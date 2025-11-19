@@ -1,0 +1,903 @@
+#!/usr/bin/env python3
+"""
+ADC Streamer GUI Application
+=============================
+A comprehensive GUI for controlling and visualizing data from the Arduino
+Interactive ADC CSV Sweeper sketch.
+
+Features:
+- Serial port connection and configuration
+- Real-time ADC configuration (resolution, voltage reference)
+- Acquisition settings (channels, ground pin, repeat count, delay)
+- Run control (continuous or timed runs)
+- Real-time plotting with pyqtgraph
+- Data export (CSV with metadata) and plot image export
+- State management (parameter lock-out during capture)
+
+Requirements:
+- PyQt6
+- pyserial
+- pyqtgraph
+- numpy
+"""
+
+import sys
+import csv
+import time
+from datetime import datetime
+from pathlib import Path
+from typing import List, Optional, Dict
+
+import numpy as np
+from PyQt6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QGridLayout, QLabel, QPushButton, QLineEdit, QComboBox,
+    QCheckBox, QSpinBox, QTextEdit, QFileDialog, QGroupBox,
+    QMessageBox, QSplitter, QListWidget, QAbstractItemView
+)
+from PyQt6.QtCore import QTimer, Qt, pyqtSignal, QThread
+from PyQt6.QtGui import QFont, QColor
+
+import serial
+import serial.tools.list_ports
+import pyqtgraph as pg
+
+
+class SerialReaderThread(QThread):
+    """Background thread for reading serial data without blocking the GUI."""
+    data_received = pyqtSignal(str)
+    error_occurred = pyqtSignal(str)
+
+    def __init__(self, serial_port):
+        super().__init__()
+        self.serial_port = serial_port
+        self.running = True
+
+    def run(self):
+        """Continuously read from serial port and emit signals."""
+        buffer = ""
+        while self.running:
+            try:
+                if self.serial_port and self.serial_port.is_open:
+                    if self.serial_port.in_waiting > 0:
+                        data = self.serial_port.read(self.serial_port.in_waiting)
+                        try:
+                            text = data.decode('utf-8', errors='ignore')
+                            buffer += text
+
+                            # Process complete lines
+                            while '\n' in buffer:
+                                line, buffer = buffer.split('\n', 1)
+                                line = line.strip()
+                                if line:
+                                    self.data_received.emit(line)
+                        except Exception as e:
+                            self.error_occurred.emit(f"Decode error: {e}")
+                else:
+                    break
+
+                self.msleep(10)  # Small delay to prevent CPU spinning
+
+            except Exception as e:
+                self.error_occurred.emit(f"Serial read error: {e}")
+                break
+
+    def stop(self):
+        """Stop the thread."""
+        self.running = False
+
+
+class ADCStreamerGUI(QMainWindow):
+    """Main GUI application for ADC streaming and visualization."""
+
+    def __init__(self):
+        super().__init__()
+
+        # Serial connection
+        self.serial_port: Optional[serial.Serial] = None
+        self.serial_thread: Optional[SerialReaderThread] = None
+
+        # Data storage
+        self.raw_data: List[List[int]] = []  # List of sweeps (each sweep is a list of values)
+        self.sweep_count = 0
+        self.is_capturing = False
+
+        # Configuration state
+        self.config = {
+            'channels': [],
+            'repeat': 1,
+            'delay_us': 0,
+            'ground_pin': -1,
+            'use_ground': False,
+            'resolution': 12,
+            'reference': 'vdd'
+        }
+
+        # Initialize UI
+        self.init_ui()
+
+        # Update port list on startup
+        self.update_port_list()
+
+    def init_ui(self):
+        """Initialize the user interface."""
+        self.setWindowTitle("ADC Streamer - Arduino Control & Visualization")
+        self.setGeometry(100, 100, 1400, 900)
+
+        # Main widget and layout
+        main_widget = QWidget()
+        self.setCentralWidget(main_widget)
+        main_layout = QHBoxLayout(main_widget)
+
+        # Create splitter for resizable panels
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        main_layout.addWidget(splitter)
+
+        # Left panel: Controls
+        left_panel = QWidget()
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setSpacing(10)
+
+        # Add control sections
+        left_layout.addWidget(self.create_serial_section())
+        left_layout.addWidget(self.create_adc_config_section())
+        left_layout.addWidget(self.create_acquisition_section())
+        left_layout.addWidget(self.create_run_control_section())
+        left_layout.addWidget(self.create_file_management_section())
+        left_layout.addWidget(self.create_status_section())
+        left_layout.addStretch()
+
+        # Right panel: Plotting and visualization
+        right_panel = QWidget()
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.addWidget(self.create_plot_section())
+        right_layout.addWidget(self.create_visualization_controls())
+
+        # Add panels to splitter
+        splitter.addWidget(left_panel)
+        splitter.addWidget(right_panel)
+        splitter.setStretchFactor(0, 1)  # Controls get 1 part
+        splitter.setStretchFactor(1, 3)  # Plot gets 3 parts
+
+        # Status bar
+        self.statusBar().showMessage("Disconnected")
+
+    def create_serial_section(self) -> QGroupBox:
+        """Create serial connection control section."""
+        group = QGroupBox("Serial Connection")
+        layout = QGridLayout()
+
+        # Port selection
+        layout.addWidget(QLabel("Port:"), 0, 0)
+        self.port_combo = QComboBox()
+        layout.addWidget(self.port_combo, 0, 1)
+
+        self.refresh_ports_btn = QPushButton("Refresh")
+        self.refresh_ports_btn.clicked.connect(self.update_port_list)
+        layout.addWidget(self.refresh_ports_btn, 0, 2)
+
+        # Connect/Disconnect button
+        self.connect_btn = QPushButton("Connect")
+        self.connect_btn.clicked.connect(self.toggle_connection)
+        layout.addWidget(self.connect_btn, 1, 0, 1, 3)
+
+        group.setLayout(layout)
+        return group
+
+    def create_adc_config_section(self) -> QGroupBox:
+        """Create ADC configuration section."""
+        group = QGroupBox("ADC Configuration")
+        layout = QGridLayout()
+
+        # Resolution
+        layout.addWidget(QLabel("Resolution (bits):"), 0, 0)
+        self.resolution_combo = QComboBox()
+        self.resolution_combo.addItems(["8", "10", "12", "16"])
+        self.resolution_combo.setCurrentText("12")
+        self.resolution_combo.currentTextChanged.connect(self.on_resolution_changed)
+        layout.addWidget(self.resolution_combo, 0, 1)
+
+        # Voltage Reference
+        layout.addWidget(QLabel("Voltage Reference:"), 1, 0)
+        self.vref_combo = QComboBox()
+        self.vref_combo.addItems(["1.2V (Internal)", "3.3V (VDD)", "0.8*VDD", "External 1.25V"])
+        self.vref_combo.setCurrentIndex(1)  # Default to VDD
+        self.vref_combo.currentTextChanged.connect(self.on_vref_changed)
+        layout.addWidget(self.vref_combo, 1, 1)
+
+        group.setLayout(layout)
+        return group
+
+    def create_acquisition_section(self) -> QGroupBox:
+        """Create acquisition settings section."""
+        group = QGroupBox("Acquisition Settings")
+        layout = QGridLayout()
+
+        # Channels sequence
+        layout.addWidget(QLabel("Channels Sequence:"), 0, 0)
+        self.channels_input = QLineEdit()
+        self.channels_input.setPlaceholderText("e.g., 0,1,1,2,3")
+        self.channels_input.textChanged.connect(self.on_channels_changed)
+        layout.addWidget(self.channels_input, 0, 1, 1, 2)
+
+        # Ground pin
+        layout.addWidget(QLabel("Ground Pin:"), 1, 0)
+        self.ground_pin_spin = QSpinBox()
+        self.ground_pin_spin.setRange(-1, 255)
+        self.ground_pin_spin.setValue(-1)
+        self.ground_pin_spin.setSpecialValueText("Not Set")
+        self.ground_pin_spin.valueChanged.connect(self.on_ground_pin_changed)
+        layout.addWidget(self.ground_pin_spin, 1, 1)
+
+        # Use ground sample
+        self.use_ground_check = QCheckBox("Use Ground Sample")
+        self.use_ground_check.stateChanged.connect(self.on_use_ground_changed)
+        layout.addWidget(self.use_ground_check, 1, 2)
+
+        # Repeat count
+        layout.addWidget(QLabel("Repeat Count:"), 2, 0)
+        self.repeat_spin = QSpinBox()
+        self.repeat_spin.setRange(1, 1000)
+        self.repeat_spin.setValue(1)
+        self.repeat_spin.valueChanged.connect(self.on_repeat_changed)
+        layout.addWidget(self.repeat_spin, 2, 1)
+
+        # Delay
+        layout.addWidget(QLabel("Delay (µs):"), 3, 0)
+        self.delay_spin = QSpinBox()
+        self.delay_spin.setRange(0, 100000)
+        self.delay_spin.setValue(0)
+        self.delay_spin.valueChanged.connect(self.on_delay_changed)
+        layout.addWidget(self.delay_spin, 3, 1)
+
+        group.setLayout(layout)
+        return group
+
+    def create_run_control_section(self) -> QGroupBox:
+        """Create run control section."""
+        group = QGroupBox("Run Control")
+        layout = QGridLayout()
+
+        # Start button
+        self.start_btn = QPushButton("Start")
+        self.start_btn.setEnabled(False)
+        self.start_btn.clicked.connect(self.start_capture)
+        self.start_btn.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; font-weight: bold; }")
+        layout.addWidget(self.start_btn, 0, 0, 1, 2)
+
+        # Stop button
+        self.stop_btn = QPushButton("Stop")
+        self.stop_btn.setEnabled(False)
+        self.stop_btn.clicked.connect(self.stop_capture)
+        self.stop_btn.setStyleSheet("QPushButton { background-color: #f44336; color: white; font-weight: bold; }")
+        layout.addWidget(self.stop_btn, 1, 0, 1, 2)
+
+        # Timed run
+        self.timed_run_check = QCheckBox("Timed Run (ms):")
+        layout.addWidget(self.timed_run_check, 2, 0)
+
+        self.timed_run_spin = QSpinBox()
+        self.timed_run_spin.setRange(10, 3600000)  # 10ms to 1 hour
+        self.timed_run_spin.setValue(1000)
+        self.timed_run_spin.setEnabled(False)
+        self.timed_run_check.stateChanged.connect(
+            lambda state: self.timed_run_spin.setEnabled(state == Qt.CheckState.Checked.value)
+        )
+        layout.addWidget(self.timed_run_spin, 2, 1)
+
+        # Clear data button
+        self.clear_btn = QPushButton("Clear Data")
+        self.clear_btn.clicked.connect(self.clear_data)
+        layout.addWidget(self.clear_btn, 3, 0, 1, 2)
+
+        group.setLayout(layout)
+        return group
+
+    def create_file_management_section(self) -> QGroupBox:
+        """Create file management section."""
+        group = QGroupBox("Data Export")
+        layout = QGridLayout()
+
+        # Directory selection
+        layout.addWidget(QLabel("Directory:"), 0, 0)
+        self.dir_input = QLineEdit()
+        self.dir_input.setText(str(Path.home()))
+        layout.addWidget(self.dir_input, 0, 1)
+
+        self.browse_btn = QPushButton("Browse")
+        self.browse_btn.clicked.connect(self.browse_directory)
+        layout.addWidget(self.browse_btn, 0, 2)
+
+        # Filename
+        layout.addWidget(QLabel("Filename:"), 1, 0)
+        self.filename_input = QLineEdit()
+        self.filename_input.setText("adc_data")
+        layout.addWidget(self.filename_input, 1, 1, 1, 2)
+
+        # Save data button
+        self.save_data_btn = QPushButton("Save Data (CSV)")
+        self.save_data_btn.clicked.connect(self.save_data)
+        layout.addWidget(self.save_data_btn, 2, 0, 1, 3)
+
+        # Save image button
+        self.save_image_btn = QPushButton("Save Plot Image")
+        self.save_image_btn.clicked.connect(self.save_plot_image)
+        layout.addWidget(self.save_image_btn, 3, 0, 1, 3)
+
+        group.setLayout(layout)
+        return group
+
+    def create_status_section(self) -> QGroupBox:
+        """Create status display section."""
+        group = QGroupBox("Status & Messages")
+        layout = QVBoxLayout()
+
+        self.status_text = QTextEdit()
+        self.status_text.setReadOnly(True)
+        self.status_text.setMaximumHeight(150)
+        font = QFont("Courier", 9)
+        self.status_text.setFont(font)
+        layout.addWidget(self.status_text)
+
+        group.setLayout(layout)
+        return group
+
+    def create_plot_section(self) -> QGroupBox:
+        """Create plotting section with pyqtgraph."""
+        group = QGroupBox("Real-time Data Visualization")
+        layout = QVBoxLayout()
+
+        # Create plot widget
+        self.plot_widget = pg.PlotWidget()
+        self.plot_widget.setBackground('w')
+        self.plot_widget.setLabel('left', 'ADC Value', units='counts')
+        self.plot_widget.setLabel('bottom', 'Sample Index')
+        self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
+        self.plot_widget.addLegend()
+
+        layout.addWidget(self.plot_widget)
+
+        # Info label
+        self.plot_info_label = QLabel("Sweeps: 0 | Total Samples: 0")
+        layout.addWidget(self.plot_info_label)
+
+        group.setLayout(layout)
+        return group
+
+    def create_visualization_controls(self) -> QGroupBox:
+        """Create visualization control section."""
+        group = QGroupBox("Visualization Controls")
+        layout = QHBoxLayout()
+
+        # Channel selector (list of channels to display)
+        channel_group = QGroupBox("Display Channels")
+        channel_layout = QVBoxLayout()
+        self.channel_list = QListWidget()
+        self.channel_list.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
+        self.channel_list.itemSelectionChanged.connect(self.update_plot)
+        channel_layout.addWidget(self.channel_list)
+
+        self.select_all_btn = QPushButton("Select All")
+        self.select_all_btn.clicked.connect(lambda: self.channel_list.selectAll())
+        channel_layout.addWidget(self.select_all_btn)
+
+        self.deselect_all_btn = QPushButton("Deselect All")
+        self.deselect_all_btn.clicked.connect(lambda: self.channel_list.clearSelection())
+        channel_layout.addWidget(self.deselect_all_btn)
+
+        channel_group.setLayout(channel_layout)
+        layout.addWidget(channel_group)
+
+        # Repeats visualization mode
+        repeats_group = QGroupBox("Repeats Visualization")
+        repeats_layout = QVBoxLayout()
+
+        self.show_all_repeats_radio = QCheckBox("Show All Repeats")
+        self.show_all_repeats_radio.setChecked(True)
+        self.show_all_repeats_radio.toggled.connect(self.update_plot)
+        repeats_layout.addWidget(self.show_all_repeats_radio)
+
+        self.show_average_radio = QCheckBox("Show Average")
+        self.show_average_radio.setChecked(False)
+        self.show_average_radio.toggled.connect(self.update_plot)
+        repeats_layout.addWidget(self.show_average_radio)
+
+        repeats_layout.addStretch()
+        repeats_group.setLayout(repeats_layout)
+        layout.addWidget(repeats_group)
+
+        group.setLayout(layout)
+        return group
+
+    # Serial connection methods
+
+    def update_port_list(self):
+        """Update the list of available serial ports."""
+        self.port_combo.clear()
+        ports = serial.tools.list_ports.comports()
+        for port in ports:
+            self.port_combo.addItem(f"{port.device} - {port.description}")
+
+        if self.port_combo.count() == 0:
+            self.port_combo.addItem("No ports found")
+
+    def toggle_connection(self):
+        """Connect or disconnect from the serial port."""
+        if self.serial_port is None or not self.serial_port.is_open:
+            self.connect_serial()
+        else:
+            self.disconnect_serial()
+
+    def connect_serial(self):
+        """Connect to the selected serial port."""
+        if self.port_combo.currentText() == "No ports found":
+            self.log_status("ERROR: No serial ports available")
+            return
+
+        port_text = self.port_combo.currentText()
+        port_name = port_text.split(" - ")[0]
+
+        try:
+            self.serial_port = serial.Serial(
+                port=port_name,
+                baudrate=115200,
+                timeout=1
+            )
+
+            # Start serial reader thread
+            self.serial_thread = SerialReaderThread(self.serial_port)
+            self.serial_thread.data_received.connect(self.process_serial_data)
+            self.serial_thread.error_occurred.connect(self.log_status)
+            self.serial_thread.start()
+
+            self.log_status(f"Connected to {port_name}")
+            self.connect_btn.setText("Disconnect")
+            self.start_btn.setEnabled(True)
+            self.statusBar().showMessage("Connected")
+
+            # Disable port selection during connection
+            self.port_combo.setEnabled(False)
+            self.refresh_ports_btn.setEnabled(False)
+
+        except Exception as e:
+            self.log_status(f"ERROR: Failed to connect - {e}")
+            QMessageBox.critical(self, "Connection Error", f"Failed to connect:\n{e}")
+
+    def disconnect_serial(self):
+        """Disconnect from the serial port."""
+        if self.is_capturing:
+            self.stop_capture()
+
+        if self.serial_thread:
+            self.serial_thread.stop()
+            self.serial_thread.wait()
+            self.serial_thread = None
+
+        if self.serial_port and self.serial_port.is_open:
+            self.serial_port.close()
+
+        self.serial_port = None
+        self.log_status("Disconnected")
+        self.connect_btn.setText("Connect")
+        self.start_btn.setEnabled(False)
+        self.stop_btn.setEnabled(False)
+        self.statusBar().showMessage("Disconnected")
+
+        # Re-enable port selection
+        self.port_combo.setEnabled(True)
+        self.refresh_ports_btn.setEnabled(True)
+
+    def send_command(self, command: str):
+        """Send a command to the Arduino."""
+        if self.serial_port and self.serial_port.is_open:
+            try:
+                self.serial_port.write(f"{command}\n".encode('utf-8'))
+                self.log_status(f"Sent: {command}")
+            except Exception as e:
+                self.log_status(f"ERROR: Failed to send command - {e}")
+        else:
+            self.log_status("ERROR: Not connected to serial port")
+
+    def process_serial_data(self, line: str):
+        """Process incoming serial data."""
+        if line.startswith('#'):
+            # Status/configuration message
+            self.log_status(line)
+        else:
+            # Data line (CSV)
+            if self.is_capturing:
+                try:
+                    values = [int(v.strip()) for v in line.split(',')]
+                    self.raw_data.append(values)
+                    self.sweep_count += 1
+
+                    # Update plot periodically (every 10 sweeps for performance)
+                    if self.sweep_count % 10 == 0:
+                        self.update_plot()
+                        self.plot_info_label.setText(
+                            f"Sweeps: {self.sweep_count} | Total Samples: {len(self.raw_data) * len(values)}"
+                        )
+
+                except Exception as e:
+                    self.log_status(f"ERROR: Failed to parse data - {e}")
+
+    def log_status(self, message: str):
+        """Log a status message."""
+        timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        self.status_text.append(f"[{timestamp}] {message}")
+        # Auto-scroll to bottom
+        self.status_text.verticalScrollBar().setValue(
+            self.status_text.verticalScrollBar().maximum()
+        )
+
+    # Configuration change handlers
+
+    def on_resolution_changed(self, text: str):
+        """Handle resolution change."""
+        if self.serial_port and self.serial_port.is_open:
+            self.send_command(f"res {text}")
+            self.config['resolution'] = int(text)
+
+    def on_vref_changed(self, text: str):
+        """Handle voltage reference change."""
+        if self.serial_port and self.serial_port.is_open:
+            vref_map = {
+                "1.2V (Internal)": "1.2",
+                "3.3V (VDD)": "3.3",
+                "0.8*VDD": "0.8vdd",
+                "External 1.25V": "ext"
+            }
+            vref_cmd = vref_map.get(text, "3.3")
+            self.send_command(f"ref {vref_cmd}")
+            self.config['reference'] = vref_cmd
+
+    def on_channels_changed(self, text: str):
+        """Handle channels sequence change."""
+        if self.serial_port and self.serial_port.is_open and text.strip():
+            self.send_command(f"channels {text}")
+            try:
+                # Parse channels for visualization
+                channels = [int(c.strip()) for c in text.split(',')]
+                self.config['channels'] = channels
+                self.update_channel_list()
+            except:
+                pass
+
+    def on_ground_pin_changed(self, value: int):
+        """Handle ground pin change."""
+        if self.serial_port and self.serial_port.is_open:
+            if value >= 0:
+                self.send_command(f"ground {value}")
+                self.config['ground_pin'] = value
+
+    def on_use_ground_changed(self, state: int):
+        """Handle use ground checkbox change."""
+        if self.serial_port and self.serial_port.is_open:
+            use_ground = state == Qt.CheckState.Checked.value
+            self.send_command(f"ground {str(use_ground).lower()}")
+            self.config['use_ground'] = use_ground
+
+    def on_repeat_changed(self, value: int):
+        """Handle repeat count change."""
+        if self.serial_port and self.serial_port.is_open:
+            self.send_command(f"repeat {value}")
+            self.config['repeat'] = value
+
+    def on_delay_changed(self, value: int):
+        """Handle delay change."""
+        if self.serial_port and self.serial_port.is_open:
+            self.send_command(f"delay {value}")
+            self.config['delay_us'] = value
+
+    def update_channel_list(self):
+        """Update the channel selector list based on configured channels."""
+        self.channel_list.clear()
+
+        if not self.config['channels']:
+            return
+
+        # Get unique channels while preserving order
+        unique_channels = []
+        for ch in self.config['channels']:
+            if ch not in unique_channels:
+                unique_channels.append(ch)
+
+        for ch in unique_channels:
+            self.channel_list.addItem(f"Channel {ch}")
+
+        # Select all by default
+        self.channel_list.selectAll()
+
+    # Run control methods
+
+    def start_capture(self):
+        """Start data capture."""
+        if not self.config['channels']:
+            QMessageBox.warning(
+                self,
+                "Configuration Error",
+                "Please configure channels before starting capture."
+            )
+            return
+
+        # Lock configuration controls
+        self.set_controls_enabled(False)
+
+        # Clear previous data
+        self.raw_data.clear()
+        self.sweep_count = 0
+
+        # Send run command
+        if self.timed_run_check.isChecked():
+            duration_ms = self.timed_run_spin.value()
+            self.send_command(f"run {duration_ms}")
+            self.log_status(f"Starting timed capture for {duration_ms} ms")
+
+            # Set timer to re-enable controls after timed run
+            QTimer.singleShot(duration_ms + 500, self.on_capture_finished)
+        else:
+            self.send_command("run")
+            self.log_status("Starting continuous capture")
+
+        self.is_capturing = True
+        self.start_btn.setEnabled(False)
+        self.stop_btn.setEnabled(True)
+        self.statusBar().showMessage("Capturing")
+
+    def stop_capture(self):
+        """Stop data capture."""
+        self.send_command("stop")
+        self.log_status("Stopping capture")
+        self.on_capture_finished()
+
+    def on_capture_finished(self):
+        """Handle capture finished (either stopped or timed out)."""
+        self.is_capturing = False
+        self.start_btn.setEnabled(True)
+        self.stop_btn.setEnabled(False)
+        self.set_controls_enabled(True)
+        self.statusBar().showMessage("Connected")
+
+        # Final plot update
+        self.update_plot()
+        self.plot_info_label.setText(
+            f"Sweeps: {self.sweep_count} | Total Samples: {len(self.raw_data) * (len(self.raw_data[0]) if self.raw_data else 0)}"
+        )
+
+        self.log_status(f"Capture finished. Total sweeps: {self.sweep_count}")
+
+    def set_controls_enabled(self, enabled: bool):
+        """Enable or disable configuration controls."""
+        # Serial connection
+        self.port_combo.setEnabled(enabled and not self.serial_port)
+        self.refresh_ports_btn.setEnabled(enabled and not self.serial_port)
+
+        # ADC configuration
+        self.resolution_combo.setEnabled(enabled)
+        self.vref_combo.setEnabled(enabled)
+
+        # Acquisition settings
+        self.channels_input.setEnabled(enabled)
+        self.ground_pin_spin.setEnabled(enabled)
+        self.use_ground_check.setEnabled(enabled)
+        self.repeat_spin.setEnabled(enabled)
+        self.delay_spin.setEnabled(enabled)
+
+        # Run control
+        self.timed_run_check.setEnabled(enabled)
+        if enabled:
+            self.timed_run_spin.setEnabled(self.timed_run_check.isChecked())
+        else:
+            self.timed_run_spin.setEnabled(False)
+
+    def clear_data(self):
+        """Clear all captured data."""
+        reply = QMessageBox.question(
+            self,
+            "Clear Data",
+            "Are you sure you want to clear all captured data?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            self.raw_data.clear()
+            self.sweep_count = 0
+            self.update_plot()
+            self.plot_info_label.setText("Sweeps: 0 | Total Samples: 0")
+            self.log_status("Data cleared")
+
+    # Plotting methods
+
+    def update_plot(self):
+        """Update the plot with current data."""
+        self.plot_widget.clear()
+
+        if not self.raw_data or not self.config['channels']:
+            return
+
+        # Get selected channels
+        selected_items = self.channel_list.selectedItems()
+        if not selected_items:
+            return
+
+        selected_channels = [int(item.text().split()[1]) for item in selected_items]
+
+        # Parse data structure: each sweep contains [ch0_r1, ch0_r2, ..., ch1_r1, ...]
+        channels = self.config['channels']
+        repeat_count = self.config['repeat']
+
+        # Get unique channels in order
+        unique_channels = []
+        for ch in channels:
+            if ch not in unique_channels:
+                unique_channels.append(ch)
+
+        # Prepare colors for each channel
+        colors = [
+            (255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0),
+            (255, 0, 255), (0, 255, 255), (128, 0, 0), (0, 128, 0),
+            (0, 0, 128), (128, 128, 0), (128, 0, 128), (0, 128, 128)
+        ]
+
+        # Extract data for each channel
+        for ch_idx, channel in enumerate(unique_channels):
+            if channel not in selected_channels:
+                continue
+
+            color = colors[ch_idx % len(colors)]
+
+            # Find all positions of this channel in the sequence
+            positions = [i for i, c in enumerate(channels) if c == channel]
+
+            # Extract data for this channel across all sweeps
+            channel_data = []
+            for sweep in self.raw_data:
+                for pos in positions:
+                    start_idx = pos * repeat_count
+                    end_idx = start_idx + repeat_count
+                    if end_idx <= len(sweep):
+                        channel_data.extend(sweep[start_idx:end_idx])
+
+            if not channel_data:
+                continue
+
+            # Show based on visualization mode
+            if self.show_all_repeats_radio.isChecked():
+                # Plot all raw data points
+                self.plot_widget.plot(
+                    channel_data,
+                    pen=pg.mkPen(color=color, width=1),
+                    name=f"Ch {channel}"
+                )
+
+            if self.show_average_radio.isChecked():
+                # Compute average across repeats
+                # Reshape data into (num_samples_per_channel, repeat_count)
+                num_samples = len(channel_data) // repeat_count
+                if num_samples > 0:
+                    reshaped = np.array(channel_data[:num_samples * repeat_count]).reshape(-1, repeat_count)
+                    averaged = np.mean(reshaped, axis=1)
+
+                    # Plot with thicker line for average
+                    x_coords = np.arange(len(averaged)) * repeat_count + repeat_count // 2
+                    self.plot_widget.plot(
+                        x_coords,
+                        averaged,
+                        pen=pg.mkPen(color=color, width=3, style=Qt.PenStyle.DashLine),
+                        name=f"Ch {channel} (avg)"
+                    )
+
+    # File management methods
+
+    def browse_directory(self):
+        """Browse for output directory."""
+        directory = QFileDialog.getExistingDirectory(
+            self,
+            "Select Output Directory",
+            self.dir_input.text()
+        )
+        if directory:
+            self.dir_input.setText(directory)
+
+    def save_data(self):
+        """Save captured data to CSV file with metadata."""
+        if not self.raw_data:
+            QMessageBox.warning(self, "No Data", "No data to save.")
+            return
+
+        # Prepare file paths
+        directory = Path(self.dir_input.text())
+        filename = self.filename_input.text()
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        csv_path = directory / f"{filename}_{timestamp}.csv"
+        metadata_path = directory / f"{filename}_{timestamp}_metadata.txt"
+
+        try:
+            # Save CSV data
+            with open(csv_path, 'w', newline='') as f:
+                writer = csv.writer(f)
+                for sweep in self.raw_data:
+                    writer.writerow(sweep)
+
+            # Save metadata
+            with open(metadata_path, 'w') as f:
+                f.write("ADC Streamer - Acquisition Metadata\n")
+                f.write("=" * 50 + "\n\n")
+                f.write(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"Total Sweeps: {self.sweep_count}\n")
+                f.write(f"Total Samples: {len(self.raw_data) * len(self.raw_data[0])}\n\n")
+
+                f.write("Configuration:\n")
+                f.write("-" * 50 + "\n")
+                f.write(f"Channels: {','.join(map(str, self.config['channels']))}\n")
+                f.write(f"Repeat Count: {self.config['repeat']}\n")
+                f.write(f"Delay (µs): {self.config['delay_us']}\n")
+                f.write(f"Ground Pin: {self.config['ground_pin']}\n")
+                f.write(f"Use Ground Sample: {self.config['use_ground']}\n")
+                f.write(f"ADC Resolution: {self.config['resolution']} bits\n")
+                f.write(f"Voltage Reference: {self.config['reference']}\n")
+
+            self.log_status(f"Data saved to {csv_path}")
+            self.log_status(f"Metadata saved to {metadata_path}")
+
+            QMessageBox.information(
+                self,
+                "Save Successful",
+                f"Data saved successfully:\n{csv_path}\n{metadata_path}"
+            )
+
+        except Exception as e:
+            self.log_status(f"ERROR: Failed to save data - {e}")
+            QMessageBox.critical(self, "Save Error", f"Failed to save data:\n{e}")
+
+    def save_plot_image(self):
+        """Save the current plot as an image."""
+        if not self.raw_data:
+            QMessageBox.warning(self, "No Data", "No plot to save.")
+            return
+
+        directory = Path(self.dir_input.text())
+        filename = self.filename_input.text()
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        image_path = directory / f"{filename}_{timestamp}.png"
+
+        try:
+            # Export plot as image
+            exporter = pg.exporters.ImageExporter(self.plot_widget.plotItem)
+            exporter.parameters()['width'] = 1920  # High resolution
+            exporter.export(str(image_path))
+
+            self.log_status(f"Plot image saved to {image_path}")
+            QMessageBox.information(
+                self,
+                "Save Successful",
+                f"Plot image saved successfully:\n{image_path}"
+            )
+
+        except Exception as e:
+            self.log_status(f"ERROR: Failed to save plot image - {e}")
+            QMessageBox.critical(self, "Save Error", f"Failed to save plot image:\n{e}")
+
+    def closeEvent(self, event):
+        """Handle window close event."""
+        if self.serial_port and self.serial_port.is_open:
+            self.disconnect_serial()
+        event.accept()
+
+
+def main():
+    """Main application entry point."""
+    app = QApplication(sys.argv)
+    app.setStyle('Fusion')  # Modern look across platforms
+
+    window = ADCStreamerGUI()
+    window.show()
+
+    sys.exit(app.exec())
+
+
+if __name__ == '__main__':
+    main()

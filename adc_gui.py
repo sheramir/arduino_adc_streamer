@@ -326,15 +326,39 @@ class ADCStreamerGUI(QMainWindow):
         self.filename_input.setText("adc_data")
         layout.addWidget(self.filename_input, 1, 1, 1, 2)
 
+        # Sample range selection
+        self.use_range_check = QCheckBox("Save Range:")
+        self.use_range_check.setToolTip("Enable to save only a specific range of sweeps")
+        self.use_range_check.stateChanged.connect(self.on_use_range_changed)
+        layout.addWidget(self.use_range_check, 2, 0)
+
+        # Min sweep
+        self.min_sweep_spin = QSpinBox()
+        self.min_sweep_spin.setRange(0, 999999)
+        self.min_sweep_spin.setValue(0)
+        self.min_sweep_spin.setPrefix("Min: ")
+        self.min_sweep_spin.setEnabled(False)
+        self.min_sweep_spin.setToolTip("Starting sweep index (inclusive)")
+        layout.addWidget(self.min_sweep_spin, 2, 1)
+
+        # Max sweep
+        self.max_sweep_spin = QSpinBox()
+        self.max_sweep_spin.setRange(0, 999999)
+        self.max_sweep_spin.setValue(1000)
+        self.max_sweep_spin.setPrefix("Max: ")
+        self.max_sweep_spin.setEnabled(False)
+        self.max_sweep_spin.setToolTip("Ending sweep index (inclusive)")
+        layout.addWidget(self.max_sweep_spin, 2, 2)
+
         # Save data button
         self.save_data_btn = QPushButton("Save Data (CSV)")
         self.save_data_btn.clicked.connect(self.save_data)
-        layout.addWidget(self.save_data_btn, 2, 0, 1, 3)
+        layout.addWidget(self.save_data_btn, 3, 0, 1, 3)
 
         # Save image button
         self.save_image_btn = QPushButton("Save Plot Image")
         self.save_image_btn.clicked.connect(self.save_plot_image)
-        layout.addWidget(self.save_image_btn, 3, 0, 1, 3)
+        layout.addWidget(self.save_image_btn, 4, 0, 1, 3)
 
         group.setLayout(layout)
         return group
@@ -1040,6 +1064,12 @@ class ADCStreamerGUI(QMainWindow):
 
     # File management methods
 
+    def on_use_range_changed(self, state: int):
+        """Handle use range checkbox state change."""
+        enabled = state == Qt.CheckState.Checked.value
+        self.min_sweep_spin.setEnabled(enabled)
+        self.max_sweep_spin.setEnabled(enabled)
+
     def browse_directory(self):
         """Browse for output directory."""
         directory = QFileDialog.getExistingDirectory(
@@ -1056,6 +1086,46 @@ class ADCStreamerGUI(QMainWindow):
             QMessageBox.warning(self, "No Data", "No data to save.")
             return
 
+        # Determine which data to save
+        data_to_save = self.raw_data
+        sweep_range_text = "All"
+        total_sweeps = len(self.raw_data)
+
+        # Check if range is enabled
+        if self.use_range_check.isChecked():
+            min_sweep = self.min_sweep_spin.value()
+            max_sweep = self.max_sweep_spin.value()
+
+            # Validate range
+            if min_sweep >= max_sweep:
+                QMessageBox.warning(
+                    self,
+                    "Invalid Range",
+                    f"Min sweep ({min_sweep}) must be less than max sweep ({max_sweep})."
+                )
+                return
+
+            if min_sweep < 0 or min_sweep >= total_sweeps:
+                QMessageBox.warning(
+                    self,
+                    "Invalid Range",
+                    f"Min sweep ({min_sweep}) is out of bounds. Valid range: 0 to {total_sweeps - 1}."
+                )
+                return
+
+            if max_sweep < 0 or max_sweep > total_sweeps:
+                QMessageBox.warning(
+                    self,
+                    "Invalid Range",
+                    f"Max sweep ({max_sweep}) is out of bounds. Valid range: 1 to {total_sweeps}."
+                )
+                return
+
+            # Slice the data (max_sweep is inclusive in user terms, but exclusive in Python slicing)
+            data_to_save = self.raw_data[min_sweep:max_sweep]
+            sweep_range_text = f"{min_sweep} to {max_sweep - 1}"
+            self.log_status(f"Saving sweep range: {sweep_range_text} ({len(data_to_save)} sweeps)")
+
         # Prepare file paths
         directory = Path(self.dir_input.text())
         filename = self.filename_input.text()
@@ -1068,7 +1138,7 @@ class ADCStreamerGUI(QMainWindow):
             # Save CSV data
             with open(csv_path, 'w', newline='') as f:
                 writer = csv.writer(f)
-                for sweep in self.raw_data:
+                for sweep in data_to_save:
                     writer.writerow(sweep)
 
             # Save metadata
@@ -1076,8 +1146,10 @@ class ADCStreamerGUI(QMainWindow):
                 f.write("ADC Streamer - Acquisition Metadata\n")
                 f.write("=" * 50 + "\n\n")
                 f.write(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-                f.write(f"Total Sweeps: {self.sweep_count}\n")
-                f.write(f"Total Samples: {len(self.raw_data) * len(self.raw_data[0])}\n\n")
+                f.write(f"Total Captured Sweeps: {self.sweep_count}\n")
+                f.write(f"Saved Sweeps: {len(data_to_save)}\n")
+                f.write(f"Sweep Range: {sweep_range_text}\n")
+                f.write(f"Total Samples: {len(data_to_save) * (len(data_to_save[0]) if data_to_save else 0)}\n\n")
 
                 f.write("Configuration:\n")
                 f.write("-" * 50 + "\n")
@@ -1095,7 +1167,7 @@ class ADCStreamerGUI(QMainWindow):
             QMessageBox.information(
                 self,
                 "Save Successful",
-                f"Data saved successfully:\n{csv_path}\n{metadata_path}"
+                f"Data saved successfully:\n{csv_path}\n{metadata_path}\n\nSweeps saved: {len(data_to_save)}"
             )
 
         except Exception as e:

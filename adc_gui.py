@@ -776,6 +776,9 @@ class ADCStreamerGUI(QMainWindow):
         else:
             self.timed_run_spin.setEnabled(False)
 
+        # Visualization controls
+        self.window_size_spin.setEnabled(enabled)
+
     def clear_data(self):
         """Clear all captured data."""
         reply = QMessageBox.question(

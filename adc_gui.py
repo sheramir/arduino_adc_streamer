@@ -33,7 +33,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QGridLayout, QLabel, QPushButton, QLineEdit, QComboBox,
     QCheckBox, QSpinBox, QTextEdit, QFileDialog, QGroupBox,
-    QMessageBox, QSplitter, QListWidget, QAbstractItemView
+    QMessageBox, QSplitter, QScrollArea
 )
 from PyQt6.QtCore import QTimer, Qt, pyqtSignal, QThread
 from PyQt6.QtGui import QFont, QColor
@@ -112,6 +112,14 @@ class ADCStreamerGUI(QMainWindow):
             'resolution': 12,
             'reference': 'vdd'
         }
+
+        # Channel checkboxes for visualization
+        self.channel_checkboxes: Dict[int, QCheckBox] = {}
+
+        # Debounce timer for plot updates
+        self.plot_update_timer = QTimer()
+        self.plot_update_timer.setSingleShot(True)
+        self.plot_update_timer.timeout.connect(self.update_plot)
 
         # Initialize UI
         self.init_ui()
@@ -367,46 +375,63 @@ class ADCStreamerGUI(QMainWindow):
     def create_visualization_controls(self) -> QGroupBox:
         """Create visualization control section."""
         group = QGroupBox("Visualization Controls")
-        layout = QHBoxLayout()
+        main_layout = QVBoxLayout()
 
-        # Channel selector (list of channels to display)
+        # Channel selector with compact checkboxes
         channel_group = QGroupBox("Display Channels")
-        channel_layout = QVBoxLayout()
-        self.channel_list = QListWidget()
-        self.channel_list.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
-        self.channel_list.itemSelectionChanged.connect(self.update_plot)
-        channel_layout.addWidget(self.channel_list)
+        channel_main_layout = QVBoxLayout()
 
-        self.select_all_btn = QPushButton("Select All")
-        self.select_all_btn.clicked.connect(lambda: self.channel_list.selectAll())
-        channel_layout.addWidget(self.select_all_btn)
+        # Container for checkboxes (will be populated dynamically)
+        self.channel_checkboxes_container = QWidget()
+        self.channel_checkboxes_layout = QGridLayout()
+        self.channel_checkboxes_layout.setSpacing(5)
+        self.channel_checkboxes_container.setLayout(self.channel_checkboxes_layout)
 
-        self.deselect_all_btn = QPushButton("Deselect All")
-        self.deselect_all_btn.clicked.connect(lambda: self.channel_list.clearSelection())
-        channel_layout.addWidget(self.deselect_all_btn)
+        # Scroll area for many channels
+        scroll = QScrollArea()
+        scroll.setWidget(self.channel_checkboxes_container)
+        scroll.setWidgetResizable(True)
+        scroll.setMaximumHeight(80)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        channel_main_layout.addWidget(scroll)
 
-        channel_group.setLayout(channel_layout)
-        layout.addWidget(channel_group)
+        # Control buttons (compact, horizontal)
+        btn_layout = QHBoxLayout()
+        self.select_all_btn = QPushButton("All")
+        self.select_all_btn.clicked.connect(self.select_all_channels)
+        self.select_all_btn.setMaximumWidth(60)
+        btn_layout.addWidget(self.select_all_btn)
 
-        # Repeats visualization mode
-        repeats_group = QGroupBox("Repeats Visualization")
-        repeats_layout = QVBoxLayout()
+        self.deselect_all_btn = QPushButton("None")
+        self.deselect_all_btn.clicked.connect(self.deselect_all_channels)
+        self.deselect_all_btn.setMaximumWidth(60)
+        btn_layout.addWidget(self.deselect_all_btn)
 
-        self.show_all_repeats_radio = QCheckBox("Show All Repeats")
+        btn_layout.addStretch()
+        channel_main_layout.addLayout(btn_layout)
+
+        channel_group.setLayout(channel_main_layout)
+        main_layout.addWidget(channel_group)
+
+        # Repeats visualization mode (horizontal layout for compactness)
+        repeats_group = QGroupBox("Display Mode")
+        repeats_layout = QHBoxLayout()
+
+        self.show_all_repeats_radio = QCheckBox("All Repeats")
         self.show_all_repeats_radio.setChecked(True)
-        self.show_all_repeats_radio.toggled.connect(self.update_plot)
+        self.show_all_repeats_radio.toggled.connect(self.trigger_plot_update)
         repeats_layout.addWidget(self.show_all_repeats_radio)
 
-        self.show_average_radio = QCheckBox("Show Average")
+        self.show_average_radio = QCheckBox("Average")
         self.show_average_radio.setChecked(False)
-        self.show_average_radio.toggled.connect(self.update_plot)
+        self.show_average_radio.toggled.connect(self.trigger_plot_update)
         repeats_layout.addWidget(self.show_average_radio)
 
         repeats_layout.addStretch()
         repeats_group.setLayout(repeats_layout)
-        layout.addWidget(repeats_group)
+        main_layout.addWidget(repeats_group)
 
-        group.setLayout(layout)
+        group.setLayout(main_layout)
         return group
 
     # Serial connection methods
@@ -590,8 +615,17 @@ class ADCStreamerGUI(QMainWindow):
             self.config['delay_us'] = value
 
     def update_channel_list(self):
-        """Update the channel selector list based on configured channels."""
-        self.channel_list.clear()
+        """Update the channel selector checkboxes based on configured channels."""
+        # Clear existing checkboxes
+        for checkbox in self.channel_checkboxes.values():
+            checkbox.deleteLater()
+        self.channel_checkboxes.clear()
+
+        # Clear layout
+        while self.channel_checkboxes_layout.count():
+            item = self.channel_checkboxes_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
 
         if not self.config['channels']:
             return
@@ -602,11 +636,34 @@ class ADCStreamerGUI(QMainWindow):
             if ch not in unique_channels:
                 unique_channels.append(ch)
 
-        for ch in unique_channels:
-            self.channel_list.addItem(f"Channel {ch}")
+        # Create checkboxes in a compact grid (6 columns)
+        max_columns = 6
+        for idx, ch in enumerate(unique_channels):
+            checkbox = QCheckBox(str(ch))
+            checkbox.setChecked(True)  # Select all by default
+            checkbox.stateChanged.connect(self.trigger_plot_update)
 
-        # Select all by default
-        self.channel_list.selectAll()
+            row = idx // max_columns
+            col = idx % max_columns
+            self.channel_checkboxes_layout.addWidget(checkbox, row, col)
+
+            self.channel_checkboxes[ch] = checkbox
+
+    def select_all_channels(self):
+        """Select all channel checkboxes."""
+        for checkbox in self.channel_checkboxes.values():
+            checkbox.setChecked(True)
+
+    def deselect_all_channels(self):
+        """Deselect all channel checkboxes."""
+        for checkbox in self.channel_checkboxes.values():
+            checkbox.setChecked(False)
+
+    def trigger_plot_update(self):
+        """Trigger a debounced plot update to avoid lag."""
+        # Restart timer (200ms delay)
+        self.plot_update_timer.stop()
+        self.plot_update_timer.start(200)
 
     # Run control methods
 
@@ -716,12 +773,10 @@ class ADCStreamerGUI(QMainWindow):
         if not self.raw_data or not self.config['channels']:
             return
 
-        # Get selected channels
-        selected_items = self.channel_list.selectedItems()
-        if not selected_items:
+        # Get selected channels from checkboxes
+        selected_channels = [ch for ch, checkbox in self.channel_checkboxes.items() if checkbox.isChecked()]
+        if not selected_channels:
             return
-
-        selected_channels = [int(item.text().split()[1]) for item in selected_items]
 
         # Parse data structure: each sweep contains [ch0_r1, ch0_r2, ..., ch1_r1, ...]
         channels = self.config['channels']

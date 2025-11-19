@@ -416,6 +416,21 @@ class ADCStreamerGUI(QMainWindow):
         channel_group.setLayout(channel_main_layout)
         main_layout.addWidget(channel_group)
 
+        # Scrolling window control
+        window_group = QGroupBox("Display Window")
+        window_layout = QHBoxLayout()
+
+        window_layout.addWidget(QLabel("Window Size (sweeps):"))
+        self.window_size_spin = QSpinBox()
+        self.window_size_spin.setRange(10, 10000)
+        self.window_size_spin.setValue(1000)
+        self.window_size_spin.setToolTip("Number of sweeps to display during capture (scrolling mode)")
+        window_layout.addWidget(self.window_size_spin)
+
+        window_layout.addStretch()
+        window_group.setLayout(window_layout)
+        main_layout.addWidget(window_group)
+
         # Repeats visualization mode (horizontal layout for compactness)
         repeats_group = QGroupBox("Display Mode")
         repeats_layout = QHBoxLayout()
@@ -542,8 +557,10 @@ class ADCStreamerGUI(QMainWindow):
                     # Update plot periodically (every 10 sweeps for performance)
                     if self.sweep_count % 10 == 0:
                         self.update_plot()
+                        window_size = self.window_size_spin.value()
+                        displayed_sweeps = min(len(self.raw_data), window_size)
                         self.plot_info_label.setText(
-                            f"Sweeps: {self.sweep_count} | Total Samples: {len(self.raw_data) * len(values)}"
+                            f"Sweeps: {self.sweep_count} (showing last {displayed_sweeps}) | Total Samples: {len(self.raw_data) * len(values)}"
                         )
 
                 except Exception as e:
@@ -687,6 +704,10 @@ class ADCStreamerGUI(QMainWindow):
         self.raw_data.clear()
         self.sweep_count = 0
 
+        # Disable plot interactions during capture (scrolling mode)
+        self.plot_widget.setMouseEnabled(x=False, y=False)
+        self.plot_widget.setMenuEnabled(False)
+
         # Send run command
         if self.timed_run_check.isChecked():
             duration_ms = self.timed_run_spin.value()
@@ -702,7 +723,7 @@ class ADCStreamerGUI(QMainWindow):
         self.is_capturing = True
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
-        self.statusBar().showMessage("Capturing")
+        self.statusBar().showMessage("Capturing - Scrolling Mode")
 
     def stop_capture(self):
         """Stop data capture."""
@@ -716,9 +737,14 @@ class ADCStreamerGUI(QMainWindow):
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.set_controls_enabled(True)
-        self.statusBar().showMessage("Connected")
 
-        # Final plot update
+        # Enable plot interactions for static mode (zoom/scroll enabled)
+        self.plot_widget.setMouseEnabled(x=True, y=True)
+        self.plot_widget.setMenuEnabled(True)
+
+        self.statusBar().showMessage("Connected - Static Display Mode")
+
+        # Final plot update (shows all data)
         self.update_plot()
         self.plot_info_label.setText(
             f"Sweeps: {self.sweep_count} | Total Samples: {len(self.raw_data) * (len(self.raw_data[0]) if self.raw_data else 0)}"
@@ -788,6 +814,15 @@ class ADCStreamerGUI(QMainWindow):
             if not selected_channels:
                 return
 
+            # Determine which data to plot based on capture state
+            if self.is_capturing:
+                # Scrolling mode: show only last N sweeps
+                window_size = self.window_size_spin.value()
+                data_to_plot = self.raw_data[-window_size:] if len(self.raw_data) > window_size else self.raw_data
+            else:
+                # Static mode: show all data
+                data_to_plot = self.raw_data
+
             # Process events to keep UI responsive
             QApplication.processEvents()
 
@@ -818,9 +853,9 @@ class ADCStreamerGUI(QMainWindow):
                 # Find all positions of this channel in the sequence
                 positions = [i for i, c in enumerate(channels) if c == channel]
 
-                # Extract data for this channel across all sweeps
+                # Extract data for this channel across sweeps (window or all)
                 channel_data = []
-                for sweep in self.raw_data:
+                for sweep in data_to_plot:
                     for pos in positions:
                         start_idx = pos * repeat_count
                         end_idx = start_idx + repeat_count

@@ -41,6 +41,7 @@ from PyQt6.QtGui import QFont, QColor
 import serial
 import serial.tools.list_ports
 import pyqtgraph as pg
+from pyqtgraph.exporters import ImageExporter
 
 
 class SerialReaderThread(QThread):
@@ -990,7 +991,7 @@ class ADCStreamerGUI(QMainWindow):
 
         try:
             # Export plot as image
-            exporter = pg.exporters.ImageExporter(self.plot_widget.plotItem)
+            exporter = ImageExporter(self.plot_widget.plotItem)
             exporter.parameters()['width'] = 1920  # High resolution
             exporter.export(str(image_path))
 

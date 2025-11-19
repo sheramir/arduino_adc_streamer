@@ -450,6 +450,46 @@ class ADCStreamerGUI(QMainWindow):
         repeats_group.setLayout(repeats_layout)
         main_layout.addWidget(repeats_group)
 
+        # Y-Axis Scaling Mode
+        yscale_group = QGroupBox("Y-Axis Scaling")
+        yscale_layout = QHBoxLayout()
+
+        self.adaptive_scale_radio = QCheckBox("Adaptive")
+        self.adaptive_scale_radio.setChecked(True)
+        self.adaptive_scale_radio.setToolTip("Auto-scale Y-axis to visible data range")
+        self.adaptive_scale_radio.toggled.connect(self.trigger_plot_update)
+        yscale_layout.addWidget(self.adaptive_scale_radio)
+
+        self.fullscale_radio = QCheckBox("Full-Scale")
+        self.fullscale_radio.setChecked(False)
+        self.fullscale_radio.setToolTip("Fixed Y-axis: 0 to 2^ResolutionBits")
+        self.fullscale_radio.toggled.connect(self.trigger_plot_update)
+        yscale_layout.addWidget(self.fullscale_radio)
+
+        yscale_layout.addStretch()
+        yscale_group.setLayout(yscale_layout)
+        main_layout.addWidget(yscale_group)
+
+        # Y-Axis Unit Mode
+        yunit_group = QGroupBox("Y-Axis Units")
+        yunit_layout = QHBoxLayout()
+
+        self.raw_units_radio = QCheckBox("Raw ADC")
+        self.raw_units_radio.setChecked(True)
+        self.raw_units_radio.setToolTip("Display raw ADC values (samples)")
+        self.raw_units_radio.toggled.connect(self.trigger_plot_update)
+        yunit_layout.addWidget(self.raw_units_radio)
+
+        self.voltage_units_radio = QCheckBox("Voltage")
+        self.voltage_units_radio.setChecked(False)
+        self.voltage_units_radio.setToolTip("Convert to voltage using Vref and resolution")
+        self.voltage_units_radio.toggled.connect(self.trigger_plot_update)
+        yunit_layout.addWidget(self.voltage_units_radio)
+
+        yunit_layout.addStretch()
+        yunit_group.setLayout(yunit_layout)
+        main_layout.addWidget(yunit_group)
+
         group.setLayout(main_layout)
         return group
 
@@ -797,6 +837,45 @@ class ADCStreamerGUI(QMainWindow):
             self.plot_info_label.setText("Sweeps: 0 | Total Samples: 0")
             self.log_status("Data cleared")
 
+    # Helper methods for voltage conversion
+
+    def get_vref_voltage(self) -> float:
+        """Get the numeric voltage reference value."""
+        vref_str = self.config['reference']
+
+        # Map reference strings to voltage values
+        if vref_str == "1.2":
+            return 1.2
+        elif vref_str == "3.3" or vref_str == "vdd":
+            return 3.3
+        elif vref_str == "0.8vdd":
+            return 3.3 * 0.8  # 2.64V
+        elif vref_str == "ext":
+            return 1.25  # External reference
+        else:
+            return 3.3  # Default to VDD
+
+    def convert_to_voltage(self, raw_value: float) -> float:
+        """Convert raw ADC value to voltage."""
+        resolution_bits = self.config['resolution']
+        vref = self.get_vref_voltage()
+
+        max_value = (2 ** resolution_bits) - 1
+        return (raw_value / max_value) * vref
+
+    def get_fullscale_range(self) -> tuple:
+        """Get the full-scale Y-axis range."""
+        resolution_bits = self.config['resolution']
+        max_raw = 2 ** resolution_bits
+
+        if self.voltage_units_radio.isChecked():
+            # Convert to voltage
+            vref = self.get_vref_voltage()
+            return (0, vref)
+        else:
+            # Raw ADC values
+            return (0, max_raw)
+
     # Plotting methods
 
     def update_plot(self):
@@ -868,6 +947,10 @@ class ADCStreamerGUI(QMainWindow):
 
                 if not channel_data:
                     continue
+
+                # Convert to voltage if voltage units mode is enabled
+                if self.voltage_units_radio.isChecked():
+                    channel_data = [self.convert_to_voltage(v) for v in channel_data]
 
                 # Process events periodically to keep UI responsive
                 if ch_idx % 2 == 0:  # Every other channel
@@ -942,6 +1025,21 @@ class ADCStreamerGUI(QMainWindow):
                             pen=pg.mkPen(color=color, width=3, style=Qt.PenStyle.DashLine),
                             name=f"Ch {channel} (avg)"
                         )
+
+            # Apply Y-axis scaling mode
+            if self.fullscale_radio.isChecked():
+                # Full-scale mode: fixed range
+                y_min, y_max = self.get_fullscale_range()
+                self.plot_widget.setYRange(y_min, y_max, padding=0)
+            else:
+                # Adaptive mode: auto-range (pyqtgraph default)
+                self.plot_widget.enableAutoRange(axis='y')
+
+            # Update Y-axis label based on unit mode
+            if self.voltage_units_radio.isChecked():
+                self.plot_widget.setLabel('left', 'Voltage', units='V')
+            else:
+                self.plot_widget.setLabel('left', 'ADC Value', units='counts')
 
         finally:
             # Always clear the flag, even if there's an error

@@ -1,0 +1,16 @@
+# ADC Streamer GUI Application - Python Requirements
+# ===================================================
+
+# GUI Framework
+PyQt6>=6.4.0
+
+# Serial Communication
+pyserial>=3.5
+
+# Real-time Plotting
+pyqtgraph>=0.13.0
+
+# Data Processing
+numpy>=1.21.0
+
+# Note: csv module is part of Python standard library

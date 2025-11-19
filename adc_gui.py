@@ -875,22 +875,58 @@ class ADCStreamerGUI(QMainWindow):
 
                 # Show based on visualization mode
                 if self.show_all_repeats_radio.isChecked():
-                    # Plot all raw data points (downsample if too many points)
-                    if len(channel_data) > 10000:
-                        # Use pyqtgraph's built-in downsampling
-                        self.plot_widget.plot(
-                            channel_data,
-                            pen=pg.mkPen(color=color, width=1),
-                            name=f"Ch {channel}",
-                            downsample=10,
-                            downsampleMethod='subsample'
-                        )
+                    # Plot each repeat as a separate line
+                    if repeat_count > 1:
+                        # Reshape data to separate repeats
+                        num_samples = len(channel_data) // repeat_count
+                        if num_samples > 0:
+                            reshaped = np.array(channel_data[:num_samples * repeat_count]).reshape(-1, repeat_count)
+
+                            # Plot each repeat as a separate line
+                            for repeat_idx in range(repeat_count):
+                                repeat_data = reshaped[:, repeat_idx]
+
+                                # Use slightly different line styles for each repeat
+                                if repeat_idx == 0:
+                                    pen = pg.mkPen(color=color, width=1.5)
+                                    name = f"Ch {channel}"
+                                else:
+                                    # Lighter/thinner lines for additional repeats
+                                    lighter_color = tuple(int(c * 0.7) for c in color)
+                                    pen = pg.mkPen(color=lighter_color, width=1, style=Qt.PenStyle.DashLine)
+                                    name = f"Ch {channel} (r{repeat_idx+1})"
+
+                                # Plot with appropriate downsampling if needed
+                                if len(repeat_data) > 10000:
+                                    self.plot_widget.plot(
+                                        repeat_data,
+                                        pen=pen,
+                                        name=name,
+                                        downsample=10,
+                                        downsampleMethod='subsample'
+                                    )
+                                else:
+                                    self.plot_widget.plot(
+                                        repeat_data,
+                                        pen=pen,
+                                        name=name
+                                    )
                     else:
-                        self.plot_widget.plot(
-                            channel_data,
-                            pen=pg.mkPen(color=color, width=1),
-                            name=f"Ch {channel}"
-                        )
+                        # Single repeat: plot as before
+                        if len(channel_data) > 10000:
+                            self.plot_widget.plot(
+                                channel_data,
+                                pen=pg.mkPen(color=color, width=1),
+                                name=f"Ch {channel}",
+                                downsample=10,
+                                downsampleMethod='subsample'
+                            )
+                        else:
+                            self.plot_widget.plot(
+                                channel_data,
+                                pen=pg.mkPen(color=color, width=1),
+                                name=f"Ch {channel}"
+                            )
 
                 if self.show_average_radio.isChecked():
                     # Compute average across repeats

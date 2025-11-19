@@ -936,10 +936,8 @@ class ADCStreamerGUI(QMainWindow):
                         reshaped = np.array(channel_data[:num_samples * repeat_count]).reshape(-1, repeat_count)
                         averaged = np.mean(reshaped, axis=1)
 
-                        # Plot with thicker line for average
-                        x_coords = np.arange(len(averaged)) * repeat_count + repeat_count // 2
+                        # Plot average with thicker line (same x-coords as individual repeats)
                         self.plot_widget.plot(
-                            x_coords,
                             averaged,
                             pen=pg.mkPen(color=color, width=3, style=Qt.PenStyle.DashLine),
                             name=f"Ch {channel} (avg)"

@@ -889,12 +889,12 @@ class ADCStreamerGUI(QMainWindow):
                                 # Use slightly different line styles for each repeat
                                 if repeat_idx == 0:
                                     pen = pg.mkPen(color=color, width=1.5)
-                                    name = f"Ch {channel}"
+                                    name = f"Ch {channel}.{repeat_idx}"
                                 else:
                                     # Lighter/thinner lines for additional repeats
                                     lighter_color = tuple(int(c * 0.7) for c in color)
                                     pen = pg.mkPen(color=lighter_color, width=1, style=Qt.PenStyle.DashLine)
-                                    name = f"Ch {channel} (r{repeat_idx+1})"
+                                    name = f"Ch {channel}.{repeat_idx}"
 
                                 # Plot with appropriate downsampling if needed
                                 if len(repeat_data) > 10000:

@@ -33,7 +33,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QGridLayout, QLabel, QPushButton, QLineEdit, QComboBox,
     QCheckBox, QSpinBox, QTextEdit, QFileDialog, QGroupBox,
-    QMessageBox, QSplitter, QScrollArea
+    QMessageBox, QSplitter, QScrollArea, QRadioButton
 )
 from PyQt6.QtCore import QTimer, Qt, pyqtSignal, QThread
 from PyQt6.QtGui import QFont, QColor
@@ -326,15 +326,39 @@ class ADCStreamerGUI(QMainWindow):
         self.filename_input.setText("adc_data")
         layout.addWidget(self.filename_input, 1, 1, 1, 2)
 
+        # Sample range selection
+        self.use_range_check = QCheckBox("Save Range:")
+        self.use_range_check.setToolTip("Enable to save only a specific range of sweeps")
+        self.use_range_check.stateChanged.connect(self.on_use_range_changed)
+        layout.addWidget(self.use_range_check, 2, 0)
+
+        # Min sweep
+        self.min_sweep_spin = QSpinBox()
+        self.min_sweep_spin.setRange(0, 999999)
+        self.min_sweep_spin.setValue(0)
+        self.min_sweep_spin.setPrefix("Min: ")
+        self.min_sweep_spin.setEnabled(False)
+        self.min_sweep_spin.setToolTip("Starting sweep index (inclusive)")
+        layout.addWidget(self.min_sweep_spin, 2, 1)
+
+        # Max sweep
+        self.max_sweep_spin = QSpinBox()
+        self.max_sweep_spin.setRange(0, 999999)
+        self.max_sweep_spin.setValue(1000)
+        self.max_sweep_spin.setPrefix("Max: ")
+        self.max_sweep_spin.setEnabled(False)
+        self.max_sweep_spin.setToolTip("Ending sweep index (inclusive)")
+        layout.addWidget(self.max_sweep_spin, 2, 2)
+
         # Save data button
         self.save_data_btn = QPushButton("Save Data (CSV)")
         self.save_data_btn.clicked.connect(self.save_data)
-        layout.addWidget(self.save_data_btn, 2, 0, 1, 3)
+        layout.addWidget(self.save_data_btn, 3, 0, 1, 3)
 
         # Save image button
         self.save_image_btn = QPushButton("Save Plot Image")
         self.save_image_btn.clicked.connect(self.save_plot_image)
-        layout.addWidget(self.save_image_btn, 3, 0, 1, 3)
+        layout.addWidget(self.save_image_btn, 4, 0, 1, 3)
 
         group.setLayout(layout)
         return group
@@ -449,6 +473,39 @@ class ADCStreamerGUI(QMainWindow):
         repeats_layout.addStretch()
         repeats_group.setLayout(repeats_layout)
         main_layout.addWidget(repeats_group)
+
+        # Y-Axis Control (combined scaling and units)
+        yaxis_group = QGroupBox("Y-Axis")
+        yaxis_layout = QGridLayout()
+
+        # Scaling mode (row 0)
+        yaxis_layout.addWidget(QLabel("Range:"), 0, 0)
+        self.adaptive_scale_radio = QRadioButton("Adaptive")
+        self.adaptive_scale_radio.setChecked(True)
+        self.adaptive_scale_radio.setToolTip("Auto-scale Y-axis to visible data range")
+        self.adaptive_scale_radio.toggled.connect(self.trigger_plot_update)
+        yaxis_layout.addWidget(self.adaptive_scale_radio, 0, 1)
+
+        self.fullscale_radio = QRadioButton("Full-Scale")
+        self.fullscale_radio.setToolTip("Fixed Y-axis: 0 to 2^ResolutionBits")
+        self.fullscale_radio.toggled.connect(self.trigger_plot_update)
+        yaxis_layout.addWidget(self.fullscale_radio, 0, 2)
+
+        # Units mode (row 1)
+        yaxis_layout.addWidget(QLabel("Units:"), 1, 0)
+        self.raw_units_radio = QRadioButton("Values")
+        self.raw_units_radio.setChecked(True)
+        self.raw_units_radio.setToolTip("Display raw ADC values (samples)")
+        self.raw_units_radio.toggled.connect(self.trigger_plot_update)
+        yaxis_layout.addWidget(self.raw_units_radio, 1, 1)
+
+        self.voltage_units_radio = QRadioButton("Voltage")
+        self.voltage_units_radio.setToolTip("Convert to voltage using Vref and resolution")
+        self.voltage_units_radio.toggled.connect(self.trigger_plot_update)
+        yaxis_layout.addWidget(self.voltage_units_radio, 1, 2)
+
+        yaxis_group.setLayout(yaxis_layout)
+        main_layout.addWidget(yaxis_group)
 
         group.setLayout(main_layout)
         return group
@@ -797,6 +854,45 @@ class ADCStreamerGUI(QMainWindow):
             self.plot_info_label.setText("Sweeps: 0 | Total Samples: 0")
             self.log_status("Data cleared")
 
+    # Helper methods for voltage conversion
+
+    def get_vref_voltage(self) -> float:
+        """Get the numeric voltage reference value."""
+        vref_str = self.config['reference']
+
+        # Map reference strings to voltage values
+        if vref_str == "1.2":
+            return 1.2
+        elif vref_str == "3.3" or vref_str == "vdd":
+            return 3.3
+        elif vref_str == "0.8vdd":
+            return 3.3 * 0.8  # 2.64V
+        elif vref_str == "ext":
+            return 1.25  # External reference
+        else:
+            return 3.3  # Default to VDD
+
+    def convert_to_voltage(self, raw_value: float) -> float:
+        """Convert raw ADC value to voltage."""
+        resolution_bits = self.config['resolution']
+        vref = self.get_vref_voltage()
+
+        max_value = (2 ** resolution_bits) - 1
+        return (raw_value / max_value) * vref
+
+    def get_fullscale_range(self) -> tuple:
+        """Get the full-scale Y-axis range with padding above max."""
+        resolution_bits = self.config['resolution']
+        max_raw = 2 ** resolution_bits
+
+        if self.voltage_units_radio.isChecked():
+            # Convert to voltage - add 5% padding above max
+            vref = self.get_vref_voltage()
+            return (0, vref * 1.05)
+        else:
+            # Raw ADC values - add 5% padding above max
+            return (0, max_raw * 1.05)
+
     # Plotting methods
 
     def update_plot(self):
@@ -869,28 +965,68 @@ class ADCStreamerGUI(QMainWindow):
                 if not channel_data:
                     continue
 
+                # Convert to voltage if voltage units mode is enabled
+                if self.voltage_units_radio.isChecked():
+                    channel_data = [self.convert_to_voltage(v) for v in channel_data]
+
                 # Process events periodically to keep UI responsive
                 if ch_idx % 2 == 0:  # Every other channel
                     QApplication.processEvents()
 
                 # Show based on visualization mode
                 if self.show_all_repeats_radio.isChecked():
-                    # Plot all raw data points (downsample if too many points)
-                    if len(channel_data) > 10000:
-                        # Use pyqtgraph's built-in downsampling
-                        self.plot_widget.plot(
-                            channel_data,
-                            pen=pg.mkPen(color=color, width=1),
-                            name=f"Ch {channel}",
-                            downsample=10,
-                            downsampleMethod='subsample'
-                        )
+                    # Plot each repeat as a separate line
+                    if repeat_count > 1:
+                        # Reshape data to separate repeats
+                        num_samples = len(channel_data) // repeat_count
+                        if num_samples > 0:
+                            reshaped = np.array(channel_data[:num_samples * repeat_count]).reshape(-1, repeat_count)
+
+                            # Plot each repeat as a separate line
+                            for repeat_idx in range(repeat_count):
+                                repeat_data = reshaped[:, repeat_idx]
+
+                                # Use slightly different line styles for each repeat
+                                if repeat_idx == 0:
+                                    pen = pg.mkPen(color=color, width=1.5)
+                                    name = f"Ch {channel}.{repeat_idx}"
+                                else:
+                                    # Lighter/thinner lines for additional repeats
+                                    lighter_color = tuple(int(c * 0.7) for c in color)
+                                    pen = pg.mkPen(color=lighter_color, width=1, style=Qt.PenStyle.DashLine)
+                                    name = f"Ch {channel}.{repeat_idx}"
+
+                                # Plot with appropriate downsampling if needed
+                                if len(repeat_data) > 10000:
+                                    self.plot_widget.plot(
+                                        repeat_data,
+                                        pen=pen,
+                                        name=name,
+                                        downsample=10,
+                                        downsampleMethod='subsample'
+                                    )
+                                else:
+                                    self.plot_widget.plot(
+                                        repeat_data,
+                                        pen=pen,
+                                        name=name
+                                    )
                     else:
-                        self.plot_widget.plot(
-                            channel_data,
-                            pen=pg.mkPen(color=color, width=1),
-                            name=f"Ch {channel}"
-                        )
+                        # Single repeat: plot as before
+                        if len(channel_data) > 10000:
+                            self.plot_widget.plot(
+                                channel_data,
+                                pen=pg.mkPen(color=color, width=1),
+                                name=f"Ch {channel}",
+                                downsample=10,
+                                downsampleMethod='subsample'
+                            )
+                        else:
+                            self.plot_widget.plot(
+                                channel_data,
+                                pen=pg.mkPen(color=color, width=1),
+                                name=f"Ch {channel}"
+                            )
 
                 if self.show_average_radio.isChecked():
                     # Compute average across repeats
@@ -900,20 +1036,39 @@ class ADCStreamerGUI(QMainWindow):
                         reshaped = np.array(channel_data[:num_samples * repeat_count]).reshape(-1, repeat_count)
                         averaged = np.mean(reshaped, axis=1)
 
-                        # Plot with thicker line for average
-                        x_coords = np.arange(len(averaged)) * repeat_count + repeat_count // 2
+                        # Plot average with thicker line (same x-coords as individual repeats)
                         self.plot_widget.plot(
-                            x_coords,
                             averaged,
                             pen=pg.mkPen(color=color, width=3, style=Qt.PenStyle.DashLine),
                             name=f"Ch {channel} (avg)"
                         )
+
+            # Apply Y-axis scaling mode
+            if self.fullscale_radio.isChecked():
+                # Full-scale mode: fixed range
+                y_min, y_max = self.get_fullscale_range()
+                self.plot_widget.setYRange(y_min, y_max, padding=0)
+            else:
+                # Adaptive mode: auto-range (pyqtgraph default)
+                self.plot_widget.enableAutoRange(axis='y')
+
+            # Update Y-axis label based on unit mode
+            if self.voltage_units_radio.isChecked():
+                self.plot_widget.setLabel('left', 'Voltage', units='V')
+            else:
+                self.plot_widget.setLabel('left', 'ADC Value', units='counts')
 
         finally:
             # Always clear the flag, even if there's an error
             self.is_updating_plot = False
 
     # File management methods
+
+    def on_use_range_changed(self, state: int):
+        """Handle use range checkbox state change."""
+        enabled = state == Qt.CheckState.Checked.value
+        self.min_sweep_spin.setEnabled(enabled)
+        self.max_sweep_spin.setEnabled(enabled)
 
     def browse_directory(self):
         """Browse for output directory."""
@@ -931,6 +1086,46 @@ class ADCStreamerGUI(QMainWindow):
             QMessageBox.warning(self, "No Data", "No data to save.")
             return
 
+        # Determine which data to save
+        data_to_save = self.raw_data
+        sweep_range_text = "All"
+        total_sweeps = len(self.raw_data)
+
+        # Check if range is enabled
+        if self.use_range_check.isChecked():
+            min_sweep = self.min_sweep_spin.value()
+            max_sweep = self.max_sweep_spin.value()
+
+            # Validate range
+            if min_sweep >= max_sweep:
+                QMessageBox.warning(
+                    self,
+                    "Invalid Range",
+                    f"Min sweep ({min_sweep}) must be less than max sweep ({max_sweep})."
+                )
+                return
+
+            if min_sweep < 0 or min_sweep >= total_sweeps:
+                QMessageBox.warning(
+                    self,
+                    "Invalid Range",
+                    f"Min sweep ({min_sweep}) is out of bounds. Valid range: 0 to {total_sweeps - 1}."
+                )
+                return
+
+            if max_sweep < 0 or max_sweep > total_sweeps:
+                QMessageBox.warning(
+                    self,
+                    "Invalid Range",
+                    f"Max sweep ({max_sweep}) is out of bounds. Valid range: 1 to {total_sweeps}."
+                )
+                return
+
+            # Slice the data (max_sweep is inclusive in user terms, but exclusive in Python slicing)
+            data_to_save = self.raw_data[min_sweep:max_sweep]
+            sweep_range_text = f"{min_sweep} to {max_sweep - 1}"
+            self.log_status(f"Saving sweep range: {sweep_range_text} ({len(data_to_save)} sweeps)")
+
         # Prepare file paths
         directory = Path(self.dir_input.text())
         filename = self.filename_input.text()
@@ -943,7 +1138,7 @@ class ADCStreamerGUI(QMainWindow):
             # Save CSV data
             with open(csv_path, 'w', newline='') as f:
                 writer = csv.writer(f)
-                for sweep in self.raw_data:
+                for sweep in data_to_save:
                     writer.writerow(sweep)
 
             # Save metadata
@@ -951,8 +1146,10 @@ class ADCStreamerGUI(QMainWindow):
                 f.write("ADC Streamer - Acquisition Metadata\n")
                 f.write("=" * 50 + "\n\n")
                 f.write(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-                f.write(f"Total Sweeps: {self.sweep_count}\n")
-                f.write(f"Total Samples: {len(self.raw_data) * len(self.raw_data[0])}\n\n")
+                f.write(f"Total Captured Sweeps: {self.sweep_count}\n")
+                f.write(f"Saved Sweeps: {len(data_to_save)}\n")
+                f.write(f"Sweep Range: {sweep_range_text}\n")
+                f.write(f"Total Samples: {len(data_to_save) * (len(data_to_save[0]) if data_to_save else 0)}\n\n")
 
                 f.write("Configuration:\n")
                 f.write("-" * 50 + "\n")
@@ -970,7 +1167,7 @@ class ADCStreamerGUI(QMainWindow):
             QMessageBox.information(
                 self,
                 "Save Successful",
-                f"Data saved successfully:\n{csv_path}\n{metadata_path}"
+                f"Data saved successfully:\n{csv_path}\n{metadata_path}\n\nSweeps saved: {len(data_to_save)}"
             )
 
         except Exception as e:

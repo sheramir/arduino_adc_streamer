@@ -121,6 +121,9 @@ class ADCStreamerGUI(QMainWindow):
         self.plot_update_timer.setSingleShot(True)
         self.plot_update_timer.timeout.connect(self.update_plot)
 
+        # Flag to prevent concurrent plot updates
+        self.is_updating_plot = False
+
         # Initialize UI
         self.init_ui()
 
@@ -768,80 +771,108 @@ class ADCStreamerGUI(QMainWindow):
 
     def update_plot(self):
         """Update the plot with current data."""
-        self.plot_widget.clear()
-
-        if not self.raw_data or not self.config['channels']:
+        # Prevent concurrent updates
+        if self.is_updating_plot:
             return
 
-        # Get selected channels from checkboxes
-        selected_channels = [ch for ch, checkbox in self.channel_checkboxes.items() if checkbox.isChecked()]
-        if not selected_channels:
-            return
+        self.is_updating_plot = True
 
-        # Parse data structure: each sweep contains [ch0_r1, ch0_r2, ..., ch1_r1, ...]
-        channels = self.config['channels']
-        repeat_count = self.config['repeat']
+        try:
+            self.plot_widget.clear()
 
-        # Get unique channels in order
-        unique_channels = []
-        for ch in channels:
-            if ch not in unique_channels:
-                unique_channels.append(ch)
+            if not self.raw_data or not self.config['channels']:
+                return
 
-        # Prepare colors for each channel
-        colors = [
-            (255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0),
-            (255, 0, 255), (0, 255, 255), (128, 0, 0), (0, 128, 0),
-            (0, 0, 128), (128, 128, 0), (128, 0, 128), (0, 128, 128)
-        ]
+            # Get selected channels from checkboxes
+            selected_channels = [ch for ch, checkbox in self.channel_checkboxes.items() if checkbox.isChecked()]
+            if not selected_channels:
+                return
 
-        # Extract data for each channel
-        for ch_idx, channel in enumerate(unique_channels):
-            if channel not in selected_channels:
-                continue
+            # Process events to keep UI responsive
+            QApplication.processEvents()
 
-            color = colors[ch_idx % len(colors)]
+            # Parse data structure: each sweep contains [ch0_r1, ch0_r2, ..., ch1_r1, ...]
+            channels = self.config['channels']
+            repeat_count = self.config['repeat']
 
-            # Find all positions of this channel in the sequence
-            positions = [i for i, c in enumerate(channels) if c == channel]
+            # Get unique channels in order
+            unique_channels = []
+            for ch in channels:
+                if ch not in unique_channels:
+                    unique_channels.append(ch)
 
-            # Extract data for this channel across all sweeps
-            channel_data = []
-            for sweep in self.raw_data:
-                for pos in positions:
-                    start_idx = pos * repeat_count
-                    end_idx = start_idx + repeat_count
-                    if end_idx <= len(sweep):
-                        channel_data.extend(sweep[start_idx:end_idx])
+            # Prepare colors for each channel
+            colors = [
+                (255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0),
+                (255, 0, 255), (0, 255, 255), (128, 0, 0), (0, 128, 0),
+                (0, 0, 128), (128, 128, 0), (128, 0, 128), (0, 128, 128)
+            ]
 
-            if not channel_data:
-                continue
+            # Extract data for each channel
+            for ch_idx, channel in enumerate(unique_channels):
+                if channel not in selected_channels:
+                    continue
 
-            # Show based on visualization mode
-            if self.show_all_repeats_radio.isChecked():
-                # Plot all raw data points
-                self.plot_widget.plot(
-                    channel_data,
-                    pen=pg.mkPen(color=color, width=1),
-                    name=f"Ch {channel}"
-                )
+                color = colors[ch_idx % len(colors)]
 
-            if self.show_average_radio.isChecked():
-                # Compute average across repeats
-                # Reshape data into (num_samples_per_channel, repeat_count)
-                num_samples = len(channel_data) // repeat_count
-                if num_samples > 0:
-                    reshaped = np.array(channel_data[:num_samples * repeat_count]).reshape(-1, repeat_count)
-                    averaged = np.mean(reshaped, axis=1)
+                # Find all positions of this channel in the sequence
+                positions = [i for i, c in enumerate(channels) if c == channel]
 
-                    # Plot with thicker line for average
-                    x_coords = np.arange(len(averaged)) * repeat_count + repeat_count // 2
-                    self.plot_widget.plot(
-                        x_coords,
-                        averaged,
-                        pen=pg.mkPen(color=color, width=3, style=Qt.PenStyle.DashLine),
-                        name=f"Ch {channel} (avg)"
-                    )
+                # Extract data for this channel across all sweeps
+                channel_data = []
+                for sweep in self.raw_data:
+                    for pos in positions:
+                        start_idx = pos * repeat_count
+                        end_idx = start_idx + repeat_count
+                        if end_idx <= len(sweep):
+                            channel_data.extend(sweep[start_idx:end_idx])
+
+                if not channel_data:
+                    continue
+
+                # Process events periodically to keep UI responsive
+                if ch_idx % 2 == 0:  # Every other channel
+                    QApplication.processEvents()
+
+                # Show based on visualization mode
+                if self.show_all_repeats_radio.isChecked():
+                    # Plot all raw data points (downsample if too many points)
+                    if len(channel_data) > 10000:
+                        # Use pyqtgraph's built-in downsampling
+                        self.plot_widget.plot(
+                            channel_data,
+                            pen=pg.mkPen(color=color, width=1),
+                            name=f"Ch {channel}",
+                            downsample=10,
+                            downsampleMethod='subsample'
+                        )
+                    else:
+                        self.plot_widget.plot(
+                            channel_data,
+                            pen=pg.mkPen(color=color, width=1),
+                            name=f"Ch {channel}"
+                        )
+
+                if self.show_average_radio.isChecked():
+                    # Compute average across repeats
+                    # Reshape data into (num_samples_per_channel, repeat_count)
+                    num_samples = len(channel_data) // repeat_count
+                    if num_samples > 0:
+                        reshaped = np.array(channel_data[:num_samples * repeat_count]).reshape(-1, repeat_count)
+                        averaged = np.mean(reshaped, axis=1)
+
+                        # Plot with thicker line for average
+                        x_coords = np.arange(len(averaged)) * repeat_count + repeat_count // 2
+                        self.plot_widget.plot(
+                            x_coords,
+                            averaged,
+                            pen=pg.mkPen(color=color, width=3, style=Qt.PenStyle.DashLine),
+                            name=f"Ch {channel} (avg)"
+                        )
+
+        finally:
+            # Always clear the flag, even if there's an error
+            self.is_updating_plot = False
 
     # File management methods
 

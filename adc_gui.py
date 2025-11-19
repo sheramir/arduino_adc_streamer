@@ -33,7 +33,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QGridLayout, QLabel, QPushButton, QLineEdit, QComboBox,
     QCheckBox, QSpinBox, QTextEdit, QFileDialog, QGroupBox,
-    QMessageBox, QSplitter, QScrollArea
+    QMessageBox, QSplitter, QScrollArea, QRadioButton
 )
 from PyQt6.QtCore import QTimer, Qt, pyqtSignal, QThread
 from PyQt6.QtGui import QFont, QColor
@@ -450,45 +450,38 @@ class ADCStreamerGUI(QMainWindow):
         repeats_group.setLayout(repeats_layout)
         main_layout.addWidget(repeats_group)
 
-        # Y-Axis Scaling Mode
-        yscale_group = QGroupBox("Y-Axis Scaling")
-        yscale_layout = QHBoxLayout()
+        # Y-Axis Control (combined scaling and units)
+        yaxis_group = QGroupBox("Y-Axis")
+        yaxis_layout = QGridLayout()
 
-        self.adaptive_scale_radio = QCheckBox("Adaptive")
+        # Scaling mode (row 0)
+        yaxis_layout.addWidget(QLabel("Range:"), 0, 0)
+        self.adaptive_scale_radio = QRadioButton("Adaptive")
         self.adaptive_scale_radio.setChecked(True)
         self.adaptive_scale_radio.setToolTip("Auto-scale Y-axis to visible data range")
         self.adaptive_scale_radio.toggled.connect(self.trigger_plot_update)
-        yscale_layout.addWidget(self.adaptive_scale_radio)
+        yaxis_layout.addWidget(self.adaptive_scale_radio, 0, 1)
 
-        self.fullscale_radio = QCheckBox("Full-Scale")
-        self.fullscale_radio.setChecked(False)
+        self.fullscale_radio = QRadioButton("Full-Scale")
         self.fullscale_radio.setToolTip("Fixed Y-axis: 0 to 2^ResolutionBits")
         self.fullscale_radio.toggled.connect(self.trigger_plot_update)
-        yscale_layout.addWidget(self.fullscale_radio)
+        yaxis_layout.addWidget(self.fullscale_radio, 0, 2)
 
-        yscale_layout.addStretch()
-        yscale_group.setLayout(yscale_layout)
-        main_layout.addWidget(yscale_group)
-
-        # Y-Axis Unit Mode
-        yunit_group = QGroupBox("Y-Axis Units")
-        yunit_layout = QHBoxLayout()
-
-        self.raw_units_radio = QCheckBox("Raw ADC")
+        # Units mode (row 1)
+        yaxis_layout.addWidget(QLabel("Units:"), 1, 0)
+        self.raw_units_radio = QRadioButton("Values")
         self.raw_units_radio.setChecked(True)
         self.raw_units_radio.setToolTip("Display raw ADC values (samples)")
         self.raw_units_radio.toggled.connect(self.trigger_plot_update)
-        yunit_layout.addWidget(self.raw_units_radio)
+        yaxis_layout.addWidget(self.raw_units_radio, 1, 1)
 
-        self.voltage_units_radio = QCheckBox("Voltage")
-        self.voltage_units_radio.setChecked(False)
+        self.voltage_units_radio = QRadioButton("Voltage")
         self.voltage_units_radio.setToolTip("Convert to voltage using Vref and resolution")
         self.voltage_units_radio.toggled.connect(self.trigger_plot_update)
-        yunit_layout.addWidget(self.voltage_units_radio)
+        yaxis_layout.addWidget(self.voltage_units_radio, 1, 2)
 
-        yunit_layout.addStretch()
-        yunit_group.setLayout(yunit_layout)
-        main_layout.addWidget(yunit_group)
+        yaxis_group.setLayout(yaxis_layout)
+        main_layout.addWidget(yaxis_group)
 
         group.setLayout(main_layout)
         return group
@@ -864,17 +857,17 @@ class ADCStreamerGUI(QMainWindow):
         return (raw_value / max_value) * vref
 
     def get_fullscale_range(self) -> tuple:
-        """Get the full-scale Y-axis range."""
+        """Get the full-scale Y-axis range with padding above max."""
         resolution_bits = self.config['resolution']
         max_raw = 2 ** resolution_bits
 
         if self.voltage_units_radio.isChecked():
-            # Convert to voltage
+            # Convert to voltage - add 5% padding above max
             vref = self.get_vref_voltage()
-            return (0, vref)
+            return (0, vref * 1.05)
         else:
-            # Raw ADC values
-            return (0, max_raw)
+            # Raw ADC values - add 5% padding above max
+            return (0, max_raw * 1.05)
 
     # Plotting methods
 

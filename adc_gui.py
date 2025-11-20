@@ -23,6 +23,7 @@ Requirements:
 
 import sys
 import csv
+import json
 import time
 from datetime import datetime
 from pathlib import Path
@@ -326,11 +327,18 @@ class ADCStreamerGUI(QMainWindow):
         self.filename_input.setText("adc_data")
         layout.addWidget(self.filename_input, 1, 1, 1, 2)
 
+        # Notes
+        layout.addWidget(QLabel("Notes:"), 2, 0, Qt.AlignmentFlag.AlignTop)
+        self.notes_input = QTextEdit()
+        self.notes_input.setPlaceholderText("Add notes about this capture (optional)")
+        self.notes_input.setMaximumHeight(60)
+        layout.addWidget(self.notes_input, 2, 1, 1, 2)
+
         # Sample range selection
         self.use_range_check = QCheckBox("Save Range:")
         self.use_range_check.setToolTip("Enable to save only a specific range of sweeps")
         self.use_range_check.stateChanged.connect(self.on_use_range_changed)
-        layout.addWidget(self.use_range_check, 2, 0)
+        layout.addWidget(self.use_range_check, 3, 0)
 
         # Min sweep
         self.min_sweep_spin = QSpinBox()
@@ -339,7 +347,7 @@ class ADCStreamerGUI(QMainWindow):
         self.min_sweep_spin.setPrefix("Min: ")
         self.min_sweep_spin.setEnabled(False)
         self.min_sweep_spin.setToolTip("Starting sweep index (inclusive)")
-        layout.addWidget(self.min_sweep_spin, 2, 1)
+        layout.addWidget(self.min_sweep_spin, 3, 1)
 
         # Max sweep
         self.max_sweep_spin = QSpinBox()
@@ -348,17 +356,17 @@ class ADCStreamerGUI(QMainWindow):
         self.max_sweep_spin.setPrefix("Max: ")
         self.max_sweep_spin.setEnabled(False)
         self.max_sweep_spin.setToolTip("Ending sweep index (inclusive)")
-        layout.addWidget(self.max_sweep_spin, 2, 2)
+        layout.addWidget(self.max_sweep_spin, 3, 2)
 
         # Save data button
         self.save_data_btn = QPushButton("Save Data (CSV)")
         self.save_data_btn.clicked.connect(self.save_data)
-        layout.addWidget(self.save_data_btn, 3, 0, 1, 3)
+        layout.addWidget(self.save_data_btn, 4, 0, 1, 3)
 
         # Save image button
         self.save_image_btn = QPushButton("Save Plot Image")
         self.save_image_btn.clicked.connect(self.save_plot_image)
-        layout.addWidget(self.save_image_btn, 4, 0, 1, 3)
+        layout.addWidget(self.save_image_btn, 5, 0, 1, 3)
 
         group.setLayout(layout)
         return group
@@ -455,9 +463,16 @@ class ADCStreamerGUI(QMainWindow):
         # Reset graph button
         self.reset_graph_btn = QPushButton("Reset View")
         self.reset_graph_btn.clicked.connect(self.reset_graph_view)
-        self.reset_graph_btn.setToolTip("Reset zoom and pan to default view")
+        self.reset_graph_btn.setToolTip("Reset X-axis to 0 to window size")
         self.reset_graph_btn.setMaximumWidth(100)
         window_layout.addWidget(self.reset_graph_btn)
+
+        # Full view button
+        self.full_view_btn = QPushButton("Full View")
+        self.full_view_btn.clicked.connect(self.full_graph_view)
+        self.full_view_btn.setToolTip("Show all data from 0 to last sample")
+        self.full_view_btn.setMaximumWidth(100)
+        window_layout.addWidget(self.full_view_btn)
 
         window_layout.addStretch()
         window_group.setLayout(window_layout)
@@ -663,8 +678,8 @@ class ADCStreamerGUI(QMainWindow):
 
     def on_channels_changed(self, text: str):
         """Handle channels sequence change."""
-        if self.serial_port and self.serial_port.is_open and text.strip():
-            self.send_command(f"channels {text}")
+        # Always update config when text changes
+        if text.strip():
             try:
                 # Parse channels for visualization
                 channels = [int(c.strip()) for c in text.split(',')]
@@ -672,6 +687,10 @@ class ADCStreamerGUI(QMainWindow):
                 self.update_channel_list()
             except:
                 pass
+        
+        # Send command if connected
+        if self.serial_port and self.serial_port.is_open and text.strip():
+            self.send_command(f"channels {text}")
 
     def on_ground_pin_changed(self, value: int):
         """Handle ground pin change."""
@@ -698,6 +717,65 @@ class ADCStreamerGUI(QMainWindow):
         if self.serial_port and self.serial_port.is_open:
             self.send_command(f"delay {value}")
             self.config['delay_us'] = value
+
+    def send_all_config(self):
+        """Send all configuration parameters to Arduino."""
+        if not self.serial_port or not self.serial_port.is_open:
+            return
+
+        self.log_status("Sending all configuration parameters...")
+
+        # Send resolution
+        res_text = self.resolution_combo.currentText()
+        self.send_command(f"res {res_text}")
+        self.config['resolution'] = int(res_text)
+
+        # Send voltage reference
+        vref_text = self.vref_combo.currentText()
+        vref_map = {
+            "1.2V (Internal)": "1.2",
+            "3.3V (VDD)": "3.3",
+            "0.8*VDD": "0.8vdd",
+            "External 1.25V": "ext"
+        }
+        vref_cmd = vref_map.get(vref_text, "3.3")
+        self.send_command(f"ref {vref_cmd}")
+        self.config['reference'] = vref_cmd
+
+        # Send channels sequence
+        channels_text = self.channels_input.text().strip()
+        if channels_text:
+            self.send_command(f"channels {channels_text}")
+            try:
+                channels = [int(c.strip()) for c in channels_text.split(',')]
+                self.config['channels'] = channels
+            except:
+                pass
+
+        # Send ground pin
+        ground_pin = self.ground_pin_spin.value()
+        if ground_pin >= 0:
+            self.send_command(f"ground {ground_pin}")
+            self.config['ground_pin'] = ground_pin
+
+        # Send use ground
+        use_ground = self.use_ground_check.isChecked()
+        self.send_command(f"ground {str(use_ground).lower()}")
+        self.config['use_ground'] = use_ground
+
+        # Send repeat count
+        repeat = self.repeat_spin.value()
+        self.send_command(f"repeat {repeat}")
+        self.config['repeat'] = repeat
+
+        # Send delay
+        delay = self.delay_spin.value()
+        self.send_command(f"delay {delay}")
+        self.config['delay_us'] = delay
+
+        # Small delay to ensure all commands are processed
+        time.sleep(0.1)
+        self.log_status("Configuration complete")
 
     def update_channel_list(self):
         """Update the channel selector checkboxes based on configured channels."""
@@ -751,10 +829,89 @@ class ADCStreamerGUI(QMainWindow):
         self.plot_update_timer.start(200)
 
     def reset_graph_view(self):
-        """Reset the plot view to default (auto-range and reset zoom/pan)."""
-        # Reset to auto-range on both axes
-        self.plot_widget.autoRange()
-        self.log_status("Graph view reset to default")
+        """Reset the plot view to window size (X: 0 to window size, Y: according to settings)."""
+        if not self.raw_data:
+            return
+
+        # Calculate X-axis range based on window size
+        window_size = self.window_size_spin.value()
+        
+        # Determine which data would be plotted (same logic as update_plot)
+        if len(self.raw_data) > window_size:
+            data_to_show = self.raw_data[-window_size:]
+        else:
+            data_to_show = self.raw_data
+        
+        channels = self.config['channels']
+        repeat_count = self.config['repeat']
+        
+        if channels:
+            # Calculate samples per channel (not total samples)
+            # Each channel gets plotted separately with indices 0, 1, 2, ...
+            # Find positions of first channel to determine sample count
+            first_channel = channels[0]
+            positions = [i for i, c in enumerate(channels) if c == first_channel]
+            
+            # Extract data for first channel to count samples
+            channel_samples = 0
+            for sweep in data_to_show:
+                for pos in positions:
+                    start_idx = pos * repeat_count
+                    end_idx = start_idx + repeat_count
+                    if end_idx <= len(sweep):
+                        channel_samples += (end_idx - start_idx)
+            
+            # Set X-axis range to match the plotted data
+            self.plot_widget.setXRange(0, channel_samples, padding=0)
+            
+            # Set Y-axis according to current mode
+            self.apply_y_axis_range()
+            
+            self.log_status(f"Graph view reset to window size ({len(data_to_show)} sweeps, {channel_samples} samples per channel)")
+
+    def full_graph_view(self):
+        """Show full data view (X: 0 to last sample, Y: according to settings)."""
+        if not self.raw_data:
+            return
+
+        # Calculate samples per channel across all sweeps
+        total_sweeps = len(self.raw_data)
+        channels = self.config['channels']
+        repeat_count = self.config['repeat']
+        
+        if channels:
+            # Calculate samples per channel (not total samples)
+            # Each channel gets plotted separately with indices 0, 1, 2, ...
+            # Find positions of first channel to determine sample count
+            first_channel = channels[0]
+            positions = [i for i, c in enumerate(channels) if c == first_channel]
+            
+            # Extract data for first channel to count samples
+            channel_samples = 0
+            for sweep in self.raw_data:
+                for pos in positions:
+                    start_idx = pos * repeat_count
+                    end_idx = start_idx + repeat_count
+                    if end_idx <= len(sweep):
+                        channel_samples += (end_idx - start_idx)
+            
+            # Set X-axis range to show all data
+            self.plot_widget.setXRange(0, channel_samples, padding=0)
+            
+            # Set Y-axis according to current mode
+            self.apply_y_axis_range()
+            
+            self.log_status(f"Graph view set to full data ({total_sweeps} sweeps, {channel_samples} samples per channel)")
+
+    def apply_y_axis_range(self):
+        """Apply Y-axis range according to current settings (adaptive or full-scale)."""
+        if self.fullscale_radio.isChecked():
+            # Full-scale mode: fixed range with padding
+            y_min, y_max = self.get_fullscale_range()
+            self.plot_widget.setYRange(y_min, y_max, padding=0)
+        else:
+            # Adaptive mode: auto-range based on visible data
+            self.plot_widget.enableAutoRange(axis='y')
 
     # Run control methods
 
@@ -767,6 +924,9 @@ class ADCStreamerGUI(QMainWindow):
                 "Please configure channels before starting capture."
             )
             return
+
+        # Send all configuration parameters before starting
+        self.send_all_config()
 
         # Lock configuration controls
         self.set_controls_enabled(False)
@@ -1154,7 +1314,7 @@ class ADCStreamerGUI(QMainWindow):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
         csv_path = directory / f"{filename}_{timestamp}.csv"
-        metadata_path = directory / f"{filename}_{timestamp}_metadata.txt"
+        metadata_path = directory / f"{filename}_{timestamp}_metadata.json"
 
         try:
             # Save CSV data
@@ -1163,25 +1323,32 @@ class ADCStreamerGUI(QMainWindow):
                 for sweep in data_to_save:
                     writer.writerow(sweep)
 
-            # Save metadata
-            with open(metadata_path, 'w') as f:
-                f.write("ADC Streamer - Acquisition Metadata\n")
-                f.write("=" * 50 + "\n\n")
-                f.write(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-                f.write(f"Total Captured Sweeps: {self.sweep_count}\n")
-                f.write(f"Saved Sweeps: {len(data_to_save)}\n")
-                f.write(f"Sweep Range: {sweep_range_text}\n")
-                f.write(f"Total Samples: {len(data_to_save) * (len(data_to_save[0]) if data_to_save else 0)}\n\n")
+            # Prepare metadata dictionary
+            metadata = {
+                "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                "total_captured_sweeps": self.sweep_count,
+                "saved_sweeps": len(data_to_save),
+                "sweep_range": sweep_range_text,
+                "total_samples": len(data_to_save) * (len(data_to_save[0]) if data_to_save else 0),
+                "configuration": {
+                    "channels": self.config['channels'],
+                    "repeat_count": self.config['repeat'],
+                    "delay_us": self.config['delay_us'],
+                    "ground_pin": self.config['ground_pin'],
+                    "use_ground_sample": self.config['use_ground'],
+                    "adc_resolution_bits": self.config['resolution'],
+                    "voltage_reference": self.config['reference']
+                }
+            }
 
-                f.write("Configuration:\n")
-                f.write("-" * 50 + "\n")
-                f.write(f"Channels: {','.join(map(str, self.config['channels']))}\n")
-                f.write(f"Repeat Count: {self.config['repeat']}\n")
-                f.write(f"Delay (µs): {self.config['delay_us']}\n")
-                f.write(f"Ground Pin: {self.config['ground_pin']}\n")
-                f.write(f"Use Ground Sample: {self.config['use_ground']}\n")
-                f.write(f"ADC Resolution: {self.config['resolution']} bits\n")
-                f.write(f"Voltage Reference: {self.config['reference']}\n")
+            # Add user notes if provided
+            notes = self.notes_input.toPlainText().strip()
+            if notes:
+                metadata["notes"] = notes
+
+            # Save metadata as JSON
+            with open(metadata_path, 'w') as f:
+                json.dump(metadata, f, indent=2)
 
             self.log_status(f"Data saved to {csv_path}")
             self.log_status(f"Metadata saved to {metadata_path}")

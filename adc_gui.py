@@ -452,6 +452,13 @@ class ADCStreamerGUI(QMainWindow):
         self.window_size_spin.setToolTip("Number of sweeps to display during capture (scrolling mode)")
         window_layout.addWidget(self.window_size_spin)
 
+        # Reset graph button
+        self.reset_graph_btn = QPushButton("Reset View")
+        self.reset_graph_btn.clicked.connect(self.reset_graph_view)
+        self.reset_graph_btn.setToolTip("Reset zoom and pan to default view")
+        self.reset_graph_btn.setMaximumWidth(100)
+        window_layout.addWidget(self.reset_graph_btn)
+
         window_layout.addStretch()
         window_group.setLayout(window_layout)
         main_layout.addWidget(window_group)
@@ -743,6 +750,12 @@ class ADCStreamerGUI(QMainWindow):
         self.plot_update_timer.stop()
         self.plot_update_timer.start(200)
 
+    def reset_graph_view(self):
+        """Reset the plot view to default (auto-range and reset zoom/pan)."""
+        # Reset to auto-range on both axes
+        self.plot_widget.autoRange()
+        self.log_status("Graph view reset to default")
+
     # Run control methods
 
     def start_capture(self):
@@ -936,11 +949,20 @@ class ADCStreamerGUI(QMainWindow):
                 if ch not in unique_channels:
                     unique_channels.append(ch)
 
-            # Prepare colors for each channel
+            # Prepare colors for each channel (darker colors for white background)
             colors = [
-                (255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0),
-                (255, 0, 255), (0, 255, 255), (128, 0, 0), (0, 128, 0),
-                (0, 0, 128), (128, 128, 0), (128, 0, 128), (0, 128, 128)
+                (255, 0, 0),      # Red
+                (34, 139, 34),    # Forest green (replaces bright green)
+                (0, 0, 255),      # Blue
+                (255, 140, 0),    # Dark orange (replaces yellow)
+                (148, 0, 211),    # Dark violet (replaces magenta)
+                (0, 139, 139),    # Dark cyan (replaces cyan)
+                (128, 0, 0),      # Dark red/maroon
+                (0, 100, 0),      # Dark green
+                (0, 0, 128),      # Navy
+                (184, 134, 11),   # Dark goldenrod (replaces olive)
+                (128, 0, 128),    # Purple
+                (0, 128, 128)     # Teal
             ]
 
             # Extract data for each channel

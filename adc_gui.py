@@ -936,11 +936,20 @@ class ADCStreamerGUI(QMainWindow):
                 if ch not in unique_channels:
                     unique_channels.append(ch)
 
-            # Prepare colors for each channel
+            # Prepare colors for each channel (darker colors for white background)
             colors = [
-                (255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0),
-                (255, 0, 255), (0, 255, 255), (128, 0, 0), (0, 128, 0),
-                (0, 0, 128), (128, 128, 0), (128, 0, 128), (0, 128, 128)
+                (255, 0, 0),      # Red
+                (34, 139, 34),    # Forest green (replaces bright green)
+                (0, 0, 255),      # Blue
+                (255, 140, 0),    # Dark orange (replaces yellow)
+                (148, 0, 211),    # Dark violet (replaces magenta)
+                (0, 139, 139),    # Dark cyan (replaces cyan)
+                (128, 0, 0),      # Dark red/maroon
+                (0, 100, 0),      # Dark green
+                (0, 0, 128),      # Navy
+                (184, 134, 11),   # Dark goldenrod (replaces olive)
+                (128, 0, 128),    # Purple
+                (0, 128, 128)     # Teal
             ]
 
             # Extract data for each channel

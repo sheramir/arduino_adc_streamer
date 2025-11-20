@@ -452,6 +452,13 @@ class ADCStreamerGUI(QMainWindow):
         self.window_size_spin.setToolTip("Number of sweeps to display during capture (scrolling mode)")
         window_layout.addWidget(self.window_size_spin)
 
+        # Reset graph button
+        self.reset_graph_btn = QPushButton("Reset View")
+        self.reset_graph_btn.clicked.connect(self.reset_graph_view)
+        self.reset_graph_btn.setToolTip("Reset zoom and pan to default view")
+        self.reset_graph_btn.setMaximumWidth(100)
+        window_layout.addWidget(self.reset_graph_btn)
+
         window_layout.addStretch()
         window_group.setLayout(window_layout)
         main_layout.addWidget(window_group)
@@ -742,6 +749,12 @@ class ADCStreamerGUI(QMainWindow):
         # Restart timer (200ms delay)
         self.plot_update_timer.stop()
         self.plot_update_timer.start(200)
+
+    def reset_graph_view(self):
+        """Reset the plot view to default (auto-range and reset zoom/pan)."""
+        # Reset to auto-range on both axes
+        self.plot_widget.autoRange()
+        self.log_status("Graph view reset to default")
 
     # Run control methods
 

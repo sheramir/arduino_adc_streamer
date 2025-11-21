@@ -222,6 +222,36 @@ void doDummyRead() {
   (void)analogRead(pin);
 }
 
+// ---------------------------------------------------------------------
+// Command acknowledgment helper
+// ---------------------------------------------------------------------
+void sendCommandAck(bool ok, const String &args) {
+  
+  // Send acknowledgment line
+  if (ok) {
+    if (args.length() > 0) {
+      Serial.print(F("#OK "));
+      Serial.println(args);
+    } else {
+      Serial.println(F("#OK"));
+    }
+  } else {
+    if (args.length() > 0) {
+      Serial.print(F("#NOT_OK "));
+      Serial.println(args);
+    } else {
+      Serial.println(F("#NOT_OK"));
+    }
+  }
+
+  // Ensure it is actually sent out on USB before we continue
+  Serial.flush();
+
+  // Tiny delay to give host side time to react, and to avoid
+  // back-to-back command overruns when the PC is very fast.
+  delay(5);  // 1–5 ms is usually enough
+}
+
 
 // ---------------------------------------------------------------------
 // Derived configuration recomputation
@@ -270,7 +300,7 @@ void sendSweepHeader(uint16_t totalSamples) {
 // Command handlers
 // ---------------------------------------------------------------------
 
-void handleChannels(const String &args) {
+bool handleChannels(const String &args) {
   channelCount = 0;
   int len = args.length();
   int i   = 0;
@@ -292,7 +322,7 @@ void handleChannels(const String &args) {
     int val = token.toInt();
     if (val < 0 || val > 255) {
       Serial.println(F("# ERROR: channel out of range (0-255)"));
-      continue;
+      continue;  // ignore invalid, not a fatal error for the whole command
     }
 
     channelSequence[channelCount++] = (uint8_t)val;
@@ -300,25 +330,31 @@ void handleChannels(const String &args) {
 
   if (channelCount == 0) {
     Serial.println(F("# ERROR: no valid channels parsed."));
+    recomputeDerivedConfig();
+    return false;
   }
 
   recomputeDerivedConfig();
+  return true;
 }
 
-void handleDelay(const String &args) {
+
+bool handleDelay(const String &args) {
   if (args.length() == 0) {
     Serial.println(F("# ERROR: delay requires a value in microseconds"));
-    return;
+    return false;
   }
   long val = args.toInt();
   if (val < 0) val = 0;
   interSweepDelayUs = (uint32_t)val;
+  return true;
 }
 
-void handleGround(const String &args) {
+
+bool handleGround(const String &args) {
   if (args.length() == 0) {
     Serial.println(F("# ERROR: ground requires an argument (pin number or true/false)"));
-    return;
+    return false;
   }
 
   String a = toLowerTrim(args);
@@ -334,31 +370,36 @@ void handleGround(const String &args) {
     int pin = a.toInt();
     if (pin < 0 || pin > 255) {
       Serial.println(F("# ERROR: ground pin out of range (0-255)"));
-      return;
+      return false;
     }
     groundPin = pin;
-    recomputeDerivedConfig();
   }
+
+  recomputeDerivedConfig();
+  return true;
 }
 
-void handleRepeat(const String &args) {
+
+bool handleRepeat(const String &args) {
   if (args.length() == 0) {
     Serial.println(F("# ERROR: repeat requires a positive integer"));
-    return;
+    return false;
   }
   long val = args.toInt();
   if (val <= 0) val = 1;
-  if (val > MAX_REPEAT_COUNT) val = MAX_REPEAT_COUNT; // some upper bound to avoid huge lines
+  if (val > MAX_REPEAT_COUNT) val = MAX_REPEAT_COUNT;
 
   repeatCount = (uint16_t)val;
   recomputeDerivedConfig();
+  return true;
 }
 
+
 // Set ADC reference (and do dummy read)
-void handleRef(const String &args) {
+bool handleRef(const String &args) {
   if (args.length() == 0) {
     Serial.println(F("# ERROR: ref requires a value (1.2, 3.3, vdd, 0.8vdd, ext)"));
-    return;
+    return false;
   }
 
   String a = toLowerTrim(args);
@@ -373,18 +414,20 @@ void handleRef(const String &args) {
     currentRef = AR_EXTERNAL_1V25;
   } else {
     Serial.println(F("# ERROR: unknown ref value. Use 1.2, 3.3, vdd, 0.8vdd, ext"));
-    return;
+    return false;
   }
 
   analogReference(currentRef);
   doDummyRead();  // settle ADC
+  return true;
 }
 
+
 // Set ADC resolution (and do dummy read)
-void handleRes(const String &args) {
+bool handleRes(const String &args) {
   if (args.length() == 0) {
     Serial.println(F("# ERROR: res requires a bit depth (e.g. 8, 10, 12, 16)"));
-    return;
+    return false;
   }
   long bits = args.toInt();
   if (bits < 8)  bits = 8;
@@ -393,7 +436,9 @@ void handleRes(const String &args) {
   adcResolutionBits = (uint8_t)bits;
   analogReadResolution(adcResolutionBits);
   doDummyRead();  // settle ADC
+  return true;
 }
+
 
 // Handle sampling rate measurements
 
@@ -429,11 +474,11 @@ void printRateStats() {
 }
 
 
-void handleStartRate(const String &args) {
+bool handleStartRate(const String &args) {
   (void)args;
   if (channelCount == 0) {
     Serial.println(F("# ERROR: no channels configured. Use 'channels ...' first."));
-    return;
+    return false;
   }
 
   resetRateStats();
@@ -441,21 +486,24 @@ void handleStartRate(const String &args) {
   rateEverStarted = true;
 
   Serial.println(F("# rate measurement started"));
+  return true;
 }
 
-void handleEndRate(const String &args) {
+bool handleEndRate(const String &args) {
   (void)args;
   rateEnabled = false;
   Serial.println(F("# rate measurement stopped (stats preserved)"));
+  return true;
 }
 
-void handleGetRate(const String &args) {
+bool handleGetRate(const String &args) {
   (void)args;
   if (!rateEverStarted) {
     Serial.println(F("# ERROR: rate measurement not started. Use 'start-rate' first."));
-    return;
+    return false;
   }
   printRateStats();
+  return true;
 }
 
 
@@ -524,10 +572,10 @@ void printHelp() {
   Serial.println(F("#   help                  (this message)"));
 }
 
-void handleRun(const String &args) {
+bool handleRun(const String &args) {
   if (channelCount == 0) {
     Serial.println(F("# ERROR: no channels configured. Use 'channels ...' first."));
-    return;
+    return false;
   }
 
   // New: reset timing statistics for a fresh measurement window
@@ -547,9 +595,11 @@ void handleRun(const String &args) {
       runStopMillis = millis() + (uint32_t)ms;
     }
   }
-  // NEW: make sure derived values match current config when we start
+
   recomputeDerivedConfig();
+  return true;
 }
+
 
 void handleStop() {
   isRunning = false;
@@ -657,32 +707,39 @@ void handleLine(const String &lineRaw) {
   splitCommand(line, cmd, args);
   cmd.toLowerCase();
 
-  if      (cmd == "channels") { handleChannels(args); }
-  else if (cmd == "delay")    { handleDelay(args); }
-  else if (cmd == "ground")   { handleGround(args); }
-  else if (cmd == "repeat")   { handleRepeat(args); }
-  else if (cmd == "ref")      { handleRef(args); }
-  else if (cmd == "res")      { handleRes(args); }
-  else if (cmd == "run")      { handleRun(args); }
-  else if (cmd == "stop")     { handleStop(); }
-  else if (cmd == "status")   { printStatus(); }
-  else if (cmd == "start-rate") { handleStartRate(args); }  // NEW
-  else if (cmd == "end-rate")   { handleEndRate(args); }    // NEW
-  else if (cmd == "get-rate")   { handleGetRate(args); }    // NEW
-  else if (cmd == "help")     { printHelp(); }
+  bool ok = true;
+
+  if      (cmd == "channels")    { ok = handleChannels(args); }
+  else if (cmd == "delay")       { ok = handleDelay(args); }
+  else if (cmd == "ground")      { ok = handleGround(args); }
+  else if (cmd == "repeat")      { ok = handleRepeat(args); }
+  else if (cmd == "ref")         { ok = handleRef(args); }
+  else if (cmd == "res")         { ok = handleRes(args); }
+  else if (cmd == "run")         { ok = handleRun(args); }
+  else if (cmd == "stop")        { handleStop(); ok = true;}
+  else if (cmd == "status")      { printStatus(); ok = true; }
+  else if (cmd == "start-rate")  { ok = handleStartRate(args); }
+  else if (cmd == "end-rate")    { ok = handleEndRate(args); }
+  else if (cmd == "get-rate")    { ok = handleGetRate(args); }
+  else if (cmd == "help")        { printHelp(); ok = true; }
   else {
     Serial.print(F("# ERROR: unknown command '"));
     Serial.print(cmd);
     Serial.println(F("'. Type 'help'."));
+    ok = false;
   }
+
+  // Send acknowledgment (#OK or #NOT_OK) AFTER command is fully processed.
+  sendCommandAck(ok, args);
 }
+
 
 // ---------------------------------------------------------------------
 // setup() and loop()
 // ---------------------------------------------------------------------
 
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(2000000); // changed from 115200 to speed the usb reading
   while (!Serial) {
     ; // wait for USB serial
   }

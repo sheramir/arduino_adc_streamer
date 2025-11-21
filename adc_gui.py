@@ -104,6 +104,13 @@ class ADCStreamerGUI(QMainWindow):
         self.sweep_count = 0
         self.is_capturing = False
 
+        # Timing measurement
+        self.timing_data = {
+            'between_channels_us': None,
+            'between_samples_us': None,
+            'sampling_rate_hz': None
+        }
+
         # Configuration state
         self.config = {
             'channels': [],
@@ -164,6 +171,7 @@ class ADCStreamerGUI(QMainWindow):
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
         right_layout.addWidget(self.create_plot_section())
+        right_layout.addWidget(self.create_timing_section())
         right_layout.addWidget(self.create_visualization_controls())
 
         # Add panels to splitter
@@ -371,6 +379,37 @@ class ADCStreamerGUI(QMainWindow):
         group.setLayout(layout)
         return group
 
+    def create_timing_section(self) -> QGroupBox:
+        """Create timing measurement display section."""
+        group = QGroupBox("Sampling Rate")
+        layout = QHBoxLayout()
+
+        # Between channels timing
+        layout.addWidget(QLabel("Between Channels:"))
+        self.between_channels_label = QLabel("- µs")
+        self.between_channels_label.setStyleSheet("QLabel { font-weight: bold; }")
+        layout.addWidget(self.between_channels_label)
+
+        layout.addWidget(QLabel("  |  "))
+
+        # Between samples (same channel) timing
+        layout.addWidget(QLabel("Between Samples:"))
+        self.between_samples_label = QLabel("- µs")
+        self.between_samples_label.setStyleSheet("QLabel { font-weight: bold; }")
+        layout.addWidget(self.between_samples_label)
+
+        layout.addWidget(QLabel("  |  "))
+
+        # Sampling rate
+        layout.addWidget(QLabel("Sampling Rate:"))
+        self.sampling_rate_label = QLabel("- Hz")
+        self.sampling_rate_label.setStyleSheet("QLabel { font-weight: bold; color: #2196F3; }")
+        layout.addWidget(self.sampling_rate_label)
+
+        layout.addStretch()
+        group.setLayout(layout)
+        return group
+
     def create_status_section(self) -> QGroupBox:
         """Create status display section."""
         group = QGroupBox("Status & Messages")
@@ -463,7 +502,7 @@ class ADCStreamerGUI(QMainWindow):
         # Reset graph button
         self.reset_graph_btn = QPushButton("Reset View")
         self.reset_graph_btn.clicked.connect(self.reset_graph_view)
-        self.reset_graph_btn.setToolTip("Reset X-axis to 0 to window size")
+        self.reset_graph_btn.setToolTip("Reset X-axis to show window size")
         self.reset_graph_btn.setMaximumWidth(100)
         window_layout.addWidget(self.reset_graph_btn)
 
@@ -624,8 +663,12 @@ class ADCStreamerGUI(QMainWindow):
     def process_serial_data(self, line: str):
         """Process incoming serial data."""
         if line.startswith('#'):
-            # Status/configuration message
-            self.log_status(line)
+            # Check if it's a RATE message
+            if line.startswith('#RATE,'):
+                self.parse_rate_message(line)
+            else:
+                # Status/configuration message
+                self.log_status(line)
         else:
             # Data line (CSV)
             if self.is_capturing:
@@ -645,6 +688,35 @@ class ADCStreamerGUI(QMainWindow):
 
                 except Exception as e:
                     self.log_status(f"ERROR: Failed to parse data - {e}")
+
+    def parse_rate_message(self, line: str):
+        """Parse timing rate message from Arduino."""
+        try:
+            # Format: #RATE,<avg_between_channels_us>,<avg_between_samples_us>
+            parts = line.split(',', 2)
+            if len(parts) >= 3:
+                between_channels_us = float(parts[1])
+                between_samples_us = float(parts[2])
+                
+                # Calculate sampling rate (Hz) from time between samples
+                if between_samples_us > 0:
+                    sampling_rate_hz = 1000000.0 / between_samples_us  # Convert µs to Hz
+                else:
+                    sampling_rate_hz = 0
+                
+                # Store timing data
+                self.timing_data['between_channels_us'] = between_channels_us
+                self.timing_data['between_samples_us'] = between_samples_us
+                self.timing_data['sampling_rate_hz'] = sampling_rate_hz
+                
+                # Update display
+                self.between_channels_label.setText(f"{between_channels_us:.2f} µs")
+                self.between_samples_label.setText(f"{between_samples_us:.2f} µs")
+                self.sampling_rate_label.setText(f"{sampling_rate_hz:.2f} Hz")
+                
+                self.log_status(f"Timing: {between_channels_us:.2f} µs between channels, {between_samples_us:.2f} µs between samples ({sampling_rate_hz:.2f} Hz)")
+        except Exception as e:
+            self.log_status(f"ERROR: Failed to parse rate message - {e}")
 
     def log_status(self, message: str):
         """Log a status message."""
@@ -935,9 +1007,23 @@ class ADCStreamerGUI(QMainWindow):
         self.raw_data.clear()
         self.sweep_count = 0
 
+        # Clear timing data for new measurement
+        self.timing_data = {
+            'between_channels_us': None,
+            'between_samples_us': None,
+            'sampling_rate_hz': None
+        }
+        self.between_channels_label.setText("- µs")
+        self.between_samples_label.setText("- µs")
+        self.sampling_rate_label.setText("- Hz")
+
         # Disable plot interactions during capture (scrolling mode)
         self.plot_widget.setMouseEnabled(x=False, y=False)
         self.plot_widget.setMenuEnabled(False)
+
+        # Start timing measurement
+        self.send_command("start-rate")
+        time.sleep(0.05)  # Small delay to ensure command is processed
 
         # Send run command
         if self.timed_run_check.isChecked():
@@ -955,6 +1041,16 @@ class ADCStreamerGUI(QMainWindow):
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self.statusBar().showMessage("Capturing - Scrolling Mode")
+
+        # Schedule timing measurement after 100ms
+        QTimer.singleShot(100, self.measure_timing)
+
+    def measure_timing(self):
+        """Request timing measurement from Arduino."""
+        if self.is_capturing and self.serial_port and self.serial_port.is_open:
+            self.send_command("get-rate")
+            time.sleep(0.05)  # Small delay for response
+            self.send_command("end-rate")
 
     def stop_capture(self):
         """Stop data capture."""
@@ -1338,6 +1434,11 @@ class ADCStreamerGUI(QMainWindow):
                     "use_ground_sample": self.config['use_ground'],
                     "adc_resolution_bits": self.config['resolution'],
                     "voltage_reference": self.config['reference']
+                },
+                "timing": {
+                    "between_channels_us": self.timing_data['between_channels_us'],
+                    "between_samples_us": self.timing_data['between_samples_us'],
+                    "sampling_rate_hz": self.timing_data['sampling_rate_hz']
                 }
             }
 

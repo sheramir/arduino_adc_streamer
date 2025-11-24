@@ -196,7 +196,6 @@ class ADCStreamerGUI(QMainWindow):
         self.config = {
             'channels': [],
             'repeat': 1,
-            'delay_us': 0,
             'ground_pin': -1,
             'use_ground': False,
             'resolution': 12,
@@ -207,7 +206,6 @@ class ADCStreamerGUI(QMainWindow):
         self.last_sent_config = {
             'channels': None,
             'repeat': None,
-            'delay_us': None,
             'ground_pin': None,
             'use_ground': None,
             'resolution': None,
@@ -221,7 +219,6 @@ class ADCStreamerGUI(QMainWindow):
         self.arduino_status = {
             'channels': None,
             'repeat': None,
-            'delay_us': None,
             'ground_pin': None,
             'use_ground': None,
             'resolution': None,
@@ -373,14 +370,6 @@ class ADCStreamerGUI(QMainWindow):
         self.repeat_spin.setValue(1)
         self.repeat_spin.valueChanged.connect(self.on_repeat_changed)
         layout.addWidget(self.repeat_spin, 2, 1)
-
-        # Delay
-        layout.addWidget(QLabel("Delay (µs):"), 3, 0)
-        self.delay_spin = QSpinBox()
-        self.delay_spin.setRange(0, 100000)
-        self.delay_spin.setValue(0)
-        self.delay_spin.valueChanged.connect(self.on_delay_changed)
-        layout.addWidget(self.delay_spin, 3, 1)
 
         group.setLayout(layout)
         return group
@@ -774,7 +763,6 @@ class ADCStreamerGUI(QMainWindow):
         self.last_sent_config = {
             'channels': None,
             'repeat': None,
-            'delay_us': None,
             'ground_pin': None,
             'use_ground': None,
             'resolution': None,
@@ -939,9 +927,7 @@ class ADCStreamerGUI(QMainWindow):
                 key = parts[0].strip('# ').strip()
                 value = parts[1].strip()
                 
-                if 'interSweepDelay_us' in key:
-                    self.arduino_status['delay_us'] = int(value)
-                elif 'repeatCount' in key:
+                if 'repeatCount' in key:
                     self.arduino_status['repeat'] = int(value)
                 elif 'groundPin' in key:
                     self.arduino_status['ground_pin'] = int(value)
@@ -1058,12 +1044,6 @@ class ADCStreamerGUI(QMainWindow):
         self.config_is_valid = False
         self.update_start_button_state()
 
-    def on_delay_changed(self, value: int):
-        """Handle delay change."""
-        self.config['delay_us'] = value
-        self.config_is_valid = False
-        self.update_start_button_state()
-
     def verify_configuration(self) -> bool:
         """Verify that Arduino status matches expected configuration."""
         # Check if we have valid status data
@@ -1083,11 +1063,6 @@ class ADCStreamerGUI(QMainWindow):
         if self.arduino_status['repeat'] is not None:
             if self.arduino_status['repeat'] != self.config.get('repeat'):
                 self.log_status(f"MISMATCH: Expected repeat {self.config.get('repeat')}, got {self.arduino_status['repeat']}")
-                return False
-        
-        if self.arduino_status['delay_us'] is not None:
-            if self.arduino_status['delay_us'] != self.config.get('delay_us'):
-                self.log_status(f"MISMATCH: Expected delay {self.config.get('delay_us')}, got {self.arduino_status['delay_us']}")
                 return False
         
         # All critical checks passed
@@ -1248,15 +1223,6 @@ class ADCStreamerGUI(QMainWindow):
         success, received = self.send_command_and_wait_ack(f"repeat {repeat}", repeat)
         if success:
             self.arduino_status['repeat'] = int(received)
-        else:
-            all_success = False
-        time.sleep(0.05)
-        
-        # Send delay
-        delay = str(self.delay_spin.value())
-        success, received = self.send_command_and_wait_ack(f"delay {delay}", delay)
-        if success:
-            self.arduino_status['delay_us'] = int(received)
         else:
             all_success = False
         time.sleep(0.05)
@@ -1550,7 +1516,6 @@ class ADCStreamerGUI(QMainWindow):
         self.ground_pin_spin.setEnabled(enabled)
         self.use_ground_check.setEnabled(enabled)
         self.repeat_spin.setEnabled(enabled)
-        self.delay_spin.setEnabled(enabled)
 
         # Run control
         self.timed_run_check.setEnabled(enabled)

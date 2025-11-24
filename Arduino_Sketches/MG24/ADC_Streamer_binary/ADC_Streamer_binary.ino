@@ -35,9 +35,6 @@
  *   channels 0,1,1,1,2,2,3,4,5
  *     - Set the ADC sweep sequence (Arduino pin numbers, duplicates allowed).
  *
- *   delay 50
- *     - Add delay between samples in µs.
- *
  *   ground 2
  *     - Set "ground" pin (physically tied to GND).
  *
@@ -89,8 +86,14 @@
 // ---------------------------------------------------------------------
 
 const uint8_t  MAX_SEQUENCE_LEN  = 16; // Maximum number of channels in a sequence
-const uint32_t DEFAULT_DELAY_US  = 0;
 const uint32_t BAUD_RATE = 460800; // 460800 work without error
+
+// ---------------------------------------------------------------------
+// Command framing constants
+// ---------------------------------------------------------------------
+
+static const char CMD_TERMINATOR = '*';             // '*' ends a command
+static const uint16_t MAX_CMD_LENGTH = 512;         // Max input line length
 
 // ---------------------------------------------------------------------
 // Configuration state
@@ -101,8 +104,6 @@ uint8_t  channelCount        = 0;
 
 int      groundPin           = -1;   // -1 = not set
 bool     useGroundBeforeEach = false;
-
-uint32_t interSweepDelayUs   = DEFAULT_DELAY_US;
 
 // repeatCount = number of ADC readings per channel per sweep
 uint16_t repeatCount         = 1;
@@ -340,18 +341,6 @@ bool handleChannels(const String &args) {
 }
 
 
-bool handleDelay(const String &args) {
-  if (args.length() == 0) {
-    Serial.println(F("# ERROR: delay requires a value in microseconds"));
-    return false;
-  }
-  long val = args.toInt();
-  if (val < 0) val = 0;
-  interSweepDelayUs = (uint32_t)val;
-  return true;
-}
-
-
 bool handleGround(const String &args) {
   if (args.length() == 0) {
     Serial.println(F("# ERROR: ground requires an argument (pin number or true/false)"));
@@ -526,9 +515,6 @@ void printStatus() {
   }
   Serial.println();
 
-  Serial.print(F("# interSweepDelay_us: "));
-  Serial.println(interSweepDelayUs);
-
   Serial.print(F("# repeatCount (samples per channel): "));
   Serial.println(repeatCount);
 
@@ -556,7 +542,6 @@ void printStatus() {
 void printHelp() {
   Serial.println(F("# Commands:"));
   Serial.println(F("#   channels 0,1,1,1,2,2,3,4,5"));
-  Serial.println(F("#   delay 50              (µs between sweeps)"));
   Serial.println(F("#   ground 2              (set ground pin)"));
   Serial.println(F("#   ground true|false     (enable/disable ground sampling)"));
   Serial.println(F("#   repeat 20             (samples per channel per sweep)"));
@@ -710,7 +695,6 @@ void handleLine(const String &lineRaw) {
   bool ok = true;
 
   if      (cmd == "channels")    { ok = handleChannels(args); }
-  else if (cmd == "delay")       { ok = handleDelay(args); }
   else if (cmd == "ground")      { ok = handleGround(args); }
   else if (cmd == "repeat")      { ok = handleRepeat(args); }
   else if (cmd == "ref")         { ok = handleRef(args); }
@@ -765,7 +749,7 @@ void loop() {
       continue;
     }
 
-    if (c == '*') {
+    if (c == CMD_TERMINATOR) {
       // '*' means "end of command" IF we already have some text
       if (inputLine.length() > 0) {
         // We have a complete command: process it
@@ -781,7 +765,7 @@ void loop() {
     inputLine += c;
 
     // Optional safety: prevent runaway growth
-    if (inputLine.length() > 512) {
+    if (inputLine.length() > MAX_CMD_LENGTH) {
       inputLine = "";
       Serial.println(F("# ERROR: input line too long; cleared."));
     }
@@ -790,9 +774,6 @@ void loop() {
   // 2) Run sweeps if requested (unchanged)
   if (isRunning) {
     doOneSweep();
-    if (isRunning && interSweepDelayUs > 0) {
-      delayMicroseconds(interSweepDelayUs);
-    }
   }
 }
 

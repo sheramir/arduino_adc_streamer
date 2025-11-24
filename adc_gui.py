@@ -21,6 +21,10 @@ Requirements:
 - numpy
 """
 
+import os
+# Suppress Qt geometry warnings - must be set before importing Qt
+os.environ['QT_LOGGING_RULES'] = 'qt.qpa.*=false'
+
 import sys
 import csv
 import json
@@ -56,7 +60,6 @@ class SerialReaderThread(QThread):
         self.serial_port = serial_port
         self.running = True
         self.is_capturing = False
-        self.paused = False  # Allow pausing during configuration
 
     def run(self):
         """Continuously read from serial port and emit signals."""
@@ -65,11 +68,6 @@ class SerialReaderThread(QThread):
         
         while self.running:
             try:
-                # Skip reading if paused (e.g., during configuration)
-                if self.paused:
-                    self.msleep(50)
-                    continue
-                    
                 if self.serial_port and self.serial_port.is_open:
                     if self.serial_port.in_waiting > 0:
                         data = self.serial_port.read(self.serial_port.in_waiting)
@@ -154,14 +152,6 @@ class SerialReaderThread(QThread):
     def set_capturing(self, capturing):
         """Set whether we're currently capturing data."""
         self.is_capturing = capturing
-    
-    def pause(self):
-        """Pause reading (for configuration commands)."""
-        self.paused = True
-    
-    def resume(self):
-        """Resume reading."""
-        self.paused = False
 
     def stop(self):
         """Stop the thread."""
@@ -816,7 +806,7 @@ class ADCStreamerGUI(QMainWindow):
         else:
             self.log_status("ERROR: Not connected to serial port")
 
-    def send_command_and_wait_ack(self, command: str, expected_value: str = None, timeout: float = 2.0, max_retries: int = 3) -> tuple:
+    def send_command_and_wait_ack(self, command: str, expected_value: str = None, timeout: float = 1.0, max_retries: int = 3) -> tuple:
         """Send a command and wait for #OK acknowledgment with echoed argument verification.
         
         Returns:
@@ -828,17 +818,15 @@ class ADCStreamerGUI(QMainWindow):
         
         for attempt in range(max_retries):
             try:
-                # Flush buffers before each attempt
+                # Flush buffers before retry
                 if attempt > 0:
-                    time.sleep(0.1)
+                    time.sleep(0.05)
                     self.serial_port.reset_input_buffer()
                     self.serial_port.reset_output_buffer()
                 
                 # Send the command
                 self.serial_port.write(f"{command}***".encode('utf-8'))
-                time.sleep(0.01)  # Small delay to let USB buffer process
                 self.serial_port.flush()
-                time.sleep(0.01)  # Small delay after flush
                 
                 # Wait for #OK or #NOT_OK with echoed value
                 start_time = time.time()
@@ -1156,41 +1144,28 @@ class ADCStreamerGUI(QMainWindow):
         def config_worker():
             success_flag = False
             try:
-                try:
-                    # Pause the serial reader thread so it doesn't steal our ACK responses
-                    if self.serial_thread:
-                        self.serial_thread.pause()
-                        time.sleep(0.1)  # Let it pause
-                    
-                    # Flush buffers before configuration
-                    self.serial_port.reset_input_buffer()
-                    self.serial_port.reset_output_buffer()
-                    time.sleep(0.1)
-                    
-                    max_attempts = 3
-                    for attempt in range(max_attempts):
-                        success = self.send_config_with_verification()
-                        
-                        if success:
-                            # Verify final configuration
-                            if self.verify_configuration():
-                                success_flag = True
-                                break
-                        
-                        time.sleep(0.1)  # Brief delay between retries
-                        
-                except Exception as e:
-                    print(f"ERROR: Configuration exception - {e}")
-                    import traceback
-                    traceback.print_exc()
-            finally:
-                # Resume the serial reader thread
-                try:
-                    if self.serial_thread:
-                        self.serial_thread.resume()
-                except:
-                    pass
+                # Flush buffers before configuration
+                self.serial_port.reset_input_buffer()
+                self.serial_port.reset_output_buffer()
+                time.sleep(0.05)
                 
+                max_attempts = 3
+                for attempt in range(max_attempts):
+                    success = self.send_config_with_verification()
+                    
+                    if success:
+                        # Verify final configuration
+                        if self.verify_configuration():
+                            success_flag = True
+                            break
+                    
+                    time.sleep(0.05)  # Brief delay between retries
+                    
+            except Exception as e:
+                print(f"ERROR: Configuration exception - {e}")
+                import traceback
+                traceback.print_exc()
+            finally:
                 # Set completion status for main thread to handle
                 if success_flag:
                     self.config_completion_status = True
@@ -1248,7 +1223,7 @@ class ADCStreamerGUI(QMainWindow):
             self.arduino_status['resolution'] = int(received)
         else:
             all_success = False
-        time.sleep(0.15)  # Delay between commands
+        time.sleep(0.05)
         
         # Send voltage reference
         vref_text = self.vref_combo.currentText()
@@ -1264,7 +1239,7 @@ class ADCStreamerGUI(QMainWindow):
             self.arduino_status['reference'] = received
         else:
             all_success = False
-        time.sleep(0.15)
+        time.sleep(0.05)
         
         # Send channels
         channels_text = self.channels_input.text().strip()
@@ -1274,7 +1249,7 @@ class ADCStreamerGUI(QMainWindow):
                 self.arduino_status['channels'] = [int(c.strip()) for c in received.split(',')]
             else:
                 all_success = False
-        time.sleep(0.15)
+        time.sleep(0.05)
         
         # Send repeat count
         repeat = str(self.repeat_spin.value())
@@ -1283,7 +1258,7 @@ class ADCStreamerGUI(QMainWindow):
             self.arduino_status['repeat'] = int(received)
         else:
             all_success = False
-        time.sleep(0.15)
+        time.sleep(0.05)
         
         # Send delay
         delay = str(self.delay_spin.value())
@@ -1292,7 +1267,7 @@ class ADCStreamerGUI(QMainWindow):
             self.arduino_status['delay_us'] = int(received)
         else:
             all_success = False
-        time.sleep(0.15)
+        time.sleep(0.05)
         
         # Send ground settings
         use_ground = str(self.use_ground_check.isChecked()).lower()
@@ -1301,16 +1276,15 @@ class ADCStreamerGUI(QMainWindow):
             self.arduino_status['use_ground'] = (received == 'true')
         else:
             all_success = False
-        time.sleep(0.05)
         
         if self.use_ground_check.isChecked():
+            time.sleep(0.05)
             ground_pin = str(self.ground_pin_spin.value())
             success, received = self.send_command_and_wait_ack(f"ground {ground_pin}", ground_pin)
             if success:
                 self.arduino_status['ground_pin'] = int(received)
             else:
                 all_success = False
-            time.sleep(0.05)
         
         return all_success
         
@@ -1993,10 +1967,6 @@ class ADCStreamerGUI(QMainWindow):
 
 def main():
     """Main application entry point."""
-    import os
-    # Suppress Qt geometry warnings
-    os.environ['QT_LOGGING_RULES'] = 'qt.qpa.*=false'
-    
     app = QApplication(sys.argv)
     app.setStyle('Fusion')  # Modern look across platforms
 

@@ -35,9 +35,6 @@
  *   channels 0,1,1,1,2,2,3,4,5
  *     - Set the ADC sweep sequence (Arduino pin numbers, duplicates allowed).
  *
- *   delay 50
- *     - Add delay between samples in µs.
- *
  *   ground 2
  *     - Set "ground" pin (physically tied to GND).
  *
@@ -74,7 +71,7 @@
  *   help
  *     - Print help text (with '#'-prefixed lines).
  *
- * CSV OUTPUT WHILE RUNNING:
+ * CSV (binary) OUTPUT WHILE RUNNING:
  *   One line per sweep:
  *       v0,v1,...,v(N-1)
  *   where N = channels_count * repeatCount
@@ -89,8 +86,14 @@
 // ---------------------------------------------------------------------
 
 const uint8_t  MAX_SEQUENCE_LEN  = 16; // Maximum number of channels in a sequence
-const uint32_t DEFAULT_DELAY_US  = 0;
 const uint32_t BAUD_RATE = 460800; // 460800 work without error
+
+// ---------------------------------------------------------------------
+// Command framing constants
+// ---------------------------------------------------------------------
+
+static const char CMD_TERMINATOR = '*';             // '*' ends a command
+static const uint16_t MAX_CMD_LENGTH = 512;         // Max input line length
 
 // ---------------------------------------------------------------------
 // Configuration state
@@ -101,8 +104,6 @@ uint8_t  channelCount        = 0;
 
 int      groundPin           = -1;   // -1 = not set
 bool     useGroundBeforeEach = false;
-
-uint32_t interSweepDelayUs   = DEFAULT_DELAY_US;
 
 // repeatCount = number of ADC readings per channel per sweep
 uint16_t repeatCount         = 1;
@@ -129,50 +130,6 @@ int      effectiveGroundCached = -1;  // ground pin actually used for dummy read
 bool     isRunning           = false;
 bool     timedRun            = false;
 uint32_t runStopMillis       = 0;
-
-// ---------------------------------------------------------------------
-// Rate measurement state (only active between start-rate / end-rate)
-// ---------------------------------------------------------------------
-
-bool     rateEnabled      = false;  // true while we're measuring timing
-bool     rateEverStarted  = false;  // used so get-rate can error if never started
-bool     rateHasData      = false;  // becomes true once any delta is recorded
-
-// Per-channel-index timing (per position in channelSequence[])
-uint32_t lastStartUsPerIdx[MAX_SEQUENCE_LEN];
-bool     hasLastStartPerIdx[MAX_SEQUENCE_LEN];
-uint32_t minDeltaPerIdx[MAX_SEQUENCE_LEN];
-uint32_t maxDeltaPerIdx[MAX_SEQUENCE_LEN];
-uint64_t sumDeltaPerIdx[MAX_SEQUENCE_LEN];
-uint32_t countDeltaPerIdx[MAX_SEQUENCE_LEN];
-
-// Between-consecutive-channels timing (within a sweep)
-uint32_t lastChannelStartUsInSweep      = 0;
-bool     haveLastChannelStartUsInSweep  = false;
-uint32_t minBetweenChannelsUs           = 0xFFFFFFFFUL;
-uint32_t maxBetweenChannelsUs           = 0;
-uint64_t sumBetweenChannelsUs           = 0;
-uint32_t countBetweenChannelsUs         = 0;
-
-void resetRateStats() {
-  for (uint8_t i = 0; i < MAX_SEQUENCE_LEN; i++) {
-    lastStartUsPerIdx[i]   = 0;
-    hasLastStartPerIdx[i]  = false;
-    minDeltaPerIdx[i]      = 0xFFFFFFFFUL;
-    maxDeltaPerIdx[i]      = 0;
-    sumDeltaPerIdx[i]      = 0;
-    countDeltaPerIdx[i]    = 0;
-  }
-
-  lastChannelStartUsInSweep     = 0;
-  haveLastChannelStartUsInSweep = false;
-  minBetweenChannelsUs          = 0xFFFFFFFFUL;
-  maxBetweenChannelsUs          = 0;
-  sumBetweenChannelsUs          = 0;
-  countBetweenChannelsUs        = 0;
-
-  rateHasData = false;
-}
 
 
 // ---------------------------------------------------------------------
@@ -340,18 +297,6 @@ bool handleChannels(const String &args) {
 }
 
 
-bool handleDelay(const String &args) {
-  if (args.length() == 0) {
-    Serial.println(F("# ERROR: delay requires a value in microseconds"));
-    return false;
-  }
-  long val = args.toInt();
-  if (val < 0) val = 0;
-  interSweepDelayUs = (uint32_t)val;
-  return true;
-}
-
-
 bool handleGround(const String &args) {
   if (args.length() == 0) {
     Serial.println(F("# ERROR: ground requires an argument (pin number or true/false)"));
@@ -441,72 +386,6 @@ bool handleRes(const String &args) {
 }
 
 
-// Handle sampling rate measurements
-
-void printRateStats() {
-  // Aggregate all per-channel-index timing into a single average.
-  uint64_t totalSampleDeltaUs  = 0;
-  uint32_t totalSampleCount    = 0;
-
-  for (uint8_t i = 0; i < channelCount; i++) {
-    totalSampleDeltaUs += sumDeltaPerIdx[i];
-    totalSampleCount   += countDeltaPerIdx[i];
-  }
-
-  // Need both: between-channels stats and at least one per-channel delta.
-  if (totalSampleCount == 0 || countBetweenChannelsUs == 0) {
-    Serial.println(F("# ERROR: not enough timing data. "
-                     "Run with start-rate enabled and capture some sweeps."));
-    return;
-  }
-
-  float avgBetweenChannelsUs =
-      (float)sumBetweenChannelsUs / (float)countBetweenChannelsUs;
-
-  float avgSamplePeriodUs =
-      (float)totalSampleDeltaUs / (float)totalSampleCount;
-
-  // Minimal, machine-friendly output:
-  //   #RATE,<avg_between_channels_us>,<avg_between_samples_us>
-  Serial.print(F("#RATE,"));
-  Serial.print(avgBetweenChannelsUs, 3);
-  Serial.print(',');
-  Serial.println(avgSamplePeriodUs, 3);
-}
-
-
-bool handleStartRate(const String &args) {
-  (void)args;
-  if (channelCount == 0) {
-    Serial.println(F("# ERROR: no channels configured. Use 'channels ...' first."));
-    return false;
-  }
-
-  resetRateStats();
-  rateEnabled     = true;
-  rateEverStarted = true;
-
-  Serial.println(F("# rate measurement started"));
-  return true;
-}
-
-bool handleEndRate(const String &args) {
-  (void)args;
-  rateEnabled = false;
-  Serial.println(F("# rate measurement stopped (stats preserved)"));
-  return true;
-}
-
-bool handleGetRate(const String &args) {
-  (void)args;
-  if (!rateEverStarted) {
-    Serial.println(F("# ERROR: rate measurement not started. Use 'start-rate' first."));
-    return false;
-  }
-  printRateStats();
-  return true;
-}
-
 
 void printStatus() {
   Serial.println(F("# -------- STATUS --------"));
@@ -525,9 +404,6 @@ void printStatus() {
     if (i + 1 < channelCount) Serial.print(F(","));
   }
   Serial.println();
-
-  Serial.print(F("# interSweepDelay_us: "));
-  Serial.println(interSweepDelayUs);
 
   Serial.print(F("# repeatCount (samples per channel): "));
   Serial.println(repeatCount);
@@ -556,7 +432,6 @@ void printStatus() {
 void printHelp() {
   Serial.println(F("# Commands:"));
   Serial.println(F("#   channels 0,1,1,1,2,2,3,4,5"));
-  Serial.println(F("#   delay 50              (µs between sweeps)"));
   Serial.println(F("#   ground 2              (set ground pin)"));
   Serial.println(F("#   ground true|false     (enable/disable ground sampling)"));
   Serial.println(F("#   repeat 20             (samples per channel per sweep)"));
@@ -567,9 +442,6 @@ void printHelp() {
   Serial.println(F("#   run 100               (~100 ms time-limited run)"));
   Serial.println(F("#   stop                  (stop running)"));
   Serial.println(F("#   status                (show configuration)"));
-  Serial.println(F("#   start-rate            (start ADC timing measurement)"));   // NEW
-  Serial.println(F("#   end-rate              (stop ADC timing measurement)"));    // NEW
-  Serial.println(F("#   get-rate              (print timing statistics)"));        // NEW
   Serial.println(F("#   help                  (this message)"));
 }
 
@@ -578,9 +450,6 @@ bool handleRun(const String &args) {
     Serial.println(F("# ERROR: no channels configured. Use 'channels ...' first."));
     return false;
   }
-
-  // New: reset timing statistics for a fresh measurement window
-  resetRateStats();
 
   if (args.length() == 0) {
     isRunning = true;
@@ -626,59 +495,21 @@ void doOneSweep() {
   // Use precomputed "effective" ground pin (may be -1 if disabled)
   int sweepGroundPin = effectiveGroundCached;
 
-  // Reset "previous channel in this sweep" marker for between-channel timing
-  if (rateEnabled) {
-    haveLastChannelStartUsInSweep = false;
-  }
-
   // Fill buffer with all samples for this sweep
   uint16_t idx = 0;
 
-  for (uint8_t i = 0; i < channelCount; i++) {
+  for (uint8_t i = 0; i < channelCount; i++) { // loop through channels
     uint8_t chanPin = channelSequence[i];
 
-    for (uint16_t r = 0; r < repeatCount; r++) {
+    for (uint16_t r = 0; r < repeatCount; r++) { // loop through channel repeat
       if (useGroundBeforeEach && sweepGroundPin >= 0) {
         (void)analogRead(sweepGroundPin);  // discarded
       }
-
-      // --- Timing measurement: only first sample of each channel, and only if enabled ---
-      if (rateEnabled && r == 0) {
-        uint32_t tStart = micros();
-
-        // Per-channel index timing (same index i across sweeps)
-        if (i < MAX_SEQUENCE_LEN) {
-          if (hasLastStartPerIdx[i]) {
-            uint32_t d = tStart - lastStartUsPerIdx[i];
-            if (d < minDeltaPerIdx[i]) minDeltaPerIdx[i] = d;
-            if (d > maxDeltaPerIdx[i]) maxDeltaPerIdx[i] = d;
-            sumDeltaPerIdx[i]    += d;
-            countDeltaPerIdx[i]  += 1;
-            rateHasData           = true;
-          }
-          lastStartUsPerIdx[i]  = tStart;
-          hasLastStartPerIdx[i] = true;
-        }
-
-        // Between-consecutive-channels timing (within this sweep)
-        if (haveLastChannelStartUsInSweep) {
-          uint32_t d2 = tStart - lastChannelStartUsInSweep;
-          if (d2 < minBetweenChannelsUs) minBetweenChannelsUs = d2;
-          if (d2 > maxBetweenChannelsUs) maxBetweenChannelsUs = d2;
-          sumBetweenChannelsUs    += d2;
-          countBetweenChannelsUs  += 1;
-          rateHasData              = true;
-        }
-        lastChannelStartUsInSweep     = tStart;
-        haveLastChannelStartUsInSweep = true;
-      }
-      // --- End timing measurement ---
 
       int adcRaw = analogRead(chanPin);
       if (idx < samplesPerSweep) {
         adcBuffer[idx++] = (uint16_t)adcRaw;
       }
-      // No delay between samples!
     }
   }
 
@@ -710,7 +541,6 @@ void handleLine(const String &lineRaw) {
   bool ok = true;
 
   if      (cmd == "channels")    { ok = handleChannels(args); }
-  else if (cmd == "delay")       { ok = handleDelay(args); }
   else if (cmd == "ground")      { ok = handleGround(args); }
   else if (cmd == "repeat")      { ok = handleRepeat(args); }
   else if (cmd == "ref")         { ok = handleRef(args); }
@@ -718,9 +548,6 @@ void handleLine(const String &lineRaw) {
   else if (cmd == "run")         { ok = handleRun(args); }
   else if (cmd == "stop")        { handleStop(); ok = true;}
   else if (cmd == "status")      { printStatus(); ok = true; }
-  else if (cmd == "start-rate")  { ok = handleStartRate(args); }
-  else if (cmd == "end-rate")    { ok = handleEndRate(args); }
-  else if (cmd == "get-rate")    { ok = handleGetRate(args); }
   else if (cmd == "help")        { printHelp(); ok = true; }
   else {
     Serial.print(F("# ERROR: unknown command '"));
@@ -765,7 +592,7 @@ void loop() {
       continue;
     }
 
-    if (c == '*') {
+    if (c == CMD_TERMINATOR) {
       // '*' means "end of command" IF we already have some text
       if (inputLine.length() > 0) {
         // We have a complete command: process it
@@ -781,7 +608,7 @@ void loop() {
     inputLine += c;
 
     // Optional safety: prevent runaway growth
-    if (inputLine.length() > 512) {
+    if (inputLine.length() > MAX_CMD_LENGTH) {
       inputLine = "";
       Serial.println(F("# ERROR: input line too long; cleared."));
     }
@@ -790,9 +617,6 @@ void loop() {
   // 2) Run sweeps if requested (unchanged)
   if (isRunning) {
     doOneSweep();
-    if (isRunning && interSweepDelayUs > 0) {
-      delayMicroseconds(interSweepDelayUs);
-    }
   }
 }
 

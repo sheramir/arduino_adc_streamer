@@ -187,16 +187,17 @@ class ADCStreamerGUI(QMainWindow):
 
         # Timing measurement
         self.timing_data = {
-            'between_channels_us': None,
-            'between_samples_us': None,
-            'sampling_rate_hz': None
+            'per_channel_rate_hz': None,
+            'total_rate_hz': None,
+            'between_samples_us': None
         }
+        self.capture_start_time = None
+        self.capture_end_time = None
 
         # Configuration state
         self.config = {
             'channels': [],
             'repeat': 1,
-            'delay_us': 0,
             'ground_pin': -1,
             'use_ground': False,
             'resolution': 12,
@@ -207,7 +208,6 @@ class ADCStreamerGUI(QMainWindow):
         self.last_sent_config = {
             'channels': None,
             'repeat': None,
-            'delay_us': None,
             'ground_pin': None,
             'use_ground': None,
             'resolution': None,
@@ -221,7 +221,6 @@ class ADCStreamerGUI(QMainWindow):
         self.arduino_status = {
             'channels': None,
             'repeat': None,
-            'delay_us': None,
             'ground_pin': None,
             'use_ground': None,
             'resolution': None,
@@ -374,14 +373,6 @@ class ADCStreamerGUI(QMainWindow):
         self.repeat_spin.valueChanged.connect(self.on_repeat_changed)
         layout.addWidget(self.repeat_spin, 2, 1)
 
-        # Delay
-        layout.addWidget(QLabel("Delay (µs):"), 3, 0)
-        self.delay_spin = QSpinBox()
-        self.delay_spin.setRange(0, 100000)
-        self.delay_spin.setValue(0)
-        self.delay_spin.valueChanged.connect(self.on_delay_changed)
-        layout.addWidget(self.delay_spin, 3, 1)
-
         group.setLayout(layout)
         return group
 
@@ -397,23 +388,22 @@ class ADCStreamerGUI(QMainWindow):
         self.configure_btn.setStyleSheet("QPushButton { background-color: #CCCCCC; color: #666666; font-weight: bold; }")
         layout.addWidget(self.configure_btn, 0, 0, 1, 2)
 
-        # Start button (disabled until configured)
+        # Start and Stop buttons on same line
         self.start_btn = QPushButton("Start")
         self.start_btn.setEnabled(False)
         self.start_btn.clicked.connect(self.start_capture)
         self.start_btn.setStyleSheet("QPushButton { background-color: #CCCCCC; color: #666666; font-weight: bold; }")
-        layout.addWidget(self.start_btn, 1, 0, 1, 2)
+        layout.addWidget(self.start_btn, 1, 0)
 
-        # Stop button
         self.stop_btn = QPushButton("Stop")
         self.stop_btn.setEnabled(False)
         self.stop_btn.clicked.connect(self.stop_capture)
         self.stop_btn.setStyleSheet("QPushButton { background-color: #CCCCCC; color: #666666; font-weight: bold; }")
-        layout.addWidget(self.stop_btn, 2, 0, 1, 2)
+        layout.addWidget(self.stop_btn, 1, 1)
 
         # Timed run
         self.timed_run_check = QCheckBox("Timed Run (ms):")
-        layout.addWidget(self.timed_run_check, 3, 0)
+        layout.addWidget(self.timed_run_check, 2, 0)
 
         self.timed_run_spin = QSpinBox()
         self.timed_run_spin.setRange(10, 3600000)  # 10ms to 1 hour
@@ -422,7 +412,7 @@ class ADCStreamerGUI(QMainWindow):
         self.timed_run_check.stateChanged.connect(
             lambda state: self.timed_run_spin.setEnabled(state == Qt.CheckState.Checked.value)
         )
-        layout.addWidget(self.timed_run_spin, 3, 1)
+        layout.addWidget(self.timed_run_spin, 2, 1)
 
         # Clear data button
         self.clear_btn = QPushButton("Clear Data")
@@ -487,12 +477,12 @@ class ADCStreamerGUI(QMainWindow):
         # Save data button
         self.save_data_btn = QPushButton("Save Data (CSV)")
         self.save_data_btn.clicked.connect(self.save_data)
-        layout.addWidget(self.save_data_btn, 4, 0, 1, 3)
+        layout.addWidget(self.save_data_btn, 4, 0, 1, 2)
 
         # Save image button
         self.save_image_btn = QPushButton("Save Plot Image")
         self.save_image_btn.clicked.connect(self.save_plot_image)
-        layout.addWidget(self.save_image_btn, 5, 0, 1, 3)
+        layout.addWidget(self.save_image_btn, 4, 2)
 
         group.setLayout(layout)
         return group
@@ -502,27 +492,27 @@ class ADCStreamerGUI(QMainWindow):
         group = QGroupBox("Sampling Rate")
         layout = QHBoxLayout()
 
-        # Between channels timing
-        layout.addWidget(QLabel("Between Channels:"))
-        self.between_channels_label = QLabel("- µs")
-        self.between_channels_label.setStyleSheet("QLabel { font-weight: bold; }")
-        layout.addWidget(self.between_channels_label)
+        # Per-channel sampling rate
+        layout.addWidget(QLabel("Per Channel:"))
+        self.per_channel_rate_label = QLabel("- Hz")
+        self.per_channel_rate_label.setStyleSheet("QLabel { font-weight: bold; color: #2196F3; }")
+        layout.addWidget(self.per_channel_rate_label)
 
         layout.addWidget(QLabel("  |  "))
 
-        # Between samples (same channel) timing
-        layout.addWidget(QLabel("Between Samples:"))
+        # Total sampling rate
+        layout.addWidget(QLabel("Total Rate:"))
+        self.total_rate_label = QLabel("- Hz")
+        self.total_rate_label.setStyleSheet("QLabel { font-weight: bold; color: #FF9800; }")
+        layout.addWidget(self.total_rate_label)
+
+        layout.addWidget(QLabel("  |  "))
+
+        # Between samples timing
+        layout.addWidget(QLabel("Sample Interval:"))
         self.between_samples_label = QLabel("- µs")
         self.between_samples_label.setStyleSheet("QLabel { font-weight: bold; }")
         layout.addWidget(self.between_samples_label)
-
-        layout.addWidget(QLabel("  |  "))
-
-        # Sampling rate
-        layout.addWidget(QLabel("Sampling Rate:"))
-        self.sampling_rate_label = QLabel("- Hz")
-        self.sampling_rate_label.setStyleSheet("QLabel { font-weight: bold; color: #2196F3; }")
-        layout.addWidget(self.sampling_rate_label)
 
         layout.addStretch()
         group.setLayout(layout)
@@ -774,7 +764,6 @@ class ADCStreamerGUI(QMainWindow):
         self.last_sent_config = {
             'channels': None,
             'repeat': None,
-            'delay_us': None,
             'ground_pin': None,
             'use_ground': None,
             'resolution': None,
@@ -889,23 +878,24 @@ class ADCStreamerGUI(QMainWindow):
     def process_serial_data(self, line: str):
         """Process incoming ASCII serial data (status messages, errors, etc.)."""
         if line.startswith('#'):
-            # Check if it's a RATE message
-            if line.startswith('#RATE,'):
-                self.parse_rate_message(line)
-            else:
-                # Log all other status messages
-                self.log_status(line)
-                # Parse status lines when not in configuration mode
-                if 'STATUS' in line or ':' in line or (line.startswith('#   ') and ',' in line):
-                    self.parse_status_line(line)
+            # Log all status messages
+            self.log_status(line)
+            # Parse status lines when not in configuration mode
+            if 'STATUS' in line or ':' in line or (line.startswith('#   ') and ',' in line):
+                self.parse_status_line(line)
         else:
-            # Unexpected ASCII data
-            self.log_status(f"Unexpected ASCII: {line}")
+            # Only log if it's printable ASCII (not binary data that got through)
+            if line.strip() and line.isprintable():
+                self.log_status(f"Unexpected ASCII: {line}")
 
     def process_binary_sweep(self, samples: List[int]):
         """Process incoming binary sweep data."""
         if self.is_capturing:
             try:
+                # Track first sweep time for rate calculation
+                if self.sweep_count == 0:
+                    self.capture_start_time = time.time()
+                
                 self.raw_data.append(samples)
                 self.sweep_count += 1
 
@@ -939,9 +929,7 @@ class ADCStreamerGUI(QMainWindow):
                 key = parts[0].strip('# ').strip()
                 value = parts[1].strip()
                 
-                if 'interSweepDelay_us' in key:
-                    self.arduino_status['delay_us'] = int(value)
-                elif 'repeatCount' in key:
+                if 'repeatCount' in key:
                     self.arduino_status['repeat'] = int(value)
                 elif 'groundPin' in key:
                     self.arduino_status['ground_pin'] = int(value)
@@ -962,34 +950,59 @@ class ADCStreamerGUI(QMainWindow):
             # Silently ignore parse errors
             pass
     
-    def parse_rate_message(self, line: str):
-        """Parse timing rate message from Arduino."""
+    def calculate_sampling_rate(self):
+        """Calculate sampling rate based on captured data and time."""
+        if not self.capture_start_time or not self.capture_end_time or not self.raw_data:
+            return
+        
         try:
-            # Format: #RATE,<avg_between_channels_us>,<avg_between_samples_us>
-            parts = line.split(',', 2)
-            if len(parts) >= 3:
-                between_channels_us = float(parts[1])
-                between_samples_us = float(parts[2])
+            elapsed_time = self.capture_end_time - self.capture_start_time
+            if elapsed_time <= 0:
+                return
+            
+            # Total samples across all sweeps
+            total_samples = sum(len(sweep) for sweep in self.raw_data)
+            
+            # Calculate per-channel samples
+            channels = self.config['channels']
+            repeat_count = self.config['repeat']
+            
+            if channels:
+                # Get unique channels
+                unique_channels = []
+                for ch in channels:
+                    if ch not in unique_channels:
+                        unique_channels.append(ch)
                 
-                # Calculate sampling rate (Hz) from time between samples
-                if between_samples_us > 0:
-                    sampling_rate_hz = 1000000.0 / between_samples_us  # Convert µs to Hz
-                else:
-                    sampling_rate_hz = 0
-                
-                # Store timing data
-                self.timing_data['between_channels_us'] = between_channels_us
-                self.timing_data['between_samples_us'] = between_samples_us
-                self.timing_data['sampling_rate_hz'] = sampling_rate_hz
-                
-                # Update display
-                self.between_channels_label.setText(f"{between_channels_us:.2f} µs")
-                self.between_samples_label.setText(f"{between_samples_us:.2f} µs")
-                self.sampling_rate_label.setText(f"{sampling_rate_hz:.2f} Hz")
-                
-                self.log_status(f"Timing: {between_channels_us:.2f} µs between channels, {between_samples_us:.2f} µs between samples ({sampling_rate_hz:.2f} Hz)")
+                num_unique_channels = len(unique_channels)
+                samples_per_channel = total_samples / num_unique_channels if num_unique_channels > 0 else 0
+            else:
+                samples_per_channel = total_samples
+            
+            # Calculate rates
+            per_channel_rate = samples_per_channel / elapsed_time  # Samples/sec for each channel
+            total_sample_rate = total_samples / elapsed_time  # Total samples/sec across all channels
+            
+            # Calculate time between samples (in microseconds) - for individual channel
+            if per_channel_rate > 0:
+                between_samples_us = 1000000.0 / per_channel_rate
+            else:
+                between_samples_us = 0
+            
+            # Store timing data
+            self.timing_data['per_channel_rate_hz'] = per_channel_rate
+            self.timing_data['total_rate_hz'] = total_sample_rate
+            self.timing_data['between_samples_us'] = between_samples_us
+            
+            # Update display
+            self.per_channel_rate_label.setText(f"{per_channel_rate:.2f} Hz")
+            self.total_rate_label.setText(f"{total_sample_rate:.2f} Hz")
+            self.between_samples_label.setText(f"{between_samples_us:.2f} µs")
+            
+            self.log_status(f"Per-channel rate: {per_channel_rate:.2f} Hz ({between_samples_us:.2f} µs between samples)")
+            self.log_status(f"Total rate: {total_sample_rate:.2f} Hz ({total_samples} samples in {elapsed_time:.3f}s across {num_unique_channels} channels)")
         except Exception as e:
-            self.log_status(f"ERROR: Failed to parse rate message - {e}")
+            self.log_status(f"ERROR: Failed to calculate sampling rate - {e}")
 
     def log_status(self, message: str):
         """Log a status message."""
@@ -1058,12 +1071,6 @@ class ADCStreamerGUI(QMainWindow):
         self.config_is_valid = False
         self.update_start_button_state()
 
-    def on_delay_changed(self, value: int):
-        """Handle delay change."""
-        self.config['delay_us'] = value
-        self.config_is_valid = False
-        self.update_start_button_state()
-
     def verify_configuration(self) -> bool:
         """Verify that Arduino status matches expected configuration."""
         # Check if we have valid status data
@@ -1083,11 +1090,6 @@ class ADCStreamerGUI(QMainWindow):
         if self.arduino_status['repeat'] is not None:
             if self.arduino_status['repeat'] != self.config.get('repeat'):
                 self.log_status(f"MISMATCH: Expected repeat {self.config.get('repeat')}, got {self.arduino_status['repeat']}")
-                return False
-        
-        if self.arduino_status['delay_us'] is not None:
-            if self.arduino_status['delay_us'] != self.config.get('delay_us'):
-                self.log_status(f"MISMATCH: Expected delay {self.config.get('delay_us')}, got {self.arduino_status['delay_us']}")
                 return False
         
         # All critical checks passed
@@ -1248,15 +1250,6 @@ class ADCStreamerGUI(QMainWindow):
         success, received = self.send_command_and_wait_ack(f"repeat {repeat}", repeat)
         if success:
             self.arduino_status['repeat'] = int(received)
-        else:
-            all_success = False
-        time.sleep(0.05)
-        
-        # Send delay
-        delay = str(self.delay_spin.value())
-        success, received = self.send_command_and_wait_ack(f"delay {delay}", delay)
-        if success:
-            self.arduino_status['delay_us'] = int(received)
         else:
             all_success = False
         time.sleep(0.05)
@@ -1441,21 +1434,19 @@ class ADCStreamerGUI(QMainWindow):
 
         # Clear timing data for new measurement
         self.timing_data = {
-            'between_channels_us': None,
-            'between_samples_us': None,
-            'sampling_rate_hz': None
+            'per_channel_rate_hz': None,
+            'total_rate_hz': None,
+            'between_samples_us': None
         }
-        self.between_channels_label.setText("- µs")
+        self.capture_start_time = None
+        self.capture_end_time = None
+        self.per_channel_rate_label.setText("- Hz")
+        self.total_rate_label.setText("- Hz")
         self.between_samples_label.setText("- µs")
-        self.sampling_rate_label.setText("- Hz")
 
         # Disable plot interactions during capture (scrolling mode)
         self.plot_widget.setMouseEnabled(x=False, y=False)
         self.plot_widget.setMenuEnabled(False)
-
-        # Start timing measurement
-        self.send_command("start-rate")
-        time.sleep(0.05)  # Wait for command to be processed
 
         # Switch to binary capture mode BEFORE sending run command
         self.is_capturing = True
@@ -1483,18 +1474,6 @@ class ADCStreamerGUI(QMainWindow):
         self.stop_btn.setStyleSheet("QPushButton { background-color: #f44336; color: white; font-weight: bold; }")
         self.statusBar().showMessage("Capturing - Scrolling Mode")
 
-        # Don't measure timing during capture - it will be done after capture finishes
-        # QTimer.singleShot(100, self.measure_timing)  # REMOVED
-
-    def measure_timing(self):
-        """Request timing measurement from Arduino (after capture is done)."""
-        if self.serial_port and self.serial_port.is_open:
-            # After capture, send commands normally (no ACK waiting - thread handles responses)
-            self.send_command("get-rate")
-            time.sleep(0.05)
-            self.send_command("end-rate")
-            time.sleep(0.05)
-
     def stop_capture(self):
         """Stop data capture."""
         self.send_command("stop")
@@ -1503,15 +1482,18 @@ class ADCStreamerGUI(QMainWindow):
 
     def on_capture_finished(self):
         """Handle capture finished (either stopped or timed out)."""
+        # Record end time
+        self.capture_end_time = time.time()
+        
         self.is_capturing = False
         
         # Notify serial thread that we're not capturing (disables binary mode)
         if self.serial_thread:
             self.serial_thread.set_capturing(False)
         
-        # Now get the timing measurements (after capture is done)
+        # Calculate sampling rate from captured data
         time.sleep(0.1)  # Wait for Arduino to finish sending binary data
-        self.measure_timing()
+        self.calculate_sampling_rate()
         
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
@@ -1550,7 +1532,6 @@ class ADCStreamerGUI(QMainWindow):
         self.ground_pin_spin.setEnabled(enabled)
         self.use_ground_check.setEnabled(enabled)
         self.repeat_spin.setEnabled(enabled)
-        self.delay_spin.setEnabled(enabled)
 
         # Run control
         self.timed_run_check.setEnabled(enabled)

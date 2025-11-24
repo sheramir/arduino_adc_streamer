@@ -21,6 +21,10 @@ Requirements:
 - numpy
 """
 
+import os
+# Suppress Qt geometry warnings - must be set before importing Qt
+os.environ['QT_LOGGING_RULES'] = 'qt.qpa.*=false'
+
 import sys
 import csv
 import json
@@ -163,6 +167,10 @@ class ADCStreamerGUI(QMainWindow):
         # Serial connection
         self.serial_port: Optional[serial.Serial] = None
         self.serial_thread: Optional[SerialReaderThread] = None
+        self.current_baud_rate: int = 921600  # Default baud rate
+        
+        # Configuration completion tracking
+        self.config_completion_status: Optional[bool] = None  # None=pending, True=success, False=failed
 
         # Data storage
         self.raw_data: List[List[int]] = []  # List of sweeps (each sweep is a list of values)
@@ -225,6 +233,11 @@ class ADCStreamerGUI(QMainWindow):
 
         # Initialize UI
         self.init_ui()
+        
+        # Timer to check configuration completion
+        self.config_check_timer = QTimer()
+        self.config_check_timer.timeout.connect(self.check_config_completion)
+        self.config_check_timer.setInterval(100)  # Check every 100ms
 
         # Update port list on startup
         self.update_port_list()
@@ -232,7 +245,7 @@ class ADCStreamerGUI(QMainWindow):
     def init_ui(self):
         """Initialize the user interface."""
         self.setWindowTitle("ADC Streamer - Arduino Control & Visualization")
-        self.setGeometry(100, 100, 1400, 900)
+        self.setGeometry(100, 100, 1200, 800)
 
         # Main widget and layout
         main_widget = QWidget()
@@ -286,11 +299,19 @@ class ADCStreamerGUI(QMainWindow):
         self.refresh_ports_btn = QPushButton("Refresh")
         self.refresh_ports_btn.clicked.connect(self.update_port_list)
         layout.addWidget(self.refresh_ports_btn, 0, 2)
+        
+        # Baud rate selection
+        layout.addWidget(QLabel("Baud Rate:"), 1, 0)
+        self.baud_combo = QComboBox()
+        self.baud_combo.addItems(["115200", "230400", "460800", "921600", "1000000", "1500000", "2000000"])
+        self.baud_combo.setCurrentText("921600")  # Default to 921600
+        self.baud_combo.currentTextChanged.connect(self.on_baud_changed)
+        layout.addWidget(self.baud_combo, 1, 1, 1, 2)
 
         # Connect/Disconnect button
         self.connect_btn = QPushButton("Connect")
         self.connect_btn.clicked.connect(self.toggle_connection)
-        layout.addWidget(self.connect_btn, 1, 0, 1, 3)
+        layout.addWidget(self.connect_btn, 2, 0, 1, 3)
 
         group.setLayout(layout)
         return group
@@ -699,8 +720,9 @@ class ADCStreamerGUI(QMainWindow):
         try:
             self.serial_port = serial.Serial(
                 port=port_name,
-                baudrate=2000000, # changed from 115200
-                timeout=1
+                baudrate=self.current_baud_rate,
+                timeout=1,
+                rtscts=True  # Enable hardware flow control
             )
             
             # Wait for Arduino to reset (DTR/RTS can cause reset on some boards)
@@ -774,97 +796,95 @@ class ADCStreamerGUI(QMainWindow):
         self.refresh_ports_btn.setEnabled(True)
 
     def send_command(self, command: str):
-        """Send a command to the Arduino."""
+        """Send a command to the Arduino (fire-and-forget for runtime commands)."""
         if self.serial_port and self.serial_port.is_open:
             try:
-                # Track what command was sent for response parsing
-                self.last_command_sent = command
-                
-                self.serial_port.write(f"{command}\n".encode('utf-8'))
-                self.serial_port.flush()  # Make sure it's actually sent
+                self.serial_port.write(f"{command}***".encode('utf-8'))
+                self.serial_port.flush()
             except Exception as e:
                 self.log_status(f"ERROR: Failed to send command - {e}")
         else:
             self.log_status("ERROR: Not connected to serial port")
 
-    def send_command_and_wait_ack(self, command: str, timeout: float = 1.0, max_retries: int = 3):
-        """Send a command and wait for #OK acknowledgment with retry on error."""
+    def send_command_and_wait_ack(self, command: str, expected_value: str = None, timeout: float = 1.0, max_retries: int = 3) -> tuple:
+        """Send a command and wait for #OK acknowledgment with echoed argument verification.
+        
+        Returns:
+            tuple: (success: bool, received_value: str or None)
+        """
         if not self.serial_port or not self.serial_port.is_open:
             self.log_status("ERROR: Not connected to serial port")
-            return False
+            return (False, None)
         
         for attempt in range(max_retries):
             try:
-                # Flush input buffer before retry to clear stale acknowledgments
+                # Flush buffers before retry
                 if attempt > 0:
-                    time.sleep(0.05)  # Let any pending data arrive
+                    time.sleep(0.05)
                     self.serial_port.reset_input_buffer()
+                    self.serial_port.reset_output_buffer()
                 
                 # Send the command
-                self.serial_port.write(f"{command}\n".encode('utf-8'))
-                if attempt == 0:
-                    self.log_status(f"Sent: {command}")
-                else:
-                    self.log_status(f"Retry {attempt}: {command}")
+                self.serial_port.write(f"{command}***".encode('utf-8'))
+                self.serial_port.flush()
                 
-                # Wait for #OK acknowledgment
+                # Wait for #OK or #NOT_OK with echoed value
                 start_time = time.time()
-                got_error = False
                 
                 while time.time() - start_time < timeout:
                     try:
-                        # Use readline with timeout for line-based reading
                         line = self.serial_port.readline().decode('utf-8', errors='ignore').strip()
                         
-                        if not line:
-                            # Skip empty lines
+                        if not line or not line.isprintable():
                             continue
                         
-                        # Filter out garbage data (non-printable characters)
-                        if not line.isprintable():
-                            continue
-                        
-                        if line == '#OK':
-                            return True  # Got acknowledgment - command succeeded
-                        elif line == '#NOT_OK':
-                            # Command failed - retry
-                            self.log_status(f"Command failed: {command}")
-                            got_error = True
-                            break
-                        elif '# ERROR:' in line:
-                            # Got an error message - log it
-                            self.log_status(line)
-                            # Continue reading to get #NOT_OK
-                        elif line.startswith('#'):
-                            # Log other status messages
-                            self.log_status(line)
-                        else:
-                            # Silently ignore unexpected data during sync
-                            pass
+                        # Parse #OK response with optional echoed value
+                        if line.startswith('#OK'):
+                            received_value = line[3:].strip() if len(line) > 3 else None
                             
-                    except Exception as e:
-                        # Timeout on readline or decode error
+                            # If we expect a specific value, verify it matches
+                            if expected_value is not None and received_value != expected_value:
+                                self.log_status(f"MISMATCH: Sent '{expected_value}', received '{received_value}'")
+                                if attempt < max_retries - 1:
+                                    break  # Retry
+                                else:
+                                    return (False, received_value)
+                            
+                            return (True, received_value)
+                        
+                        # Parse #NOT_OK response
+                        elif line.startswith('#NOT_OK'):
+                            received_value = line[7:].strip() if len(line) > 7 else None
+                            self.log_status(f"Command rejected: {command} (received: {received_value})")
+                            if attempt < max_retries - 1:
+                                break  # Retry
+                            else:
+                                return (False, received_value)
+                        
+                        # Log error messages
+                        elif '# ERROR:' in line:
+                            self.log_status(line)
+                        
+                        # Log other status messages
+                        elif line.startswith('#'):
+                            self.log_status(line)
+                            
+                    except Exception:
                         continue
                 
-                if got_error:
-                    # Got an error response, retry after clearing buffer
-                    continue
-                    
-                # Timeout waiting for ACK
+                # Timeout - retry
                 if attempt < max_retries - 1:
-                    self.log_status(f"Timeout on command: {command}, retrying...")
+                    self.log_status(f"Timeout waiting for ACK: {command}, retrying...")
                 else:
-                    self.log_status(f"WARNING: Failed after {max_retries} attempts: {command}")
-                    return False
+                    self.log_status(f"ERROR: No response after {max_retries} attempts: {command}")
+                    return (False, None)
                     
             except Exception as e:
                 self.log_status(f"ERROR: Failed to send command - {e}")
-                if attempt < max_retries - 1:
-                    time.sleep(0.05)
-                else:
-                    return False
+                if attempt >= max_retries - 1:
+                    return (False, None)
         
-        return False
+        return (False, None)
 
     def process_serial_data(self, line: str):
         """Process incoming ASCII serial data (status messages, errors, etc.)."""
@@ -872,22 +892,14 @@ class ADCStreamerGUI(QMainWindow):
             # Check if it's a RATE message
             if line.startswith('#RATE,'):
                 self.parse_rate_message(line)
-            # Parse #OK responses with echoed arguments
-            elif line.startswith('#OK'):
-                self.parse_ok_response(line)
-                self.log_status(line)
-            # Parse #NOT_OK responses with echoed arguments
-            elif line.startswith('#NOT_OK'):
-                self.parse_not_ok_response(line)
-                self.log_status(line)
             else:
-                # Status/configuration message
+                # Log all other status messages
                 self.log_status(line)
-                # Also parse status lines for verification
+                # Parse status lines when not in configuration mode
                 if 'STATUS' in line or ':' in line or (line.startswith('#   ') and ',' in line):
                     self.parse_status_line(line)
         else:
-            # Unexpected ASCII data during capture
+            # Unexpected ASCII data
             self.log_status(f"Unexpected ASCII: {line}")
 
     def process_binary_sweep(self, samples: List[int]):
@@ -911,45 +923,6 @@ class ADCStreamerGUI(QMainWindow):
             except Exception as e:
                 self.log_status(f"ERROR: Failed to process binary sweep - {e}")
 
-    def parse_ok_response(self, line: str):
-        """Parse #OK response with echoed argument."""
-        try:
-            # Format: "#OK" or "#OK <value>" or "#OK <value1>,<value2>,..."
-            if len(line) > 4:  # Has echoed value
-                value = line[4:].strip()
-                # Store the last successful response
-                if hasattr(self, 'last_command_sent'):
-                    cmd_parts = self.last_command_sent.split(' ', 1)
-                    if len(cmd_parts) == 2:
-                        cmd_name = cmd_parts[0]
-                        
-                        # Parse based on command type
-                        if cmd_name == 'channels':
-                            channels = [int(c.strip()) for c in value.split(',')]
-                            self.arduino_status['channels'] = channels
-                        elif cmd_name == 'repeat':
-                            self.arduino_status['repeat'] = int(value)
-                        elif cmd_name == 'delay':
-                            self.arduino_status['delay_us'] = int(value)
-                        elif cmd_name == 'res':
-                            self.arduino_status['resolution'] = int(value)
-                        elif cmd_name == 'ref':
-                            self.arduino_status['reference'] = value
-                        elif cmd_name == 'ground':
-                            if value.lower() in ('true', 'false'):
-                                self.arduino_status['use_ground'] = (value.lower() == 'true')
-                            else:
-                                self.arduino_status['ground_pin'] = int(value)
-        except Exception as e:
-            # Silently ignore parse errors
-            pass
-    
-    def parse_not_ok_response(self, line: str):
-        """Parse #NOT_OK response (command failed)."""
-        # Command failed - the echoed value may show what was attempted
-        # Just log it, verification will handle the failure
-        pass
-    
     def parse_status_line(self, line: str):
         """Parse a single line from Arduino status output."""
         try:
@@ -1035,6 +1008,14 @@ class ADCStreamerGUI(QMainWindow):
         self.config_is_valid = False
         self.update_start_button_state()
 
+    def on_baud_changed(self, text: str):
+        """Handle baud rate change."""
+        try:
+            self.current_baud_rate = int(text)
+            self.log_status(f"Baud rate will be {self.current_baud_rate} on next connection")
+        except:
+            pass
+    
     def on_vref_changed(self, text: str):
         """Handle voltage reference change."""
         vref_map = {
@@ -1136,189 +1117,114 @@ class ADCStreamerGUI(QMainWindow):
             self.start_btn.setEnabled(False)
     
     def configure_arduino(self):
-        """Configure Arduino with verification and retry (non-blocking)."""
+        """Configure Arduino with verification and retry."""
         if not self.serial_port or not self.serial_port.is_open:
             return
         
-        self.log_status("Configuring Arduino...")
-        self.configure_btn.setEnabled(False)
-        
-        # Get desired configuration
+        # Validate input
         channels_text = self.channels_input.text().strip()
         if not channels_text:
             self.log_status("ERROR: Please specify channels first")
-            self.configure_btn.setEnabled(True)
             return
         
         try:
             desired_channels = [int(c.strip()) for c in channels_text.split(',')]
         except:
             self.log_status("ERROR: Invalid channel format")
-            self.configure_btn.setEnabled(True)
             return
         
-        # Initialize configuration state machine
-        self.config_attempt = 0
-        self.config_max_attempts = 5
-        self.config_state = 'request_status'  # States: request_status, send_config, verify
+        self.log_status("Configuring Arduino...")
+        self.configure_btn.setEnabled(False)
         
-        # Clear previous status
-        self.arduino_status['channels'] = None
-        self.arduino_status['repeat'] = None
-        self.arduino_status['delay_us'] = None
-        self.arduino_status['resolution'] = None
-        self.arduino_status['reference'] = None
+        # Reset completion status and start checking
+        self.config_completion_status = None
+        self.config_check_timer.start()
         
-        # Start the configuration process
-        self.continue_configuration()
-    
-    def continue_configuration(self):
-        """Continue the configuration process (called by QTimer)."""
-        if self.config_state == 'request_status':
-            # Request current Arduino status
-            if self.config_attempt == 0:
-                self.log_status(f"Configuration attempt {self.config_attempt + 1}/{self.config_max_attempts}...")
-                self.send_command("status")
-                self.config_state = 'wait_status'
-                QTimer.singleShot(1000, self.continue_configuration)
-            else:
-                # Skip status request on retry, go straight to send
-                self.config_state = 'send_config'
-                self.continue_configuration()
-        
-        elif self.config_state == 'wait_status':
-            # Check if status was received
-            self.log_status(f"Current Arduino state: channels={self.arduino_status['channels']}, repeat={self.arduino_status['repeat']}, delay={self.arduino_status['delay_us']}")
-            self.config_state = 'send_config'
-            self.continue_configuration()
-        
-        elif self.config_state == 'send_config':
-            # Send mismatched configuration
-            if self.config_attempt > 0:
-                self.log_status(f"Configuration attempt {self.config_attempt + 1}/{self.config_max_attempts}...")
-            self.send_mismatched_config()
-            self.config_state = 'verify'
-            QTimer.singleShot(800, self.continue_configuration)  # Reduced from 1500ms - we get immediate feedback now
-        
-        elif self.config_state == 'verify':
-            # Log what we received
-            self.log_status(f"After config: channels={self.arduino_status['channels']}, repeat={self.arduino_status['repeat']}, delay={self.arduino_status['delay_us']}")
-            
-            # Verify configuration matches
-            if self.verify_configuration():
-                # Success!
-                self.config_is_valid = True
-                self.log_status("✓ Configuration verified - Ready to start")
-                self.update_start_button_state()
-                self.configure_btn.setEnabled(True)
-                self.configure_btn.setStyleSheet("QPushButton { background-color: #2196F3; color: white; font-weight: bold; }")
-                self.statusBar().showMessage("Configured - Ready to capture", 3000)
-            else:
-                # Retry or fail
-                self.config_attempt += 1
-                if self.config_attempt < self.config_max_attempts:
-                    self.log_status(f"Configuration mismatch, retrying...")
-                    self.config_state = 'send_config'
-                    self.continue_configuration()
+        # Run configuration in a separate thread to avoid blocking UI
+        def config_worker():
+            success_flag = False
+            try:
+                # Flush buffers before configuration
+                self.serial_port.reset_input_buffer()
+                self.serial_port.reset_output_buffer()
+                time.sleep(0.05)
+                
+                max_attempts = 3
+                for attempt in range(max_attempts):
+                    success = self.send_config_with_verification()
+                    
+                    if success:
+                        # Verify final configuration
+                        if self.verify_configuration():
+                            success_flag = True
+                            break
+                    
+                    time.sleep(0.05)  # Brief delay between retries
+                    
+            except Exception as e:
+                print(f"ERROR: Configuration exception - {e}")
+                import traceback
+                traceback.print_exc()
+            finally:
+                # Set completion status for main thread to handle
+                if success_flag:
+                    self.config_completion_status = True
                 else:
-                    # Failed after all attempts
-                    self.log_status("ERROR: Configuration failed after 5 attempts")
-                    self.configure_btn.setEnabled(True)
-                    self.configure_btn.setStyleSheet("QPushButton { background-color: #FF9800; color: white; font-weight: bold; }")
-                    self.statusBar().showMessage("Configuration failed - please retry", 5000)
+                    self.config_completion_status = False
+        
+        # Start configuration in background thread
+        import threading
+        threading.Thread(target=config_worker, daemon=True).start()
     
-    def send_mismatched_config(self):
-        """Send only configuration parameters that don't match Arduino's current state."""
+    def check_config_completion(self):
+        """Check if configuration has completed (called by timer)."""
+        if self.config_completion_status is not None:
+            self.config_check_timer.stop()
+            
+            if self.config_completion_status:
+                self.on_configuration_success()
+            else:
+                self.on_configuration_failed()
+            
+            # Reset status
+            self.config_completion_status = None
+    
+    def on_configuration_success(self):
+        """Handle successful configuration."""
+        self.config_is_valid = True
+        self.log_status("✓ Configuration verified - Ready to start")
+        self.update_start_button_state()
+        self.configure_btn.setEnabled(True)
+        self.configure_btn.setStyleSheet("QPushButton { background-color: #2196F3; color: white; font-weight: bold; }")
+        self.statusBar().showMessage("Configured - Ready to capture", 3000)
+    
+    def on_configuration_failed(self):
+        """Handle failed configuration."""
+        self.log_status("ERROR: Configuration failed after retries")
+        self.configure_btn.setEnabled(True)
+        self.configure_btn.setStyleSheet("QPushButton { background-color: #FF9800; color: white; font-weight: bold; }")
+        self.statusBar().showMessage("Configuration failed - please retry", 5000)
+    
+    def send_config_with_verification(self) -> bool:
+        """Send configuration to Arduino with ACK verification and retry.
+        
+        Returns:
+            bool: True if all parameters were set successfully
+        """
         if not self.serial_port or not self.serial_port.is_open:
-            return
-
-        sent_any = False
+            return False
         
-        # Check and send resolution if mismatched
-        res_text = self.resolution_combo.currentText()
-        desired_res = int(res_text)
-        if self.arduino_status.get('resolution') != desired_res:
-            self.log_status(f"Updating resolution: {self.arduino_status.get('resolution')} → {desired_res}")
-            self.send_command(f"res {res_text}")
-            sent_any = True
-        
-        # Check and send voltage reference if mismatched
-        vref_text = self.vref_combo.currentText()
-        vref_map = {
-            "1.2V (Internal)": "1.2",
-            "3.3V (VDD)": "vdd",
-            "0.8*VDD": "0.8vdd",
-            "External 1.25V": "ext"
-        }
-        desired_vref = vref_map.get(vref_text, "vdd")
-        if self.arduino_status.get('reference') != desired_vref:
-            self.log_status(f"Updating reference: {self.arduino_status.get('reference')} → {desired_vref}")
-            self.send_command(f"ref {desired_vref}")
-            sent_any = True
-        
-        # Check and send channels if mismatched
-        channels_text = self.channels_input.text().strip()
-        if channels_text:
-            desired_channels = [int(c.strip()) for c in channels_text.split(',')]
-            if self.arduino_status.get('channels') != desired_channels:
-                self.log_status(f"Updating channels: {self.arduino_status.get('channels')} → {desired_channels}")
-                self.send_command(f"channels {channels_text}")
-                sent_any = True
-        
-        # Check and send repeat count if mismatched
-        desired_repeat = self.repeat_spin.value()
-        if self.arduino_status.get('repeat') != desired_repeat:
-            self.log_status(f"Updating repeat: {self.arduino_status.get('repeat')} → {desired_repeat}")
-            self.send_command(f"repeat {desired_repeat}")
-            sent_any = True
-        
-        # Check and send delay if mismatched
-        desired_delay = self.delay_spin.value()
-        if self.arduino_status.get('delay_us') != desired_delay:
-            self.log_status(f"Updating delay: {self.arduino_status.get('delay_us')} → {desired_delay}")
-            self.send_command(f"delay {desired_delay}")
-            sent_any = True
-        
-        # Check and send ground settings if mismatched
-        desired_use_ground = self.use_ground_check.isChecked()
-        if self.arduino_status.get('use_ground') != desired_use_ground:
-            self.log_status(f"Updating use_ground: {self.arduino_status.get('use_ground')} → {desired_use_ground}")
-            self.send_command(f"ground {str(desired_use_ground).lower()}")
-            sent_any = True
-        
-        if desired_use_ground:
-            desired_ground_pin = self.ground_pin_spin.value()
-            if self.arduino_status.get('ground_pin') != desired_ground_pin:
-                self.log_status(f"Updating ground_pin: {self.arduino_status.get('ground_pin')} → {desired_ground_pin}")
-                self.send_command(f"ground {desired_ground_pin}")
-                sent_any = True
-        
-        if not sent_any:
-            self.log_status("All parameters already match - no updates needed")
-        
-        # Request status after sending to get final state
-        self.send_command("status")
-        
-    def send_all_config(self):
-        """Send all configuration parameters to Arduino."""
-        if not self.serial_port or not self.serial_port.is_open:
-            return
-
-        self.log_status("Sending configuration...")
-        
-        # Flush any pending data
-        self.serial_port.reset_input_buffer()
-        self.serial_port.reset_output_buffer()
-        time.sleep(0.1)
-
-        # Always send ALL parameters with delays to prevent corruption at 2 Mbps
-        # Increased delays to 100ms to reduce corruption
+        all_success = True
         
         # Send resolution
         res_text = self.resolution_combo.currentText()
-        self.send_command(f"res {res_text}")
-        time.sleep(0.1)  # Increased from 50ms
-
+        success, received = self.send_command_and_wait_ack(f"res {res_text}", res_text)
+        if success:
+            self.arduino_status['resolution'] = int(received)
+        else:
+            all_success = False
+        time.sleep(0.05)
+        
         # Send voltage reference
         vref_text = self.vref_combo.currentText()
         vref_map = {
@@ -1328,41 +1234,61 @@ class ADCStreamerGUI(QMainWindow):
             "External 1.25V": "ext"
         }
         vref_cmd = vref_map.get(vref_text, "vdd")
-        self.send_command(f"ref {vref_cmd}")
-        time.sleep(0.1)  # Increased from 50ms
-
-        # Send channels sequence
+        success, received = self.send_command_and_wait_ack(f"ref {vref_cmd}", vref_cmd)
+        if success:
+            self.arduino_status['reference'] = received
+        else:
+            all_success = False
+        time.sleep(0.05)
+        
+        # Send channels
         channels_text = self.channels_input.text().strip()
         if channels_text:
-            self.send_command(f"channels {channels_text}")
-            time.sleep(0.1)  # Increased from 50ms
-
-        # Send ground boolean
-        use_ground = self.use_ground_check.isChecked()
-        self.send_command(f"ground {str(use_ground).lower()}")
-        time.sleep(0.1)  # Increased from 50ms
-
-        # Send ground pin (only if use_ground is true)
-        if use_ground:
-            ground_pin = self.ground_pin_spin.value()
-            self.send_command(f"ground {ground_pin}")
-            time.sleep(0.1)  # Increased from 50ms
-
-        # Send repeat count
-        repeat = self.repeat_spin.value()
-        self.send_command(f"repeat {repeat}")
-        time.sleep(0.1)  # Increased from 50ms
-
-        # Send delay
-        delay = self.delay_spin.value()
-        self.send_command(f"delay {delay}")
-        time.sleep(0.1)  # Increased from 50ms
-
-        # Request status to verify
-        self.send_command("status")
-        time.sleep(0.5)  # Wait longer for full status output
+            success, received = self.send_command_and_wait_ack(f"channels {channels_text}", channels_text)
+            if success and received:
+                self.arduino_status['channels'] = [int(c.strip()) for c in received.split(',')]
+            else:
+                all_success = False
+        time.sleep(0.05)
         
-        self.log_status("Configuration complete")
+        # Send repeat count
+        repeat = str(self.repeat_spin.value())
+        success, received = self.send_command_and_wait_ack(f"repeat {repeat}", repeat)
+        if success:
+            self.arduino_status['repeat'] = int(received)
+        else:
+            all_success = False
+        time.sleep(0.05)
+        
+        # Send delay
+        delay = str(self.delay_spin.value())
+        success, received = self.send_command_and_wait_ack(f"delay {delay}", delay)
+        if success:
+            self.arduino_status['delay_us'] = int(received)
+        else:
+            all_success = False
+        time.sleep(0.05)
+        
+        # Send ground settings
+        use_ground = str(self.use_ground_check.isChecked()).lower()
+        success, received = self.send_command_and_wait_ack(f"ground {use_ground}", use_ground)
+        if success:
+            self.arduino_status['use_ground'] = (received == 'true')
+        else:
+            all_success = False
+        
+        if self.use_ground_check.isChecked():
+            time.sleep(0.05)
+            ground_pin = str(self.ground_pin_spin.value())
+            success, received = self.send_command_and_wait_ack(f"ground {ground_pin}", ground_pin)
+            if success:
+                self.arduino_status['ground_pin'] = int(received)
+            else:
+                all_success = False
+        
+        return all_success
+        
+
 
     def update_channel_list(self):
         """Update the channel selector checkboxes based on configured channels."""

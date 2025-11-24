@@ -90,6 +90,7 @@
 
 const uint8_t  MAX_SEQUENCE_LEN  = 16; // Maximum number of channels in a sequence
 const uint32_t DEFAULT_DELAY_US  = 0;
+const uint32_t BAUD_RATE = 460800; // 460800 work without error
 
 // ---------------------------------------------------------------------
 // Configuration state
@@ -600,7 +601,6 @@ bool handleRun(const String &args) {
   return true;
 }
 
-
 void handleStop() {
   isRunning = false;
   timedRun  = false;
@@ -739,7 +739,7 @@ void handleLine(const String &lineRaw) {
 // ---------------------------------------------------------------------
 
 void setup() {
-  Serial.begin(2000000); // changed from 115200 to speed the usb reading
+  Serial.begin(BAUD_RATE); // changed from 115200 to speed the usb reading
   while (!Serial) {
     ; // wait for USB serial
   }
@@ -754,31 +754,45 @@ void setup() {
   // (No banner here to keep stream clean; use 'status' if needed.)
 }
 
+
 void loop() {
-  // 1) Handle incoming serial lines
+  // 1) Handle incoming serial bytes
   while (Serial.available() > 0) {
     char c = (char)Serial.read();
-    if (c == '\r') continue;
-    if (c == '\n') {
-      handleLine(inputLine);
-      inputLine = "";
-    } else {
-      inputLine += c;
-      if (inputLine.length() > 200) {
+
+    // Ignore CR/LF entirely
+    if (c == '\r' || c == '\n') {
+      continue;
+    }
+
+    if (c == '*') {
+      // '*' means "end of command" IF we already have some text
+      if (inputLine.length() > 0) {
+        // We have a complete command: process it
+        handleLine(inputLine);
         inputLine = "";
-        Serial.println(F("# ERROR: input line too long; cleared."));
       }
+      // If inputLine is empty, this is leading or extra '*':
+      // just ignore it. This gives you redundancy (***).
+      continue;
+    }
+
+    // Any non-'*' character is part of the command text
+    inputLine += c;
+
+    // Optional safety: prevent runaway growth
+    if (inputLine.length() > 512) {
+      inputLine = "";
+      Serial.println(F("# ERROR: input line too long; cleared."));
     }
   }
 
-  // 2) Run sweeps if requested
+  // 2) Run sweeps if requested (unchanged)
   if (isRunning) {
     doOneSweep();
-
-    // NEW: delay between *sweeps* (if configured)
-    if (interSweepDelayUs > 0) {
+    if (isRunning && interSweepDelayUs > 0) {
       delayMicroseconds(interSweepDelayUs);
     }
-  
   }
 }
+

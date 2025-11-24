@@ -48,6 +48,15 @@ import serial.tools.list_ports
 import pyqtgraph as pg
 from pyqtgraph.exporters import ImageExporter
 
+# Import configuration constants
+from config_constants import (
+    BAUD_RATE, SERIAL_TIMEOUT, COMMAND_TERMINATOR,
+    CONFIG_RETRY_ATTEMPTS, CONFIG_COMMAND_TIMEOUT, CONFIG_RETRY_DELAY, INTER_COMMAND_DELAY,
+    ARDUINO_RESET_DELAY, PLOT_UPDATE_DEBOUNCE, CONFIG_CHECK_INTERVAL, PLOT_UPDATE_FREQUENCY,
+    WINDOW_WIDTH, WINDOW_HEIGHT, DEFAULT_WINDOW_SIZE, MAX_PLOT_COLUMNS,
+    PLOT_EXPORT_WIDTH, PLOT_COLORS
+)
+
 
 class SerialReaderThread(QThread):
     """Background thread for reading serial data without blocking the GUI."""
@@ -167,7 +176,6 @@ class ADCStreamerGUI(QMainWindow):
         # Serial connection
         self.serial_port: Optional[serial.Serial] = None
         self.serial_thread: Optional[SerialReaderThread] = None
-        self.current_baud_rate: int = 921600  # Default baud rate
         
         # Configuration completion tracking
         self.config_completion_status: Optional[bool] = None  # None=pending, True=success, False=failed
@@ -237,7 +245,7 @@ class ADCStreamerGUI(QMainWindow):
         # Timer to check configuration completion
         self.config_check_timer = QTimer()
         self.config_check_timer.timeout.connect(self.check_config_completion)
-        self.config_check_timer.setInterval(100)  # Check every 100ms
+        self.config_check_timer.setInterval(CONFIG_CHECK_INTERVAL)  # Check interval from constants
 
         # Update port list on startup
         self.update_port_list()
@@ -245,7 +253,7 @@ class ADCStreamerGUI(QMainWindow):
     def init_ui(self):
         """Initialize the user interface."""
         self.setWindowTitle("ADC Streamer - Arduino Control & Visualization")
-        self.setGeometry(100, 100, 1200, 800)
+        self.setGeometry(100, 100, WINDOW_WIDTH, WINDOW_HEIGHT)
 
         # Main widget and layout
         main_widget = QWidget()
@@ -299,19 +307,11 @@ class ADCStreamerGUI(QMainWindow):
         self.refresh_ports_btn = QPushButton("Refresh")
         self.refresh_ports_btn.clicked.connect(self.update_port_list)
         layout.addWidget(self.refresh_ports_btn, 0, 2)
-        
-        # Baud rate selection
-        layout.addWidget(QLabel("Baud Rate:"), 1, 0)
-        self.baud_combo = QComboBox()
-        self.baud_combo.addItems(["115200", "230400", "460800", "921600", "1000000", "1500000", "2000000"])
-        self.baud_combo.setCurrentText("921600")  # Default to 921600
-        self.baud_combo.currentTextChanged.connect(self.on_baud_changed)
-        layout.addWidget(self.baud_combo, 1, 1, 1, 2)
 
         # Connect/Disconnect button
         self.connect_btn = QPushButton("Connect")
         self.connect_btn.clicked.connect(self.toggle_connection)
-        layout.addWidget(self.connect_btn, 2, 0, 1, 3)
+        layout.addWidget(self.connect_btn, 1, 0, 1, 3)
 
         group.setLayout(layout)
         return group
@@ -613,7 +613,7 @@ class ADCStreamerGUI(QMainWindow):
         window_layout.addWidget(QLabel("Window Size (sweeps):"))
         self.window_size_spin = QSpinBox()
         self.window_size_spin.setRange(10, 10000)
-        self.window_size_spin.setValue(1000)
+        self.window_size_spin.setValue(DEFAULT_WINDOW_SIZE)
         self.window_size_spin.setToolTip("Number of sweeps to display during capture (scrolling mode)")
         window_layout.addWidget(self.window_size_spin)
 
@@ -720,13 +720,13 @@ class ADCStreamerGUI(QMainWindow):
         try:
             self.serial_port = serial.Serial(
                 port=port_name,
-                baudrate=self.current_baud_rate,
-                timeout=1,
+                baudrate=BAUD_RATE,
+                timeout=SERIAL_TIMEOUT,
                 rtscts=True  # Enable hardware flow control
             )
             
             # Wait for Arduino to reset (DTR/RTS can cause reset on some boards)
-            time.sleep(2)
+            time.sleep(ARDUINO_RESET_DELAY)
             
             # Clear any startup messages or garbage data
             self.serial_port.reset_input_buffer()
@@ -799,14 +799,14 @@ class ADCStreamerGUI(QMainWindow):
         """Send a command to the Arduino (fire-and-forget for runtime commands)."""
         if self.serial_port and self.serial_port.is_open:
             try:
-                self.serial_port.write(f"{command}***".encode('utf-8'))
+                self.serial_port.write(f"{command}{COMMAND_TERMINATOR}".encode('utf-8'))
                 self.serial_port.flush()
             except Exception as e:
                 self.log_status(f"ERROR: Failed to send command - {e}")
         else:
             self.log_status("ERROR: Not connected to serial port")
 
-    def send_command_and_wait_ack(self, command: str, expected_value: str = None, timeout: float = 1.0, max_retries: int = 3) -> tuple:
+    def send_command_and_wait_ack(self, command: str, expected_value: str = None, timeout: float = CONFIG_COMMAND_TIMEOUT, max_retries: int = CONFIG_RETRY_ATTEMPTS) -> tuple:
         """Send a command and wait for #OK acknowledgment with echoed argument verification.
         
         Returns:
@@ -820,12 +820,12 @@ class ADCStreamerGUI(QMainWindow):
             try:
                 # Flush buffers before retry
                 if attempt > 0:
-                    time.sleep(0.05)
+                    time.sleep(CONFIG_RETRY_DELAY)
                     self.serial_port.reset_input_buffer()
                     self.serial_port.reset_output_buffer()
                 
                 # Send the command
-                self.serial_port.write(f"{command}***".encode('utf-8'))
+                self.serial_port.write(f"{command}{COMMAND_TERMINATOR}".encode('utf-8'))
                 self.serial_port.flush()
                 
                 # Wait for #OK or #NOT_OK with echoed value
@@ -909,8 +909,8 @@ class ADCStreamerGUI(QMainWindow):
                 self.raw_data.append(samples)
                 self.sweep_count += 1
 
-                # Update plot periodically (every 10 sweeps for performance)
-                if self.sweep_count % 10 == 0:
+                # Update plot periodically for performance
+                if self.sweep_count % PLOT_UPDATE_FREQUENCY == 0:
                     self.update_plot()
                     window_size = self.window_size_spin.value()
                     displayed_sweeps = min(len(self.raw_data), window_size)
@@ -1008,14 +1008,6 @@ class ADCStreamerGUI(QMainWindow):
         self.config_is_valid = False
         self.update_start_button_state()
 
-    def on_baud_changed(self, text: str):
-        """Handle baud rate change."""
-        try:
-            self.current_baud_rate = int(text)
-            self.log_status(f"Baud rate will be {self.current_baud_rate} on next connection")
-        except:
-            pass
-    
     def on_vref_changed(self, text: str):
         """Handle voltage reference change."""
         vref_map = {
@@ -1223,7 +1215,7 @@ class ADCStreamerGUI(QMainWindow):
             self.arduino_status['resolution'] = int(received)
         else:
             all_success = False
-        time.sleep(0.05)
+        time.sleep(INTER_COMMAND_DELAY)
         
         # Send voltage reference
         vref_text = self.vref_combo.currentText()
@@ -1312,15 +1304,14 @@ class ADCStreamerGUI(QMainWindow):
             if ch not in unique_channels:
                 unique_channels.append(ch)
 
-        # Create checkboxes in a compact grid (6 columns)
-        max_columns = 6
+        # Create checkboxes in a compact grid
         for idx, ch in enumerate(unique_channels):
             checkbox = QCheckBox(str(ch))
             checkbox.setChecked(True)  # Select all by default
             checkbox.stateChanged.connect(self.trigger_plot_update)
 
-            row = idx // max_columns
-            col = idx % max_columns
+            row = idx // MAX_PLOT_COLUMNS
+            col = idx % MAX_PLOT_COLUMNS
             self.channel_checkboxes_layout.addWidget(checkbox, row, col)
 
             self.channel_checkboxes[ch] = checkbox
@@ -1337,9 +1328,9 @@ class ADCStreamerGUI(QMainWindow):
 
     def trigger_plot_update(self):
         """Trigger a debounced plot update to avoid lag."""
-        # Restart timer (200ms delay)
+        # Restart timer
         self.plot_update_timer.stop()
-        self.plot_update_timer.start(200)
+        self.plot_update_timer.start(PLOT_UPDATE_DEBOUNCE)
 
     def reset_graph_view(self):
         """Reset the plot view to window size (X: 0 to window size, Y: according to settings)."""
@@ -1670,28 +1661,12 @@ class ADCStreamerGUI(QMainWindow):
                 if ch not in unique_channels:
                     unique_channels.append(ch)
 
-            # Prepare colors for each channel (darker colors for white background)
-            colors = [
-                (255, 0, 0),      # Red
-                (34, 139, 34),    # Forest green (replaces bright green)
-                (0, 0, 255),      # Blue
-                (255, 140, 0),    # Dark orange (replaces yellow)
-                (148, 0, 211),    # Dark violet (replaces magenta)
-                (0, 139, 139),    # Dark cyan (replaces cyan)
-                (128, 0, 0),      # Dark red/maroon
-                (0, 100, 0),      # Dark green
-                (0, 0, 128),      # Navy
-                (184, 134, 11),   # Dark goldenrod (replaces olive)
-                (128, 0, 128),    # Purple
-                (0, 128, 128)     # Teal
-            ]
-
             # Extract data for each channel
             for ch_idx, channel in enumerate(unique_channels):
                 if channel not in selected_channels:
                     continue
 
-                color = colors[ch_idx % len(colors)]
+                color = PLOT_COLORS[ch_idx % len(PLOT_COLORS)]
 
                 # Find all positions of this channel in the sequence
                 positions = [i for i, c in enumerate(channels) if c == channel]
@@ -1944,7 +1919,7 @@ class ADCStreamerGUI(QMainWindow):
         try:
             # Export plot as image
             exporter = ImageExporter(self.plot_widget.plotItem)
-            exporter.parameters()['width'] = 1920  # High resolution
+            exporter.parameters()['width'] = PLOT_EXPORT_WIDTH  # High resolution
             exporter.export(str(image_path))
 
             self.log_status(f"Plot image saved to {image_path}")

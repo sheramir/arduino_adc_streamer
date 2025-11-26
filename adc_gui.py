@@ -167,6 +167,48 @@ class SerialReaderThread(QThread):
         self.running = False
 
 
+class ForceReaderThread(QThread):
+    """Background thread for reading force sensor CSV data."""
+    force_data_received = pyqtSignal(float, float)  # x_force, z_force
+    error_occurred = pyqtSignal(str)
+
+    def __init__(self, serial_port):
+        super().__init__()
+        self.serial_port = serial_port
+        self.running = True
+
+    def run(self):
+        """Continuously read CSV data from force sensor serial port."""
+        while self.running:
+            try:
+                if self.serial_port and self.serial_port.is_open:
+                    if self.serial_port.in_waiting > 0:
+                        line = self.serial_port.readline().decode('utf-8', errors='ignore').strip()
+                        
+                        if line:
+                            # Parse CSV format: x,z
+                            try:
+                                parts = line.split(',')
+                                if len(parts) >= 2:
+                                    x_force = float(parts[0].strip())
+                                    z_force = float(parts[1].strip())
+                                    self.force_data_received.emit(x_force, z_force)
+                            except ValueError:
+                                pass  # Skip invalid lines
+                else:
+                    break
+
+                self.msleep(10)  # Small delay to prevent CPU spinning
+
+            except Exception as e:
+                self.error_occurred.emit(f"Force sensor read error: {e}")
+                break
+
+    def stop(self):
+        """Stop the thread."""
+        self.running = False
+
+
 class ADCStreamerGUI(QMainWindow):
     """Main GUI application for ADC streaming and visualization."""
 
@@ -184,6 +226,14 @@ class ADCStreamerGUI(QMainWindow):
         self.raw_data: List[List[int]] = []  # List of sweeps (each sweep is a list of values)
         self.sweep_count = 0
         self.is_capturing = False
+        
+        # Force measurement data storage
+        self.force_serial_port: Optional[serial.Serial] = None
+        self.force_serial_thread: Optional[QThread] = None
+        self.force_data: List[tuple] = []  # List of (timestamp, x_force, z_force) tuples
+        self.force_start_time: Optional[float] = None
+        self.force_calibration_offset = {'x': 0.0, 'z': 0.0}  # Calibration offsets
+        self.force_calibrating = False  # Flag for calibration in progress
 
         # Timing measurement
         self.timing_data = {
@@ -229,11 +279,14 @@ class ADCStreamerGUI(QMainWindow):
 
         # Channel checkboxes for visualization
         self.channel_checkboxes: Dict[int, QCheckBox] = {}
+        self.force_x_checkbox: Optional[QCheckBox] = None
+        self.force_z_checkbox: Optional[QCheckBox] = None
 
         # Debounce timer for plot updates
         self.plot_update_timer = QTimer()
         self.plot_update_timer.setSingleShot(True)
         self.plot_update_timer.timeout.connect(self.update_plot)
+        self.plot_update_timer.timeout.connect(self.update_force_plot)
 
         # Flag to prevent concurrent plot updates
         self.is_updating_plot = False
@@ -298,8 +351,8 @@ class ADCStreamerGUI(QMainWindow):
         group = QGroupBox("Serial Connection")
         layout = QGridLayout()
 
-        # Port selection
-        layout.addWidget(QLabel("Port:"), 0, 0)
+        # ADC Port selection
+        layout.addWidget(QLabel("ADC Port:"), 0, 0)
         self.port_combo = QComboBox()
         layout.addWidget(self.port_combo, 0, 1)
 
@@ -307,10 +360,20 @@ class ADCStreamerGUI(QMainWindow):
         self.refresh_ports_btn.clicked.connect(self.update_port_list)
         layout.addWidget(self.refresh_ports_btn, 0, 2)
 
-        # Connect/Disconnect button
-        self.connect_btn = QPushButton("Connect")
+        # Connect/Disconnect button for ADC
+        self.connect_btn = QPushButton("Connect ADC")
         self.connect_btn.clicked.connect(self.toggle_connection)
         layout.addWidget(self.connect_btn, 1, 0, 1, 3)
+        
+        # Force sensor port selection
+        layout.addWidget(QLabel("Force Port:"), 2, 0)
+        self.force_port_combo = QComboBox()
+        layout.addWidget(self.force_port_combo, 2, 1, 1, 2)
+        
+        # Connect/Disconnect button for force sensors
+        self.force_connect_btn = QPushButton("Connect Force")
+        self.force_connect_btn.clicked.connect(self.toggle_force_connection)
+        layout.addWidget(self.force_connect_btn, 3, 0, 1, 3)
 
         group.setLayout(layout)
         return group
@@ -538,22 +601,42 @@ class ADCStreamerGUI(QMainWindow):
         group = QGroupBox("Real-time Data Visualization")
         layout = QVBoxLayout()
 
-        # Create plot widget
+        # Create main plot widget with dual Y-axes (ADC on left, Force on right)
         self.plot_widget = pg.PlotWidget()
         self.plot_widget.setBackground('w')
         self.plot_widget.setLabel('left', 'ADC Value', units='counts')
         self.plot_widget.setLabel('bottom', 'Sample Index')
         self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
-        self.plot_widget.addLegend()
+        
+        # Create a second ViewBox for force data (right Y-axis)
+        self.force_viewbox = pg.ViewBox()
+        self.plot_widget.scene().addItem(self.force_viewbox)
+        self.plot_widget.getAxis('right').linkToView(self.force_viewbox)
+        self.force_viewbox.setXLink(self.plot_widget)  # Link X-axis
+        self.plot_widget.setLabel('right', 'Force (Raw)', units='')
+        self.plot_widget.showAxis('right')
+        
+        # Add legends
+        self.adc_legend = self.plot_widget.addLegend(offset=(10, 10))
+        self.force_legend = pg.LegendItem(offset=(10, 100))
+        self.force_legend.setParentItem(self.plot_widget.graphicsItem())
+        
+        # Connect view resize to update force viewbox geometry
+        self.plot_widget.getViewBox().sigResized.connect(self.update_force_viewbox)
 
         layout.addWidget(self.plot_widget)
 
-        # Info label
-        self.plot_info_label = QLabel("Sweeps: 0 | Total Samples: 0")
+        # Combined info label
+        self.plot_info_label = QLabel("ADC - Sweeps: 0 | Samples: 0  |  Force: 0 samples")
         layout.addWidget(self.plot_info_label)
 
         group.setLayout(layout)
         return group
+    
+    def update_force_viewbox(self):
+        """Update force viewbox geometry to match main plot viewbox."""
+        if hasattr(self, 'force_viewbox'):
+            self.force_viewbox.setGeometry(self.plot_widget.getViewBox().sceneBoundingRect())
 
     def create_visualization_controls(self) -> QGroupBox:
         """Create visualization control section."""
@@ -596,34 +679,47 @@ class ADCStreamerGUI(QMainWindow):
         channel_group.setLayout(channel_main_layout)
         main_layout.addWidget(channel_group)
 
-        # Scrolling window control
-        window_group = QGroupBox("Display Window")
-        window_layout = QHBoxLayout()
+        # Consolidated Display Settings
+        display_settings_group = QGroupBox("Display Settings")
+        display_settings_layout = QGridLayout()
 
-        window_layout.addWidget(QLabel("Window Size (sweeps):"))
+        # Row 0: Y-Axis Range and Units
+        display_settings_layout.addWidget(QLabel("Y Range:"), 0, 0)
+        self.yaxis_range_combo = QComboBox()
+        self.yaxis_range_combo.addItems(["Adaptive", "Full-Scale"])
+        self.yaxis_range_combo.setToolTip("Adaptive: Auto-scale to visible data | Full-Scale: 0 to 2^ResolutionBits")
+        self.yaxis_range_combo.currentIndexChanged.connect(self.on_yaxis_range_changed)
+        display_settings_layout.addWidget(self.yaxis_range_combo, 0, 1)
+
+        display_settings_layout.addWidget(QLabel("Y Units:"), 0, 2)
+        self.yaxis_units_combo = QComboBox()
+        self.yaxis_units_combo.addItems(["Values", "Voltage"])
+        self.yaxis_units_combo.setToolTip("Values: Raw ADC samples | Voltage: Convert using Vref and resolution")
+        self.yaxis_units_combo.currentIndexChanged.connect(self.on_yaxis_units_changed)
+        display_settings_layout.addWidget(self.yaxis_units_combo, 0, 3)
+
+        # Row 1: Window controls
+        display_settings_layout.addWidget(QLabel("Window Size:"), 1, 0)
         self.window_size_spin = QSpinBox()
         self.window_size_spin.setRange(10, 10000)
         self.window_size_spin.setValue(DEFAULT_WINDOW_SIZE)
         self.window_size_spin.setToolTip("Number of sweeps to display during capture (scrolling mode)")
-        window_layout.addWidget(self.window_size_spin)
+        display_settings_layout.addWidget(self.window_size_spin, 1, 1)
 
-        # Reset graph button
         self.reset_graph_btn = QPushButton("Reset View")
         self.reset_graph_btn.clicked.connect(self.reset_graph_view)
         self.reset_graph_btn.setToolTip("Reset X-axis to show window size")
         self.reset_graph_btn.setMaximumWidth(100)
-        window_layout.addWidget(self.reset_graph_btn)
+        display_settings_layout.addWidget(self.reset_graph_btn, 1, 2)
 
-        # Full view button
         self.full_view_btn = QPushButton("Full View")
         self.full_view_btn.clicked.connect(self.full_graph_view)
         self.full_view_btn.setToolTip("Show all data from 0 to last sample")
         self.full_view_btn.setMaximumWidth(100)
-        window_layout.addWidget(self.full_view_btn)
+        display_settings_layout.addWidget(self.full_view_btn, 1, 3)
 
-        window_layout.addStretch()
-        window_group.setLayout(window_layout)
-        main_layout.addWidget(window_group)
+        display_settings_group.setLayout(display_settings_layout)
+        main_layout.addWidget(display_settings_group)
 
         # Repeats visualization mode (horizontal layout for compactness)
         repeats_group = QGroupBox("Display Mode")
@@ -643,38 +739,7 @@ class ADCStreamerGUI(QMainWindow):
         repeats_group.setLayout(repeats_layout)
         main_layout.addWidget(repeats_group)
 
-        # Y-Axis Control (combined scaling and units)
-        yaxis_group = QGroupBox("Y-Axis")
-        yaxis_layout = QGridLayout()
 
-        # Scaling mode (row 0)
-        yaxis_layout.addWidget(QLabel("Range:"), 0, 0)
-        self.adaptive_scale_radio = QRadioButton("Adaptive")
-        self.adaptive_scale_radio.setChecked(True)
-        self.adaptive_scale_radio.setToolTip("Auto-scale Y-axis to visible data range")
-        self.adaptive_scale_radio.toggled.connect(self.trigger_plot_update)
-        yaxis_layout.addWidget(self.adaptive_scale_radio, 0, 1)
-
-        self.fullscale_radio = QRadioButton("Full-Scale")
-        self.fullscale_radio.setToolTip("Fixed Y-axis: 0 to 2^ResolutionBits")
-        self.fullscale_radio.toggled.connect(self.trigger_plot_update)
-        yaxis_layout.addWidget(self.fullscale_radio, 0, 2)
-
-        # Units mode (row 1)
-        yaxis_layout.addWidget(QLabel("Units:"), 1, 0)
-        self.raw_units_radio = QRadioButton("Values")
-        self.raw_units_radio.setChecked(True)
-        self.raw_units_radio.setToolTip("Display raw ADC values (samples)")
-        self.raw_units_radio.toggled.connect(self.trigger_plot_update)
-        yaxis_layout.addWidget(self.raw_units_radio, 1, 1)
-
-        self.voltage_units_radio = QRadioButton("Voltage")
-        self.voltage_units_radio.setToolTip("Convert to voltage using Vref and resolution")
-        self.voltage_units_radio.toggled.connect(self.trigger_plot_update)
-        yaxis_layout.addWidget(self.voltage_units_radio, 1, 2)
-
-        yaxis_group.setLayout(yaxis_layout)
-        main_layout.addWidget(yaxis_group)
 
         group.setLayout(main_layout)
         return group
@@ -684,12 +749,16 @@ class ADCStreamerGUI(QMainWindow):
     def update_port_list(self):
         """Update the list of available serial ports."""
         self.port_combo.clear()
+        self.force_port_combo.clear()
         ports = serial.tools.list_ports.comports()
         for port in ports:
-            self.port_combo.addItem(f"{port.device} - {port.description}")
+            port_text = f"{port.device} - {port.description}"
+            self.port_combo.addItem(port_text)
+            self.force_port_combo.addItem(port_text)
 
         if self.port_combo.count() == 0:
             self.port_combo.addItem("No ports found")
+            self.force_port_combo.addItem("No ports found")
 
     def toggle_connection(self):
         """Connect or disconnect from the serial port."""
@@ -783,6 +852,80 @@ class ADCStreamerGUI(QMainWindow):
         # Re-enable port selection
         self.port_combo.setEnabled(True)
         self.refresh_ports_btn.setEnabled(True)
+
+    def toggle_force_connection(self):
+        """Connect or disconnect from the force sensor serial port."""
+        if self.force_serial_port is None or not self.force_serial_port.is_open:
+            self.connect_force_serial()
+        else:
+            self.disconnect_force_serial()
+
+    def connect_force_serial(self):
+        """Connect to the force sensor serial port."""
+        if self.force_port_combo.currentText() == "No ports found":
+            self.log_status("ERROR: No force sensor ports available")
+            return
+
+        port_text = self.force_port_combo.currentText()
+        port_name = port_text.split(" - ")[0]
+
+        try:
+            self.force_serial_port = serial.Serial(
+                port=port_name,
+                baudrate=115200,  # Force sensor baud rate
+                timeout=1.0
+            )
+            
+            # Clear any startup messages
+            time.sleep(0.5)
+            self.force_serial_port.reset_input_buffer()
+
+            # Start force serial reader thread
+            self.force_serial_thread = ForceReaderThread(self.force_serial_port)
+            self.force_serial_thread.force_data_received.connect(self.process_force_data)
+            self.force_serial_thread.error_occurred.connect(self.log_status)
+            self.force_serial_thread.start()
+
+            self.log_status(f"Connected to force sensor on {port_name} at 115200 baud")
+            self.log_status("Calibrating force sensors (collecting 10 samples)...")
+            
+            # Start calibration
+            self.calibrate_force_sensors()
+            
+            self.force_connect_btn.setText("Disconnect Force")
+            
+            # Disable port selection during connection
+            self.force_port_combo.setEnabled(False)
+            
+            # Update channel list to add force checkboxes
+            if self.config['channels']:  # Only if ADC is already configured
+                self.update_channel_list()
+
+        except Exception as e:
+            self.log_status(f"ERROR: Failed to connect to force sensor - {e}")
+            QMessageBox.critical(self, "Force Connection Error", f"Failed to connect:\n{e}")
+
+    def disconnect_force_serial(self):
+        """Disconnect from the force sensor serial port."""
+        if self.force_serial_thread:
+            self.force_serial_thread.stop()
+            self.force_serial_thread.wait()
+            self.force_serial_thread = None
+
+        if self.force_serial_port and self.force_serial_port.is_open:
+            self.force_serial_port.close()
+
+        self.force_serial_port = None
+        
+        self.log_status("Force sensor disconnected")
+        self.force_connect_btn.setText("Connect Force")
+        
+        # Re-enable port selection
+        self.force_port_combo.setEnabled(True)
+        
+        # Update channel list to remove force checkboxes
+        if self.config['channels']:  # Only if ADC is configured
+            self.update_channel_list()
 
     def send_command(self, command: str):
         """Send a command to the Arduino (fire-and-forget for runtime commands)."""
@@ -895,6 +1038,7 @@ class ADCStreamerGUI(QMainWindow):
                 # Track first sweep time for rate calculation
                 if self.sweep_count == 0:
                     self.capture_start_time = time.time()
+                    self.force_start_time = self.capture_start_time  # Sync force timing
                 
                 self.raw_data.append(samples)
                 self.sweep_count += 1
@@ -906,12 +1050,176 @@ class ADCStreamerGUI(QMainWindow):
                     displayed_sweeps = min(len(self.raw_data), window_size)
                     # Calculate total samples correctly
                     total_samples = sum(len(sweep) for sweep in self.raw_data)
+                    force_samples = len(self.force_data)
                     self.plot_info_label.setText(
-                        f"Sweeps: {self.sweep_count} (showing last {displayed_sweeps}) | Total Samples: {total_samples}"
+                        f"ADC - Sweeps: {self.sweep_count} (showing last {displayed_sweeps}) | Samples: {total_samples}  |  Force: {force_samples} samples"
                     )
+                    self.update_force_plot()
 
             except Exception as e:
                 self.log_status(f"ERROR: Failed to process binary sweep - {e}")
+
+    def calibrate_force_sensors(self):
+        """Calibrate force sensors by collecting baseline samples without load."""
+        self.force_calibrating = True
+        self.calibration_samples = {'x': [], 'z': []}
+        # Calibration will be completed in process_force_data after 10 samples
+
+    def process_force_data(self, x_force: float, z_force: float):
+        """Process incoming force measurement data."""
+        # Handle calibration
+        if self.force_calibrating:
+            self.calibration_samples['x'].append(x_force)
+            self.calibration_samples['z'].append(z_force)
+            
+            if len(self.calibration_samples['x']) >= 10:
+                # Calculate average offsets
+                self.force_calibration_offset['x'] = sum(self.calibration_samples['x']) / len(self.calibration_samples['x'])
+                self.force_calibration_offset['z'] = sum(self.calibration_samples['z']) / len(self.calibration_samples['z'])
+                
+                self.force_calibrating = False
+                self.log_status(f"Force calibration complete: X offset={self.force_calibration_offset['x']:.1f}, Z offset={self.force_calibration_offset['z']:.1f}")
+                self.log_status("Force sensors ready (calibrated to zero)")
+            return
+        
+        # Apply calibration offsets
+        x_calibrated = x_force - self.force_calibration_offset['x']
+        z_calibrated = z_force - self.force_calibration_offset['z']
+        
+        if self.is_capturing and self.force_start_time is not None:
+            timestamp = time.time() - self.force_start_time
+            self.force_data.append((timestamp, x_calibrated, z_calibrated))
+            
+            # Update info label
+            if len(self.force_data) % 10 == 0:  # Update every 10 samples
+                total_samples = sum(len(sweep) for sweep in self.raw_data) if self.raw_data else 0
+                self.plot_info_label.setText(
+                    f"ADC - Sweeps: {self.sweep_count} | Samples: {total_samples}  |  Force: {len(self.force_data)} samples"
+                )
+
+    def update_force_plot(self):
+        """Update the force measurement plot on the right Y-axis."""
+        # Clear force plots from the force viewbox
+        for item in self.force_viewbox.addedItems[:]:
+            self.force_viewbox.removeItem(item)
+        
+        # Clear force legend
+        self.force_legend.clear()
+        
+        # Check if we should show force data
+        show_x_force = self.force_x_checkbox and self.force_x_checkbox.isChecked()
+        show_z_force = self.force_z_checkbox and self.force_z_checkbox.isChecked()
+        
+        if not self.force_data or not self.raw_data or (not show_x_force and not show_z_force):
+            return
+        
+        try:
+            # Calculate total ADC samples per channel to get the X-axis scale
+            channels = self.config['channels']
+            repeat_count = self.config['repeat']
+            
+            if not channels:
+                return
+            
+            # During capture, use window size; otherwise use all data
+            if self.is_capturing:
+                window_size = self.window_size_spin.value()
+                data_to_show = self.raw_data[-window_size:] if len(self.raw_data) > window_size else self.raw_data
+            else:
+                data_to_show = self.raw_data
+            
+            # Calculate total samples per channel for X-axis scaling
+            first_channel = channels[0]
+            positions = [i for i, c in enumerate(channels) if c == first_channel]
+            
+            total_adc_samples = 0
+            for sweep in data_to_show:
+                for pos in positions:
+                    start_idx = pos * repeat_count
+                    end_idx = start_idx + repeat_count
+                    if end_idx <= len(sweep):
+                        total_adc_samples += (end_idx - start_idx)
+            
+            if total_adc_samples == 0:
+                return
+            
+            # Get the capture duration to map force timestamps
+            if self.is_capturing and self.capture_start_time:
+                current_duration = time.time() - self.capture_start_time
+            elif self.capture_end_time and self.capture_start_time:
+                current_duration = self.capture_end_time - self.capture_start_time
+            else:
+                current_duration = max([d[0] for d in self.force_data]) if self.force_data else 1.0
+            
+            # During capture, only show force data within the time window
+            if self.is_capturing:
+                # Calculate time range for current window
+                window_duration = current_duration * (len(data_to_show) / len(self.raw_data)) if len(self.raw_data) > 0 else current_duration
+                min_time = max(0, current_duration - window_duration)
+                force_data_to_show = [(t, x, z) for t, x, z in self.force_data if t >= min_time]
+            else:
+                force_data_to_show = self.force_data
+            
+            if not force_data_to_show:
+                return
+            
+            # Get force data
+            timestamps = [d[0] for d in force_data_to_show]
+            x_forces = [d[1] for d in force_data_to_show]
+            z_forces = [d[2] for d in force_data_to_show]
+            
+            # Map force timestamps to ADC sample indices
+            # Normalize timestamps to 0-1 range, then scale to total_adc_samples
+            if self.is_capturing:
+                # During capture: map relative to window time range
+                if timestamps:
+                    min_timestamp = min(timestamps)
+                    max_timestamp = max(timestamps)
+                    time_range = max_timestamp - min_timestamp if max_timestamp > min_timestamp else 1.0
+                    force_x_indices = [((t - min_timestamp) / time_range) * total_adc_samples for t in timestamps]
+                else:
+                    force_x_indices = []
+            else:
+                # After capture: map to full data range using actual time
+                # Calculate total samples from ALL data (not windowed)
+                total_all_adc_samples = 0
+                for sweep in self.raw_data:
+                    for pos in positions:
+                        start_idx = pos * repeat_count
+                        end_idx = start_idx + repeat_count
+                        if end_idx <= len(sweep):
+                            total_all_adc_samples += (end_idx - start_idx)
+                
+                max_force_time = max(timestamps) if timestamps else 1.0
+                if max_force_time > 0:
+                    force_x_indices = [(t / max_force_time) * total_all_adc_samples for t in timestamps]
+                else:
+                    force_x_indices = [0] * len(timestamps)
+            
+            # Plot X force (red) if checkbox is checked
+            if show_x_force and force_x_indices:
+                x_force_curve = pg.PlotCurveItem(force_x_indices, x_forces, pen=pg.mkPen(color=(255, 0, 0), width=2))
+                self.force_viewbox.addItem(x_force_curve)
+                self.force_legend.addItem(x_force_curve, 'X Force')
+            
+            # Plot Z force (blue) if checkbox is checked
+            if show_z_force and force_x_indices:
+                z_force_curve = pg.PlotCurveItem(force_x_indices, z_forces, pen=pg.mkPen(color=(0, 0, 255), width=2))
+                self.force_viewbox.addItem(z_force_curve)
+                self.force_legend.addItem(z_force_curve, 'Z Force')
+            
+            # Update viewbox geometry to match main plot
+            self.update_force_viewbox()
+            
+            # Set X-axis range to match ADC data (0 to total_adc_samples)
+            self.force_viewbox.setXRange(0, total_adc_samples, padding=0)
+            self.force_viewbox.disableAutoRange(axis=pg.ViewBox.XAxis)
+            
+            # Enable auto-range for Y-axis only
+            self.force_viewbox.enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
+            
+        except Exception as e:
+            self.log_status(f"ERROR: Failed to update force plot - {e}")
 
     def parse_status_line(self, line: str):
         """Parse a single line from Arduino status output."""
@@ -1071,6 +1379,14 @@ class ADCStreamerGUI(QMainWindow):
         self.config_is_valid = False
         self.update_start_button_state()
 
+    def on_yaxis_range_changed(self, text: str):
+        """Handle Y-axis range change."""
+        self.trigger_plot_update()
+
+    def on_yaxis_units_changed(self, text: str):
+        """Handle Y-axis units change."""
+        self.trigger_plot_update()
+
     def verify_configuration(self) -> bool:
         """Verify that Arduino status matches expected configuration."""
         # Check if we have valid status data
@@ -1145,11 +1461,15 @@ class ADCStreamerGUI(QMainWindow):
                 
                 max_attempts = 3
                 for attempt in range(max_attempts):
+                    self.log_status(f"Configuration attempt {attempt + 1}/{max_attempts}")
                     success = self.send_config_with_verification()
+                    self.log_status(f"send_config_with_verification returned: {success}")
                     
                     if success:
                         # Verify final configuration
-                        if self.verify_configuration():
+                        verified = self.verify_configuration()
+                        self.log_status(f"verify_configuration returned: {verified}")
+                        if verified:
                             success_flag = True
                             break
                     
@@ -1308,16 +1628,44 @@ class ADCStreamerGUI(QMainWindow):
             self.channel_checkboxes_layout.addWidget(checkbox, row, col)
 
             self.channel_checkboxes[ch] = checkbox
+        
+        # Add force sensor checkboxes if force data is available
+        if self.force_serial_port and self.force_serial_port.is_open:
+            # X Force checkbox
+            self.force_x_checkbox = QCheckBox("X Force")
+            self.force_x_checkbox.setChecked(True)
+            self.force_x_checkbox.setStyleSheet("QCheckBox { color: red; }")
+            self.force_x_checkbox.stateChanged.connect(self.trigger_plot_update)
+            row = len(unique_channels) // MAX_PLOT_COLUMNS
+            col = len(unique_channels) % MAX_PLOT_COLUMNS
+            self.channel_checkboxes_layout.addWidget(self.force_x_checkbox, row, col)
+            
+            # Z Force checkbox
+            self.force_z_checkbox = QCheckBox("Z Force")
+            self.force_z_checkbox.setChecked(True)
+            self.force_z_checkbox.setStyleSheet("QCheckBox { color: blue; }")
+            self.force_z_checkbox.stateChanged.connect(self.trigger_plot_update)
+            row = (len(unique_channels) + 1) // MAX_PLOT_COLUMNS
+            col = (len(unique_channels) + 1) % MAX_PLOT_COLUMNS
+            self.channel_checkboxes_layout.addWidget(self.force_z_checkbox, row, col)
 
     def select_all_channels(self):
         """Select all channel checkboxes."""
         for checkbox in self.channel_checkboxes.values():
             checkbox.setChecked(True)
+        if self.force_x_checkbox:
+            self.force_x_checkbox.setChecked(True)
+        if self.force_z_checkbox:
+            self.force_z_checkbox.setChecked(True)
 
     def deselect_all_channels(self):
         """Deselect all channel checkboxes."""
         for checkbox in self.channel_checkboxes.values():
             checkbox.setChecked(False)
+        if self.force_x_checkbox:
+            self.force_x_checkbox.setChecked(False)
+        if self.force_z_checkbox:
+            self.force_z_checkbox.setChecked(False)
 
     def trigger_plot_update(self):
         """Trigger a debounced plot update to avoid lag."""
@@ -1364,6 +1712,9 @@ class ADCStreamerGUI(QMainWindow):
             # Set Y-axis according to current mode
             self.apply_y_axis_range()
             
+            # Also update force plot to match
+            self.update_force_plot()
+            
             self.log_status(f"Graph view reset to window size ({len(data_to_show)} sweeps, {channel_samples} samples per channel)")
 
     def full_graph_view(self):
@@ -1402,7 +1753,7 @@ class ADCStreamerGUI(QMainWindow):
 
     def apply_y_axis_range(self):
         """Apply Y-axis range according to current settings (adaptive or full-scale)."""
-        if self.fullscale_radio.isChecked():
+        if self.yaxis_range_combo.currentText() == "Full-Scale":
             # Full-scale mode: fixed range with padding
             y_min, y_max = self.get_fullscale_range()
             self.plot_widget.setYRange(y_min, y_max, padding=0)
@@ -1431,6 +1782,8 @@ class ADCStreamerGUI(QMainWindow):
         # Clear previous data
         self.raw_data.clear()
         self.sweep_count = 0
+        self.force_data.clear()
+        self.force_start_time = None
 
         # Clear timing data for new measurement
         self.timing_data = {
@@ -1511,11 +1864,12 @@ class ADCStreamerGUI(QMainWindow):
         self.update_plot()
         # Calculate total samples correctly
         total_samples = sum(len(sweep) for sweep in self.raw_data) if self.raw_data else 0
+        force_samples = len(self.force_data)
         self.plot_info_label.setText(
-            f"Sweeps: {self.sweep_count} | Total Samples: {total_samples}"
+            f"ADC - Sweeps: {self.sweep_count} | Samples: {total_samples}  |  Force: {force_samples} samples"
         )
 
-        self.log_status(f"Capture finished. Total sweeps: {self.sweep_count}, Total samples: {total_samples}")
+        self.log_status(f"Capture finished. Total sweeps: {self.sweep_count}, Total samples: {total_samples}, Force samples: {force_samples}")
 
     def set_controls_enabled(self, enabled: bool):
         """Enable or disable configuration controls."""
@@ -1556,8 +1910,10 @@ class ADCStreamerGUI(QMainWindow):
         if reply == QMessageBox.StandardButton.Yes:
             self.raw_data.clear()
             self.sweep_count = 0
+            self.force_data.clear()
             self.update_plot()
-            self.plot_info_label.setText("Sweeps: 0 | Total Samples: 0")
+            self.update_force_plot()
+            self.plot_info_label.setText("ADC - Sweeps: 0 | Samples: 0  |  Force: 0 samples")
             self.log_status("Data cleared")
 
     # Helper methods for voltage conversion
@@ -1591,7 +1947,7 @@ class ADCStreamerGUI(QMainWindow):
         resolution_bits = self.config['resolution']
         max_raw = 2 ** resolution_bits
 
-        if self.voltage_units_radio.isChecked():
+        if self.yaxis_units_combo.currentText() == "Voltage":
             # Convert to voltage - add 5% padding above max
             vref = self.get_vref_voltage()
             return (0, vref * 1.05)
@@ -1665,7 +2021,7 @@ class ADCStreamerGUI(QMainWindow):
                     continue
 
                 # Convert to voltage if voltage units mode is enabled
-                if self.voltage_units_radio.isChecked():
+                if self.yaxis_units_combo.currentText() == "Voltage":
                     channel_data = [self.convert_to_voltage(v) for v in channel_data]
 
                 # Process events periodically to keep UI responsive
@@ -1743,7 +2099,7 @@ class ADCStreamerGUI(QMainWindow):
                         )
 
             # Apply Y-axis scaling mode
-            if self.fullscale_radio.isChecked():
+            if self.yaxis_range_combo.currentText() == "Full-Scale":
                 # Full-scale mode: fixed range
                 y_min, y_max = self.get_fullscale_range()
                 self.plot_widget.setYRange(y_min, y_max, padding=0)
@@ -1752,7 +2108,7 @@ class ADCStreamerGUI(QMainWindow):
                 self.plot_widget.enableAutoRange(axis='y')
 
             # Update Y-axis label based on unit mode
-            if self.voltage_units_radio.isChecked():
+            if self.yaxis_units_combo.currentText() == "Voltage":
                 self.plot_widget.setLabel('left', 'Voltage', units='V')
             else:
                 self.plot_widget.setLabel('left', 'ADC Value', units='counts')
@@ -1834,11 +2190,50 @@ class ADCStreamerGUI(QMainWindow):
         metadata_path = directory / f"{filename}_{timestamp}_metadata.json"
 
         try:
-            # Save CSV data
+            # Determine if we have force data
+            has_force_x = any(d[1] != 0 for d in self.force_data) if self.force_data else False
+            has_force_z = any(d[2] != 0 for d in self.force_data) if self.force_data else False
+            
+            # Create a mapping of ADC timestamps to force data
+            force_dict = {}
+            if self.force_data:
+                for timestamp, x_force, z_force in self.force_data:
+                    force_dict[timestamp] = (x_force, z_force)
+            
+            # Save CSV data with force columns
             with open(csv_path, 'w', newline='') as f:
                 writer = csv.writer(f)
+                
+                # Write header
+                header = [f"CH{ch}" for ch in self.config['channels']] * self.config['repeat']
+                header.extend(["Force_X", "Force_Z"])
+                writer.writerow(header)
+                
+                # Write data rows
+                sweep_idx = 0
                 for sweep in data_to_save:
-                    writer.writerow(sweep)
+                    row = list(sweep)
+                    
+                    # Calculate approximate timestamp for this sweep
+                    if self.capture_start_time and self.capture_end_time and len(self.raw_data) > 0:
+                        sweep_time = (sweep_idx / len(data_to_save)) * (self.capture_end_time - self.capture_start_time)
+                        
+                        # Find closest force measurement
+                        closest_force = (0.0, 0.0)
+                        if force_dict:
+                            min_diff = float('inf')
+                            for f_time, (x, z) in force_dict.items():
+                                diff = abs(f_time - sweep_time)
+                                if diff < min_diff:
+                                    min_diff = diff
+                                    closest_force = (x, z)
+                        
+                        row.extend(closest_force)
+                    else:
+                        row.extend([0.0, 0.0])
+                    
+                    writer.writerow(row)
+                    sweep_idx += 1
 
             # Prepare metadata dictionary
             metadata = {
@@ -1850,16 +2245,24 @@ class ADCStreamerGUI(QMainWindow):
                 "configuration": {
                     "channels": self.config['channels'],
                     "repeat_count": self.config['repeat'],
-                    "delay_us": self.config['delay_us'],
                     "ground_pin": self.config['ground_pin'],
                     "use_ground_sample": self.config['use_ground'],
                     "adc_resolution_bits": self.config['resolution'],
                     "voltage_reference": self.config['reference']
                 },
                 "timing": {
-                    "between_channels_us": self.timing_data['between_channels_us'],
-                    "between_samples_us": self.timing_data['between_samples_us'],
-                    "sampling_rate_hz": self.timing_data['sampling_rate_hz']
+                    "per_channel_rate_hz": self.timing_data.get('per_channel_rate_hz'),
+                    "total_rate_hz": self.timing_data.get('total_rate_hz'),
+                    "between_samples_us": self.timing_data.get('between_samples_us')
+                },
+                "force_data": {
+                    "available": len(self.force_data) > 0,
+                    "x_force_available": has_force_x,
+                    "z_force_available": has_force_z,
+                    "total_force_samples": len(self.force_data),
+                    "calibration_offset_x": self.force_calibration_offset['x'],
+                    "calibration_offset_z": self.force_calibration_offset['z'],
+                    "note": "Force data not available" if not self.force_data else "Force data synchronized with ADC samples (calibrated to zero at connection)"
                 }
             }
 

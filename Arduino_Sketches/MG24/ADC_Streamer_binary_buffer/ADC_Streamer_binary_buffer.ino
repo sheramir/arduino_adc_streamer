@@ -16,11 +16,9 @@
  *   - The Arduino fills a large RAM buffer with multiple sweeps, and only
  *     after B sweeps are captured, it sends ONE binary block to the host:
  *
- *       [MAGIC1][MAGIC2][countL][countH][samples...]
+ *      [0xAA][0x55][countL][countH] + count * uint16 samples + avg_dt_us (uint16)
  *
  *       where:
- *         - MAGIC1 = 0xAA
- *         - MAGIC2 = 0x55
  *         - count  = total number of samples in this block (uint16_t),
  *                    so total data bytes = count * 2
  *
@@ -182,6 +180,13 @@ uint32_t runStopMillis       = 0;
 String   inputLine;
 
 // ---------------------------------------------------------------------
+// Timing measurement: start time for current block
+// ---------------------------------------------------------------------
+
+uint32_t blockStartMicros = 0;  // micros() when first sample of block is taken
+
+
+// ---------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------
 
@@ -319,18 +324,39 @@ void sendSweepHeader(uint16_t totalSamples) {
 }
 
 // Send an entire block (one or more sweeps) currently in adcBuffer
-void sendBlock(uint16_t sweepsInBlock) {
-  if (sweepsInBlock == 0 || samplesPerSweep == 0) return;
+void sendBlock(uint16_t sampleCount, uint32_t blockEndMicros) {
+  if (sampleCount == 0) return;
 
-  uint32_t totalSamples = (uint32_t)sweepsInBlock * (uint32_t)samplesPerSweep;
+  uint32_t totalSamples = sampleCount;
   if (totalSamples > MAX_SAMPLES_BUFFER) {
-    totalSamples = MAX_SAMPLES_BUFFER; // safety clamp
+    totalSamples = MAX_SAMPLES_BUFFER;
   }
 
-  // Header count is 16-bit; we keep MAX_SAMPLES_BUFFER <= 65535.
+  // Compute total time and average time per sample (µs)
+  uint32_t totalTimeUs   = blockEndMicros - blockStartMicros;  // micros() wrap handled by unsigned math
+  uint32_t avgSampleDtUs = (totalSamples > 0) ? (totalTimeUs / totalSamples) : 0;
+
+  // Clamp to uint16; we know this will be much smaller in practice
+  uint16_t avgSampleDtUs16 = (avgSampleDtUs <= 65535u)
+                               ? (uint16_t)avgSampleDtUs
+                               : (uint16_t)65535u;
+
+  // 1) Header: count = number of samples
   sendSweepHeader((uint16_t)totalSamples);
+
+  // 2) Samples (unchanged)
   Serial.write((uint8_t*)adcBuffer, (size_t)(totalSamples * sizeof(uint16_t)));
+
+  // 3) Append average per-sample time [µs] as uint16 LE (2 bytes)
+  uint8_t rateBytes[2];
+  rateBytes[0] = (uint8_t)(avgSampleDtUs16 & 0xFF);
+  rateBytes[1] = (uint8_t)(avgSampleDtUs16 >> 8);
+  Serial.write(rateBytes, 2);
+
+  // Reset timing state for next block
+  blockStartMicros = 0;
 }
+
 
 // ---------------------------------------------------------------------
 // Command handlers
@@ -506,82 +532,56 @@ bool handleRun(const String &args) {
 }
 
 void handleStop() {
-  // If we're stopping while having a partially filled block, send it
-  if (sweepsInCurrentBlock > 0 && samplesPerSweep > 0) {
-    sendBlock(sweepsInCurrentBlock);
-    sweepsInCurrentBlock = 0;
-  }
-
   isRunning = false;
   timedRun  = false;
 }
 
 
 // ---------------------------------------------------------------------
-// One sweep captured into a big block buffer; when enough sweeps are
-// accumulated (sweepsPerBlock), send the block in binary.
+// Sweeps are captured into a big block buffer; when all sweeps are
+// captured, send the block in binary.
 // ---------------------------------------------------------------------
-void doOneSweep() {
+void doOneBlock() {
   if (!isRunning || channelCount == 0 || samplesPerSweep == 0) return;
 
-  // For timed runs: if time expired BEFORE starting a new sweep,
-  // send any partial block and stop.
-  if (timedRun) {
-    uint32_t now = millis();
-    if ((int32_t)(now - runStopMillis) >= 0) {
-      // Time is up: send any partial block
-      if (sweepsInCurrentBlock > 0) {
-        sendBlock(sweepsInCurrentBlock);
-        sweepsInCurrentBlock = 0;
-      }
-      isRunning = false;
-      timedRun  = false;
-      return;
-    }
+  // How many samples in a full block?
+  uint32_t totalSamples = (uint32_t)sweepsPerBlock * (uint32_t)samplesPerSweep;
+  if (totalSamples > MAX_SAMPLES_BUFFER) {
+    totalSamples = MAX_SAMPLES_BUFFER;  // recomputeDerivedConfig should prevent this, but safety
   }
 
-  // Where in the big buffer this sweep should start
-  uint32_t baseIdx = (uint32_t)sweepsInCurrentBlock * (uint32_t)samplesPerSweep;
-  uint32_t idx     = baseIdx;
+  // Start timing at the FIRST sample of the block
+  blockStartMicros = micros();
 
-  // Safety: if configuration changed without resetting, avoid overflow
-  if (baseIdx >= MAX_SAMPLES_BUFFER) {
-    sweepsInCurrentBlock = 0;
-    baseIdx = 0;
-    idx     = 0;
-  }
-
+  uint32_t idx = 0;
   int sweepGroundPin = effectiveGroundCached;
 
-  // Capture one sweep into adcBuffer[baseIdx ... baseIdx + samplesPerSweep - 1]
-  for (uint8_t i = 0; i < channelCount; i++) {  // loop through channels
-    uint8_t chanPin = channelSequence[i];
+  // Triple loop: sweeps → channels → repeats
+  for (uint16_t s = 0; s < sweepsPerBlock; s++) {
+    for (uint8_t i = 0; i < channelCount; i++) {
+      uint8_t chanPin = channelSequence[i];
 
-    // If ground capture is enabled, do ONE dummy read per channel,
-    // not per individual sample.
-    if (useGroundBeforeEach && sweepGroundPin >= 0) {
-      (void)analogRead(sweepGroundPin);  // discarded
-    }
+      // If "ground true": ONE dummy ground read per channel per sweep
+      if (useGroundBeforeEach && sweepGroundPin >= 0) {
+        (void)analogRead(sweepGroundPin);  // discarded
+      }
 
-    for (uint16_t r = 0; r < repeatCount; r++) {  // loop through repeats
-      int adcRaw = analogRead(chanPin);
+      for (uint16_t r = 0; r < repeatCount; r++) {
+        if (idx >= totalSamples) break;  // safety
 
-      if (idx < baseIdx + samplesPerSweep &&
-          idx < MAX_SAMPLES_BUFFER) {
+        int adcRaw = analogRead(chanPin);
         adcBuffer[idx++] = (uint16_t)adcRaw;
       }
     }
   }
 
-  // One more sweep in this block
-  sweepsInCurrentBlock++;
+  // End timing right after the last sample of the block (before sending)
+  uint32_t blockEndMicros = micros();
 
-  // If block is full, send it
-  if (sweepsInCurrentBlock >= sweepsPerBlock) {
-    sendBlock(sweepsInCurrentBlock);
-    sweepsInCurrentBlock = 0;
-  }
+  // Send the block: samples + timing info
+  sendBlock((uint16_t)idx, blockEndMicros);
 }
+
 
 
 // ---------------------------------------------------------------------
@@ -749,8 +749,18 @@ void loop() {
     }
   }
 
-  // 2) Run sweeps if requested
+  // 2) Handle timed run stop BETWEEN blocks
+  if (isRunning && timedRun) {
+    uint32_t now = millis();
+    if ((int32_t)(now - runStopMillis) >= 0) {
+      isRunning = false;
+      timedRun  = false;
+      return;   // don't start a new block
+    }
+  }
+
+  // 3) Run a whole block if we're in run mode
   if (isRunning) {
-    doOneSweep();
+    doOneBlock();   // this captures the entire block without returning
   }
 }

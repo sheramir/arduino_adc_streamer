@@ -76,7 +76,13 @@ MAX_PLOT_COLUMNS = 6
 
 # Target latency for buffered blocks (seconds)
 # Used to calculate optimal sweeps per block
-TARGET_LATENCY_SEC = 0.15  # ~150ms target
+TARGET_LATENCY_SEC = 0.25  # ~250ms target
+
+# Maximum samples buffer capacity on Arduino
+MAX_SAMPLES_BUFFER = 32000
+
+# USB CDC packet size (bytes) - used for optimizing block transfers
+USB_PACKET_SIZE = 64
 
 # ============================================================================
 # Plot Export Settings

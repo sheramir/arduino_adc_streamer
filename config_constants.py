@@ -71,6 +71,14 @@ DEFAULT_WINDOW_SIZE = 1000
 MAX_PLOT_COLUMNS = 6
 
 # ============================================================================
+# Buffer Optimization Settings
+# ============================================================================
+
+# Target latency for buffered blocks (seconds)
+# Used to calculate optimal sweeps per block
+TARGET_LATENCY_SEC = 0.15  # ~150ms target
+
+# ============================================================================
 # Plot Export Settings
 # ============================================================================
 

@@ -54,7 +54,7 @@ from config_constants import (
     CONFIG_RETRY_ATTEMPTS, CONFIG_COMMAND_TIMEOUT, CONFIG_RETRY_DELAY, INTER_COMMAND_DELAY,
     ARDUINO_RESET_DELAY, PLOT_UPDATE_DEBOUNCE, CONFIG_CHECK_INTERVAL, PLOT_UPDATE_FREQUENCY,
     WINDOW_WIDTH, WINDOW_HEIGHT, DEFAULT_WINDOW_SIZE, MAX_PLOT_COLUMNS,
-    PLOT_EXPORT_WIDTH, PLOT_COLORS
+    TARGET_LATENCY_SEC, PLOT_EXPORT_WIDTH, PLOT_COLORS
 )
 
 
@@ -109,7 +109,13 @@ class SerialReaderThread(QThread):
                 break
 
     def process_binary_data(self, buffer):
-        """Process buffer for binary sweep packets and ASCII messages."""
+        """Process buffer for binary block packets and ASCII messages.
+        
+        Binary blocks contain multiple sweeps:
+        - Header: [0xAA][0x55][countL][countH] (4 bytes)
+        - Payload: count samples as uint16_t little-endian
+        - Each block may contain multiple sweeps
+        """
         while len(buffer) >= 4:
             # Look for ASCII messages (lines starting with #)
             if buffer[0] == ord('#'):
@@ -128,32 +134,34 @@ class SerialReaderThread(QThread):
                     else:
                         break
             
-            # Look for binary sweep packet (0xAA 0x55 header)
+            # Look for binary block packet (0xAA 0x55 header)
             if buffer[0] == 0xAA and buffer[1] == 0x55:
-                # Read sample count (little-endian uint16)
+                # Read total sample count in block (little-endian uint16)
                 if len(buffer) < 4:
-                    break  # Need more data
+                    break  # Need more data for header
                 
                 sample_count = buffer[2] | (buffer[3] << 8)
                 packet_size = 4 + (sample_count * 2)
                 
                 if len(buffer) < packet_size:
-                    break  # Need more data
+                    break  # Need more data for complete block
                 
-                # Extract samples (little-endian uint16)
+                # Extract all samples in block (little-endian uint16)
                 samples = []
                 for i in range(sample_count):
                     idx = 4 + (i * 2)
                     sample = buffer[idx] | (buffer[idx + 1] << 8)
                     samples.append(sample)
                 
-                # Emit the sweep
-                self.binary_sweep_received.emit(samples)
+                # Convert block of samples into individual sweeps
+                # samples_per_sweep = channel_count * repeat_count
+                # We emit each sweep separately to maintain compatibility with existing processing
+                self.binary_sweep_received.emit(samples)  # Emit entire block for processing
                 
                 # Remove processed packet from buffer
                 buffer = buffer[packet_size:]
             else:
-                # Unknown byte - skip it
+                # Unknown byte - skip it to resync
                 buffer = buffer[1:]
         
         return buffer
@@ -239,10 +247,16 @@ class ADCStreamerGUI(QMainWindow):
         self.timing_data = {
             'per_channel_rate_hz': None,
             'total_rate_hz': None,
-            'between_samples_us': None
+            'between_samples_us': None,
+            'buffer_capture_time_us': None,  # Time to capture one buffer (ADC only)
+            'buffer_gap_time_ms': None  # Gap time between buffers (transmission + processing)
         }
         self.capture_start_time = None
         self.capture_end_time = None
+        
+        # Buffer timing tracking
+        self.last_buffer_time = None  # Time when last buffer was received
+        self.buffer_receipt_times = []  # Timestamps of buffer arrivals
 
         # Configuration state
         self.config = {
@@ -274,7 +288,8 @@ class ADCStreamerGUI(QMainWindow):
             'ground_pin': None,
             'use_ground': None,
             'resolution': None,
-            'reference': None
+            'reference': None,
+            'buffer': None
         }
 
         # Channel checkboxes for visualization
@@ -435,6 +450,19 @@ class ADCStreamerGUI(QMainWindow):
         self.repeat_spin.setValue(1)
         self.repeat_spin.valueChanged.connect(self.on_repeat_changed)
         layout.addWidget(self.repeat_spin, 2, 1)
+
+        # Buffer size (sweeps per block)
+        layout.addWidget(QLabel("Sweeps per block (buffer):"), 3, 0)
+        self.buffer_spin = QSpinBox()
+        self.buffer_spin.setRange(1, 1000)
+        self.buffer_spin.setValue(10)  # Default, will be updated by suggestion
+        self.buffer_spin.setToolTip("Number of sweeps sent per block from Arduino")
+        layout.addWidget(self.buffer_spin, 3, 1)
+        
+        # Label to show suggested buffer size
+        self.buffer_suggestion_label = QLabel("(suggested: --)")
+        self.buffer_suggestion_label.setStyleSheet("QLabel { color: gray; font-size: 9pt; }")
+        layout.addWidget(self.buffer_suggestion_label, 3, 2)
 
         group.setLayout(layout)
         return group
@@ -1032,18 +1060,52 @@ class ADCStreamerGUI(QMainWindow):
                 self.log_status(f"Unexpected ASCII: {line}")
 
     def process_binary_sweep(self, samples: List[int]):
-        """Process incoming binary sweep data."""
+        """Process incoming binary block data containing one or more sweeps.
+        
+        The Arduino now sends blocks of sweeps. Each block contains:
+        - Multiple complete sweeps (samples_per_sweep * sweeps_in_block)
+        - Possibly a partial block at the end of capture
+        """
         if self.is_capturing:
             try:
+                # Track buffer arrival time
+                current_time = time.time()
+                self.buffer_receipt_times.append(current_time)
+                
                 # Track first sweep time for rate calculation
                 if self.sweep_count == 0:
-                    self.capture_start_time = time.time()
+                    self.capture_start_time = current_time
                     self.force_start_time = self.capture_start_time  # Sync force timing
+                    self.last_buffer_time = current_time
                 
-                self.raw_data.append(samples)
-                self.sweep_count += 1
+                # Calculate samples per sweep from configuration
+                channel_count = len(self.config.get('channels', []))
+                repeat_count = self.config.get('repeat', 1)
+                samples_per_sweep = channel_count * repeat_count
+                
+                if samples_per_sweep == 0:
+                    self.log_status("ERROR: Invalid configuration, samples_per_sweep is 0")
+                    return
+                
+                # Split block into individual sweeps
+                total_samples = len(samples)
+                sweeps_in_block = total_samples // samples_per_sweep
+                remainder = total_samples % samples_per_sweep
+                
+                # Log warning if there are leftover samples (shouldn't happen normally)
+                if remainder != 0:
+                    self.log_status(f"WARNING: Block has {remainder} extra samples (expected multiple of {samples_per_sweep})")
+                
+                # Process each complete sweep in the block
+                for sweep_idx in range(sweeps_in_block):
+                    start_idx = sweep_idx * samples_per_sweep
+                    end_idx = start_idx + samples_per_sweep
+                    sweep_samples = samples[start_idx:end_idx]
+                    
+                    self.raw_data.append(sweep_samples)
+                    self.sweep_count += 1
 
-                # Update plot periodically for performance
+                # Update plot periodically for performance (after processing entire block)
                 if self.sweep_count % PLOT_UPDATE_FREQUENCY == 0:
                     self.update_plot()
                     window_size = self.window_size_spin.value()
@@ -1057,7 +1119,7 @@ class ADCStreamerGUI(QMainWindow):
                     self.update_force_plot()
 
             except Exception as e:
-                self.log_status(f"ERROR: Failed to process binary sweep - {e}")
+                self.log_status(f"ERROR: Failed to process binary block - {e}")
 
     def calibrate_force_sensors(self):
         """Calibrate force sensors by collecting baseline samples without load."""
@@ -1259,7 +1321,7 @@ class ADCStreamerGUI(QMainWindow):
             pass
     
     def calculate_sampling_rate(self):
-        """Calculate sampling rate based on captured data and time."""
+        """Calculate sampling rate based on captured data and buffer timing."""
         if not self.capture_start_time or not self.capture_end_time or not self.raw_data:
             return
         
@@ -1297,10 +1359,37 @@ class ADCStreamerGUI(QMainWindow):
             else:
                 between_samples_us = 0
             
+            # Calculate buffer-based timing metrics
+            buffer_size = self.arduino_status.get('buffer', self.buffer_spin.value())
+            samples_per_buffer = buffer_size * (len(channels) * repeat_count)
+            
+            # Time to capture one buffer (ADC only, excludes transmission)
+            if total_sample_rate > 0:
+                buffer_capture_time_us = (samples_per_buffer / total_sample_rate) * 1000000.0
+            else:
+                buffer_capture_time_us = 0
+            
+            # Calculate average gap between buffers (transmission + processing time)
+            buffer_gap_time_ms = 0
+            if len(self.buffer_receipt_times) > 1:
+                # Calculate intervals between buffer arrivals
+                intervals = []
+                for i in range(1, len(self.buffer_receipt_times)):
+                    interval = self.buffer_receipt_times[i] - self.buffer_receipt_times[i-1]
+                    intervals.append(interval)
+                
+                if intervals:
+                    avg_interval_s = sum(intervals) / len(intervals)
+                    # Gap time = total interval - capture time
+                    buffer_gap_time_ms = (avg_interval_s - (buffer_capture_time_us / 1000000.0)) * 1000.0
+                    buffer_gap_time_ms = max(0, buffer_gap_time_ms)  # Ensure non-negative
+            
             # Store timing data
             self.timing_data['per_channel_rate_hz'] = per_channel_rate
             self.timing_data['total_rate_hz'] = total_sample_rate
             self.timing_data['between_samples_us'] = between_samples_us
+            self.timing_data['buffer_capture_time_us'] = buffer_capture_time_us
+            self.timing_data['buffer_gap_time_ms'] = buffer_gap_time_ms
             
             # Update display
             self.per_channel_rate_label.setText(f"{per_channel_rate:.2f} Hz")
@@ -1309,6 +1398,7 @@ class ADCStreamerGUI(QMainWindow):
             
             self.log_status(f"Per-channel rate: {per_channel_rate:.2f} Hz ({between_samples_us:.2f} µs between samples)")
             self.log_status(f"Total rate: {total_sample_rate:.2f} Hz ({total_samples} samples in {elapsed_time:.3f}s across {num_unique_channels} channels)")
+            self.log_status(f"Buffer timing: Capture={buffer_capture_time_us:.2f} µs, Gap={buffer_gap_time_ms:.2f} ms ({len(self.buffer_receipt_times)} buffers received)")
         except Exception as e:
             self.log_status(f"ERROR: Failed to calculate sampling rate - {e}")
 
@@ -1353,6 +1443,7 @@ class ADCStreamerGUI(QMainWindow):
                 self.update_channel_list()
                 self.config_is_valid = False
                 self.update_start_button_state()
+                self.update_buffer_suggestion()  # Update buffer suggestion when channels change
             except:
                 pass
         
@@ -1378,6 +1469,7 @@ class ADCStreamerGUI(QMainWindow):
         self.config['repeat'] = value
         self.config_is_valid = False
         self.update_start_button_state()
+        self.update_buffer_suggestion()
 
     def on_yaxis_range_changed(self, text: str):
         """Handle Y-axis range change."""
@@ -1519,6 +1611,41 @@ class ADCStreamerGUI(QMainWindow):
         self.configure_btn.setStyleSheet("QPushButton { background-color: #FF9800; color: white; font-weight: bold; }")
         self.statusBar().showMessage("Configuration failed - please retry", 5000)
     
+    def suggest_sweeps_per_block(self, channel_count: int, repeat_count: int, baud_rate: int = 460800) -> int:
+        """Compute suggested sweeps per block for optimal buffering.
+        
+        Target latency: ~0.15 seconds
+        USB CDC packet size: typically 64 bytes
+        
+        Args:
+            channel_count: Number of ADC channels
+            repeat_count: Number of repeats per channel
+            baud_rate: Serial baud rate (default 460800)
+        
+        Returns:
+            Suggested number of sweeps per block
+        """
+        if channel_count <= 0 or repeat_count <= 0:
+            return 10  # Fallback default
+        
+        samples_per_sweep = channel_count * repeat_count
+        bytes_per_sweep = samples_per_sweep * 2  # uint16_t = 2 bytes per sample
+        
+        # Estimate time to send one sweep over serial
+        # baud_rate is bits/sec, 10 bits per byte (8N1 with overhead)
+        time_per_sweep = (bytes_per_sweep * 10) / baud_rate
+        
+        # Calculate sweeps for target latency
+        if time_per_sweep > 0:
+            suggested = int(TARGET_LATENCY_SEC / time_per_sweep)
+        else:
+            suggested = 10
+        
+        # Clamp to reasonable range: 1-100
+        suggested = max(1, min(100, suggested))
+        
+        return suggested
+
     def send_config_with_verification(self) -> bool:
         """Send configuration to Arduino with ACK verification and retry.
         
@@ -1591,9 +1718,48 @@ class ADCStreamerGUI(QMainWindow):
             else:
                 all_success = False
         
+        # Send buffer size (sweeps per block)
+        time.sleep(0.05)
+        buffer_size = self.buffer_spin.value()
+        # Validate buffer size
+        if buffer_size <= 0:
+            # Compute suggested value
+            channel_count = len(self.config.get('channels', []))
+            repeat_count = self.config.get('repeat', 1)
+            buffer_size = self.suggest_sweeps_per_block(channel_count, repeat_count)
+            self.log_status(f"Invalid buffer size, using suggested value: {buffer_size}")
+            self.buffer_spin.setValue(buffer_size)
+        
+        buffer_str = str(buffer_size)
+        success, received = self.send_command_and_wait_ack(f"buffer {buffer_str}", buffer_str)
+        if success:
+            self.arduino_status['buffer'] = int(received)
+        else:
+            all_success = False
+        
         return all_success
         
 
+
+    def update_buffer_suggestion(self):
+        """Update the suggested buffer size based on current configuration."""
+        try:
+            # Parse channels
+            channels_text = self.channels_input.text().strip()
+            if channels_text:
+                channel_count = len([c.strip() for c in channels_text.split(',')])
+            else:
+                channel_count = 0
+            
+            repeat_count = self.repeat_spin.value()
+            
+            if channel_count > 0:
+                suggested = self.suggest_sweeps_per_block(channel_count, repeat_count)
+                self.buffer_suggestion_label.setText(f"(suggested: {suggested})")
+            else:
+                self.buffer_suggestion_label.setText("(suggested: --)")
+        except Exception:
+            self.buffer_suggestion_label.setText("(suggested: --)")
 
     def update_channel_list(self):
         """Update the channel selector checkboxes based on configured channels."""
@@ -1789,10 +1955,14 @@ class ADCStreamerGUI(QMainWindow):
         self.timing_data = {
             'per_channel_rate_hz': None,
             'total_rate_hz': None,
-            'between_samples_us': None
+            'between_samples_us': None,
+            'buffer_capture_time_us': None,
+            'buffer_gap_time_ms': None
         }
         self.capture_start_time = None
         self.capture_end_time = None
+        self.last_buffer_time = None
+        self.buffer_receipt_times.clear()
         self.per_channel_rate_label.setText("- Hz")
         self.total_rate_label.setText("- Hz")
         self.between_samples_label.setText("- µs")
@@ -1886,6 +2056,7 @@ class ADCStreamerGUI(QMainWindow):
         self.ground_pin_spin.setEnabled(enabled)
         self.use_ground_check.setEnabled(enabled)
         self.repeat_spin.setEnabled(enabled)
+        self.buffer_spin.setEnabled(enabled)
 
         # Run control
         self.timed_run_check.setEnabled(enabled)

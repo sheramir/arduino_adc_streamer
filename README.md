@@ -1,12 +1,13 @@
 # Arduino ADC Streamer
 
-Stream, display and save analog signals captured from Arduino board. This repository includes a comprehensive Python GUI application and Arduino sketch for high-speed ADC data acquisition and visualization.
+High-speed ADC data acquisition system for Arduino-based boards with real-time visualization and analysis. This repository includes a comprehensive Python GUI application and Arduino firmware for streaming analog sensor data at high sample rates with advanced features like ground subtraction, repeat averaging, and force sensor integration.
 
 ## 🚀 Quick Start
 
 1. **Upload Arduino Sketch**:
-   - Open `ADC_Streamer XIAO MG24/ADC_Streamer XIAO MG24.ino`
-   - Upload to your Arduino board
+   - Navigate to `Arduino_Sketches/MG24/ADC_Streamer_binary_scan/`
+   - Open `ADC_Streamer_binary_scan.ino` in Arduino IDE
+   - Upload to your XIAO MG24 board (or compatible)
 
 2. **Install Python Dependencies**:
    ```bash
@@ -16,53 +17,151 @@ Stream, display and save analog signals captured from Arduino board. This reposi
 3. **Run the GUI**:
    ```bash
    python adc_gui.py
+   # Or with uv:
+   uv run adc_gui.py
    ```
 
 ## 📁 Repository Contents
 
-- **`adc_gui.py`**: Full-featured Python GUI application
-- **`ADC_Streamer XIAO MG24/`**: Arduino sketch for ADC streaming
+### Main Application Files
+- **`adc_gui.py`**: Full-featured Python GUI application with real-time plotting
+- **`config_constants.py`**: Centralized configuration constants
+- **`buffer_utils.py`**: Buffer optimization and validation utilities
 - **`requirements.txt`**: Python package dependencies
-- **`GUI_README.md`**: Comprehensive GUI documentation
+
+### Arduino Sketches
+- **`Arduino_Sketches/MG24/ADC_Streamer_binary_scan/`**: **Current sketch** - Binary streaming with buffered blocks (recommended)
+- **`Arduino_Sketches/MG24/ADC_Streamer_binary/`**: Binary streaming (legacy)
+- **`Arduino_Sketches/MG24/ADC_Streamer_binary_buffer/`**: Binary with buffer (legacy)
+- **`Arduino_Sketches/MG24/ADC_Streamer XIAO MG24/`**: ASCII streaming (legacy)
+
+### Documentation
+- **`GUI_README.md`**: Comprehensive GUI user guide
+- **`BUFFER_OPTIMIZATION.md`**: Buffer size optimization guide
+- **`IADC_UPDATE_CHANGES.md`**: IADC firmware update notes
 
 ## ✨ Features
 
-- 🔌 **Serial Communication**: Auto-detect and connect to Arduino
-- ⚙️ **ADC Configuration**: Resolution (8-16 bits) and voltage reference control
-- 📊 **Acquisition Control**: Multi-channel sequences, repeat averaging, timing control
-- 📈 **Real-time Plotting**: Fast visualization with pyqtgraph
-- 💾 **Data Export**: CSV data with metadata and plot images
-- 🎨 **Interactive Visualization**: Channel selection and averaging modes
+### Hardware Support
+- 🔌 **XIAO MG24**: 12-bit IADC with oversampling (OSR 2×, 4×, 8×)
+- 📊 **Multi-channel scanning**: Up to 18 analog input pins
+- ⚡ **High-speed acquisition**: Up to 76 kHz per channel (OSR 2×)
+- 🔄 **Ground subtraction**: Automatic background subtraction with dedicated ground pin
+- 🎯 **Analog gain**: 1×, 2×, 3×, 4× amplification
 
-## 📖 Documentation
+### Data Acquisition
+- 🔁 **Repeat averaging**: 1-16 measurements per channel per sweep (hardware limit)
+- 📦 **Buffered streaming**: Configurable block size (up to 32,000 samples)
+- ⏱️ **Timing measurement**: Per-sample and block-gap timing from Arduino
+- 🕐 **Timed runs**: Fixed-duration captures with automatic stop
 
-See **[GUI_README.md](GUI_README.md)** for detailed documentation including:
-- Installation instructions
-- Usage guide and workflows
-- Troubleshooting tips
-- Data format specifications
-- Advanced features
+### Visualization & Analysis
+- 📈 **Real-time plotting**: Fast pyqtgraph-based visualization with scrolling window
+- 🎨 **Channel selection**: Individual channel display control
+- 📊 **Display modes**: View all repeats or averaged data
+- 🔍 **Zoom/pan**: Interactive plot navigation
+- 📏 **Dual Y-axes**: ADC values or voltage conversion
+- 💪 **Force sensor support**: Dual-axis force measurement overlay (115200 baud CSV)
+
+### Data Management
+- 💾 **CSV export**: Timestamped data with full metadata
+- 🖼️ **Plot export**: Save visualization as PNG images
+- 📝 **Notes**: Add experimental notes to saved files
+- 🎯 **Range selection**: Export specific sweep ranges
 
 ## 🔧 Requirements
 
-- Python 3.8+
-- PyQt6, pyserial, pyqtgraph, numpy
-- Arduino with compatible ADC (tested on XIAO MG24)
+### Software
+- **Python**: 3.8+ (tested with 3.11)
+- **Packages**: PyQt6, pyserial, pyqtgraph, numpy
+- **Arduino IDE**: 1.8+ or Arduino CLI
+
+### Hardware
+- **Primary**: Seeed XIAO MG24 (12-bit IADC, 76 kHz max)
+- **Force Sensor** (optional): Serial CSV output (X, Z axes)
+
+## 📖 Configuration
+
+### ADC Settings
+- **Voltage Reference**: 1.2V (internal) or 3.3V (VDD)
+- **Oversampling (OSR)**: 2, 4, or 8 (higher = better SNR, lower sample rate)
+- **Analog Gain**: 1×, 2×, 3×, 4× (applied before ADC)
+
+### Acquisition Settings
+- **Channel Sequence**: Comma-separated list (e.g., `0,1,2,3` or `0,1,1,2,3` for oversampling channel 1)
+- **Repeat Count**: 1-16 measurements per channel per sweep
+- **Ground Pin**: 0-18 (optional, for background subtraction)
+- **Buffer Size**: Sweeps per block sent to PC (validated against 32K sample limit)
+
+### Buffer Optimization
+The GUI automatically validates buffer size against hardware limits:
+- **Formula**: `buffer_size × channels × repeat_count ≤ 32,000 samples`
+- See `BUFFER_OPTIMIZATION.md` for tuning guidelines
 
 ## 📊 Arduino Protocol
 
-The Arduino sketch supports commands for:
-- Channel configuration (`channels 0,1,2,3`)
-- ADC settings (`res 12`, `ref 3.3`)
-- Acquisition control (`repeat 20`, `delay 50`)
-- Run modes (`run`, `run 1000`, `stop`)
+### Configuration Commands
+```
+ref <value>        - Set voltage reference: "1.2" or "vdd"
+osr <value>        - Set oversampling: 2, 4, or 8
+gain <value>       - Set analog gain: 1, 2, 3, or 4
+channels <list>    - Set channel sequence: "0,1,2,3"
+repeat <count>     - Set repeat count: 1-16
+ground <pin|false> - Set ground pin (0-18) or disable ("false")
+buffer <size>      - Set sweeps per block
+```
 
-Data is streamed as CSV lines: `value1,value2,...,valueN`
+### Run Commands
+```
+run           - Start continuous capture
+run <ms>      - Timed capture (milliseconds)
+stop          - Stop capture
+status        - Print current configuration
+```
+
+### Data Format
+- **Binary blocks**: Header `[0xAA][0x55][countL][countH]` + samples (uint16 LE) + timing (uint16 LE)
+- **ASCII messages**: Lines starting with `#` for status/errors
+
+## 🎯 Typical Workflow
+
+1. **Connect** Arduino via serial port
+2. **Configure** ADC settings (reference, OSR, gain)
+3. **Set channels** and acquisition parameters
+4. **Press Configure** to send settings to Arduino
+5. **Press Start** to begin capture and real-time plotting
+6. **Press Stop** when complete
+7. **Save data** as CSV with notes and metadata
+
+## 📚 Documentation
+
+- **[GUI_README.md](GUI_README.md)**: Complete user guide with screenshots
+- **[BUFFER_OPTIMIZATION.md](BUFFER_OPTIMIZATION.md)**: Performance tuning guide
+- **[IADC_UPDATE_CHANGES.md](IADC_UPDATE_CHANGES.md)**: Firmware change notes
+
+## 🐛 Troubleshooting
+
+### Common Issues
+- **No data received**: Check "Use Ground Sample" is unchecked unless using ground pin
+- **Buffer size error**: Reduce buffer size or repeat count
+- **Configuration fails**: Reset Arduino and reconnect
+- **Intermittent crashes**: Fixed in latest version (Qt thread safety)
+
+### Qt Geometry Warning
+The warning about window geometry can be safely ignored - it's a cosmetic issue with Qt adjusting window size to fit your display.
 
 ## 🤝 Contributing
 
-Contributions welcome! Please open issues or pull requests.
+Contributions welcome! Areas for improvement:
+- Additional Arduino board support
+- Advanced signal processing features
+- Export format options
+- Calibration tools
 
 ## 📄 License
 
 [Add your license here]
+
+---
+
+**Note**: This project has evolved significantly from ASCII to optimized binary streaming with buffering. The current recommended firmware is `ADC_Streamer_binary_scan` which provides the best performance and reliability.

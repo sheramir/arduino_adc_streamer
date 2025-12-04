@@ -65,7 +65,7 @@ WINDOW_WIDTH = 1200
 WINDOW_HEIGHT = 800
 
 # Default scrolling window size (number of sweeps to display during capture)
-DEFAULT_WINDOW_SIZE = 1000
+DEFAULT_WINDOW_SIZE = 10000
 
 # Maximum number of columns for channel checkboxes layout
 MAX_PLOT_COLUMNS = 6
@@ -83,6 +83,53 @@ MAX_SAMPLES_BUFFER = 32000
 
 # USB CDC packet size (bytes) - used for optimizing block transfers
 USB_PACKET_SIZE = 64
+
+# Default buffer size (sweeps per block)
+DEFAULT_BUFFER_SIZE = 128
+
+# ============================================================================
+# UI Control Ranges and Defaults
+# ============================================================================
+
+# Ground pin spinner range
+GROUND_PIN_MIN = 0
+GROUND_PIN_MAX = 18
+GROUND_PIN_DEFAULT = 0
+
+# Repeat count range and default
+REPEAT_COUNT_MIN = 1
+REPEAT_COUNT_MAX = 16  # Arduino limitation
+REPEAT_COUNT_DEFAULT = 1
+
+# Buffer size (sweeps per block) range
+BUFFER_SIZE_MIN = 1
+BUFFER_SIZE_MAX = 10000
+
+# Timed run range and default (milliseconds)
+TIMED_RUN_MIN = 10
+TIMED_RUN_MAX = 3600000  # 1 hour
+TIMED_RUN_DEFAULT = 1000
+
+# Sweep range spinners
+SWEEP_RANGE_MIN = 0
+SWEEP_RANGE_MAX = 999999
+SWEEP_RANGE_DEFAULT_MAX = 1000
+
+# Window size spinner range
+WINDOW_SIZE_MIN = 10
+WINDOW_SIZE_MAX = 10000
+
+# UI element heights (pixels)
+NOTES_INPUT_HEIGHT = 60
+STATUS_TEXT_HEIGHT = 150
+CHANNEL_SCROLL_HEIGHT = 80
+
+# ============================================================================
+# ADC Hardware Settings
+# ============================================================================
+
+# IADC fixed resolution for XIAO MG24 (used for display scaling only, not sent to Arduino)
+IADC_RESOLUTION_BITS = 12
 
 # ============================================================================
 # Plot Export Settings

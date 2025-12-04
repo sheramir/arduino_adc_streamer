@@ -7,8 +7,8 @@ Interactive ADC CSV Sweeper sketch.
 
 Features:
 - Serial port connection and configuration
-- Real-time ADC configuration (resolution, voltage reference)
-- Acquisition settings (channels, ground pin, repeat count, delay)
+- Real-time ADC configuration (voltage reference, OSR, gain)
+- Acquisition settings (channels, ground pin, repeat count)
 - Run control (continuous or timed runs)
 - Real-time plotting with pyqtgraph
 - Data export (CSV with metadata) and plot image export
@@ -29,6 +29,8 @@ import sys
 import csv
 import json
 import time
+import threading
+import traceback
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Dict
@@ -54,11 +56,19 @@ from config_constants import (
     CONFIG_RETRY_ATTEMPTS, CONFIG_COMMAND_TIMEOUT, CONFIG_RETRY_DELAY, INTER_COMMAND_DELAY,
     ARDUINO_RESET_DELAY, PLOT_UPDATE_DEBOUNCE, CONFIG_CHECK_INTERVAL, PLOT_UPDATE_FREQUENCY,
     WINDOW_WIDTH, WINDOW_HEIGHT, DEFAULT_WINDOW_SIZE, MAX_PLOT_COLUMNS,
-    TARGET_LATENCY_SEC, PLOT_EXPORT_WIDTH, PLOT_COLORS, MAX_SAMPLES_BUFFER, USB_PACKET_SIZE
+    TARGET_LATENCY_SEC, PLOT_EXPORT_WIDTH, PLOT_COLORS, MAX_SAMPLES_BUFFER, USB_PACKET_SIZE, DEFAULT_BUFFER_SIZE,
+    GROUND_PIN_MIN, GROUND_PIN_MAX, GROUND_PIN_DEFAULT,
+    REPEAT_COUNT_MIN, REPEAT_COUNT_MAX, REPEAT_COUNT_DEFAULT,
+    BUFFER_SIZE_MIN, BUFFER_SIZE_MAX,
+    TIMED_RUN_MIN, TIMED_RUN_MAX, TIMED_RUN_DEFAULT,
+    SWEEP_RANGE_MIN, SWEEP_RANGE_MAX, SWEEP_RANGE_DEFAULT_MAX,
+    WINDOW_SIZE_MIN, WINDOW_SIZE_MAX,
+    NOTES_INPUT_HEIGHT, STATUS_TEXT_HEIGHT, CHANNEL_SCROLL_HEIGHT,
+    IADC_RESOLUTION_BITS
 )
 
 # Import buffer optimization utilities
-from buffer_utils import calculate_optimal_sweeps_per_block, validate_and_limit_sweeps_per_block
+from buffer_utils import validate_and_limit_sweeps_per_block
 
 
 class SerialReaderThread(QThread):
@@ -271,7 +281,8 @@ class ADCStreamerGUI(QMainWindow):
             'repeat': 1,
             'ground_pin': -1,
             'use_ground': False,
-            'resolution': 12,
+            'osr': 2,
+            'gain': 1,
             'reference': 'vdd'
         }
         
@@ -281,7 +292,8 @@ class ADCStreamerGUI(QMainWindow):
             'repeat': None,
             'ground_pin': None,
             'use_ground': None,
-            'resolution': None,
+            'osr': None,
+            'gain': None,
             'reference': None
         }
         
@@ -294,7 +306,8 @@ class ADCStreamerGUI(QMainWindow):
             'repeat': None,
             'ground_pin': None,
             'use_ground': None,
-            'resolution': None,
+            'osr': None,
+            'gain': None,
             'reference': None,
             'buffer': None
         }
@@ -405,21 +418,31 @@ class ADCStreamerGUI(QMainWindow):
         group = QGroupBox("ADC Configuration")
         layout = QGridLayout()
 
-        # Resolution
-        layout.addWidget(QLabel("Resolution (bits):"), 0, 0)
-        self.resolution_combo = QComboBox()
-        self.resolution_combo.addItems(["8", "10", "12", "16"])
-        self.resolution_combo.setCurrentText("12")
-        self.resolution_combo.currentTextChanged.connect(self.on_resolution_changed)
-        layout.addWidget(self.resolution_combo, 0, 1)
-
         # Voltage Reference
-        layout.addWidget(QLabel("Voltage Reference:"), 1, 0)
+        layout.addWidget(QLabel("Voltage Reference:"), 0, 0)
         self.vref_combo = QComboBox()
-        self.vref_combo.addItems(["1.2V (Internal)", "3.3V (VDD)", "0.8*VDD", "External 1.25V"])
+        self.vref_combo.addItems(["1.2V (Internal)", "3.3V (VDD)"])
         self.vref_combo.setCurrentIndex(1)  # Default to VDD
         self.vref_combo.currentTextChanged.connect(self.on_vref_changed)
-        layout.addWidget(self.vref_combo, 1, 1)
+        layout.addWidget(self.vref_combo, 0, 1)
+
+        # OSR (Oversampling Ratio)
+        layout.addWidget(QLabel("OSR (Oversampling):"), 1, 0)
+        self.osr_combo = QComboBox()
+        self.osr_combo.addItems(["2", "4", "8"])
+        self.osr_combo.setCurrentText("2")
+        self.osr_combo.setToolTip("Oversampling ratio: higher = better SNR, lower sample rate")
+        self.osr_combo.currentTextChanged.connect(self.on_osr_changed)
+        layout.addWidget(self.osr_combo, 1, 1)
+
+        # Gain (Analog Amplification)
+        layout.addWidget(QLabel("Gain (Analog):"), 2, 0)
+        self.gain_combo = QComboBox()
+        self.gain_combo.addItems(["1×", "2×", "3×", "4×"])
+        self.gain_combo.setCurrentText("1×")
+        self.gain_combo.setToolTip("Analog amplification factor (1× to 4×)")
+        self.gain_combo.currentTextChanged.connect(self.on_gain_changed)
+        layout.addWidget(self.gain_combo, 2, 1)
 
         group.setLayout(layout)
         return group
@@ -439,38 +462,33 @@ class ADCStreamerGUI(QMainWindow):
         # Ground pin
         layout.addWidget(QLabel("Ground Pin:"), 1, 0)
         self.ground_pin_spin = QSpinBox()
-        self.ground_pin_spin.setRange(-1, 255)
-        self.ground_pin_spin.setValue(-1)
-        self.ground_pin_spin.setSpecialValueText("Not Set")
+        self.ground_pin_spin.setRange(GROUND_PIN_MIN, GROUND_PIN_MAX)
+        self.ground_pin_spin.setValue(0)  # Default to pin 0
         self.ground_pin_spin.valueChanged.connect(self.on_ground_pin_changed)
         layout.addWidget(self.ground_pin_spin, 1, 1)
 
         # Use ground sample
         self.use_ground_check = QCheckBox("Use Ground Sample")
+        self.use_ground_check.setChecked(False)  # Default to disabled
         self.use_ground_check.stateChanged.connect(self.on_use_ground_changed)
         layout.addWidget(self.use_ground_check, 1, 2)
 
         # Repeat count
         layout.addWidget(QLabel("Repeat Count:"), 2, 0)
         self.repeat_spin = QSpinBox()
-        self.repeat_spin.setRange(1, 1000)
-        self.repeat_spin.setValue(1)
+        self.repeat_spin.setRange(REPEAT_COUNT_MIN, REPEAT_COUNT_MAX)
+        self.repeat_spin.setValue(REPEAT_COUNT_DEFAULT)
         self.repeat_spin.valueChanged.connect(self.on_repeat_changed)
         layout.addWidget(self.repeat_spin, 2, 1)
 
         # Buffer size (sweeps per block)
         layout.addWidget(QLabel("Sweeps per block (buffer):"), 3, 0)
         self.buffer_spin = QSpinBox()
-        self.buffer_spin.setRange(1, 10000)
-        self.buffer_spin.setValue(10)  # Default, will be updated by suggestion
+        self.buffer_spin.setRange(BUFFER_SIZE_MIN, BUFFER_SIZE_MAX)
+        self.buffer_spin.setValue(DEFAULT_BUFFER_SIZE)
         self.buffer_spin.setToolTip("Number of sweeps sent per block from Arduino")
         self.buffer_spin.valueChanged.connect(self.on_buffer_size_changed)
         layout.addWidget(self.buffer_spin, 3, 1)
-        
-        # Label to show suggested buffer size
-        self.buffer_suggestion_label = QLabel("(suggested: --)")
-        self.buffer_suggestion_label.setStyleSheet("QLabel { color: gray; font-size: 9pt; }")
-        layout.addWidget(self.buffer_suggestion_label, 3, 2)
 
         group.setLayout(layout)
         return group
@@ -505,8 +523,8 @@ class ADCStreamerGUI(QMainWindow):
         layout.addWidget(self.timed_run_check, 2, 0)
 
         self.timed_run_spin = QSpinBox()
-        self.timed_run_spin.setRange(10, 3600000)  # 10ms to 1 hour
-        self.timed_run_spin.setValue(1000)
+        self.timed_run_spin.setRange(TIMED_RUN_MIN, TIMED_RUN_MAX)
+        self.timed_run_spin.setValue(TIMED_RUN_DEFAULT)
         self.timed_run_spin.setEnabled(False)
         self.timed_run_check.stateChanged.connect(
             lambda state: self.timed_run_spin.setEnabled(state == Qt.CheckState.Checked.value)
@@ -546,7 +564,7 @@ class ADCStreamerGUI(QMainWindow):
         layout.addWidget(QLabel("Notes:"), 2, 0, Qt.AlignmentFlag.AlignTop)
         self.notes_input = QTextEdit()
         self.notes_input.setPlaceholderText("Add notes about this capture (optional)")
-        self.notes_input.setMaximumHeight(60)
+        self.notes_input.setMaximumHeight(NOTES_INPUT_HEIGHT)
         layout.addWidget(self.notes_input, 2, 1, 1, 2)
 
         # Sample range selection
@@ -557,8 +575,8 @@ class ADCStreamerGUI(QMainWindow):
 
         # Min sweep
         self.min_sweep_spin = QSpinBox()
-        self.min_sweep_spin.setRange(0, 999999)
-        self.min_sweep_spin.setValue(0)
+        self.min_sweep_spin.setRange(SWEEP_RANGE_MIN, SWEEP_RANGE_MAX)
+        self.min_sweep_spin.setValue(SWEEP_RANGE_MIN)
         self.min_sweep_spin.setPrefix("Min: ")
         self.min_sweep_spin.setEnabled(False)
         self.min_sweep_spin.setToolTip("Starting sweep index (inclusive)")
@@ -566,8 +584,8 @@ class ADCStreamerGUI(QMainWindow):
 
         # Max sweep
         self.max_sweep_spin = QSpinBox()
-        self.max_sweep_spin.setRange(0, 999999)
-        self.max_sweep_spin.setValue(1000)
+        self.max_sweep_spin.setRange(SWEEP_RANGE_MIN, SWEEP_RANGE_MAX)
+        self.max_sweep_spin.setValue(SWEEP_RANGE_DEFAULT_MAX)
         self.max_sweep_spin.setPrefix("Max: ")
         self.max_sweep_spin.setEnabled(False)
         self.max_sweep_spin.setToolTip("Ending sweep index (inclusive)")
@@ -632,7 +650,7 @@ class ADCStreamerGUI(QMainWindow):
 
         self.status_text = QTextEdit()
         self.status_text.setReadOnly(True)
-        self.status_text.setMaximumHeight(150)
+        self.status_text.setMaximumHeight(STATUS_TEXT_HEIGHT)
         font = QFont("Courier", 9)
         self.status_text.setFont(font)
         layout.addWidget(self.status_text)
@@ -701,7 +719,7 @@ class ADCStreamerGUI(QMainWindow):
         scroll = QScrollArea()
         scroll.setWidget(self.channel_checkboxes_container)
         scroll.setWidgetResizable(True)
-        scroll.setMaximumHeight(80)
+        scroll.setMaximumHeight(CHANNEL_SCROLL_HEIGHT)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         channel_main_layout.addWidget(scroll)
 
@@ -731,21 +749,22 @@ class ADCStreamerGUI(QMainWindow):
         display_settings_layout.addWidget(QLabel("Y Range:"), 0, 0)
         self.yaxis_range_combo = QComboBox()
         self.yaxis_range_combo.addItems(["Adaptive", "Full-Scale"])
-        self.yaxis_range_combo.setToolTip("Adaptive: Auto-scale to visible data | Full-Scale: 0 to 2^ResolutionBits")
+        self.yaxis_range_combo.setCurrentIndex(1)  # Default to Full-Scale
+        self.yaxis_range_combo.setToolTip("Adaptive: Auto-scale to visible data | Full-Scale: 0 to max ADC value")
         self.yaxis_range_combo.currentIndexChanged.connect(self.on_yaxis_range_changed)
         display_settings_layout.addWidget(self.yaxis_range_combo, 0, 1)
 
         display_settings_layout.addWidget(QLabel("Y Units:"), 0, 2)
         self.yaxis_units_combo = QComboBox()
         self.yaxis_units_combo.addItems(["Values", "Voltage"])
-        self.yaxis_units_combo.setToolTip("Values: Raw ADC samples | Voltage: Convert using Vref and resolution")
+        self.yaxis_units_combo.setToolTip("Values: Raw ADC samples | Voltage: Convert using Vref")
         self.yaxis_units_combo.currentIndexChanged.connect(self.on_yaxis_units_changed)
         display_settings_layout.addWidget(self.yaxis_units_combo, 0, 3)
 
         # Row 1: Window controls
         display_settings_layout.addWidget(QLabel("Window Size:"), 1, 0)
         self.window_size_spin = QSpinBox()
-        self.window_size_spin.setRange(10, 10000)
+        self.window_size_spin.setRange(WINDOW_SIZE_MIN, WINDOW_SIZE_MAX)
         self.window_size_spin.setValue(DEFAULT_WINDOW_SIZE)
         self.window_size_spin.setToolTip("Number of sweeps to display during capture (scrolling mode)")
         display_settings_layout.addWidget(self.window_size_spin, 1, 1)
@@ -879,7 +898,8 @@ class ADCStreamerGUI(QMainWindow):
             'repeat': None,
             'ground_pin': None,
             'use_ground': None,
-            'resolution': None,
+            'osr': None,
+            'gain': None,
             'reference': None
         }
         
@@ -984,12 +1004,12 @@ class ADCStreamerGUI(QMainWindow):
 
     def send_command_and_wait_ack(self, command: str, expected_value: str = None, timeout: float = CONFIG_COMMAND_TIMEOUT, max_retries: int = CONFIG_RETRY_ATTEMPTS) -> tuple:
         """Send a command and wait for #OK acknowledgment with echoed argument verification.
+        Thread-safe version - silent operation, no console output.
         
         Returns:
             tuple: (success: bool, received_value: str or None)
         """
         if not self.serial_port or not self.serial_port.is_open:
-            self.log_status("ERROR: Not connected to serial port")
             return (False, None)
         
         for attempt in range(max_retries):
@@ -1020,7 +1040,6 @@ class ADCStreamerGUI(QMainWindow):
                             
                             # If we expect a specific value, verify it matches
                             if expected_value is not None and received_value != expected_value:
-                                self.log_status(f"MISMATCH: Sent '{expected_value}', received '{received_value}'")
                                 if attempt < max_retries - 1:
                                     break  # Retry
                                 else:
@@ -1031,32 +1050,21 @@ class ADCStreamerGUI(QMainWindow):
                         # Parse #NOT_OK response
                         elif line.startswith('#NOT_OK'):
                             received_value = line[7:].strip() if len(line) > 7 else None
-                            self.log_status(f"Command rejected: {command} (received: {received_value})")
                             if attempt < max_retries - 1:
                                 break  # Retry
                             else:
                                 return (False, received_value)
                         
-                        # Log error messages
-                        elif '# ERROR:' in line:
-                            self.log_status(line)
-                        
-                        # Log other status messages
-                        elif line.startswith('#'):
-                            self.log_status(line)
+                        # Silently ignore other messages during configuration
                             
                     except Exception:
                         continue
                 
-                # Timeout - retry
-                if attempt < max_retries - 1:
-                    self.log_status(f"Timeout waiting for ACK: {command}, retrying...")
-                else:
-                    self.log_status(f"ERROR: No response after {max_retries} attempts: {command}")
+                # Timeout - retry silently
+                if attempt >= max_retries - 1:
                     return (False, None)
                     
             except Exception as e:
-                self.log_status(f"ERROR: Failed to send command - {e}")
                 if attempt >= max_retries - 1:
                     return (False, None)
         
@@ -1341,15 +1349,17 @@ class ADCStreamerGUI(QMainWindow):
                     self.arduino_status['ground_pin'] = int(value)
                 elif 'useGroundBeforeEach' in key:
                     self.arduino_status['use_ground'] = (value.lower() == 'true')
-                elif 'adcResolutionBits' in key:
-                    self.arduino_status['resolution'] = int(value)
-                elif 'adcReference' in key:
+                elif 'osr' in key.lower():
+                    self.arduino_status['osr'] = int(value)
+                elif 'gain' in key.lower():
+                    self.arduino_status['gain'] = int(value)
+                elif 'adcReference' in key or 'reference' in key.lower():
                     # Map Arduino reference names back to our format
                     ref_map = {
                         'INTERNAL1V2': '1.2',
                         'VDD': 'vdd',
-                        '0.8*VDD': '0.8vdd',
-                        'EXTERNAL_1V25': 'ext'
+                        '1V2': '1.2',
+                        '3V3': 'vdd'
                     }
                     self.arduino_status['reference'] = ref_map.get(value, value.lower())
         except Exception as e:
@@ -1419,22 +1429,27 @@ class ADCStreamerGUI(QMainWindow):
 
     # Configuration change handlers
 
-    def on_resolution_changed(self, text: str):
-        """Handle resolution change."""
-        self.config['resolution'] = int(text)
-        self.config_is_valid = False
-        self.update_start_button_state()
-
     def on_vref_changed(self, text: str):
         """Handle voltage reference change."""
         vref_map = {
             "1.2V (Internal)": "1.2",
-            "3.3V (VDD)": "vdd",
-            "0.8*VDD": "0.8vdd",
-            "External 1.25V": "ext"
+            "3.3V (VDD)": "vdd"
         }
         vref_cmd = vref_map.get(text, "vdd")
         self.config['reference'] = vref_cmd
+        self.config_is_valid = False
+        self.update_start_button_state()
+    
+    def on_osr_changed(self, text: str):
+        """Handle OSR (oversampling ratio) change."""
+        self.config['osr'] = int(text)
+        self.config_is_valid = False
+        self.update_start_button_state()
+    
+    def on_gain_changed(self, text: str):
+        """Handle gain change."""
+        gain_value = int(text.replace('×', ''))
+        self.config['gain'] = gain_value
         self.config_is_valid = False
         self.update_start_button_state()
 
@@ -1449,7 +1464,6 @@ class ADCStreamerGUI(QMainWindow):
                 self.update_channel_list()
                 self.config_is_valid = False
                 self.update_start_button_state()
-                self.update_buffer_suggestion()  # Update buffer suggestion when channels change
             except:
                 pass
         
@@ -1475,7 +1489,6 @@ class ADCStreamerGUI(QMainWindow):
         self.config['repeat'] = value
         self.config_is_valid = False
         self.update_start_button_state()
-        self.update_buffer_suggestion()
     
     def on_buffer_size_changed(self, value: int):
         """Handle buffer size change and validate against constraints."""
@@ -1579,6 +1592,10 @@ class ADCStreamerGUI(QMainWindow):
         def config_worker():
             success_flag = False
             try:
+                # Check serial port is still valid
+                if not self.serial_port or not self.serial_port.is_open:
+                    return
+                    
                 # Flush buffers before configuration
                 self.serial_port.reset_input_buffer()
                 self.serial_port.reset_output_buffer()
@@ -1586,14 +1603,11 @@ class ADCStreamerGUI(QMainWindow):
                 
                 max_attempts = 3
                 for attempt in range(max_attempts):
-                    self.log_status(f"Configuration attempt {attempt + 1}/{max_attempts}")
                     success = self.send_config_with_verification()
-                    self.log_status(f"send_config_with_verification returned: {success}")
                     
                     if success:
                         # Verify final configuration
                         verified = self.verify_configuration()
-                        self.log_status(f"verify_configuration returned: {verified}")
                         if verified:
                             success_flag = True
                             break
@@ -1601,9 +1615,7 @@ class ADCStreamerGUI(QMainWindow):
                     time.sleep(0.05)  # Brief delay between retries
                     
             except Exception as e:
-                print(f"ERROR: Configuration exception - {e}")
-                import traceback
-                traceback.print_exc()
+                pass  # Silent error handling
             finally:
                 # Set completion status for main thread to handle
                 if success_flag:
@@ -1612,7 +1624,6 @@ class ADCStreamerGUI(QMainWindow):
                     self.config_completion_status = False
         
         # Start configuration in background thread
-        import threading
         threading.Thread(target=config_worker, daemon=True).start()
     
     def check_config_completion(self):
@@ -1632,6 +1643,7 @@ class ADCStreamerGUI(QMainWindow):
         """Handle successful configuration."""
         self.config_is_valid = True
         self.log_status("✓ Configuration verified - Ready to start")
+        self.log_status("Configuration complete - all parameters confirmed")
         self.update_start_button_state()
         self.configure_btn.setEnabled(True)
         self.configure_btn.setStyleSheet("QPushButton { background-color: #2196F3; color: white; font-weight: bold; }")
@@ -1644,59 +1656,24 @@ class ADCStreamerGUI(QMainWindow):
         self.configure_btn.setStyleSheet("QPushButton { background-color: #FF9800; color: white; font-weight: bold; }")
         self.statusBar().showMessage("Configuration failed - please retry", 5000)
     
-    def suggest_sweeps_per_block(self, channel_count: int, repeat_count: int, baud_rate: int = BAUD_RATE) -> tuple:
-        """Compute optimal sweeps per block using advanced optimization.
-        
-        Args:
-            channel_count: Number of ADC channels
-            repeat_count: Number of repeats per channel
-            baud_rate: Serial baud rate (default from BAUD_RATE constant)
-        
-        Returns:
-            Tuple of (best_sweeps, candidates_list)
-            - best_sweeps: The top recommended sweeps_per_block value
-            - candidates_list: List of (sweeps, metrics) for top candidates
-        """
-        if channel_count <= 0 or repeat_count <= 0:
-            return (10, [])  # Fallback default
-        
-        candidates = calculate_optimal_sweeps_per_block(
-            channel_count, repeat_count, baud_rate, TARGET_LATENCY_SEC, max_candidates=3
-        )
-        
-        if candidates:
-            best_sweeps = candidates[0][0]  # First candidate is best
-            return (best_sweeps, candidates)
-        else:
-            return (10, [])
-
     def send_config_with_verification(self) -> bool:
         """Send configuration to Arduino with ACK verification and retry.
         
         Returns:
             bool: True if all parameters were set successfully
         """
+        # Thread-safe check of serial port
         if not self.serial_port or not self.serial_port.is_open:
+            print("Serial port not available for configuration")
             return False
         
         all_success = True
-        
-        # Send resolution
-        res_text = self.resolution_combo.currentText()
-        success, received = self.send_command_and_wait_ack(f"res {res_text}", res_text)
-        if success:
-            self.arduino_status['resolution'] = int(received)
-        else:
-            all_success = False
-        time.sleep(INTER_COMMAND_DELAY)
         
         # Send voltage reference
         vref_text = self.vref_combo.currentText()
         vref_map = {
             "1.2V (Internal)": "1.2",
-            "3.3V (VDD)": "vdd",
-            "0.8*VDD": "0.8vdd",
-            "External 1.25V": "ext"
+            "3.3V (VDD)": "vdd"
         }
         vref_cmd = vref_map.get(vref_text, "vdd")
         success, received = self.send_command_and_wait_ack(f"ref {vref_cmd}", vref_cmd)
@@ -1704,7 +1681,25 @@ class ADCStreamerGUI(QMainWindow):
             self.arduino_status['reference'] = received
         else:
             all_success = False
-        time.sleep(0.05)
+        time.sleep(INTER_COMMAND_DELAY)
+        
+        # Send OSR (oversampling ratio)
+        osr_value = self.osr_combo.currentText()
+        success, received = self.send_command_and_wait_ack(f"osr {osr_value}", osr_value)
+        if success:
+            self.arduino_status['osr'] = int(received)
+        else:
+            all_success = False
+        time.sleep(INTER_COMMAND_DELAY)
+        
+        # Send gain
+        gain_value = str(self.config['gain'])
+        success, received = self.send_command_and_wait_ack(f"gain {gain_value}", gain_value)
+        if success:
+            self.arduino_status['gain'] = int(received)
+        else:
+            all_success = False
+        time.sleep(INTER_COMMAND_DELAY)
         
         # Send channels
         channels_text = self.channels_input.text().strip()
@@ -1726,21 +1721,23 @@ class ADCStreamerGUI(QMainWindow):
         time.sleep(0.05)
         
         # Send ground settings
-        use_ground = str(self.use_ground_check.isChecked()).lower()
-        success, received = self.send_command_and_wait_ack(f"ground {use_ground}", use_ground)
-        if success:
-            self.arduino_status['use_ground'] = (received == 'true')
-        else:
-            all_success = False
-        
         if self.use_ground_check.isChecked():
-            time.sleep(0.05)
+            # Send "ground N" where N is the pin number (automatically enables ground)
             ground_pin = str(self.ground_pin_spin.value())
             success, received = self.send_command_and_wait_ack(f"ground {ground_pin}", ground_pin)
             if success:
                 self.arduino_status['ground_pin'] = int(received)
+                self.arduino_status['use_ground'] = True
             else:
                 all_success = False
+        else:
+            # Send "ground false" to disable ground
+            success, received = self.send_command_and_wait_ack("ground false", "false")
+            if success:
+                self.arduino_status['use_ground'] = False
+            else:
+                all_success = False
+        time.sleep(0.05)
         
         # Send buffer size (sweeps per block)
         time.sleep(0.05)
@@ -1750,9 +1747,9 @@ class ADCStreamerGUI(QMainWindow):
         repeat_count = self.config.get('repeat', 1)
         
         if buffer_size <= 0:
-            # Compute suggested value
-            buffer_size, _ = self.suggest_sweeps_per_block(channel_count, repeat_count)
-            self.log_status(f"Invalid buffer size, using suggested value: {buffer_size}")
+            # Use default value
+            buffer_size = 128
+            self.log_status(f"Invalid buffer size, using default value: {buffer_size}")
             self.buffer_spin.setValue(buffer_size)
         else:
             # Validate against buffer capacity
@@ -1771,43 +1768,6 @@ class ADCStreamerGUI(QMainWindow):
         return all_success
         
 
-
-    def update_buffer_suggestion(self):
-        """Update the suggested buffer size based on current configuration."""
-        try:
-            # Parse channels
-            channels_text = self.channels_input.text().strip()
-            if channels_text:
-                channel_count = len([c.strip() for c in channels_text.split(',')])
-            else:
-                channel_count = 0
-            
-            repeat_count = self.repeat_spin.value()
-            
-            if channel_count > 0:
-                suggested, candidates = self.suggest_sweeps_per_block(channel_count, repeat_count)
-                
-                # Build suggestion text with details
-                if candidates:
-                    best = candidates[0][1]  # metrics for best candidate
-                    suggestion_text = (
-                        f"(suggested: {suggested} sweeps, "
-                        f"{best['transmit_time_ms']:.1f}ms, "
-                        f"{best['block_bytes']} bytes)"
-                    )
-                else:
-                    suggestion_text = f"(suggested: {suggested})"
-                
-                self.buffer_suggestion_label.setText(suggestion_text)
-                
-                # Auto-update buffer spin box to suggested value if it's currently at default/invalid
-                current_buffer = self.buffer_spin.value()
-                if current_buffer == 10 or current_buffer <= 0:  # Default or invalid
-                    self.buffer_spin.setValue(suggested)
-            else:
-                self.buffer_suggestion_label.setText("(suggested: --)")
-        except Exception as e:
-            self.buffer_suggestion_label.setText("(suggested: --)")
 
     def update_channel_list(self):
         """Update the channel selector checkboxes based on configured channels."""
@@ -2108,8 +2068,9 @@ class ADCStreamerGUI(QMainWindow):
         self.refresh_ports_btn.setEnabled(enabled and not self.serial_port)
 
         # ADC configuration
-        self.resolution_combo.setEnabled(enabled)
         self.vref_combo.setEnabled(enabled)
+        self.osr_combo.setEnabled(enabled)
+        self.gain_combo.setEnabled(enabled)
 
         # Acquisition settings
         self.channels_input.setEnabled(enabled)
@@ -2167,16 +2128,13 @@ class ADCStreamerGUI(QMainWindow):
 
     def convert_to_voltage(self, raw_value: float) -> float:
         """Convert raw ADC value to voltage."""
-        resolution_bits = self.config['resolution']
         vref = self.get_vref_voltage()
-
-        max_value = (2 ** resolution_bits) - 1
+        max_value = (2 ** IADC_RESOLUTION_BITS) - 1
         return (raw_value / max_value) * vref
 
     def get_fullscale_range(self) -> tuple:
         """Get the full-scale Y-axis range with padding above max."""
-        resolution_bits = self.config['resolution']
-        max_raw = 2 ** resolution_bits
+        max_raw = 2 ** IADC_RESOLUTION_BITS
 
         if self.yaxis_units_combo.currentText() == "Voltage":
             # Convert to voltage - add 5% padding above max
@@ -2478,8 +2436,10 @@ class ADCStreamerGUI(QMainWindow):
                     "repeat_count": self.config['repeat'],
                     "ground_pin": self.config['ground_pin'],
                     "use_ground_sample": self.config['use_ground'],
-                    "adc_resolution_bits": self.config['resolution'],
-                    "voltage_reference": self.config['reference']
+                    "adc_resolution_bits": IADC_RESOLUTION_BITS,
+                    "voltage_reference": self.config['reference'],
+                    "osr": self.config['osr'],
+                    "gain": self.config['gain']
                 },
                 "timing": {
                     "per_channel_rate_hz": self.timing_data.get('per_channel_rate_hz'),

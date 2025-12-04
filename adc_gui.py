@@ -1886,6 +1886,9 @@ class ADCStreamerGUI(QMainWindow):
             # Set Y-axis according to current mode
             self.apply_y_axis_range()
             
+            # Force plot update to apply the new range
+            self.update_plot()
+            
             # Also update force plot to match
             self.update_force_plot()
             
@@ -1922,6 +1925,9 @@ class ADCStreamerGUI(QMainWindow):
             
             # Set Y-axis according to current mode
             self.apply_y_axis_range()
+            
+            # Force plot update to apply the new range
+            self.update_plot()
             
             self.log_status(f"Graph view set to full data ({total_sweeps} sweeps, {channel_samples} samples per channel)")
 
@@ -2232,12 +2238,12 @@ class ADCStreamerGUI(QMainWindow):
 
                                 # Use slightly different line styles for each repeat
                                 if repeat_idx == 0:
-                                    pen = pg.mkPen(color=color, width=1.5)
+                                    pen = pg.mkPen(color=color, width=2)
                                     name = f"Ch {channel}.{repeat_idx}"
                                 else:
                                     # Lighter/thinner lines for additional repeats
                                     lighter_color = tuple(int(c * 0.7) for c in color)
-                                    pen = pg.mkPen(color=lighter_color, width=1, style=Qt.PenStyle.DashLine)
+                                    pen = pg.mkPen(color=lighter_color, width=1.5, style=Qt.PenStyle.DashLine)
                                     name = f"Ch {channel}.{repeat_idx}"
 
                                 # Plot with appropriate downsampling if needed
@@ -2260,7 +2266,7 @@ class ADCStreamerGUI(QMainWindow):
                         if len(channel_data) > 10000:
                             self.plot_widget.plot(
                                 channel_data,
-                                pen=pg.mkPen(color=color, width=1),
+                                pen=pg.mkPen(color=color, width=2),
                                 name=f"Ch {channel}",
                                 downsample=10,
                                 downsampleMethod='subsample'
@@ -2268,7 +2274,7 @@ class ADCStreamerGUI(QMainWindow):
                         else:
                             self.plot_widget.plot(
                                 channel_data,
-                                pen=pg.mkPen(color=color, width=1),
+                                pen=pg.mkPen(color=color, width=2),
                                 name=f"Ch {channel}"
                             )
 
@@ -2439,12 +2445,16 @@ class ADCStreamerGUI(QMainWindow):
                     "adc_resolution_bits": IADC_RESOLUTION_BITS,
                     "voltage_reference": self.config['reference'],
                     "osr": self.config['osr'],
-                    "gain": self.config['gain']
+                    "gain": self.config['gain'],
+                    "buffer_sweeps_per_block": self.config.get('buffer', 0),
+                    "buffer_total_samples": self.config.get('buffer', 0) * len(self.config['channels']) * self.config['repeat'] if self.config.get('buffer') else 0
                 },
                 "timing": {
                     "per_channel_rate_hz": self.timing_data.get('per_channel_rate_hz'),
                     "total_rate_hz": self.timing_data.get('total_rate_hz'),
-                    "between_samples_us": self.timing_data.get('between_samples_us')
+                    "arduino_sample_time_us": self.timing_data.get('arduino_sample_time_us'),
+                    "arduino_sample_rate_hz": self.timing_data.get('arduino_sample_rate_hz'),
+                    "buffer_gap_time_ms": self.timing_data.get('buffer_gap_time_ms')
                 },
                 "force_data": {
                     "available": len(self.force_data) > 0,

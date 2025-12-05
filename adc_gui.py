@@ -1369,10 +1369,11 @@ class ADCStreamerGUI(QMainWindow):
     def update_timing_display(self):
         """Update timing display based on Arduino measurements and buffer gap timing."""
         try:
-            # Calculate Arduino-based timing metrics
+            # Use only the most recent timing value from Arduino
             arduino_avg_sample_time_us = 0
             if hasattr(self, 'arduino_sample_times') and self.arduino_sample_times:
-                arduino_avg_sample_time_us = sum(self.arduino_sample_times) / len(self.arduino_sample_times)
+                # Use only the last received value
+                arduino_avg_sample_time_us = self.arduino_sample_times[-1]
             
             # Calculate sampling rate from Arduino's measurement
             arduino_sample_rate_hz = 0
@@ -1389,9 +1390,10 @@ class ADCStreamerGUI(QMainWindow):
                 else:
                     arduino_per_channel_rate_hz = arduino_sample_rate_hz
             
-            # Calculate average gap between buffers (transmission + processing time)
+            # Calculate average gap between buffers using all samples (smooths fluctuations)
             buffer_gap_time_ms = 0
             if hasattr(self, 'buffer_gap_times') and self.buffer_gap_times:
+                # Average all buffer gap times to smooth out fluctuations
                 buffer_gap_time_ms = sum(self.buffer_gap_times) / len(self.buffer_gap_times)
             
             # Store timing data
@@ -1409,9 +1411,13 @@ class ADCStreamerGUI(QMainWindow):
                 self.total_rate_label.setText("- Hz")
                 self.between_samples_label.setText("- µs")
             
-            # Display block gap time
+            # Display block gap time (always show if we have data)
             if buffer_gap_time_ms > 0:
                 self.block_gap_label.setText(f"{buffer_gap_time_ms:.2f} ms")
+            elif hasattr(self, 'buffer_gap_times') and len(self.buffer_gap_times) > 0:
+                # Show even if current value is 0, as long as we have history
+                avg_gap = sum(self.buffer_gap_times) / len(self.buffer_gap_times)
+                self.block_gap_label.setText(f"{avg_gap:.2f} ms")
             else:
                 self.block_gap_label.setText("- ms")
             
@@ -1583,6 +1589,10 @@ class ADCStreamerGUI(QMainWindow):
         
         self.log_status("Configuring Arduino...")
         self.configure_btn.setEnabled(False)
+        
+        # Clear timing data from previous runs
+        self.arduino_sample_times = []
+        self.buffer_gap_times = []
         
         # Reset completion status and start checking
         self.config_completion_status = None
@@ -2020,6 +2030,7 @@ class ADCStreamerGUI(QMainWindow):
         """Stop data capture."""
         self.send_command("stop")
         self.log_status("Stopping capture")
+        
         self.on_capture_finished()
 
     def on_capture_finished(self):

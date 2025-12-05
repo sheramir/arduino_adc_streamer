@@ -108,6 +108,23 @@ static const char     CMD_TERMINATOR   = '*';    // '*' ends a command
 static const uint16_t MAX_CMD_LENGTH   = 512;    // Max input line length
 
 // ---------------------------------------------------------------------
+// IADC clock configuration (user-tunable)
+// ---------------------------------------------------------------------
+//
+// You can change these two constants to try different speeds.
+//
+// Examples (check MG24 datasheet for absolute max values!):
+//   - IADC_SRC_CLK_TARGET_HZ: 20000000, 40000000
+//   - IADC_ADC_CLK_TARGET_HZ:  5000000, 10000000, 20000000
+//
+// Faster ADC clock  -> shorter conversion time, higher throughput, more noise.
+// Slower ADC clock  -> longer conversion, lower throughput, better SNR.
+//
+const uint32_t IADC_SRC_CLK_TARGET_HZ = 20000000UL;  // was fixed at 20 MHz
+const uint32_t IADC_ADC_CLK_TARGET_HZ = 10000000UL;  // was fixed at 10 MHz
+
+
+// ---------------------------------------------------------------------
 // Configuration state
 // ---------------------------------------------------------------------
 
@@ -447,7 +464,7 @@ void sendSweepHeader(uint16_t totalSamples) {
   Serial.write(header, 4);
 }
 
-void sendBlock(uint16_t sampleCount, uint32_t blockEndMicros) {
+void sendBlock(uint16_t sampleCount, uint32_t totalTimeUs) {
   if (sampleCount == 0) return;
 
   uint32_t totalSamples = sampleCount;
@@ -455,7 +472,6 @@ void sendBlock(uint16_t sampleCount, uint32_t blockEndMicros) {
     totalSamples = MAX_SAMPLES_BUFFER;
   }
 
-  uint32_t totalTimeUs   = blockEndMicros - blockStartMicros;
   uint32_t avgSampleDtUs = (totalSamples > 0) ? (totalTimeUs / totalSamples) : 0;
 
   uint16_t avgSampleDtUs16 = (avgSampleDtUs <= 65535u)
@@ -473,8 +489,6 @@ void sendBlock(uint16_t sampleCount, uint32_t blockEndMicros) {
   rateBytes[0] = (uint8_t)(avgSampleDtUs16 & 0xFF);
   rateBytes[1] = (uint8_t)(avgSampleDtUs16 >> 8);
   Serial.write(rateBytes, 2);
-
-  blockStartMicros = 0;
 }
 
 // ---------------------------------------------------------------------
@@ -508,7 +522,7 @@ static void initIADC_ScanMultiChannel() {
 
   // Global config
   init.warmup         = iadcWarmupNormal;
-  init.srcClkPrescale = IADC_calcSrcClkPrescale(IADC0, 20000000, 0);  // SRC ≈ 20 MHz
+  init.srcClkPrescale = IADC_calcSrcClkPrescale(IADC0, IADC_SRC_CLK_TARGET_HZ, 0);  // SRC ≈ 20 MHz
 
   // Config 0: reference, OSR, gain
   allConfigs.configs[0].reference    = g_vref_sel;
@@ -519,7 +533,7 @@ static void initIADC_ScanMultiChannel() {
   // Target ADC clock ~10 MHz
   allConfigs.configs[0].adcClkPrescale =
       IADC_calcAdcClkPrescale(IADC0,
-                              10000000,
+                              IADC_ADC_CLK_TARGET_HZ,
                               0,
                               iadcCfgModeNormal,
                               init.srcClkPrescale);
@@ -653,7 +667,7 @@ void doOneBlock() {
 
       uint32_t waitStart = micros();
       while (IADC_getScanFifoCnt(IADC0) == 0) {
-        if ((uint32_t)(micros() - waitStart) > 500000UL) {  // 500 ms timeout
+        if ((uint32_t)(micros() - waitStart) > 100000UL) {  // 100 ms timeout
           Serial.println(F("# ERROR: IADC scan timeout. Stopping run."));
           isRunning = false;
           timedRun  = false;
@@ -676,10 +690,11 @@ void doOneBlock() {
 
   sweepsInCurrentBlock = sweepsPerBlock;
 
-  uint32_t blockEndMicros = micros();
+  uint32_t totalTimeUs    = micros() - blockStartMicros; // Total sampling time for block
+  //blockStartMicros        = 0;   // clear here if you want to keep the global
 
   // Send ONLY non-ground samples
-  sendBlock((uint16_t)idx, blockEndMicros);
+  sendBlock((uint16_t)idx, totalTimeUs);
 
   sweepsInCurrentBlock = 0;
 }

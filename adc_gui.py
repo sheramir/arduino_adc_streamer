@@ -1125,14 +1125,18 @@ class ADCStreamerGUI(QMainWindow):
                     self.log_status("ERROR: Invalid configuration, samples_per_sweep is 0")
                     return
                 
-                # Split block into individual sweeps
+                # The sample count comes from the header, which reflects what Arduino actually sent
+                # Arduino may reduce sweeps per block to fit in RAM, so use actual count
                 total_samples = len(samples)
-                sweeps_in_block = total_samples // samples_per_sweep
-                remainder = total_samples % samples_per_sweep
                 
-                # Log warning if there are leftover samples (shouldn't happen normally)
-                if remainder != 0:
-                    self.log_status(f"WARNING: Block has {remainder} extra samples (expected multiple of {samples_per_sweep})")
+                # Verify the total samples is a multiple of samples_per_sweep
+                if total_samples % samples_per_sweep != 0:
+                    self.log_status(f"WARNING: Block has {total_samples} samples, not a multiple of {samples_per_sweep}. Block may be corrupted.")
+                    # Process only complete sweeps, discard partial data
+                    total_samples = (total_samples // samples_per_sweep) * samples_per_sweep
+                
+                # Calculate actual sweeps in this block (may be less than requested buffer size)
+                sweeps_in_block = total_samples // samples_per_sweep
                 
                 # Process each complete sweep in the block
                 for sweep_idx in range(sweeps_in_block):

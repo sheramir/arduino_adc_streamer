@@ -242,6 +242,7 @@ class ADCStreamerGUI(QMainWindow):
         # Serial connection
         self.serial_port: Optional[serial.Serial] = None
         self.serial_thread: Optional[SerialReaderThread] = None
+        self.current_mcu: Optional[str] = None  # Detected MCU type (e.g., "Teensy4.1", "MG24")
         
         # Configuration completion tracking
         self.config_completion_status: Optional[bool] = None  # None=pending, True=success, False=failed
@@ -283,7 +284,11 @@ class ADCStreamerGUI(QMainWindow):
             'use_ground': False,
             'osr': 2,
             'gain': 1,
-            'reference': 'vdd'
+            'reference': 'vdd',
+            # Teensy-specific settings
+            'conv_speed': 'med',  # Conversion speed (Teensy only)
+            'samp_speed': 'med',  # Sampling speed (Teensy only)
+            'sample_rate': 0      # Sample rate in Hz, 0=free-run (Teensy only)
         }
         
         # Track last successfully sent configuration to Arduino
@@ -398,7 +403,12 @@ class ADCStreamerGUI(QMainWindow):
         # Connect/Disconnect button for ADC
         self.connect_btn = QPushButton("Connect ADC")
         self.connect_btn.clicked.connect(self.toggle_connection)
-        layout.addWidget(self.connect_btn, 1, 0, 1, 3)
+        layout.addWidget(self.connect_btn, 1, 0, 1, 2)
+        
+        # MCU label (shows detected MCU type)
+        self.mcu_label = QLabel("MCU: -")
+        self.mcu_label.setStyleSheet("QLabel { font-weight: bold; color: #2196F3; }")
+        layout.addWidget(self.mcu_label, 1, 2)
         
         # Force sensor port selection
         layout.addWidget(QLabel("Force Port:"), 2, 0)
@@ -418,16 +428,18 @@ class ADCStreamerGUI(QMainWindow):
         group = QGroupBox("ADC Configuration")
         layout = QGridLayout()
 
-        # Voltage Reference
-        layout.addWidget(QLabel("Voltage Reference:"), 0, 0)
+        # Voltage Reference (hidden for Teensy)
+        self.vref_label = QLabel("Voltage Reference:")
+        layout.addWidget(self.vref_label, 0, 0)
         self.vref_combo = QComboBox()
         self.vref_combo.addItems(["1.2V (Internal)", "3.3V (VDD)"])
         self.vref_combo.setCurrentIndex(1)  # Default to VDD
         self.vref_combo.currentTextChanged.connect(self.on_vref_changed)
         layout.addWidget(self.vref_combo, 0, 1)
 
-        # OSR (Oversampling Ratio)
-        layout.addWidget(QLabel("OSR (Oversampling):"), 1, 0)
+        # OSR (Oversampling Ratio / Averaging)
+        self.osr_label = QLabel("OSR (Oversampling):")
+        layout.addWidget(self.osr_label, 1, 0)
         self.osr_combo = QComboBox()
         self.osr_combo.addItems(["2", "4", "8"])
         self.osr_combo.setCurrentText("2")
@@ -435,14 +447,52 @@ class ADCStreamerGUI(QMainWindow):
         self.osr_combo.currentTextChanged.connect(self.on_osr_changed)
         layout.addWidget(self.osr_combo, 1, 1)
 
-        # Gain (Analog Amplification)
-        layout.addWidget(QLabel("Gain (Analog):"), 2, 0)
+        # Gain (Analog Amplification) (hidden for Teensy)
+        self.gain_label = QLabel("Gain (Analog):")
+        layout.addWidget(self.gain_label, 2, 0)
         self.gain_combo = QComboBox()
         self.gain_combo.addItems(["1×", "2×", "3×", "4×"])
         self.gain_combo.setCurrentText("1×")
         self.gain_combo.setToolTip("Analog amplification factor (1× to 4×)")
         self.gain_combo.currentTextChanged.connect(self.on_gain_changed)
         layout.addWidget(self.gain_combo, 2, 1)
+
+        # Teensy-specific: Conversion Speed
+        self.conv_speed_label = QLabel("Conversion Speed:")
+        layout.addWidget(self.conv_speed_label, 3, 0)
+        self.conv_speed_combo = QComboBox()
+        self.conv_speed_combo.addItems(["low", "med", "high", "ad10", "ad20"])
+        self.conv_speed_combo.setCurrentText("med")
+        self.conv_speed_combo.setToolTip("ADC conversion speed (Teensy only)")
+        self.conv_speed_combo.currentTextChanged.connect(self.on_conv_speed_changed)
+        layout.addWidget(self.conv_speed_combo, 3, 1)
+        self.conv_speed_label.hide()
+        self.conv_speed_combo.hide()
+
+        # Teensy-specific: Sampling Speed
+        self.samp_speed_label = QLabel("Sampling Speed:")
+        layout.addWidget(self.samp_speed_label, 4, 0)
+        self.samp_speed_combo = QComboBox()
+        self.samp_speed_combo.addItems(["vlow", "low", "lmed", "med", "mhigh", "high", "hvhigh", "vhigh"])
+        self.samp_speed_combo.setCurrentText("med")
+        self.samp_speed_combo.setToolTip("ADC sampling speed (Teensy only)")
+        self.samp_speed_combo.currentTextChanged.connect(self.on_samp_speed_changed)
+        layout.addWidget(self.samp_speed_combo, 4, 1)
+        self.samp_speed_label.hide()
+        self.samp_speed_combo.hide()
+
+        # Teensy-specific: Sampling Rate
+        self.sample_rate_label = QLabel("Sampling Rate [Hz]:")
+        layout.addWidget(self.sample_rate_label, 5, 0)
+        self.sample_rate_spin = QSpinBox()
+        self.sample_rate_spin.setRange(0, 1000000)  # 0 to 1 MHz
+        self.sample_rate_spin.setValue(0)
+        self.sample_rate_spin.setSpecialValueText("Free-run (max)")
+        self.sample_rate_spin.setToolTip("Sampling rate in Hz, 0 = free-run at maximum speed (Teensy only)")
+        self.sample_rate_spin.valueChanged.connect(self.on_sample_rate_changed)
+        layout.addWidget(self.sample_rate_spin, 5, 1)
+        self.sample_rate_label.hide()
+        self.sample_rate_spin.hide()
 
         group.setLayout(layout)
         return group
@@ -855,6 +905,9 @@ class ADCStreamerGUI(QMainWindow):
             self.serial_port.reset_output_buffer()
             time.sleep(0.1)
 
+            # Detect MCU type
+            self.detect_mcu()
+
             # Start serial reader thread
             self.serial_thread = SerialReaderThread(self.serial_port)
             self.serial_thread.data_received.connect(self.process_serial_data)
@@ -872,6 +925,9 @@ class ADCStreamerGUI(QMainWindow):
             # Disable port selection during connection
             self.port_combo.setEnabled(False)
             self.refresh_ports_btn.setEnabled(False)
+            
+            # Update GUI based on detected MCU
+            self.update_gui_for_mcu()
 
         except Exception as e:
             self.log_status(f"ERROR: Failed to connect - {e}")
@@ -891,6 +947,10 @@ class ADCStreamerGUI(QMainWindow):
             self.serial_port.close()
 
         self.serial_port = None
+        
+        # Reset MCU detection
+        self.current_mcu = None
+        self.mcu_label.setText("MCU: -")
         
         # Reset last sent config so next connection sends everything
         self.last_sent_config = {
@@ -1070,6 +1130,91 @@ class ADCStreamerGUI(QMainWindow):
         
         return (False, None)
 
+    def detect_mcu(self):
+        """Detect MCU type by sending 'mcu' command and reading response."""
+        if not self.serial_port or not self.serial_port.is_open:
+            return
+        
+        try:
+            # Send MCU detection command
+            self.serial_port.write(f"mcu{COMMAND_TERMINATOR}".encode('utf-8'))
+            self.serial_port.flush()
+            
+            # Wait for response (timeout 2 seconds)
+            start_time = time.time()
+            while time.time() - start_time < 2.0:
+                if self.serial_port.in_waiting > 0:
+                    line = self.serial_port.readline().decode('utf-8', errors='ignore').strip()
+                    
+                    # Look for MCU response (format: "# Teensy4.1" or "# MG24")
+                    if line.startswith('#'):
+                        mcu_name = line[1:].strip()
+                        if mcu_name:
+                            self.current_mcu = mcu_name
+                            self.mcu_label.setText(f"MCU: {mcu_name}")
+                            self.log_status(f"Detected MCU: {mcu_name}")
+                            return
+                
+                time.sleep(0.01)
+            
+            # Timeout or no response - use generic behavior
+            self.current_mcu = None
+            self.mcu_label.setText("MCU: Unknown")
+            self.log_status("MCU detection timeout - using generic behavior")
+            
+        except Exception as e:
+            self.log_status(f"MCU detection failed: {e}")
+            self.current_mcu = None
+            self.mcu_label.setText("MCU: Unknown")
+
+    def update_gui_for_mcu(self):
+        """Update GUI controls based on detected MCU type."""
+        is_teensy = self.current_mcu and "Teensy" in self.current_mcu
+        
+        if is_teensy:
+            # Teensy 4.1: Hide reference and gain, show Teensy-specific controls
+            self.vref_label.hide()
+            self.vref_combo.hide()
+            self.gain_label.hide()
+            self.gain_combo.hide()
+            
+            # Update OSR label and options for Teensy (averaging)
+            self.osr_label.setText("Averaging:")
+            self.osr_combo.clear()
+            self.osr_combo.addItems(["0", "1","4", "8", "16", "32"])
+            self.osr_combo.setCurrentText("4")
+            self.osr_combo.setToolTip("Hardware averaging: 0=disabled, higher = better SNR")
+            
+            # Show Teensy-specific controls
+            self.conv_speed_label.show()
+            self.conv_speed_combo.show()
+            self.samp_speed_label.show()
+            self.samp_speed_combo.show()
+            self.sample_rate_label.show()
+            self.sample_rate_spin.show()
+            
+        else:
+            # Non-Teensy (e.g., MG24): Show reference and gain, hide Teensy controls
+            self.vref_label.show()
+            self.vref_combo.show()
+            self.gain_label.show()
+            self.gain_combo.show()
+            
+            # Reset OSR to original settings
+            self.osr_label.setText("OSR (Oversampling):")
+            self.osr_combo.clear()
+            self.osr_combo.addItems(["2", "4", "8"])
+            self.osr_combo.setCurrentText("2")
+            self.osr_combo.setToolTip("Oversampling ratio: higher = better SNR, lower sample rate")
+            
+            # Hide Teensy-specific controls
+            self.conv_speed_label.hide()
+            self.conv_speed_combo.hide()
+            self.samp_speed_label.hide()
+            self.samp_speed_combo.hide()
+            self.sample_rate_label.hide()
+            self.sample_rate_spin.hide()
+
     def process_serial_data(self, line: str):
         """Process incoming ASCII serial data (status messages, errors, etc.)."""
         if line.startswith('#'):
@@ -1098,20 +1243,15 @@ class ADCStreamerGUI(QMainWindow):
         if self.is_capturing:
             try:
                 # Track buffer arrival time (start of reception)
-                current_time = time.time()
+                block_start_time = time.time()
                 
-                # Calculate gap time between blocks (time between end of last block and start of this one)
-                if self.last_buffer_end_time is not None:
-                    gap_time_ms = (current_time - self.last_buffer_end_time) * 1000.0
-                    self.buffer_gap_times.append(gap_time_ms)
-                
-                self.buffer_receipt_times.append(current_time)
+                self.buffer_receipt_times.append(block_start_time)
                 
                 # Track first sweep time for rate calculation
                 if self.sweep_count == 0:
-                    self.capture_start_time = current_time
+                    self.capture_start_time = block_start_time
                     self.force_start_time = self.capture_start_time  # Sync force timing
-                    self.last_buffer_time = current_time
+                    self.last_buffer_time = block_start_time
                 
                 # Store the average sampling time from Arduino
                 self.arduino_sample_times.append(avg_sample_time_us)
@@ -1160,8 +1300,17 @@ class ADCStreamerGUI(QMainWindow):
                     )
                     self.update_force_plot()
                 
-                # Track when this buffer finished being processed
-                self.last_buffer_end_time = time.time()
+                # Track when this buffer finished being received
+                block_end_time = time.time()
+                
+                # Calculate gap time between blocks:
+                # Time from when last block finished receiving to when this block started receiving
+                # This measures the transmission gap + Arduino processing time between blocks
+                if self.last_buffer_end_time is not None:
+                    gap_time_ms = (block_start_time - self.last_buffer_end_time) * 1000.0
+                    self.buffer_gap_times.append(gap_time_ms)
+                
+                self.last_buffer_end_time = block_end_time
                 
                 # Update timing display after each block
                 self.update_timing_display()
@@ -1403,6 +1552,8 @@ class ADCStreamerGUI(QMainWindow):
             # Store timing data
             self.timing_data['arduino_sample_time_us'] = arduino_avg_sample_time_us
             self.timing_data['arduino_sample_rate_hz'] = arduino_sample_rate_hz
+            self.timing_data['per_channel_rate_hz'] = arduino_per_channel_rate_hz
+            self.timing_data['total_rate_hz'] = arduino_sample_rate_hz
             self.timing_data['buffer_gap_time_ms'] = buffer_gap_time_ms
             
             # Update timing labels with Arduino data
@@ -1452,9 +1603,10 @@ class ADCStreamerGUI(QMainWindow):
     
     def on_osr_changed(self, text: str):
         """Handle OSR (oversampling ratio) change."""
-        self.config['osr'] = int(text)
-        self.config_is_valid = False
-        self.update_start_button_state()
+        if text.strip():  # Only update if text is not empty
+            self.config['osr'] = int(text)
+            self.config_is_valid = False
+            self.update_start_button_state()
     
     def on_gain_changed(self, text: str):
         """Handle gain change."""
@@ -1497,6 +1649,24 @@ class ADCStreamerGUI(QMainWindow):
     def on_repeat_changed(self, value: int):
         """Handle repeat count change."""
         self.config['repeat'] = value
+        self.config_is_valid = False
+        self.update_start_button_state()
+    
+    def on_conv_speed_changed(self, text: str):
+        """Handle conversion speed change (Teensy only)."""
+        self.config['conv_speed'] = text
+        self.config_is_valid = False
+        self.update_start_button_state()
+    
+    def on_samp_speed_changed(self, text: str):
+        """Handle sampling speed change (Teensy only)."""
+        self.config['samp_speed'] = text
+        self.config_is_valid = False
+        self.update_start_button_state()
+    
+    def on_sample_rate_changed(self, value: int):
+        """Handle sample rate change (Teensy only)."""
+        self.config['sample_rate'] = value
         self.config_is_valid = False
         self.update_start_button_state()
     
@@ -1683,21 +1853,25 @@ class ADCStreamerGUI(QMainWindow):
         
         all_success = True
         
-        # Send voltage reference
-        vref_text = self.vref_combo.currentText()
-        vref_map = {
-            "1.2V (Internal)": "1.2",
-            "3.3V (VDD)": "vdd"
-        }
-        vref_cmd = vref_map.get(vref_text, "vdd")
-        success, received = self.send_command_and_wait_ack(f"ref {vref_cmd}", vref_cmd)
-        if success:
-            self.arduino_status['reference'] = received
-        else:
-            all_success = False
-        time.sleep(INTER_COMMAND_DELAY)
+        # Determine if this is a Teensy MCU
+        is_teensy = self.current_mcu and "Teensy" in self.current_mcu
         
-        # Send OSR (oversampling ratio)
+        # Send voltage reference (skip for Teensy - only supports 3.3V)
+        if not is_teensy:
+            vref_text = self.vref_combo.currentText()
+            vref_map = {
+                "1.2V (Internal)": "1.2",
+                "3.3V (VDD)": "vdd"
+            }
+            vref_cmd = vref_map.get(vref_text, "vdd")
+            success, received = self.send_command_and_wait_ack(f"ref {vref_cmd}", vref_cmd)
+            if success:
+                self.arduino_status['reference'] = received
+            else:
+                all_success = False
+            time.sleep(INTER_COMMAND_DELAY)
+        
+        # Send OSR (oversampling ratio) / Averaging
         osr_value = self.osr_combo.currentText()
         success, received = self.send_command_and_wait_ack(f"osr {osr_value}", osr_value)
         if success:
@@ -1706,14 +1880,39 @@ class ADCStreamerGUI(QMainWindow):
             all_success = False
         time.sleep(INTER_COMMAND_DELAY)
         
-        # Send gain
-        gain_value = str(self.config['gain'])
-        success, received = self.send_command_and_wait_ack(f"gain {gain_value}", gain_value)
-        if success:
-            self.arduino_status['gain'] = int(received)
-        else:
-            all_success = False
-        time.sleep(INTER_COMMAND_DELAY)
+        # Send gain (skip for Teensy - doesn't support gain)
+        if not is_teensy:
+            gain_value = str(self.config['gain'])
+            success, received = self.send_command_and_wait_ack(f"gain {gain_value}", gain_value)
+            if success:
+                self.arduino_status['gain'] = int(received)
+            else:
+                all_success = False
+            time.sleep(INTER_COMMAND_DELAY)
+        
+        # Teensy-specific: Send conversion speed
+        if is_teensy:
+            conv_speed = self.conv_speed_combo.currentText()
+            success, received = self.send_command_and_wait_ack(f"conv {conv_speed}", conv_speed)
+            if not success:
+                all_success = False
+            time.sleep(INTER_COMMAND_DELAY)
+        
+        # Teensy-specific: Send sampling speed
+        if is_teensy:
+            samp_speed = self.samp_speed_combo.currentText()
+            success, received = self.send_command_and_wait_ack(f"samp {samp_speed}", samp_speed)
+            if not success:
+                all_success = False
+            time.sleep(INTER_COMMAND_DELAY)
+        
+        # Teensy-specific: Send sampling rate
+        if is_teensy:
+            sample_rate = self.sample_rate_spin.value()
+            success, received = self.send_command_and_wait_ack(f"rate {sample_rate}", str(sample_rate))
+            if not success:
+                all_success = False
+            time.sleep(INTER_COMMAND_DELAY)
         
         # Send channels
         channels_text = self.channels_input.text().strip()
@@ -2446,12 +2645,18 @@ class ADCStreamerGUI(QMainWindow):
                     sweep_idx += 1
 
             # Prepare metadata dictionary
+            capture_duration_s = None
+            if self.capture_start_time and self.capture_end_time:
+                capture_duration_s = self.capture_end_time - self.capture_start_time
+            
             metadata = {
                 "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                "mcu_type": self.current_mcu if self.current_mcu else "Unknown",
                 "total_captured_sweeps": self.sweep_count,
                 "saved_sweeps": len(data_to_save),
                 "sweep_range": sweep_range_text,
                 "total_samples": len(data_to_save) * (len(data_to_save[0]) if data_to_save else 0),
+                "capture_duration_seconds": capture_duration_s,
                 "configuration": {
                     "channels": self.config['channels'],
                     "repeat_count": self.config['repeat'],
@@ -2461,8 +2666,8 @@ class ADCStreamerGUI(QMainWindow):
                     "voltage_reference": self.config['reference'],
                     "osr": self.config['osr'],
                     "gain": self.config['gain'],
-                    "buffer_sweeps_per_block": self.config.get('buffer', 0),
-                    "buffer_total_samples": self.config.get('buffer', 0) * len(self.config['channels']) * self.config['repeat'] if self.config.get('buffer') else 0
+                    "buffer_sweeps_per_block": self.buffer_spin.value(),
+                    "buffer_total_samples": self.buffer_spin.value() * len(self.config['channels']) * self.config['repeat']
                 },
                 "timing": {
                     "per_channel_rate_hz": self.timing_data.get('per_channel_rate_hz'),

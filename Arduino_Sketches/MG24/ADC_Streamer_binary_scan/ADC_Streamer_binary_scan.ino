@@ -123,6 +123,15 @@ static const uint16_t MAX_CMD_LENGTH   = 512;    // Max input line length
 const uint32_t IADC_SRC_CLK_TARGET_HZ = 20000000UL;  // was fixed at 20 MHz
 const uint32_t IADC_ADC_CLK_TARGET_HZ = 10000000UL;  // was fixed at 10 MHz
 
+// ---------------------------------------------------------------------
+// Warm-up sweeps before real data capture
+// ---------------------------------------------------------------------
+// The ADC + reference + decimation filters may need a short settling period.
+// This number defines how many full sweeps are captured & discarded
+// immediately after "run*" starts.
+// Tune as needed (e.g., 16, 32, 48, 64).
+const uint16_t IADC_WARMUP_SWEEPS = 48;
+
 
 // ---------------------------------------------------------------------
 // Configuration state
@@ -155,7 +164,6 @@ bool isGroundEntry[MAX_SCAN_ENTRIES];  // true = ground sample, false = channel 
 
 // Blocked/buffered sweeps:
 uint16_t sweepsPerBlock        = 1;  // how many sweeps per block
-uint16_t sweepsInCurrentBlock  = 0;  // informational only
 
 // ---------------------------------------------------------------------
 // High-speed IADC configuration state (runtime adjustable)
@@ -375,48 +383,34 @@ uint16_t calcScanEntryCount(uint16_t rep) {
 
 // ---------------------------------------------------------------------
 // Derived configuration recomputation
+// Returns true if configuration is valid, false if it exceeds hardware limits
 // ---------------------------------------------------------------------
-void recomputeDerivedConfig() {
+bool recomputeDerivedConfig() {
   if (channelCount == 0) {
     samplesPerSweep      = 0;
     scanEntriesPerSweep  = 0;
     sweepsPerBlock       = 1;
-    sweepsInCurrentBlock = 0;
     g_configDirty        = true;
-    return;
+    return true;  // "empty" config is valid, just does nothing
   }
 
-  // First, compute scan entries for current repeatCount
+  // First, compute scan entries for current repeatCount and ground setting
   uint16_t scanEntries = calcScanEntryCount(repeatCount);
 
-  // Enforce IADC scan table limit by reducing repeatCount if needed
+  // HARD LIMIT: IADC scan table entries per sweep
   if (scanEntries > MAX_SCAN_ENTRIES) {
-    uint16_t oldRepeat = repeatCount;
-    bool     found     = false;
+    Serial.print(F("# ERROR: total scan entries per sweep ("));
+    Serial.print(scanEntries);
+    Serial.print(F(") exceeds hardware limit of "));
+    Serial.print(MAX_SCAN_ENTRIES);
+    Serial.println(F(". Reduce channels, repeat, or disable ground."));
 
-    for (uint16_t newRep = repeatCount; newRep >= 1; --newRep) {
-      uint16_t cand = calcScanEntryCount(newRep);
-      if (cand <= MAX_SCAN_ENTRIES) {
-        repeatCount   = newRep;
-        scanEntries   = cand;
-        found         = true;
-        break;
-      }
-      if (newRep == 1) break; // avoid wrap-around
-    }
-
-    if (!found) {
-      Serial.print(F("# WARNING: too many channels + ground for scan table (max "));
-      Serial.print(MAX_SCAN_ENTRIES);
-      Serial.println(F("). Some entries will be ignored. Reduce channels or disable ground."));
-      scanEntries = MAX_SCAN_ENTRIES;
-    } else if (repeatCount != oldRepeat) {
-      Serial.print(F("# WARNING: repeatCount reduced to "));
-      Serial.print(repeatCount);
-      Serial.print(F(" to fit IADC scan table (max "));
-      Serial.print(MAX_SCAN_ENTRIES);
-      Serial.println(F(" entries)."));
-    }
+    // Mark as invalid so capturing won't run
+    samplesPerSweep      = 0;
+    scanEntriesPerSweep  = 0;
+    sweepsPerBlock       = 1;
+    g_configDirty        = true;
+    return false;
   }
 
   // Number of IADC entries per sweep (ground + channels)
@@ -427,7 +421,6 @@ void recomputeDerivedConfig() {
 
   if (samplesPerSweep == 0) {
     sweepsPerBlock       = 1;
-    sweepsInCurrentBlock = 0;
   } else {
     // Ensure sweepsPerBlock fits into adcBuffer (we store only non-ground samples)
     uint32_t maxSweepsByBuffer = MAX_SAMPLES_BUFFER / (uint32_t)samplesPerSweep;
@@ -441,12 +434,12 @@ void recomputeDerivedConfig() {
     if (sweepsPerBlock > maxSweepsByBuffer) {
       sweepsPerBlock = (uint16_t)maxSweepsByBuffer;
     }
-
-    sweepsInCurrentBlock = 0;
   }
 
   g_configDirty = true;
+  return true;
 }
+
 
 // ---------------------------------------------------------------------
 // Binary sweep/block output helpers
@@ -640,6 +633,54 @@ static void initIADC_ScanMultiChannel() {
 
 
 // ---------------------------------------------------------------------
+// Perform N warm-up sweeps and discard the results.
+// This lets the IADC, reference, and any digital filters settle
+// before we start filling adcBuffer for the PC.
+// ---------------------------------------------------------------------
+void discardWarmupSweeps(uint16_t warmupSweeps) {
+  if (channelCount == 0 || samplesPerSweep == 0) return;
+
+  if (g_configDirty) {
+    initIADC_ScanMultiChannel();
+  }
+
+  for (uint16_t s = 0; s < warmupSweeps; ++s) {
+    // Clear SCANTABLEDONE before starting this sweep
+    IADC_clearInt(IADC0, IADC_IF_SCANTABLEDONE);
+
+    IADC_command(IADC0, iadcCmdStartScan);
+
+    uint16_t entriesRead = 0;
+
+    while (entriesRead < MAX_SCAN_ENTRIES) {
+      uint32_t waitStart = micros();
+      while (IADC_getScanFifoCnt(IADC0) == 0) {
+        uint32_t flags = IADC_getInt(IADC0);
+        if (flags & IADC_IF_SCANTABLEDONE) {
+          // End of this warm-up sweep
+          IADC_clearInt(IADC0, IADC_IF_SCANTABLEDONE);
+          goto sweep_done_warmup;
+        }
+
+        if ((uint32_t)(micros() - waitStart) > 100000UL) {  // 100 ms timeout
+          Serial.println(F("# ERROR: IADC warmup scan timeout."));
+          return;
+        }
+      }
+
+      // Pull and discard the sample
+      (void)IADC_pullScanFifoResult(IADC0);
+      entriesRead++;
+    }
+
+  sweep_done_warmup:
+    ; // no-op; just a label target
+  }
+}
+
+
+
+// ---------------------------------------------------------------------
 // Capture one block into adcBuffer using IADC scan
 // ---------------------------------------------------------------------
 
@@ -660,13 +701,26 @@ void doOneBlock() {
   uint32_t idx = 0;
 
   for (uint16_t s = 0; s < sweepsPerBlock; ++s) {
+    // Clear SCANTABLEDONE before starting this sweep
+    IADC_clearInt(IADC0, IADC_IF_SCANTABLEDONE);
+
     IADC_command(IADC0, iadcCmdStartScan);
 
     uint16_t entriesRead = 0;
-    while (entriesRead < scanEntriesPerSweep && idx < totalSamples) {
+
+    while (idx < totalSamples && entriesRead < MAX_SCAN_ENTRIES) {
 
       uint32_t waitStart = micros();
       while (IADC_getScanFifoCnt(IADC0) == 0) {
+        // If the hardware says the scan table is done and FIFO is empty,
+        // there are no more results for this sweep.
+        uint32_t flags = IADC_getInt(IADC0);
+        if (flags & IADC_IF_SCANTABLEDONE) {
+          // Clear the flag so the next sweep starts clean
+          IADC_clearInt(IADC0, IADC_IF_SCANTABLEDONE);
+          goto sweep_done;
+        }
+
         if ((uint32_t)(micros() - waitStart) > 100000UL) {  // 100 ms timeout
           Serial.println(F("# ERROR: IADC scan timeout. Stopping run."));
           isRunning = false;
@@ -675,28 +729,31 @@ void doOneBlock() {
         }
       }
 
-
+      // We have at least one sample in FIFO
       IADC_Result_t res = IADC_pullScanFifoResult(IADC0);
       uint16_t data     = (uint16_t)(res.data & 0x0FFF); // 12-bit
 
       // Only store non-ground scan entries
-      if (!isGroundEntry[entriesRead]) {
-        adcBuffer[idx++] = data;
+      if (entriesRead < scanEntriesPerSweep && !isGroundEntry[entriesRead]) {
+        if (idx < totalSamples) {
+          adcBuffer[idx++] = data;
+        }
       }
 
       entriesRead++;
     }
+
+  sweep_done:
+    ; // label target, nothing to do here
   }
 
-  sweepsInCurrentBlock = sweepsPerBlock;
+
 
   uint32_t totalTimeUs    = micros() - blockStartMicros; // Total sampling time for block
   //blockStartMicros        = 0;   // clear here if you want to keep the global
 
   // Send ONLY non-ground samples
   sendBlock((uint16_t)idx, totalTimeUs);
-
-  sweepsInCurrentBlock = 0;
 }
 
 // ---------------------------------------------------------------------
@@ -733,12 +790,12 @@ bool handleChannels(const String &args) {
 
   if (channelCount == 0) {
     Serial.println(F("# ERROR: no valid channels parsed."));
-    recomputeDerivedConfig();
+    recomputeDerivedConfig(); // just to reset derived values
     return false;
   }
 
-  recomputeDerivedConfig();
-  return true;
+  // Validate channel + repeat + ground combination
+  return recomputeDerivedConfig();
 }
 
 bool handleGround(const String &args) {
@@ -770,8 +827,7 @@ bool handleGround(const String &args) {
     useGroundBeforeEach = true;
   }
 
-  recomputeDerivedConfig();
-  return true;
+  return recomputeDerivedConfig();
 }
 
 bool handleRepeat(const String &args) {
@@ -784,8 +840,8 @@ bool handleRepeat(const String &args) {
   if (val > MAX_REPEAT_COUNT) val = MAX_REPEAT_COUNT;
 
   repeatCount = (uint16_t)val;
-  recomputeDerivedConfig();
-  return true;
+  // Validate channel + repeat + ground combination
+  return recomputeDerivedConfig();
 }
 
 bool handleBuffer(const String &args) {
@@ -798,9 +854,8 @@ bool handleBuffer(const String &args) {
   if (val <= 0) val = 1;
 
   sweepsPerBlock = (uint16_t)val;
-  recomputeDerivedConfig();
-  sweepsInCurrentBlock = 0;
-  return true;
+  bool ok = recomputeDerivedConfig();  // adjust to buffer size, etc.
+  return ok;
 }
 
 bool handleRef(const String &args) {
@@ -894,10 +949,22 @@ bool handleRun(const String &args) {
     }
   }
 
-  sweepsInCurrentBlock = 0;
-  recomputeDerivedConfig();
+  if (!recomputeDerivedConfig()) {
+    // Invalid config: don't start the run
+    isRunning = false;
+    timedRun  = false;
+    return false;
+  }
+
+  // Ensure IADC is initialized with current config
+  g_configDirty = true;
+  
+  // Run configurable warm-up sweeps
+  discardWarmupSweeps(IADC_WARMUP_SWEEPS);  // e.g. 48 sweeps of 6 channels
   return true;
 }
+
+
 
 void handleStop() {
   isRunning = false;
@@ -907,6 +974,11 @@ void handleStop() {
 // ---------------------------------------------------------------------
 // Status / help
 // ---------------------------------------------------------------------
+
+void printMcu() {
+  // Single line so the GUI can parse easily
+  Serial.println(F("# MG24"));
+}
 
 void printStatus() {
   Serial.println(F("# -------- STATUS --------"));
@@ -975,9 +1047,6 @@ void printStatus() {
   Serial.print(F("# sweepsPerBlock: "));
   Serial.println(sweepsPerBlock);
 
-  Serial.print(F("# sweepsInCurrentBlock: "));
-  Serial.println(sweepsInCurrentBlock);
-
   Serial.print(F("# MAX_SAMPLES_BUFFER: "));
   Serial.println(MAX_SAMPLES_BUFFER);
 
@@ -1001,6 +1070,7 @@ void printHelp() {
   Serial.println(F("#   run 100               (~100 ms time-limited run)"));
   Serial.println(F("#   stop                  (stop running)"));
   Serial.println(F("#   status                (show configuration)"));
+  Serial.println(F("#   mcu                   (print MCU name for GUI detection)"));
   Serial.println(F("#   help                  (this message)"));
 }
 
@@ -1029,6 +1099,7 @@ void handleLine(const String &lineRaw) {
   else if (cmd == "run")         { ok = handleRun(args); }
   else if (cmd == "stop")        { handleStop(); ok = true; }
   else if (cmd == "status")      { printStatus(); ok = true; }
+  else if (cmd == "mcu")         { printMcu();   ok = true; }
   else if (cmd == "help")        { printHelp();  ok = true; }
   else {
     Serial.print(F("# ERROR: unknown command '"));
@@ -1050,7 +1121,7 @@ void setup() {
     ; // wait for USB serial
   }
 
-  recomputeDerivedConfig();
+  (void)recomputeDerivedConfig();
   g_configDirty = true;
 }
 

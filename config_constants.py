@@ -139,6 +139,29 @@ IADC_RESOLUTION_BITS = 12
 PLOT_EXPORT_WIDTH = 1920
 
 # ============================================================================
+# Memory Management Settings
+# ============================================================================
+
+# Maximum number of timing samples to keep in memory (rolling window)
+# Applies to: buffer_receipt_times, arduino_sample_times, buffer_gap_times
+# Higher values = more accurate long-term statistics, but more memory usage
+MAX_TIMING_SAMPLES = 1000
+
+# Maximum number of data sweeps to keep in memory (rolling window)
+# Applies to: raw_data (ADC sweeps)
+# Higher values = more data available for analysis/export, but more memory usage
+MAX_SWEEPS_IN_MEMORY = 50000
+
+# Maximum number of force samples to keep in memory (rolling window)
+# Applies to: force_data
+# Higher values = more force data for analysis, but more memory usage
+MAX_FORCE_SAMPLES = 50000
+
+# Maximum number of log lines to keep in status text window
+# Prevents excessive memory usage from log accumulation during long sessions
+MAX_LOG_LINES = 1000
+
+# ============================================================================
 # Plot Colors
 # ============================================================================
 

@@ -64,7 +64,8 @@ from config_constants import (
     SWEEP_RANGE_MIN, SWEEP_RANGE_MAX, SWEEP_RANGE_DEFAULT_MAX,
     WINDOW_SIZE_MIN, WINDOW_SIZE_MAX,
     NOTES_INPUT_HEIGHT, STATUS_TEXT_HEIGHT, CHANNEL_SCROLL_HEIGHT,
-    IADC_RESOLUTION_BITS
+    IADC_RESOLUTION_BITS,
+    MAX_TIMING_SAMPLES, MAX_SWEEPS_IN_MEMORY, MAX_FORCE_SAMPLES, MAX_LOG_LINES
 )
 
 # Import buffer optimization utilities
@@ -1245,7 +1246,10 @@ class ADCStreamerGUI(QMainWindow):
                 # Track buffer arrival time (start of reception)
                 block_start_time = time.time()
                 
+                # Keep only last 1000 buffer receipt times to prevent unbounded growth
                 self.buffer_receipt_times.append(block_start_time)
+                if len(self.buffer_receipt_times) > MAX_TIMING_SAMPLES:
+                    self.buffer_receipt_times = self.buffer_receipt_times[-MAX_TIMING_SAMPLES:]
                 
                 # Track first sweep time for rate calculation
                 if self.sweep_count == 0:
@@ -1253,8 +1257,10 @@ class ADCStreamerGUI(QMainWindow):
                     self.force_start_time = self.capture_start_time  # Sync force timing
                     self.last_buffer_time = block_start_time
                 
-                # Store the average sampling time from Arduino
+                # Store the average sampling time from Arduino (keep only last 1000)
                 self.arduino_sample_times.append(avg_sample_time_us)
+                if len(self.arduino_sample_times) > MAX_TIMING_SAMPLES:
+                    self.arduino_sample_times = self.arduino_sample_times[-MAX_TIMING_SAMPLES:]
                 
                 # Calculate samples per sweep from configuration
                 channel_count = len(self.config.get('channels', []))
@@ -1287,6 +1293,11 @@ class ADCStreamerGUI(QMainWindow):
                     self.raw_data.append(sweep_samples)
                     self.sweep_count += 1
 
+                # Implement rolling window: keep only the most recent sweeps
+                # This prevents memory overflow during long captures
+                if len(self.raw_data) > MAX_SWEEPS_IN_MEMORY:
+                    self.raw_data = self.raw_data[-MAX_SWEEPS_IN_MEMORY:]
+
                 # Update plot periodically for performance (after processing entire block)
                 if self.sweep_count % PLOT_UPDATE_FREQUENCY == 0:
                     self.update_plot()
@@ -1309,6 +1320,9 @@ class ADCStreamerGUI(QMainWindow):
                 if self.last_buffer_end_time is not None:
                     gap_time_ms = (block_start_time - self.last_buffer_end_time) * 1000.0
                     self.buffer_gap_times.append(gap_time_ms)
+                    # Keep only recent gap times to prevent unbounded growth
+                    if len(self.buffer_gap_times) > MAX_TIMING_SAMPLES:
+                        self.buffer_gap_times = self.buffer_gap_times[-MAX_TIMING_SAMPLES:]
                 
                 self.last_buffer_end_time = block_end_time
                 
@@ -1348,6 +1362,11 @@ class ADCStreamerGUI(QMainWindow):
         if self.is_capturing and self.force_start_time is not None:
             timestamp = time.time() - self.force_start_time
             self.force_data.append((timestamp, x_calibrated, z_calibrated))
+            
+            # Implement rolling window: keep only the most recent force samples
+            # This prevents memory overflow during long captures
+            if len(self.force_data) > MAX_FORCE_SAMPLES:
+                self.force_data = self.force_data[-MAX_FORCE_SAMPLES:]
             
             # Update info label
             if len(self.force_data) % 10 == 0:  # Update every 10 samples
@@ -1583,6 +1602,15 @@ class ADCStreamerGUI(QMainWindow):
         """Log a status message."""
         timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
         self.status_text.append(f"[{timestamp}] {message}")
+        
+        # Limit status text to prevent memory overflow during long sessions
+        # QTextEdit.toPlainText() includes all lines with newlines
+        current_text = self.status_text.toPlainText()
+        lines = current_text.split('\n')
+        if len(lines) > MAX_LOG_LINES:
+            # Keep only the most recent lines
+            self.status_text.setPlainText('\n'.join(lines[-MAX_LOG_LINES:]))
+        
         # Auto-scroll to bottom
         self.status_text.verticalScrollBar().setValue(
             self.status_text.verticalScrollBar().maximum()

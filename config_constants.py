@@ -85,7 +85,7 @@ MAX_SAMPLES_BUFFER = 32000
 USB_PACKET_SIZE = 64
 
 # Default buffer size (sweeps per block)
-DEFAULT_BUFFER_SIZE = 128
+DEFAULT_BUFFER_SIZE = 1
 
 # ============================================================================
 # UI Control Ranges and Defaults

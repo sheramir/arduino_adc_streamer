@@ -252,6 +252,11 @@ class ADCStreamerGUI(QMainWindow):
         self.raw_data: List[List[int]] = []  # List of sweeps (each sweep is a list of values)
         self.sweep_count = 0
         self.is_capturing = False
+
+        # Archive file for storing every sweep to disk so we can save full capture
+        self._archive_file = None  # file object opened for write during capture
+        self._archive_path: Optional[str] = None
+        self._archive_write_count = 0
         
         # Force measurement data storage
         self.force_serial_port: Optional[serial.Serial] = None
@@ -598,7 +603,8 @@ class ADCStreamerGUI(QMainWindow):
         # Directory selection
         layout.addWidget(QLabel("Directory:"), 0, 0)
         self.dir_input = QLineEdit()
-        self.dir_input.setText(str(Path.home()))
+        # Default save directory requested by user
+        self.dir_input.setText(r"C:/Users/maggi/Documents/sensetics/data/adc")
         layout.addWidget(self.dir_input, 0, 1)
 
         self.browse_btn = QPushButton("Browse")
@@ -1292,6 +1298,22 @@ class ADCStreamerGUI(QMainWindow):
                     
                     self.raw_data.append(sweep_samples)
                     self.sweep_count += 1
+
+                    # Persist sweep to archive file so full dataset is available even when
+                    # we enforce an in-memory rolling window. Write as JSON lines.
+                    try:
+                        if self._archive_file:
+                            self._archive_file.write(json.dumps(sweep_samples) + '\n')
+                            self._archive_write_count += 1
+                            # Periodically flush to ensure data is on disk without flushing every write
+                            if self._archive_write_count % 1000 == 0:
+                                try:
+                                    self._archive_file.flush()
+                                except Exception:
+                                    pass
+                    except Exception:
+                        # Don't let archive errors interrupt capture
+                        pass
 
                 # Implement rolling window: keep only the most recent sweeps
                 # This prevents memory overflow during long captures
@@ -2232,6 +2254,41 @@ class ADCStreamerGUI(QMainWindow):
         self.plot_widget.setMenuEnabled(False)
 
         # Switch to binary capture mode BEFORE sending run command
+        # Open an archive file so we persist every sweep to disk. This ensures we
+        # never lose access to data even though the in-memory buffer is a rolling window.
+        try:
+            save_dir = Path(self.dir_input.text()) if hasattr(self, 'dir_input') else Path.cwd()
+            save_dir.mkdir(parents=True, exist_ok=True)
+            base_name = self.filename_input.text().strip() if hasattr(self, 'filename_input') else 'adc_data'
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            archive_name = f"{base_name}_{timestamp}.jsonl"
+            archive_path = save_dir / archive_name
+            # Open for write (overwrite any existing file with same name) and store handle
+            self._archive_file = open(archive_path, 'w', encoding='utf-8')
+            self._archive_path = str(archive_path)
+            self._archive_write_count = 0
+            # Write a metadata header line for later reference
+            try:
+                metadata = {
+                    'metadata': {
+                        'channels': self.config.get('channels', []),
+                        'repeat': self.config.get('repeat', 1),
+                        'ground_pin': self.config.get('ground_pin'),
+                        'use_ground': self.config.get('use_ground'),
+                        'osr': self.config.get('osr'),
+                        'gain': self.config.get('gain'),
+                        'reference': self.config.get('reference'),
+                        'notes': self.notes_input.toPlainText() if hasattr(self, 'notes_input') else None,
+                        'start_time': datetime.now().isoformat()
+                    }
+                }
+                self._archive_file.write(json.dumps(metadata) + '\n')
+            except Exception:
+                pass
+            self.log_status(f"Archive opened: {self._archive_path}")
+        except Exception as e:
+            self.log_status(f"WARNING: Could not open archive file: {e}")
+
         self.is_capturing = True
         if self.serial_thread:
             self.serial_thread.set_capturing(True)
@@ -2306,6 +2363,21 @@ class ADCStreamerGUI(QMainWindow):
         self.plot_info_label.setText(
             f"ADC - Sweeps: {self.sweep_count} | Samples: {total_samples}  |  Force: {force_samples} samples"
         )
+
+        # Close archive file if open
+        try:
+            if self._archive_file:
+                try:
+                    self._archive_file.flush()
+                except Exception:
+                    pass
+                try:
+                    self._archive_file.close()
+                except Exception:
+                    pass
+                self.log_status(f"Archive saved: {self._archive_path}")
+        except Exception:
+            pass
 
         self.log_status(f"Capture finished. Total sweeps: {self.sweep_count}, Total samples: {total_samples}, Force samples: {force_samples}")
 
@@ -2577,18 +2649,34 @@ class ADCStreamerGUI(QMainWindow):
         if not self.raw_data:
             QMessageBox.warning(self, "No Data", "No data to save.")
             return
+        # Determine archive info (if an archive file exists for this capture)
+        archived_count = 0
+        archive_path = None
+        try:
+            if getattr(self, '_archive_path', None):
+                archive_path = Path(self._archive_path)
+                if archive_path.exists():
+                    # Count archived sweeps (exclude metadata first line)
+                    with archive_path.open('r', encoding='utf-8') as af:
+                        # Read and discard metadata
+                        first = af.readline()
+                        for _ in af:
+                            archived_count += 1
+        except Exception:
+            archived_count = 0
 
-        # Determine which data to save
-        data_to_save = self.raw_data
+        # Total sweeps available for saving (archive + in-memory)
+        total_sweeps = archived_count + len(self.raw_data)
         sweep_range_text = "All"
-        total_sweeps = len(self.raw_data)
 
-        # Check if range is enabled
+        # Check if range is enabled (range refers to the global sweep index across archive+memory)
+        save_min = 0
+        save_max = total_sweeps  # exclusive
         if self.use_range_check.isChecked():
             min_sweep = self.min_sweep_spin.value()
             max_sweep = self.max_sweep_spin.value()
 
-            # Validate range
+            # Validate range against total_sweeps
             if min_sweep >= max_sweep:
                 QMessageBox.warning(
                     self,
@@ -2605,7 +2693,7 @@ class ADCStreamerGUI(QMainWindow):
                 )
                 return
 
-            if max_sweep < 0 or max_sweep > total_sweeps:
+            if max_sweep <= 0 or max_sweep > total_sweeps:
                 QMessageBox.warning(
                     self,
                     "Invalid Range",
@@ -2613,10 +2701,10 @@ class ADCStreamerGUI(QMainWindow):
                 )
                 return
 
-            # Slice the data (max_sweep is inclusive in user terms, but exclusive in Python slicing)
-            data_to_save = self.raw_data[min_sweep:max_sweep]
-            sweep_range_text = f"{min_sweep} to {max_sweep - 1}"
-            self.log_status(f"Saving sweep range: {sweep_range_text} ({len(data_to_save)} sweeps)")
+            save_min = min_sweep
+            save_max = max_sweep
+            sweep_range_text = f"{save_min} to {save_max - 1}"
+            self.log_status(f"Saving sweep range: {sweep_range_text} (global indices)")
 
         # Prepare file paths
         directory = Path(self.dir_input.text())
@@ -2637,40 +2725,77 @@ class ADCStreamerGUI(QMainWindow):
                 for timestamp, x_force, z_force in self.force_data:
                     force_dict[timestamp] = (x_force, z_force)
             
-            # Save CSV data with force columns
+            # Save CSV data with force columns. We'll stream archive (if present) + in-memory data
             with open(csv_path, 'w', newline='') as f:
                 writer = csv.writer(f)
-                
+
                 # Write header
                 header = [f"CH{ch}" for ch in self.config['channels']] * self.config['repeat']
                 header.extend(["Force_X", "Force_Z"])
                 writer.writerow(header)
-                
-                # Write data rows
-                sweep_idx = 0
-                for sweep in data_to_save:
-                    row = list(sweep)
-                    
-                    # Calculate approximate timestamp for this sweep
-                    if self.capture_start_time and self.capture_end_time and len(self.raw_data) > 0:
-                        sweep_time = (sweep_idx / len(data_to_save)) * (self.capture_end_time - self.capture_start_time)
-                        
-                        # Find closest force measurement
-                        closest_force = (0.0, 0.0)
-                        if force_dict:
-                            min_diff = float('inf')
-                            for f_time, (x, z) in force_dict.items():
-                                diff = abs(f_time - sweep_time)
-                                if diff < min_diff:
-                                    min_diff = diff
-                                    closest_force = (x, z)
-                        
-                        row.extend(closest_force)
-                    else:
-                        row.extend([0.0, 0.0])
-                    
-                    writer.writerow(row)
-                    sweep_idx += 1
+
+                # Determine how many sweeps will be saved (respecting range selection)
+                saved_total = max(0, save_max - save_min)
+                saved_index = 0  # index among saved sweeps (0..saved_total-1)
+                global_idx = 0  # index across archive + in-memory
+                first_sweep_len = None
+
+                # Precompute capture duration for approximate timestamp mapping
+                capture_duration = None
+                if self.capture_start_time and self.capture_end_time:
+                    capture_duration = self.capture_end_time - self.capture_start_time
+
+                # Helper to find closest force sample given a normalized saved_index
+                def get_closest_force(saved_idx):
+                    if not force_dict or capture_duration is None or saved_total <= 0:
+                        return (0.0, 0.0)
+                    sweep_time = (saved_idx / saved_total) * capture_duration
+                    closest_force = (0.0, 0.0)
+                    min_diff = float('inf')
+                    for f_time, (x, z) in force_dict.items():
+                        diff = abs(f_time - sweep_time)
+                        if diff < min_diff:
+                            min_diff = diff
+                            closest_force = (x, z)
+                    return closest_force
+
+                # Stream archived sweeps first (if present)
+                if archive_path and archive_path.exists():
+                    with archive_path.open('r', encoding='utf-8') as af:
+                        # skip metadata line
+                        af.readline()
+                        for line in af:
+                            if global_idx >= save_max:
+                                break
+                            if global_idx >= save_min:
+                                try:
+                                    sweep = json.loads(line)
+                                except Exception:
+                                    global_idx += 1
+                                    continue
+
+                                if first_sweep_len is None:
+                                    first_sweep_len = len(sweep)
+
+                                row = list(sweep)
+                                row.extend(list(get_closest_force(saved_index)))
+                                writer.writerow(row)
+                                saved_index += 1
+                            global_idx += 1
+
+                # Stream in-memory sweeps (preserve order)
+                for sweep in self.raw_data:
+                    if global_idx >= save_max:
+                        break
+                    if global_idx >= save_min:
+                        if first_sweep_len is None:
+                            first_sweep_len = len(sweep)
+
+                        row = list(sweep)
+                        row.extend(list(get_closest_force(saved_index)))
+                        writer.writerow(row)
+                        saved_index += 1
+                    global_idx += 1
 
             # Prepare metadata dictionary
             capture_duration_s = None
@@ -2681,9 +2806,9 @@ class ADCStreamerGUI(QMainWindow):
                 "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 "mcu_type": self.current_mcu if self.current_mcu else "Unknown",
                 "total_captured_sweeps": self.sweep_count,
-                "saved_sweeps": len(data_to_save),
+                "saved_sweeps": saved_index,
                 "sweep_range": sweep_range_text,
-                "total_samples": len(data_to_save) * (len(data_to_save[0]) if data_to_save else 0),
+                "total_samples": saved_index * (first_sweep_len if first_sweep_len else 0),
                 "capture_duration_seconds": capture_duration_s,
                 "configuration": {
                     "channels": self.config['channels'],
@@ -2730,7 +2855,7 @@ class ADCStreamerGUI(QMainWindow):
             QMessageBox.information(
                 self,
                 "Save Successful",
-                f"Data saved successfully:\n{csv_path}\n{metadata_path}\n\nSweeps saved: {len(data_to_save)}"
+                f"Data saved successfully:\n{csv_path}\n{metadata_path}\n\nSweeps saved: {saved_index}"
             )
 
         except Exception as e:

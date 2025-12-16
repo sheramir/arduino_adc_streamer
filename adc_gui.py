@@ -2260,7 +2260,8 @@ class ADCStreamerGUI(QMainWindow):
             save_dir = Path(self.dir_input.text()) if hasattr(self, 'dir_input') else Path.cwd()
             save_dir.mkdir(parents=True, exist_ok=True)
             base_name = self.filename_input.text().strip() if hasattr(self, 'filename_input') else 'adc_data'
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            # Use minute-resolution filenames (no seconds)
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M')
             archive_name = f"{base_name}_{timestamp}.jsonl"
             archive_path = save_dir / archive_name
             # Open for write (overwrite any existing file with same name) and store handle
@@ -2709,7 +2710,8 @@ class ADCStreamerGUI(QMainWindow):
         # Prepare file paths
         directory = Path(self.dir_input.text())
         filename = self.filename_input.text()
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # Use minute-resolution filenames (no seconds)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M")
 
         csv_path = directory / f"{filename}_{timestamp}.csv"
         metadata_path = directory / f"{filename}_{timestamp}_metadata.json"
@@ -2870,7 +2872,8 @@ class ADCStreamerGUI(QMainWindow):
 
         directory = Path(self.dir_input.text())
         filename = self.filename_input.text()
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # Use minute-resolution filenames (no seconds)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M")
 
         image_path = directory / f"{filename}_{timestamp}.png"
 

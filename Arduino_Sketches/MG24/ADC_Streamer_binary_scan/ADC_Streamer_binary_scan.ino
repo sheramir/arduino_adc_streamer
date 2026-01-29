@@ -17,7 +17,7 @@
  *     Each block has (B * samplesPerSweep) samples.
  *
  *   - Blocks are sent as binary:
- *       [0xAA][0x55][countL][countH] + count * uint16 + avg_dt_us(uint16)
+ *       [0xAA][0x55][countL][countH] + count * uint16 + avg_dt_us(uint16) + block_start_us(uint32) + block_end_us(uint32)
  *
  *   - The average time per sample (µs) is measured only for the
  *     ADC CAPTURE time, not including serial printing.
@@ -457,7 +457,7 @@ void sendSweepHeader(uint16_t totalSamples) {
   Serial.write(header, 4);
 }
 
-void sendBlock(uint16_t sampleCount, uint32_t totalTimeUs) {
+void sendBlock(uint16_t sampleCount, uint32_t blockStartUs, uint32_t blockEndUs) {
   if (sampleCount == 0) return;
 
   uint32_t totalSamples = sampleCount;
@@ -465,6 +465,7 @@ void sendBlock(uint16_t sampleCount, uint32_t totalTimeUs) {
     totalSamples = MAX_SAMPLES_BUFFER;
   }
 
+  uint32_t totalTimeUs = blockEndUs - blockStartUs;  // wrap-safe unsigned math
   uint32_t avgSampleDtUs = (totalSamples > 0) ? (totalTimeUs / totalSamples) : 0;
 
   uint16_t avgSampleDtUs16 = (avgSampleDtUs <= 65535u)
@@ -477,11 +478,23 @@ void sendBlock(uint16_t sampleCount, uint32_t totalTimeUs) {
   // Samples (channels only, already filtered)
   Serial.write((uint8_t*)adcBuffer, (size_t)(totalSamples * sizeof(uint16_t)));
 
-  // Average per-sample time (µs)
+  // Average per-sample time (us)
   uint8_t rateBytes[2];
   rateBytes[0] = (uint8_t)(avgSampleDtUs16 & 0xFF);
   rateBytes[1] = (uint8_t)(avgSampleDtUs16 >> 8);
   Serial.write(rateBytes, 2);
+
+  // Append block start/end micros (uint32 LE each) for host-side timing
+  uint8_t tsBytes[8];
+  tsBytes[0] = (uint8_t)(blockStartUs & 0xFF);
+  tsBytes[1] = (uint8_t)((blockStartUs >> 8) & 0xFF);
+  tsBytes[2] = (uint8_t)((blockStartUs >> 16) & 0xFF);
+  tsBytes[3] = (uint8_t)((blockStartUs >> 24) & 0xFF);
+  tsBytes[4] = (uint8_t)(blockEndUs & 0xFF);
+  tsBytes[5] = (uint8_t)((blockEndUs >> 8) & 0xFF);
+  tsBytes[6] = (uint8_t)((blockEndUs >> 16) & 0xFF);
+  tsBytes[7] = (uint8_t)((blockEndUs >> 24) & 0xFF);
+  Serial.write(tsBytes, 8);
 }
 
 // ---------------------------------------------------------------------
@@ -749,11 +762,11 @@ void doOneBlock() {
 
 
 
-  uint32_t totalTimeUs    = micros() - blockStartMicros; // Total sampling time for block
+  uint32_t blockEndMicros = micros(); // Total sampling time for block
   //blockStartMicros        = 0;   // clear here if you want to keep the global
 
   // Send ONLY non-ground samples
-  sendBlock((uint16_t)idx, totalTimeUs);
+  sendBlock((uint16_t)idx, blockStartMicros, blockEndMicros);
 }
 
 // ---------------------------------------------------------------------

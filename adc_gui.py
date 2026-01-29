@@ -75,7 +75,7 @@ from buffer_utils import validate_and_limit_sweeps_per_block
 class SerialReaderThread(QThread):
     """Background thread for reading serial data without blocking the GUI."""
     data_received = pyqtSignal(str)
-    binary_sweep_received = pyqtSignal(list, int)  # samples, avg_sample_time_us
+    binary_sweep_received = pyqtSignal(list, int, int, int)  # samples, avg_sample_time_us, block_start_us, block_end_us
     error_occurred = pyqtSignal(str)
 
     def __init__(self, serial_port):
@@ -155,8 +155,8 @@ class SerialReaderThread(QThread):
                     break  # Need more data for header
                 
                 sample_count = buffer[2] | (buffer[3] << 8)
-                # New format: header(4) + samples(count*2) + avg_time(2)
-                packet_size = 4 + (sample_count * 2) + 2
+                # New format: header(4) + samples(count*2) + avg_time(2) + block_start_us(4) + block_end_us(4)
+                packet_size = 4 + (sample_count * 2) + 2 + 8
                 
                 if len(buffer) < packet_size:
                     break  # Need more data for complete block
@@ -168,12 +168,27 @@ class SerialReaderThread(QThread):
                     sample = buffer[idx] | (buffer[idx + 1] << 8)
                     samples.append(sample)
                 
-                # Extract average sampling time (µs) from last 2 bytes (little-endian uint16)
+                # Extract average sampling time (us) from last 2 bytes (little-endian uint16)
                 avg_time_idx = 4 + (sample_count * 2)
                 avg_sample_time_us = buffer[avg_time_idx] | (buffer[avg_time_idx + 1] << 8)
-                
-                # Emit block with average sampling time
-                self.binary_sweep_received.emit(samples, avg_sample_time_us)
+
+                # Extract block start/end micros (little-endian uint32)
+                ts_idx = avg_time_idx + 2
+                block_start_us = (
+                    buffer[ts_idx]
+                    | (buffer[ts_idx + 1] << 8)
+                    | (buffer[ts_idx + 2] << 16)
+                    | (buffer[ts_idx + 3] << 24)
+                )
+                block_end_us = (
+                    buffer[ts_idx + 4]
+                    | (buffer[ts_idx + 5] << 8)
+                    | (buffer[ts_idx + 6] << 16)
+                    | (buffer[ts_idx + 7] << 24)
+                )
+
+                # Emit block with average sampling time and MCU timestamps
+                self.binary_sweep_received.emit(samples, avg_sample_time_us, block_start_us, block_end_us)
                 
                 # Remove processed packet from buffer
                 buffer = buffer[packet_size:]
@@ -257,6 +272,10 @@ class ADCStreamerGUI(QMainWindow):
         self._archive_file = None  # file object opened for write during capture
         self._archive_path: Optional[str] = None
         self._archive_write_count = 0
+        # Block timing sidecar (streamed during capture)
+        self._block_timing_file = None  # file object opened for write during capture
+        self._block_timing_path: Optional[str] = None
+        self._block_timing_write_count = 0
         
         # Force measurement data storage
         self.force_serial_port: Optional[serial.Serial] = None
@@ -270,7 +289,10 @@ class ADCStreamerGUI(QMainWindow):
         self.timing_data = {
             'arduino_sample_time_us': None,  # Average sample time from Arduino
             'arduino_sample_rate_hz': None,  # Sampling rate calculated from Arduino timing
-            'buffer_gap_time_ms': None  # Gap time between buffers (transmission + processing)
+            'buffer_gap_time_ms': None,  # Gap time between buffers (transmission + processing)
+            'mcu_block_start_us': None,
+            'mcu_block_end_us': None,
+            'mcu_block_gap_us': None
         }
         self.capture_start_time = None
         self.capture_end_time = None
@@ -281,6 +303,13 @@ class ADCStreamerGUI(QMainWindow):
         self.buffer_receipt_times = []  # Timestamps of buffer arrivals
         self.buffer_gap_times = []  # Gap times between buffers (ms)
         self.arduino_sample_times = []  # Arduino-measured sample times (µs)
+        self.block_sample_counts = []  # Samples per block (post-trim)
+        self.block_sweeps_counts = []  # Sweeps per block (post-trim)
+        self.block_samples_per_sweep = []  # Samples per sweep for each block
+        self.mcu_block_start_us = []  # MCU block start timestamps (us)
+        self.mcu_block_end_us = []  # MCU block end timestamps (us)
+        self.mcu_block_gap_us = []  # MCU gap between blocks (us)
+        self.mcu_last_block_end_us = None  # Last MCU block end (us)
 
         # Configuration state
         self.config = {
@@ -333,6 +362,17 @@ class ADCStreamerGUI(QMainWindow):
         self.plot_update_timer.setSingleShot(True)
         self.plot_update_timer.timeout.connect(self.update_plot)
         self.plot_update_timer.timeout.connect(self.update_force_plot)
+
+        # Force plot update timer (debounced) and cached curves to avoid
+        # recreating PlotCurveItem objects on every update which is costly.
+        self.force_plot_timer = QTimer()
+        self.force_plot_timer.setSingleShot(True)
+        self.force_plot_timer.timeout.connect(self.update_force_plot)
+        # Cached PlotCurveItem objects for X and Z force
+        self._force_x_curve = None
+        self._force_z_curve = None
+        # Debounce interval in ms for force plot updates when force samples arrive
+        self.force_plot_debounce_ms = 100
 
         # Flag to prevent concurrent plot updates
         self.is_updating_plot = False
@@ -1235,7 +1275,7 @@ class ADCStreamerGUI(QMainWindow):
             if line.strip() and line.isprintable():
                 self.log_status(f"Unexpected ASCII: {line}")
 
-    def process_binary_sweep(self, samples: List[int], avg_sample_time_us: int):
+    def process_binary_sweep(self, samples: List[int], avg_sample_time_us: int, block_start_us: int, block_end_us: int):
         """Process incoming binary block data containing one or more sweeps.
         
         The Arduino now sends blocks of sweeps. Each block contains:
@@ -1246,6 +1286,8 @@ class ADCStreamerGUI(QMainWindow):
         Args:
             samples: List of ADC sample values
             avg_sample_time_us: Average time per sample in microseconds (from Arduino)
+            block_start_us: MCU micros() at first sample in block
+            block_end_us: MCU micros() at last sample in block
         """
         if self.is_capturing:
             try:
@@ -1267,6 +1309,21 @@ class ADCStreamerGUI(QMainWindow):
                 self.arduino_sample_times.append(avg_sample_time_us)
                 if len(self.arduino_sample_times) > MAX_TIMING_SAMPLES:
                     self.arduino_sample_times = self.arduino_sample_times[-MAX_TIMING_SAMPLES:]
+
+                # Store MCU block timestamps (keep only last 1000)
+                self.mcu_block_start_us.append(block_start_us)
+                self.mcu_block_end_us.append(block_end_us)
+                if len(self.mcu_block_start_us) > MAX_TIMING_SAMPLES:
+                    self.mcu_block_start_us = self.mcu_block_start_us[-MAX_TIMING_SAMPLES:]
+                    self.mcu_block_end_us = self.mcu_block_end_us[-MAX_TIMING_SAMPLES:]
+
+                # MCU gap between blocks (wrap-safe unsigned math)
+                if self.mcu_last_block_end_us is not None:
+                    gap_us = (block_start_us - self.mcu_last_block_end_us) & 0xFFFFFFFF
+                    self.mcu_block_gap_us.append(gap_us)
+                    if len(self.mcu_block_gap_us) > MAX_TIMING_SAMPLES:
+                        self.mcu_block_gap_us = self.mcu_block_gap_us[-MAX_TIMING_SAMPLES:]
+                self.mcu_last_block_end_us = block_end_us
                 
                 # Calculate samples per sweep from configuration
                 channel_count = len(self.config.get('channels', []))
@@ -1289,6 +1346,40 @@ class ADCStreamerGUI(QMainWindow):
                 
                 # Calculate actual sweeps in this block (may be less than requested buffer size)
                 sweeps_in_block = total_samples // samples_per_sweep
+
+                # Track block sizing for timing export (keep only recent)
+                self.block_sample_counts.append(total_samples)
+                self.block_sweeps_counts.append(sweeps_in_block)
+                self.block_samples_per_sweep.append(samples_per_sweep)
+                if len(self.block_sample_counts) > MAX_TIMING_SAMPLES:
+                    self.block_sample_counts = self.block_sample_counts[-MAX_TIMING_SAMPLES:]
+                    self.block_sweeps_counts = self.block_sweeps_counts[-MAX_TIMING_SAMPLES:]
+                    self.block_samples_per_sweep = self.block_samples_per_sweep[-MAX_TIMING_SAMPLES:]
+
+                # Stream block timing to sidecar (if open)
+                if self._block_timing_file:
+                    try:
+                        gap_us = ""
+                        if self.mcu_block_gap_us:
+                            gap_us = self.mcu_block_gap_us[-1]
+                        tw = csv.writer(self._block_timing_file)
+                        self._block_timing_write_count += 1
+                        if self._block_timing_write_count % 100 == 0:
+                            try:
+                                self._block_timing_file.flush()
+                            except Exception:
+                                pass
+                        tw.writerow([
+                            self.block_sample_counts[-1],
+                            self.block_samples_per_sweep[-1],
+                            self.block_sweeps_counts[-1],
+                            self.arduino_sample_times[-1],
+                            block_start_us,
+                            block_end_us,
+                            gap_us
+                        ])
+                    except Exception:
+                        pass
                 
                 # Process each complete sweep in the block
                 for sweep_idx in range(sweeps_in_block):
@@ -1396,128 +1487,105 @@ class ADCStreamerGUI(QMainWindow):
                 self.plot_info_label.setText(
                     f"ADC - Sweeps: {self.sweep_count} | Samples: {total_samples}  |  Force: {len(self.force_data)} samples"
                 )
+            # Schedule a debounced force plot update (avoid updating GUI for every sample)
+            try:
+                if not self.force_plot_timer.isActive():
+                    self.force_plot_timer.start(self.force_plot_debounce_ms)
+            except Exception:
+                pass
 
     def update_force_plot(self):
         """Update the force measurement plot on the right Y-axis."""
-        # Clear force plots from the force viewbox
-        for item in self.force_viewbox.addedItems[:]:
-            self.force_viewbox.removeItem(item)
-        
-        # Clear force legend
-        self.force_legend.clear()
-        
-        # Check if we should show force data
+        # Throttle plotting work by downsampling force data and reusing curve objects.
         show_x_force = self.force_x_checkbox and self.force_x_checkbox.isChecked()
         show_z_force = self.force_z_checkbox and self.force_z_checkbox.isChecked()
-        
+
         if not self.force_data or not self.raw_data or (not show_x_force and not show_z_force):
             return
-        
+
         try:
-            # Calculate total ADC samples per channel to get the X-axis scale
-            channels = self.config['channels']
-            repeat_count = self.config['repeat']
-            
-            if not channels:
-                return
-            
             # During capture, use window size; otherwise use all data
             if self.is_capturing:
                 window_size = self.window_size_spin.value()
                 data_to_show = self.raw_data[-window_size:] if len(self.raw_data) > window_size else self.raw_data
             else:
                 data_to_show = self.raw_data
-            
-            # Calculate total samples per channel for X-axis scaling
-            first_channel = channels[0]
-            positions = [i for i, c in enumerate(channels) if c == first_channel]
-            
-            total_adc_samples = 0
-            for sweep in data_to_show:
-                for pos in positions:
-                    start_idx = pos * repeat_count
-                    end_idx = start_idx + repeat_count
-                    if end_idx <= len(sweep):
-                        total_adc_samples += (end_idx - start_idx)
-            
-            if total_adc_samples == 0:
-                return
-            
-            # Get the capture duration to map force timestamps
-            if self.is_capturing and self.capture_start_time:
-                current_duration = time.time() - self.capture_start_time
-            elif self.capture_end_time and self.capture_start_time:
-                current_duration = self.capture_end_time - self.capture_start_time
-            else:
-                current_duration = max([d[0] for d in self.force_data]) if self.force_data else 1.0
-            
-            # During capture, only show force data within the time window
+
+            # Compute samples per sweep (assume uniform sweep length)
+            samples_per_sweep = len(data_to_show[0]) if data_to_show and len(data_to_show[0]) > 0 else 1
+
+            # Prepare force_data slice for plotting (time-windowed)
             if self.is_capturing:
-                # Calculate time range for current window
+                # Show force data from the same relative window
+                current_duration = time.time() - (self.capture_start_time or time.time())
                 window_duration = current_duration * (len(data_to_show) / len(self.raw_data)) if len(self.raw_data) > 0 else current_duration
                 min_time = max(0, current_duration - window_duration)
                 force_data_to_show = [(t, x, z) for t, x, z in self.force_data if t >= min_time]
             else:
-                force_data_to_show = self.force_data
-            
+                force_data_to_show = list(self.force_data)
+
             if not force_data_to_show:
                 return
-            
-            # Get force data
-            timestamps = [d[0] for d in force_data_to_show]
-            x_forces = [d[1] for d in force_data_to_show]
-            z_forces = [d[2] for d in force_data_to_show]
-            
-            # Map force timestamps to ADC sample indices
-            # Normalize timestamps to 0-1 range, then scale to total_adc_samples
-            if self.is_capturing:
-                # During capture: map relative to window time range
-                if timestamps:
-                    min_timestamp = min(timestamps)
-                    max_timestamp = max(timestamps)
-                    time_range = max_timestamp - min_timestamp if max_timestamp > min_timestamp else 1.0
-                    force_x_indices = [((t - min_timestamp) / time_range) * total_adc_samples for t in timestamps]
-                else:
-                    force_x_indices = []
+
+            # Downsample force data for plotting to limit number of points
+            MAX_FORCE_PLOT_POINTS = 2000
+            fd_len = len(force_data_to_show)
+            decim = max(1, fd_len // MAX_FORCE_PLOT_POINTS)
+            fd_sampled = force_data_to_show[::decim]
+
+            timestamps = [d[0] for d in fd_sampled]
+            x_forces = [d[1] for d in fd_sampled]
+            z_forces = [d[2] for d in fd_sampled]
+
+            # Map force timestamps to approximate ADC sample indices by normalizing
+            # to the force time range and scaling to total ADC samples in view.
+            total_adc_samples = len(data_to_show) * samples_per_sweep
+            min_t = min(timestamps)
+            max_t = max(timestamps)
+            time_range = max_t - min_t if max_t > min_t else 1.0
+            force_x_indices = [((t - min_t) / time_range) * total_adc_samples for t in timestamps]
+
+            # Reuse cached curves if present, otherwise create them
+            if show_x_force:
+                if self._force_x_curve is None:
+                    self._force_x_curve = pg.PlotCurveItem(pen=pg.mkPen(color=(255, 0, 0), width=2))
+                    self.force_viewbox.addItem(self._force_x_curve)
+                    try:
+                        self.force_legend.addItem(self._force_x_curve, 'X Force')
+                    except Exception:
+                        pass
+                self._force_x_curve.setData(force_x_indices, x_forces)
             else:
-                # After capture: map to full data range using actual time
-                # Calculate total samples from ALL data (not windowed)
-                total_all_adc_samples = 0
-                for sweep in self.raw_data:
-                    for pos in positions:
-                        start_idx = pos * repeat_count
-                        end_idx = start_idx + repeat_count
-                        if end_idx <= len(sweep):
-                            total_all_adc_samples += (end_idx - start_idx)
-                
-                max_force_time = max(timestamps) if timestamps else 1.0
-                if max_force_time > 0:
-                    force_x_indices = [(t / max_force_time) * total_all_adc_samples for t in timestamps]
-                else:
-                    force_x_indices = [0] * len(timestamps)
-            
-            # Plot X force (red) if checkbox is checked
-            if show_x_force and force_x_indices:
-                x_force_curve = pg.PlotCurveItem(force_x_indices, x_forces, pen=pg.mkPen(color=(255, 0, 0), width=2))
-                self.force_viewbox.addItem(x_force_curve)
-                self.force_legend.addItem(x_force_curve, 'X Force')
-            
-            # Plot Z force (blue) if checkbox is checked
-            if show_z_force and force_x_indices:
-                z_force_curve = pg.PlotCurveItem(force_x_indices, z_forces, pen=pg.mkPen(color=(0, 0, 255), width=2))
-                self.force_viewbox.addItem(z_force_curve)
-                self.force_legend.addItem(z_force_curve, 'Z Force')
-            
-            # Update viewbox geometry to match main plot
+                if self._force_x_curve is not None:
+                    try:
+                        self.force_viewbox.removeItem(self._force_x_curve)
+                    except Exception:
+                        pass
+                    self._force_x_curve = None
+
+            if show_z_force:
+                if self._force_z_curve is None:
+                    self._force_z_curve = pg.PlotCurveItem(pen=pg.mkPen(color=(0, 0, 255), width=2))
+                    self.force_viewbox.addItem(self._force_z_curve)
+                    try:
+                        self.force_legend.addItem(self._force_z_curve, 'Z Force')
+                    except Exception:
+                        pass
+                self._force_z_curve.setData(force_x_indices, z_forces)
+            else:
+                if self._force_z_curve is not None:
+                    try:
+                        self.force_viewbox.removeItem(self._force_z_curve)
+                    except Exception:
+                        pass
+                    self._force_z_curve = None
+
+            # Update viewbox geometry and ranges
             self.update_force_viewbox()
-            
-            # Set X-axis range to match ADC data (0 to total_adc_samples)
             self.force_viewbox.setXRange(0, total_adc_samples, padding=0)
             self.force_viewbox.disableAutoRange(axis=pg.ViewBox.XAxis)
-            
-            # Enable auto-range for Y-axis only
             self.force_viewbox.enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
-            
+
         except Exception as e:
             self.log_status(f"ERROR: Failed to update force plot - {e}")
 
@@ -1584,10 +1652,12 @@ class ADCStreamerGUI(QMainWindow):
                 else:
                     arduino_per_channel_rate_hz = arduino_sample_rate_hz
             
-            # Calculate average gap between buffers using all samples (smooths fluctuations)
+            # Calculate gap between blocks (prefer MCU timing if available)
             buffer_gap_time_ms = 0
-            if hasattr(self, 'buffer_gap_times') and self.buffer_gap_times:
-                # Average all buffer gap times to smooth out fluctuations
+            if hasattr(self, 'mcu_block_gap_us') and self.mcu_block_gap_us:
+                buffer_gap_time_ms = self.mcu_block_gap_us[-1] / 1000.0
+            elif hasattr(self, 'buffer_gap_times') and self.buffer_gap_times:
+                # Average all host gap times to smooth out fluctuations
                 buffer_gap_time_ms = sum(self.buffer_gap_times) / len(self.buffer_gap_times)
             
             # Store timing data
@@ -1596,6 +1666,12 @@ class ADCStreamerGUI(QMainWindow):
             self.timing_data['per_channel_rate_hz'] = arduino_per_channel_rate_hz
             self.timing_data['total_rate_hz'] = arduino_sample_rate_hz
             self.timing_data['buffer_gap_time_ms'] = buffer_gap_time_ms
+            # Store latest MCU timing values (if available)
+            if hasattr(self, 'mcu_block_start_us') and self.mcu_block_start_us:
+                self.timing_data['mcu_block_start_us'] = self.mcu_block_start_us[-1]
+                self.timing_data['mcu_block_end_us'] = self.mcu_block_end_us[-1]
+                if self.mcu_block_gap_us:
+                    self.timing_data['mcu_block_gap_us'] = self.mcu_block_gap_us[-1]
             
             # Update timing labels with Arduino data
             if arduino_avg_sample_time_us > 0:
@@ -1610,6 +1686,8 @@ class ADCStreamerGUI(QMainWindow):
             # Display block gap time (always show if we have data)
             if buffer_gap_time_ms > 0:
                 self.block_gap_label.setText(f"{buffer_gap_time_ms:.2f} ms")
+            elif hasattr(self, 'mcu_block_gap_us') and len(self.mcu_block_gap_us) > 0:
+                self.block_gap_label.setText(f"{(self.mcu_block_gap_us[-1] / 1000.0):.2f} ms")
             elif hasattr(self, 'buffer_gap_times') and len(self.buffer_gap_times) > 0:
                 # Show even if current value is 0, as long as we have history
                 avg_gap = sum(self.buffer_gap_times) / len(self.buffer_gap_times)
@@ -2235,7 +2313,10 @@ class ADCStreamerGUI(QMainWindow):
             'between_samples_us': None,
             'arduino_sample_time_us': None,
             'arduino_sample_rate_hz': None,
-            'buffer_gap_time_ms': None
+            'buffer_gap_time_ms': None,
+            'mcu_block_start_us': None,
+            'mcu_block_end_us': None,
+            'mcu_block_gap_us': None
         }
         self.capture_start_time = None
         self.capture_end_time = None
@@ -2244,6 +2325,13 @@ class ADCStreamerGUI(QMainWindow):
         self.buffer_receipt_times.clear()
         self.buffer_gap_times.clear()
         self.arduino_sample_times.clear()
+        self.block_sample_counts.clear()
+        self.block_sweeps_counts.clear()
+        self.block_samples_per_sweep.clear()
+        self.mcu_block_start_us.clear()
+        self.mcu_block_end_us.clear()
+        self.mcu_block_gap_us.clear()
+        self.mcu_last_block_end_us = None
         self.per_channel_rate_label.setText("- Hz")
         self.total_rate_label.setText("- Hz")
         self.between_samples_label.setText("- µs")
@@ -2256,14 +2344,17 @@ class ADCStreamerGUI(QMainWindow):
         # Switch to binary capture mode BEFORE sending run command
         # Open an archive file so we persist every sweep to disk. This ensures we
         # never lose access to data even though the in-memory buffer is a rolling window.
+        save_dir = Path(self.dir_input.text()) if hasattr(self, 'dir_input') else Path.cwd()
+        save_dir.mkdir(parents=True, exist_ok=True)
+        base_name = self.filename_input.text().strip() if hasattr(self, 'filename_input') else 'adc_data'
+        # Use minute-resolution filenames (no seconds)
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M')
+        archive_name = f"{base_name}_{timestamp}.jsonl"
+        archive_path = save_dir / archive_name
+        timing_name = f"{base_name}_{timestamp}_block_timing.csv"
+        timing_path = save_dir / timing_name
+
         try:
-            save_dir = Path(self.dir_input.text()) if hasattr(self, 'dir_input') else Path.cwd()
-            save_dir.mkdir(parents=True, exist_ok=True)
-            base_name = self.filename_input.text().strip() if hasattr(self, 'filename_input') else 'adc_data'
-            # Use minute-resolution filenames (no seconds)
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M')
-            archive_name = f"{base_name}_{timestamp}.jsonl"
-            archive_path = save_dir / archive_name
             # Open for write (overwrite any existing file with same name) and store handle
             self._archive_file = open(archive_path, 'w', encoding='utf-8')
             self._archive_path = str(archive_path)
@@ -2289,6 +2380,23 @@ class ADCStreamerGUI(QMainWindow):
             self.log_status(f"Archive opened: {self._archive_path}")
         except Exception as e:
             self.log_status(f"WARNING: Could not open archive file: {e}")
+
+        try:
+            # Open block timing sidecar and write header
+            self._block_timing_file = open(timing_path, 'w', encoding='utf-8', newline='')
+            self._block_timing_path = str(timing_path)
+            try:
+                tw = csv.writer(self._block_timing_file)
+                tw.writerow(["sample_count", "samples_per_sweep", "sweeps_in_block", "avg_dt_us", "block_start_us", "block_end_us", "mcu_gap_us"])
+                self._block_timing_file.flush()
+            except Exception:
+                pass
+            if self._block_timing_path:
+                self.log_status(f"Block timing opened: {self._block_timing_path}")
+        except Exception as e:
+            self._block_timing_file = None
+            self._block_timing_path = None
+            self.log_status(f"WARNING: Could not open block timing file: {e}")
 
         self.is_capturing = True
         if self.serial_thread:
@@ -2377,6 +2485,20 @@ class ADCStreamerGUI(QMainWindow):
                 except Exception:
                     pass
                 self.log_status(f"Archive saved: {self._archive_path}")
+        except Exception:
+            pass
+        # Close block timing file if open
+        try:
+            if self._block_timing_file:
+                try:
+                    self._block_timing_file.flush()
+                except Exception:
+                    pass
+                try:
+                    self._block_timing_file.close()
+                except Exception:
+                    pass
+                self.log_status(f"Block timing saved: {self._block_timing_path}")
         except Exception:
             pass
 
@@ -2647,9 +2769,6 @@ class ADCStreamerGUI(QMainWindow):
 
     def save_data(self):
         """Save captured data to CSV file with metadata."""
-        if not self.raw_data:
-            QMessageBox.warning(self, "No Data", "No data to save.")
-            return
         # Determine archive info (if an archive file exists for this capture)
         archived_count = 0
         archive_path = None
@@ -2666,8 +2785,13 @@ class ADCStreamerGUI(QMainWindow):
         except Exception:
             archived_count = 0
 
-        # Total sweeps available for saving (archive + in-memory)
-        total_sweeps = archived_count + len(self.raw_data)
+        has_archive_data = archived_count > 0 and archive_path is not None
+        if not has_archive_data and not self.raw_data:
+            QMessageBox.warning(self, "No Data", "No data to save.")
+            return
+
+        # Total sweeps available for saving
+        total_sweeps = archived_count if has_archive_data else len(self.raw_data)
         sweep_range_text = "All"
 
         # Check if range is enabled (range refers to the global sweep index across archive+memory)
@@ -2726,9 +2850,10 @@ class ADCStreamerGUI(QMainWindow):
             if self.force_data:
                 for timestamp, x_force, z_force in self.force_data:
                     force_dict[timestamp] = (x_force, z_force)
-            
+
             # Save CSV data with force columns. We'll stream archive (if present) + in-memory data
             with open(csv_path, 'w', newline='') as f:
+
                 writer = csv.writer(f)
 
                 # Write header
@@ -2761,8 +2886,8 @@ class ADCStreamerGUI(QMainWindow):
                             closest_force = (x, z)
                     return closest_force
 
-                # Stream archived sweeps first (if present)
-                if archive_path and archive_path.exists():
+                # Stream archived sweeps only if present; otherwise use in-memory sweeps
+                if has_archive_data:
                     with archive_path.open('r', encoding='utf-8') as af:
                         # skip metadata line
                         af.readline()
@@ -2784,20 +2909,20 @@ class ADCStreamerGUI(QMainWindow):
                                 writer.writerow(row)
                                 saved_index += 1
                             global_idx += 1
+                else:
+                    # Stream in-memory sweeps (preserve order)
+                    for sweep in self.raw_data:
+                        if global_idx >= save_max:
+                            break
+                        if global_idx >= save_min:
+                            if first_sweep_len is None:
+                                first_sweep_len = len(sweep)
 
-                # Stream in-memory sweeps (preserve order)
-                for sweep in self.raw_data:
-                    if global_idx >= save_max:
-                        break
-                    if global_idx >= save_min:
-                        if first_sweep_len is None:
-                            first_sweep_len = len(sweep)
-
-                        row = list(sweep)
-                        row.extend(list(get_closest_force(saved_index)))
-                        writer.writerow(row)
-                        saved_index += 1
-                    global_idx += 1
+                            row = list(sweep)
+                            row.extend(list(get_closest_force(saved_index)))
+                            writer.writerow(row)
+                            saved_index += 1
+                        global_idx += 1
 
             # Prepare metadata dictionary
             capture_duration_s = None
@@ -2824,6 +2949,7 @@ class ADCStreamerGUI(QMainWindow):
                     "buffer_sweeps_per_block": self.buffer_spin.value(),
                     "buffer_total_samples": self.buffer_spin.value() * len(self.config['channels']) * self.config['repeat']
                 },
+                "block_timing_csv": self._block_timing_path,
                 "timing": {
                     "per_channel_rate_hz": self.timing_data.get('per_channel_rate_hz'),
                     "total_rate_hz": self.timing_data.get('total_rate_hz'),

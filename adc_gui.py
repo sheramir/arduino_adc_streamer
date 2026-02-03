@@ -2630,6 +2630,8 @@ class ADCStreamerGUI(QMainWindow):
                 if ch not in unique_channels:
                     unique_channels.append(ch)
 
+            max_channel_samples = 0
+
             # Extract data for each channel
             for ch_idx, channel in enumerate(unique_channels):
                 if channel not in selected_channels:
@@ -2651,6 +2653,9 @@ class ADCStreamerGUI(QMainWindow):
 
                 if not channel_data:
                     continue
+
+                if len(channel_data) > max_channel_samples:
+                    max_channel_samples = len(channel_data)
 
                 # Convert to voltage if voltage units mode is enabled
                 if self.yaxis_units_combo.currentText() == "Voltage":
@@ -2729,6 +2734,10 @@ class ADCStreamerGUI(QMainWindow):
                             pen=pg.mkPen(color=color, width=3, style=Qt.PenStyle.DashLine),
                             name=f"Ch {channel} (avg)"
                         )
+
+            if max_channel_samples > 0:
+                self.plot_widget.setXRange(0, max_channel_samples, padding=0)
+                self.plot_widget.disableAutoRange(axis=pg.ViewBox.XAxis)
 
             # Apply Y-axis scaling mode
             if self.yaxis_range_combo.currentText() == "Full-Scale":

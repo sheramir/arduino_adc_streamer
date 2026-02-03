@@ -376,6 +376,10 @@ class ADCStreamerGUI(QMainWindow):
 
         # Flag to prevent concurrent plot updates
         self.is_updating_plot = False
+        # Cache ADC plot curves to avoid recreating them (reduces flicker)
+        self._adc_curves = {}
+        self._adc_curve_names = {}
+        self._adc_curve_legend_added = {}
 
         # Initialize UI
         self.init_ui()
@@ -1500,6 +1504,11 @@ class ADCStreamerGUI(QMainWindow):
         show_x_force = self.force_x_checkbox and self.force_x_checkbox.isChecked()
         show_z_force = self.force_z_checkbox and self.force_z_checkbox.isChecked()
 
+        if not show_x_force and self._force_x_curve is not None:
+            self._force_x_curve.setVisible(False)
+        if not show_z_force and self._force_z_curve is not None:
+            self._force_z_curve.setVisible(False)
+
         if not self.force_data or not self.raw_data or (not show_x_force and not show_z_force):
             return
 
@@ -1554,14 +1563,11 @@ class ADCStreamerGUI(QMainWindow):
                         self.force_legend.addItem(self._force_x_curve, 'X Force')
                     except Exception:
                         pass
+                else:
+                    self._force_x_curve.setVisible(True)
                 self._force_x_curve.setData(force_x_indices, x_forces)
-            else:
-                if self._force_x_curve is not None:
-                    try:
-                        self.force_viewbox.removeItem(self._force_x_curve)
-                    except Exception:
-                        pass
-                    self._force_x_curve = None
+            elif self._force_x_curve is not None:
+                self._force_x_curve.setVisible(False)
 
             if show_z_force:
                 if self._force_z_curve is None:
@@ -1571,14 +1577,11 @@ class ADCStreamerGUI(QMainWindow):
                         self.force_legend.addItem(self._force_z_curve, 'Z Force')
                     except Exception:
                         pass
+                else:
+                    self._force_z_curve.setVisible(True)
                 self._force_z_curve.setData(force_x_indices, z_forces)
-            else:
-                if self._force_z_curve is not None:
-                    try:
-                        self.force_viewbox.removeItem(self._force_z_curve)
-                    except Exception:
-                        pass
-                    self._force_z_curve = None
+            elif self._force_z_curve is not None:
+                self._force_z_curve.setVisible(False)
 
             # Update viewbox geometry and ranges
             self.update_force_viewbox()
@@ -2598,14 +2601,16 @@ class ADCStreamerGUI(QMainWindow):
         self.is_updating_plot = True
 
         try:
-            self.plot_widget.clear()
-
             if not self.raw_data or not self.config['channels']:
+                for curve in self._adc_curves.values():
+                    curve.setVisible(False)
                 return
 
             # Get selected channels from checkboxes
             selected_channels = [ch for ch, checkbox in self.channel_checkboxes.items() if checkbox.isChecked()]
             if not selected_channels:
+                for curve in self._adc_curves.values():
+                    curve.setVisible(False)
                 return
 
             # Determine which data to plot based on capture state
@@ -2631,6 +2636,7 @@ class ADCStreamerGUI(QMainWindow):
                     unique_channels.append(ch)
 
             max_channel_samples = 0
+            desired_curve_keys = set()
 
             # Extract data for each channel
             for ch_idx, channel in enumerate(unique_channels):
@@ -2688,37 +2694,62 @@ class ADCStreamerGUI(QMainWindow):
                                     pen = pg.mkPen(color=lighter_color, width=1.5, style=Qt.PenStyle.DashLine)
                                     name = f"Ch {channel}.{repeat_idx}"
 
-                                # Plot with appropriate downsampling if needed
+                                curve_key = ("repeat", channel, repeat_idx)
+                                desired_curve_keys.add(curve_key)
+                                curve = self._adc_curves.get(curve_key)
+                                if curve is None:
+                                    curve = self.plot_widget.plot([], pen=pen, name=name)
+                                    self._adc_curves[curve_key] = curve
+                                    self._adc_curve_names[curve_key] = name
+                                    self._adc_curve_legend_added[curve_key] = True
+                                else:
+                                    curve.setPen(pen)
+                                    if not self._adc_curve_legend_added.get(curve_key, False):
+                                        try:
+                                            self.adc_legend.addItem(curve, self._adc_curve_names.get(curve_key, name))
+                                            self._adc_curve_legend_added[curve_key] = True
+                                        except Exception:
+                                            pass
+
+                                curve.setVisible(True)
                                 if len(repeat_data) > 10000:
-                                    self.plot_widget.plot(
+                                    curve.setData(
                                         repeat_data,
-                                        pen=pen,
-                                        name=name,
                                         downsample=10,
                                         downsampleMethod='subsample'
                                     )
                                 else:
-                                    self.plot_widget.plot(
-                                        repeat_data,
-                                        pen=pen,
-                                        name=name
-                                    )
+                                    curve.setData(repeat_data)
                     else:
                         # Single repeat: plot as before
+                        curve_key = ("single", channel, 0)
+                        desired_curve_keys.add(curve_key)
+                        name = f"Ch {channel}"
+                        pen = pg.mkPen(color=color, width=2)
+                        curve = self._adc_curves.get(curve_key)
+                        if curve is None:
+                            curve = self.plot_widget.plot([], pen=pen, name=name)
+                            self._adc_curves[curve_key] = curve
+                            self._adc_curve_names[curve_key] = name
+                            self._adc_curve_legend_added[curve_key] = True
+                        else:
+                            curve.setPen(pen)
+                            if not self._adc_curve_legend_added.get(curve_key, False):
+                                try:
+                                    self.adc_legend.addItem(curve, self._adc_curve_names.get(curve_key, name))
+                                    self._adc_curve_legend_added[curve_key] = True
+                                except Exception:
+                                    pass
+
+                        curve.setVisible(True)
                         if len(channel_data) > 10000:
-                            self.plot_widget.plot(
+                            curve.setData(
                                 channel_data,
-                                pen=pg.mkPen(color=color, width=2),
-                                name=f"Ch {channel}",
                                 downsample=10,
                                 downsampleMethod='subsample'
                             )
                         else:
-                            self.plot_widget.plot(
-                                channel_data,
-                                pen=pg.mkPen(color=color, width=2),
-                                name=f"Ch {channel}"
-                            )
+                            curve.setData(channel_data)
 
                 if self.show_average_radio.isChecked():
                     # Compute average across repeats
@@ -2728,12 +2759,37 @@ class ADCStreamerGUI(QMainWindow):
                         reshaped = np.array(channel_data[:num_samples * repeat_count]).reshape(-1, repeat_count)
                         averaged = np.mean(reshaped, axis=1)
 
-                        # Plot average with thicker line (same x-coords as individual repeats)
-                        self.plot_widget.plot(
-                            averaged,
-                            pen=pg.mkPen(color=color, width=3, style=Qt.PenStyle.DashLine),
-                            name=f"Ch {channel} (avg)"
-                        )
+                        curve_key = ("avg", channel, 0)
+                        desired_curve_keys.add(curve_key)
+                        name = f"Ch {channel} (avg)"
+                        pen = pg.mkPen(color=color, width=3, style=Qt.PenStyle.DashLine)
+                        curve = self._adc_curves.get(curve_key)
+                        if curve is None:
+                            curve = self.plot_widget.plot([], pen=pen, name=name)
+                            self._adc_curves[curve_key] = curve
+                            self._adc_curve_names[curve_key] = name
+                            self._adc_curve_legend_added[curve_key] = True
+                        else:
+                            curve.setPen(pen)
+                            if not self._adc_curve_legend_added.get(curve_key, False):
+                                try:
+                                    self.adc_legend.addItem(curve, self._adc_curve_names.get(curve_key, name))
+                                    self._adc_curve_legend_added[curve_key] = True
+                                except Exception:
+                                    pass
+
+                        curve.setVisible(True)
+                        curve.setData(averaged)
+
+            for key, curve in self._adc_curves.items():
+                if key not in desired_curve_keys:
+                    curve.setVisible(False)
+                    if self._adc_curve_legend_added.get(key):
+                        try:
+                            self.adc_legend.removeItem(curve)
+                        except Exception:
+                            pass
+                        self._adc_curve_legend_added[key] = False
 
             if max_channel_samples > 0:
                 self.plot_widget.setXRange(0, max_channel_samples, padding=0)

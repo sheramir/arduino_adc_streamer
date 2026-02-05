@@ -1413,18 +1413,21 @@ class ADCStreamerGUI(QMainWindow):
                     sweep_samples = samples[start_idx:end_idx]
                     
                     # Calculate timestamp for this sweep based on MCU timing
+                    # Use wrap-safe 32-bit arithmetic because Arduino micros() overflows ~71 minutes
                     sweep_time_offset_us = start_idx * avg_sample_time_us
-                    sweep_timestamp_us = block_start_us + sweep_time_offset_us
+                    sweep_timestamp_us = (block_start_us + sweep_time_offset_us) & 0xFFFFFFFF
                     
                     # Initialize first sweep timestamp - check outside lock, init inside lock
                     if not hasattr(self, 'first_sweep_timestamp_us'):
                         with self.buffer_lock:
                             if not hasattr(self, 'first_sweep_timestamp_us'):
-                                self.first_sweep_timestamp_us = sweep_timestamp_us
-                                self.log_status(f"First sweep timestamp initialized: {sweep_timestamp_us} µs")
+                                self.first_sweep_timestamp_us = sweep_timestamp_us & 0xFFFFFFFF
+                                self.log_status(f"First sweep timestamp initialized: {self.first_sweep_timestamp_us} µs (wrap-safe)")
                     
                     # Calculate relative timestamp (should always start near 0 for new capture)
-                    sweep_timestamp_sec = (sweep_timestamp_us - self.first_sweep_timestamp_us) / 1e6
+                    # Wrap-safe delta to avoid negative time when MCU micros() overflows
+                    delta_us = (sweep_timestamp_us - self.first_sweep_timestamp_us) & 0xFFFFFFFF
+                    sweep_timestamp_sec = delta_us / 1e6
                     
                     # Write directly to numpy buffer (circular buffer) with thread safety
                     with self.buffer_lock:

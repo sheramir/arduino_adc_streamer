@@ -66,6 +66,8 @@ WINDOW_HEIGHT = 800
 
 # Default scrolling window size (number of sweeps to display during capture)
 DEFAULT_WINDOW_SIZE = 10000
+# Hard cap for sweeps shown during live plotting (keeps UI responsive)
+MAX_PLOT_SWEEPS = 2000
 
 # Maximum number of columns for channel checkboxes layout
 MAX_PLOT_COLUMNS = 6
@@ -85,7 +87,7 @@ MAX_SAMPLES_BUFFER = 32000
 USB_PACKET_SIZE = 64
 
 # Default buffer size (sweeps per block)
-DEFAULT_BUFFER_SIZE = 128
+DEFAULT_BUFFER_SIZE = 1
 
 # ============================================================================
 # UI Control Ranges and Defaults

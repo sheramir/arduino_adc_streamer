@@ -2909,13 +2909,10 @@ class ADCStreamerGUI(QMainWindow):
                                 self.sweep_timestamps_buffer[:write_pos]
                             ])
             else:
-                # After capture: show last data up to 10K samples
-                total_samples = actual_sweeps * samples_per_sweep
-                if total_samples > MAX_SAMPLES_TO_DISPLAY:
-                    max_sweeps = MAX_SAMPLES_TO_DISPLAY // max(1, samples_per_sweep)
-                    max_sweeps = min(max_sweeps, actual_sweeps)
-                else:
-                    max_sweeps = actual_sweeps
+                # After capture: show same window as during capture for consistency
+                # Use the window_size setting so user sees what they were looking at
+                window_size = self.window_size_spin.value()
+                max_sweeps = min(window_size, actual_sweeps)
                 
                 # Extract from circular buffer
                 if actual_sweeps < self.MAX_SWEEPS_BUFFER:

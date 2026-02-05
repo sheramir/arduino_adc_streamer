@@ -1421,7 +1421,9 @@ class ADCStreamerGUI(QMainWindow):
                         with self.buffer_lock:
                             if not hasattr(self, 'first_sweep_timestamp_us'):
                                 self.first_sweep_timestamp_us = sweep_timestamp_us
+                                self.log_status(f"First sweep timestamp initialized: {sweep_timestamp_us} µs")
                     
+                    # Calculate relative timestamp (should always start near 0 for new capture)
                     sweep_timestamp_sec = (sweep_timestamp_us - self.first_sweep_timestamp_us) / 1e6
                     
                     # Write directly to numpy buffer (circular buffer) with thread safety
@@ -2302,37 +2304,41 @@ class ADCStreamerGUI(QMainWindow):
                         except json.JSONDecodeError:
                             continue
             
-            # Reconstruct timestamps from sweeps
-            # Need to read the block timing file if available
+            # Reconstruct timestamps from sweeps using the CSV timing sidecar
             if self._block_timing_path and Path(self._block_timing_path).exists():
-                with open(self._block_timing_path, 'r', encoding='utf-8') as f:
-                    first_line = f.readline()  # Skip metadata
-                    timing_data = []
-                    for line in f:
-                        line = line.strip()
-                        if line:
-                            try:
-                                timing_entry = json.loads(line)
-                                timing_data.append(timing_entry)
-                            except json.JSONDecodeError:
+                try:
+                    with open(self._block_timing_path, 'r', encoding='utf-8', newline='') as f:
+                        reader = csv.reader(f)
+                        header = next(reader, None)  # Skip header row
+
+                        # The CSV columns are: sample_count, samples_per_sweep, sweeps_in_block,
+                        # avg_dt_us, block_start_us, block_end_us, mcu_gap_us
+                        for row in reader:
+                            if len(row) < 6:
                                 continue
-                
-                # Use timing data to reconstruct timestamps
-                if timing_data and hasattr(self, 'first_sweep_timestamp_us'):
-                    first_ts_us = self.first_sweep_timestamp_us
-                    sweep_idx = 0
-                    for entry in timing_data:
-                        block_start_us = entry['block_start_us']
-                        samples_per_sweep = entry['samples_per_sweep']
-                        num_sweeps = entry['num_sweeps']
-                        avg_sample_time_us = entry['avg_sample_time_us']
-                        
-                        # Calculate timestamp for each sweep in this block
-                        for i in range(num_sweeps):
-                            ts_us = block_start_us + (i * samples_per_sweep * avg_sample_time_us)
-                            ts_sec = (ts_us - first_ts_us) / 1e6
-                            timestamps.append(ts_sec)
-                            sweep_idx += 1
+
+                            try:
+                                samples_per_sweep = int(row[1])
+                                sweeps_in_block = int(row[2])
+                                avg_dt_us = float(row[3])
+                                block_start_us = int(row[4])
+                            except (ValueError, TypeError):
+                                continue
+
+                            # Initialize reference if missing
+                            if not hasattr(self, 'first_sweep_timestamp_us'):
+                                self.first_sweep_timestamp_us = block_start_us
+
+                            base_us = self.first_sweep_timestamp_us
+
+                            # Build timestamps for each sweep in this block
+                            for i in range(sweeps_in_block):
+                                ts_us = block_start_us + (i * samples_per_sweep * avg_dt_us)
+                                ts_sec = (ts_us - base_us) / 1e6
+                                timestamps.append(ts_sec)
+                except Exception:
+                    # Fall back to legacy behavior if parsing fails
+                    pass
             
             # Fallback: if no timing data or insufficient timestamps, use uniform spacing
             if len(timestamps) < len(sweeps):
@@ -2441,6 +2447,11 @@ class ADCStreamerGUI(QMainWindow):
             self.sweep_timestamps.clear()
             self.sweep_count = 0
             self.buffer_write_index = 0
+            # Zero out buffers to prevent old data from showing
+            if self.raw_data_buffer is not None:
+                self.raw_data_buffer.fill(0)
+            if self.sweep_timestamps_buffer is not None:
+                self.sweep_timestamps_buffer.fill(0)
         
         self.force_data.clear()
         self.force_start_time = None
@@ -2617,8 +2628,10 @@ class ADCStreamerGUI(QMainWindow):
 
         # Final plot update (shows all data)
         self.update_plot()
-        # Calculate total samples correctly
-        total_samples = sum(len(sweep) for sweep in self.raw_data) if self.raw_data else 0
+        # Calculate total samples correctly from buffer
+        with self.buffer_lock:
+            actual_sweeps = min(self.sweep_count, self.MAX_SWEEPS_BUFFER)
+            total_samples = actual_sweeps * self.samples_per_sweep if self.samples_per_sweep > 0 else 0
         force_samples = len(self.force_data)
         self.plot_info_label.setText(
             f"ADC - Sweeps: {self.sweep_count} | Samples: {total_samples}  |  Force: {force_samples} samples"
@@ -2685,6 +2698,11 @@ class ADCStreamerGUI(QMainWindow):
 
     def clear_data(self):
         """Clear all captured data and completely reset plot to initial state."""
+        # Prevent clearing during capture to avoid race conditions
+        if self.is_capturing:
+            QMessageBox.warning(self, "Cannot Clear", "Cannot clear data during capture. Please stop capture first.")
+            return
+        
         reply = QMessageBox.question(
             self,
             "Clear Data",
@@ -2707,9 +2725,32 @@ class ADCStreamerGUI(QMainWindow):
             
             self.force_data.clear()
             
-            # Reset timestamp reference for next capture
+            # Reset ALL timestamp and timing references for next capture
             if hasattr(self, 'first_sweep_timestamp_us'):
+                self.log_status(f"Clearing first_sweep_timestamp_us (was {self.first_sweep_timestamp_us} µs)")
                 delattr(self, 'first_sweep_timestamp_us')
+            else:
+                self.log_status("first_sweep_timestamp_us already cleared")
+            self.capture_start_time = None
+            self.capture_end_time = None
+            self.force_start_time = None
+            self.last_buffer_time = None
+            self.last_buffer_end_time = None
+            self.mcu_last_block_end_us = None
+            
+            # Clear all timing data lists
+            self.buffer_receipt_times.clear()
+            self.buffer_gap_times.clear()
+            self.arduino_sample_times.clear()
+            self.block_sample_counts.clear()
+            self.block_sweeps_counts.clear()
+            self.block_samples_per_sweep.clear()
+            self.mcu_block_start_us.clear()
+            self.mcu_block_end_us.clear()
+            self.mcu_block_gap_us.clear()
+            
+            # Reset samples_per_sweep to force buffer reinitialization
+            self.samples_per_sweep = 0
             
             # Reset view mode flags
             self.is_full_view = False

@@ -1120,6 +1120,33 @@ class ADCStreamerGUI(QMainWindow):
         else:
             self.log_status("ERROR: Not connected to serial port")
 
+    def drain_serial_input(self, duration: float = 0.3):
+        """Drain pending serial bytes to avoid stale binary data after stopping."""
+        if not self.serial_port or not self.serial_port.is_open:
+            return
+
+        end_time = time.time() + duration
+        drained = 0
+
+        try:
+            while time.time() < end_time:
+                waiting = self.serial_port.in_waiting
+                if waiting > 0:
+                    drained += len(self.serial_port.read(waiting))
+                else:
+                    time.sleep(0.01)
+
+            try:
+                self.serial_port.reset_input_buffer()
+            except Exception:
+                pass
+        except Exception as e:
+            self.log_status(f"WARNING: Failed to drain serial input: {e}")
+            return
+
+        if drained > 0:
+            self.log_status(f"Drained {drained} bytes from serial input after stop")
+
     def send_command_and_wait_ack(self, command: str, expected_value: str = None, timeout: float = CONFIG_COMMAND_TIMEOUT, max_retries: int = CONFIG_RETRY_ATTEMPTS) -> tuple:
         """Send a command and wait for #OK acknowledgment with echoed argument verification.
         Thread-safe version - silent operation, no console output.
@@ -2582,9 +2609,32 @@ class ADCStreamerGUI(QMainWindow):
 
     def stop_capture(self):
         """Stop data capture."""
-        self.send_command("stop")
+        if not self.is_capturing:
+            self.log_status("Stop requested but capture already stopped")
+            return
+
         self.log_status("Stopping capture")
-        
+
+        # Ask MCU to stop and wait briefly for acknowledgement
+        success, _ = self.send_command_and_wait_ack(
+            "stop",
+            expected_value=None,
+            timeout=0.5,
+            max_retries=3
+        )
+
+        if not success:
+            self.log_status("WARNING: Stop command not acknowledged; halting locally")
+
+        # Immediately exit binary mode on the reader thread
+        if self.serial_thread:
+            self.serial_thread.set_capturing(False)
+
+        self.is_capturing = False
+
+        # Flush any residual binary bytes so the next run starts clean
+        self.drain_serial_input(0.5)
+
         self.on_capture_finished()
 
     def on_capture_finished(self):
@@ -2618,6 +2668,9 @@ class ADCStreamerGUI(QMainWindow):
         self.stop_btn.setStyleSheet("QPushButton { background-color: #CCCCCC; color: #666666; font-weight: bold; }")
         self.update_start_button_state()  # Restore start button to proper state
         self.set_controls_enabled(True)
+
+        # Final safety: discard any leftover bytes so the next capture starts clean
+        self.drain_serial_input(0.3)
         
         # Enable Full View button now that capture is finished (unless already in full view)
         if not self.is_full_view:
@@ -2715,6 +2768,9 @@ class ADCStreamerGUI(QMainWindow):
         )
 
         if reply == QMessageBox.StandardButton.Yes:
+            # Ensure any leftover bytes from a previous capture are discarded
+            self.drain_serial_input(0.3)
+
             # Clear all data structures with thread safety
             with self.buffer_lock:
                 self.raw_data.clear()

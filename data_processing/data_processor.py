@@ -1,0 +1,1312 @@
+"""
+Data Processing Mixin
+=====================
+Handles ADC and force data processing, plotting, and timing calculations.
+"""
+
+import time
+import csv
+import json
+from datetime import datetime
+from typing import List
+from pathlib import Path
+
+import numpy as np
+from PyQt6.QtWidgets import QMessageBox
+from PyQt6.QtCore import Qt, QTimer
+import pyqtgraph as pg
+
+from config_constants import (
+    MAX_TIMING_SAMPLES, PLOT_UPDATE_FREQUENCY, PLOT_COLORS,
+    MAX_FORCE_SAMPLES, MAX_LOG_LINES, IADC_RESOLUTION_BITS
+)
+
+
+class DataProcessorMixin:
+    """Mixin class for data processing and visualization."""
+    
+    # ========================================================================
+    # Serial Data Processing
+    # ========================================================================
+    
+    def process_serial_data(self, line: str):
+        """Process incoming ASCII serial data (status messages, errors, etc.)."""
+        if line.startswith('#'):
+            # Log all status messages
+            self.log_status(line)
+            # Parse status lines when not in configuration mode
+            if 'STATUS' in line or ':' in line or (line.startswith('#   ') and ',' in line):
+                self.parse_status_line(line)
+        else:
+            # Only log if it's printable ASCII (not binary data that got through)
+            if line.strip() and line.isprintable():
+                self.log_status(f"Unexpected ASCII: {line}")
+    
+    def parse_status_line(self, line: str):
+        """Parse a single line from Arduino status output."""
+        try:
+            # Parse channels: "#   1,2,3,4,5"
+            if line.startswith('#   ') and ',' in line and not ':' in line:
+                channels_str = line[4:].strip()
+                channels = [int(c.strip()) for c in channels_str.split(',')]
+                self.arduino_status['channels'] = channels
+                return
+            
+            # Parse other fields
+            if ':' in line:
+                parts = line.split(':', 1)
+                key = parts[0].strip('# ').strip()
+                value = parts[1].strip()
+                
+                if 'repeatCount' in key:
+                    self.arduino_status['repeat'] = int(value)
+                elif 'groundPin' in key:
+                    self.arduino_status['ground_pin'] = int(value)
+                elif 'useGroundBeforeEach' in key:
+                    self.arduino_status['use_ground'] = (value.lower() == 'true')
+                elif 'osr' in key.lower():
+                    self.arduino_status['osr'] = int(value)
+                elif 'gain' in key.lower():
+                    self.arduino_status['gain'] = int(value)
+                elif 'adcReference' in key or 'reference' in key.lower():
+                    # Map Arduino reference names back to our format
+                    ref_map = {
+                        'INTERNAL1V2': '1.2',
+                        'VDD': 'vdd',
+                        '1V2': '1.2',
+                        '3V3': 'vdd'
+                    }
+                    self.arduino_status['reference'] = ref_map.get(value, value.lower())
+        except Exception as e:
+            # Silently ignore parse errors
+            pass
+    
+    # ========================================================================
+    # Binary Data Processing
+    # ========================================================================
+    
+    def process_binary_sweep(self, samples: List[int], avg_sample_time_us: int, block_start_us: int, block_end_us: int):
+        """Process incoming binary block data containing one or more sweeps.
+        
+        The Arduino now sends blocks of sweeps. Each block contains:
+        - Multiple complete sweeps (samples_per_sweep * sweeps_in_block)
+        - Possibly a partial block at the end of capture
+        - Average sampling time per sample (in microseconds) from Arduino
+        
+        Args:
+            samples: List of ADC sample values
+            avg_sample_time_us: Average time per sample in microseconds (from Arduino)
+            block_start_us: MCU micros() at first sample in block
+            block_end_us: MCU micros() at last sample in block
+        """
+        if self.is_capturing:
+            try:
+                # Track buffer arrival time (start of reception)
+                block_start_time = time.time()
+                
+                # Keep only last 1000 buffer receipt times to prevent unbounded growth
+                self.buffer_receipt_times.append(block_start_time)
+                if len(self.buffer_receipt_times) > MAX_TIMING_SAMPLES:
+                    self.buffer_receipt_times = self.buffer_receipt_times[-MAX_TIMING_SAMPLES:]
+                
+                # Track first sweep time for rate calculation - thread safe
+                with self.buffer_lock:
+                    is_first_sweep = (self.sweep_count == 0)
+                
+                if is_first_sweep:
+                    self.capture_start_time = block_start_time
+                    self.force_start_time = self.capture_start_time  # Sync force timing
+                    self.last_buffer_time = block_start_time
+                
+                # Store the average sampling time from Arduino (keep only last 1000)
+                self.arduino_sample_times.append(avg_sample_time_us)
+                if len(self.arduino_sample_times) > MAX_TIMING_SAMPLES:
+                    self.arduino_sample_times = self.arduino_sample_times[-MAX_TIMING_SAMPLES:]
+
+                # Store MCU block timestamps (keep only last 1000)
+                self.mcu_block_start_us.append(block_start_us)
+                self.mcu_block_end_us.append(block_end_us)
+                if len(self.mcu_block_start_us) > MAX_TIMING_SAMPLES:
+                    self.mcu_block_start_us = self.mcu_block_start_us[-MAX_TIMING_SAMPLES:]
+                    self.mcu_block_end_us = self.mcu_block_end_us[-MAX_TIMING_SAMPLES:]
+
+                # MCU gap between blocks (wrap-safe unsigned math)
+                if self.mcu_last_block_end_us is not None:
+                    gap_us = (block_start_us - self.mcu_last_block_end_us) & 0xFFFFFFFF
+                    self.mcu_block_gap_us.append(gap_us)
+                    if len(self.mcu_block_gap_us) > MAX_TIMING_SAMPLES:
+                        self.mcu_block_gap_us = self.mcu_block_gap_us[-MAX_TIMING_SAMPLES:]
+                self.mcu_last_block_end_us = block_end_us
+                
+                # Calculate samples per sweep from configuration
+                channel_count = len(self.config.get('channels', []))
+                repeat_count = self.config.get('repeat', 1)
+                samples_per_sweep = channel_count * repeat_count
+                
+                if samples_per_sweep == 0:
+                    self.log_status("ERROR: Invalid configuration, samples_per_sweep is 0")
+                    return
+                
+                # Initialize numpy buffers if not done or if config changed - THREAD SAFE
+                with self.buffer_lock:
+                    if (self.raw_data_buffer is None or 
+                        self.samples_per_sweep != samples_per_sweep):
+                        self.samples_per_sweep = samples_per_sweep
+                        self.raw_data_buffer = np.zeros((self.MAX_SWEEPS_BUFFER, samples_per_sweep), dtype=np.float32)
+                        self.sweep_timestamps_buffer = np.zeros(self.MAX_SWEEPS_BUFFER, dtype=np.float64)
+                        self.buffer_write_index = 0
+                        self.log_status(f"Initialized numpy buffers: {self.MAX_SWEEPS_BUFFER} sweeps × {samples_per_sweep} samples")
+                
+                # The sample count comes from the header, which reflects what Arduino actually sent
+                # Arduino may reduce sweeps per block to fit in RAM, so use actual count
+                total_samples = len(samples)
+                
+                # Verify the total samples is a multiple of samples_per_sweep
+                if total_samples % samples_per_sweep != 0:
+                    self.log_status(f"WARNING: Block has {total_samples} samples, not a multiple of {samples_per_sweep}. Block may be corrupted.")
+                    # Process only complete sweeps, discard partial data
+                    total_samples = (total_samples // samples_per_sweep) * samples_per_sweep
+                
+                # Calculate actual sweeps in this block (may be less than requested buffer size)
+                sweeps_in_block = total_samples // samples_per_sweep
+
+                # Track block sizing for timing export (keep only recent)
+                self.block_sample_counts.append(total_samples)
+                self.block_sweeps_counts.append(sweeps_in_block)
+                self.block_samples_per_sweep.append(samples_per_sweep)
+                if len(self.block_sample_counts) > MAX_TIMING_SAMPLES:
+                    self.block_sample_counts = self.block_sample_counts[-MAX_TIMING_SAMPLES:]
+                    self.block_sweeps_counts = self.block_sweeps_counts[-MAX_TIMING_SAMPLES:]
+                    self.block_samples_per_sweep = self.block_samples_per_sweep[-MAX_TIMING_SAMPLES:]
+
+                # Stream block timing to sidecar (if open)
+                if self._block_timing_file:
+                    try:
+                        gap_us = ""
+                        if self.mcu_block_gap_us:
+                            gap_us = self.mcu_block_gap_us[-1]
+                        tw = csv.writer(self._block_timing_file)
+                        self._block_timing_write_count += 1
+                        if self._block_timing_write_count % 100 == 0:
+                            try:
+                                self._block_timing_file.flush()
+                            except Exception:
+                                pass
+                        tw.writerow([
+                            self.block_sample_counts[-1],
+                            self.block_samples_per_sweep[-1],
+                            self.block_sweeps_counts[-1],
+                            self.arduino_sample_times[-1],
+                            block_start_us,
+                            block_end_us,
+                            gap_us
+                        ])
+                    except Exception:
+                        pass
+                
+                # Process each complete sweep in the block
+                # Write directly to numpy buffer (circular buffer)
+                for sweep_idx in range(sweeps_in_block):
+                    start_idx = sweep_idx * samples_per_sweep
+                    end_idx = start_idx + samples_per_sweep
+                    sweep_samples = samples[start_idx:end_idx]
+                    
+                    # Calculate timestamp for this sweep based on MCU timing
+                    # Use wrap-safe 32-bit arithmetic because Arduino micros() overflows ~71 minutes
+                    sweep_time_offset_us = start_idx * avg_sample_time_us
+                    sweep_timestamp_us = (block_start_us + sweep_time_offset_us) & 0xFFFFFFFF
+                    
+                    # Initialize first sweep timestamp - check outside lock, init inside lock
+                    if not hasattr(self, 'first_sweep_timestamp_us'):
+                        with self.buffer_lock:
+                            if not hasattr(self, 'first_sweep_timestamp_us'):
+                                self.first_sweep_timestamp_us = sweep_timestamp_us & 0xFFFFFFFF
+                                self.log_status(f"First sweep timestamp initialized: {self.first_sweep_timestamp_us} µs (wrap-safe)")
+                    
+                    # Calculate relative timestamp (should always start near 0 for new capture)
+                    # Wrap-safe delta to avoid negative time when MCU micros() overflows
+                    delta_us = (sweep_timestamp_us - self.first_sweep_timestamp_us) & 0xFFFFFFFF
+                    sweep_timestamp_sec = delta_us / 1e6
+                    
+                    # Write directly to numpy buffer (circular buffer) with thread safety
+                    with self.buffer_lock:
+                        write_pos = self.buffer_write_index % self.MAX_SWEEPS_BUFFER
+                        self.raw_data_buffer[write_pos, :] = sweep_samples
+                        self.sweep_timestamps_buffer[write_pos] = sweep_timestamp_sec
+                        self.buffer_write_index += 1
+                        self.sweep_count += 1
+
+                    # Also keep in list for archive writing (only if archive is active)
+                    if self._archive_file:
+                        try:
+                            self._archive_file.write(json.dumps(sweep_samples) + '\n')
+                            self._archive_write_count += 1
+                            if self._archive_write_count % 1000 == 0:
+                                try:
+                                    self._archive_file.flush()
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
+
+                # Update plot periodically for performance (after processing entire block)
+                if self.sweep_count % PLOT_UPDATE_FREQUENCY == 0:
+                    self.update_plot()
+                    # Update info label based on current view mode - use buffer counts!
+                    actual_sweeps = min(self.sweep_count, self.MAX_SWEEPS_BUFFER)
+                    total_samples = actual_sweeps * samples_per_sweep
+                    force_samples = len(self.force_data)
+                    if self.is_full_view:
+                        self.plot_info_label.setText(
+                            f"ADC - Sweeps: {self.sweep_count} (full view) | Samples: {total_samples}  |  Force: {force_samples} samples"
+                        )
+                    else:
+                        window_size = self.window_size_spin.value()
+                        displayed_sweeps = min(actual_sweeps, window_size)
+                        self.plot_info_label.setText(
+                            f"ADC - Sweeps: {self.sweep_count} (showing last {displayed_sweeps}) | Samples: {total_samples}  |  Force: {force_samples} samples"
+                        )
+                    self.update_force_plot()
+                
+                # Track when this buffer finished being received
+                block_end_time = time.time()
+                
+                # Calculate gap time between blocks:
+                # Time from when last block finished receiving to when this block started receiving
+                # This measures the transmission gap + Arduino processing time between blocks
+                if self.last_buffer_end_time is not None:
+                    gap_time_ms = (block_start_time - self.last_buffer_end_time) * 1000.0
+                    self.buffer_gap_times.append(gap_time_ms)
+                    # Keep only recent gap times to prevent unbounded growth
+                    if len(self.buffer_gap_times) > MAX_TIMING_SAMPLES:
+                        self.buffer_gap_times = self.buffer_gap_times[-MAX_TIMING_SAMPLES:]
+                
+                self.last_buffer_end_time = block_end_time
+                
+                # Update timing display after each block
+                self.update_timing_display()
+
+            except Exception as e:
+                self.log_status(f"ERROR: Failed to process binary block - {e}")
+    
+    # ========================================================================
+    # Force Data Processing
+    # ========================================================================
+    
+    def calibrate_force_sensors(self):
+        """Calibrate force sensors by collecting baseline samples without load."""
+        self.force_calibrating = True
+        self.calibration_samples = {'x': [], 'z': []}
+        # Calibration will be completed in process_force_data after 10 samples
+
+    def process_force_data(self, x_force: float, z_force: float):
+        """Process incoming force measurement data."""
+        # Handle calibration
+        if self.force_calibrating:
+            self.calibration_samples['x'].append(x_force)
+            self.calibration_samples['z'].append(z_force)
+            
+            if len(self.calibration_samples['x']) >= 10:
+                # Calculate average offsets
+                self.force_calibration_offset['x'] = sum(self.calibration_samples['x']) / len(self.calibration_samples['x'])
+                self.force_calibration_offset['z'] = sum(self.calibration_samples['z']) / len(self.calibration_samples['z'])
+                
+                self.force_calibrating = False
+                self.log_status(f"Force calibration complete: X offset={self.force_calibration_offset['x']:.1f}, Z offset={self.force_calibration_offset['z']:.1f}")
+                self.log_status("Force sensors ready (calibrated to zero)")
+            return
+        
+        # Apply calibration offsets
+        x_calibrated = x_force - self.force_calibration_offset['x']
+        z_calibrated = z_force - self.force_calibration_offset['z']
+        
+        if self.is_capturing and self.force_start_time is not None:
+            timestamp = time.time() - self.force_start_time
+            self.force_data.append((timestamp, x_calibrated, z_calibrated))
+            
+            # Implement rolling window: keep only the most recent force samples
+            # This prevents memory overflow during long captures
+            if len(self.force_data) > MAX_FORCE_SAMPLES:
+                self.force_data = self.force_data[-MAX_FORCE_SAMPLES:]
+            
+            # Update info label
+            if len(self.force_data) % 10 == 0:  # Update every 10 samples
+                total_samples = sum(len(sweep) for sweep in self.raw_data) if self.raw_data else 0
+                self.plot_info_label.setText(
+                    f"ADC - Sweeps: {self.sweep_count} | Samples: {total_samples}  |  Force: {len(self.force_data)} samples"
+                )
+            # Schedule a debounced force plot update (avoid updating GUI for every sample)
+            try:
+                if not self.force_plot_timer.isActive():
+                    self.force_plot_timer.start(self.force_plot_debounce_ms)
+            except Exception:
+                pass
+    
+    # ========================================================================
+    # Plotting and Visualization
+    # ========================================================================
+    
+    def update_plot(self):
+        """Update the plot with current data - optimized for fast updates and max 10K samples."""
+        # Prevent concurrent updates
+        if self.is_updating_plot:
+            return
+
+        self.is_updating_plot = True
+
+        try:
+            if not self.is_capturing and self.raw_data_buffer is None:
+                # No data in buffer
+                for curve in self._adc_curves.values():
+                    curve.setVisible(False)
+                self.is_updating_plot = False
+                return
+            
+            if not self.config['channels']:
+                for curve in self._adc_curves.values():
+                    curve.setVisible(False)
+                self.is_updating_plot = False
+                return
+
+            # Get selected channels from checkboxes
+            selected_channels = [ch for ch, checkbox in self.channel_checkboxes.items() if checkbox.isChecked()]
+            if not selected_channels:
+                for curve in self._adc_curves.values():
+                    curve.setVisible(False)
+                self.is_updating_plot = False
+                return
+
+            # Configuration
+            channels = self.config['channels']
+            repeat_count = self.config['repeat']
+            samples_per_sweep = len(channels) * repeat_count
+            MAX_SAMPLES_TO_DISPLAY = 10000
+            
+            # Determine which data to plot - use numpy buffer directly with thread safety!
+            if self.raw_data_buffer is None:
+                self.is_updating_plot = False
+                return
+            
+            # Get snapshot of buffer state with lock
+            with self.buffer_lock:
+                current_sweep_count = self.sweep_count
+                current_write_index = self.buffer_write_index
+            
+            # Calculate actual number of sweeps in buffer
+            actual_sweeps = min(current_sweep_count, self.MAX_SWEEPS_BUFFER)
+            
+            if actual_sweeps == 0:
+                for curve in self._adc_curves.values():
+                    curve.setVisible(False)
+                self.is_updating_plot = False
+                return
+            
+            if self.is_full_view:
+                # Full view: use legacy raw_data list loaded from archive
+                if not self.raw_data or not self.sweep_timestamps:
+                    self.is_updating_plot = False
+                    return
+                
+                # Convert list data to numpy for plotting
+                try:
+                    # All sweeps have same length
+                    samples_per_sweep = len(self.raw_data[0])
+                    num_sweeps = len(self.raw_data)
+                    
+                    # Create numpy array from list data
+                    data_array = np.array(self.raw_data, dtype=np.float32)  # shape: (num_sweeps, samples_per_sweep)
+                    timestamps_array = np.array(self.sweep_timestamps, dtype=np.float64)
+                except Exception as e:
+                    self.log_status(f"Error converting archive data: {e}")
+                    self.is_updating_plot = False
+                    return
+            elif self.is_capturing:
+                # During capture: show last window_size sweeps
+                window_size = self.window_size_spin.value()
+                window_size = min(window_size, actual_sweeps)
+                
+                # Use circular buffer logic
+                if actual_sweeps < self.MAX_SWEEPS_BUFFER:
+                    # Buffer not yet full - data is contiguous from start
+                    start_idx = max(0, actual_sweeps - window_size)
+                    end_idx = actual_sweeps
+                    data_array = self.raw_data_buffer[start_idx:end_idx, :].copy()
+                    timestamps_array = self.sweep_timestamps_buffer[start_idx:end_idx].copy()
+                else:
+                    # Buffer is full - need to handle circular wrap
+                    # write_index points to next write position (oldest data will be overwritten there)
+                    # So oldest data is at write_pos, newest is at write_pos-1
+                    write_pos = current_write_index % self.MAX_SWEEPS_BUFFER
+                    
+                    if window_size >= self.MAX_SWEEPS_BUFFER:
+                        # Show entire buffer - reorder to show oldest first
+                        data_array = np.concatenate([
+                            self.raw_data_buffer[write_pos:, :],
+                            self.raw_data_buffer[:write_pos, :]
+                        ])
+                        timestamps_array = np.concatenate([
+                            self.sweep_timestamps_buffer[write_pos:],
+                            self.sweep_timestamps_buffer[:write_pos]
+                        ])
+                    else:
+                        # Show last window_size from circular buffer
+                        # Newest is at write_pos-1, so we want [write_pos-window_size : write_pos]
+                        start_pos = (write_pos - window_size) % self.MAX_SWEEPS_BUFFER
+                        if start_pos < write_pos:
+                            data_array = self.raw_data_buffer[start_pos:write_pos, :].copy()
+                            timestamps_array = self.sweep_timestamps_buffer[start_pos:write_pos].copy()
+                        else:
+                            # Wrap around
+                            data_array = np.concatenate([
+                                self.raw_data_buffer[start_pos:, :],
+                                self.raw_data_buffer[:write_pos, :]
+                            ])
+                            timestamps_array = np.concatenate([
+                                self.sweep_timestamps_buffer[start_pos:],
+                                self.sweep_timestamps_buffer[:write_pos]
+                            ])
+            else:
+                # After capture: show same window as during capture for consistency
+                # Use the window_size setting so user sees what they were looking at
+                window_size = self.window_size_spin.value()
+                max_sweeps = min(window_size, actual_sweeps)
+                
+                # Extract from circular buffer
+                if actual_sweeps < self.MAX_SWEEPS_BUFFER:
+                    # Buffer not yet full
+                    start_idx = max(0, actual_sweeps - max_sweeps)
+                    data_array = self.raw_data_buffer[start_idx:actual_sweeps, :].copy()
+                    timestamps_array = self.sweep_timestamps_buffer[start_idx:actual_sweeps].copy()
+                else:
+                    # Buffer is full
+                    write_pos = current_write_index % self.MAX_SWEEPS_BUFFER
+                    start_pos = (write_pos - max_sweeps) % self.MAX_SWEEPS_BUFFER
+                    if start_pos < write_pos:
+                        data_array = self.raw_data_buffer[start_pos:write_pos, :].copy()
+                        timestamps_array = self.sweep_timestamps_buffer[start_pos:write_pos].copy()
+                    else:
+                        data_array = np.concatenate([
+                            self.raw_data_buffer[start_pos:, :],
+                            self.raw_data_buffer[:write_pos, :]
+                        ])
+                        timestamps_array = np.concatenate([
+                            self.sweep_timestamps_buffer[start_pos:],
+                            self.sweep_timestamps_buffer[:write_pos]
+                        ])
+            
+            if len(data_array) == 0 or len(timestamps_array) == 0:
+                self.is_updating_plot = False
+                return
+
+            # Get unique channels in order
+            unique_channels = []
+            for ch in channels:
+                if ch not in unique_channels:
+                    unique_channels.append(ch)
+
+            desired_curve_keys = set()
+            
+            # Calculate average sample time for intra-sweep timing
+            if hasattr(self, 'arduino_sample_times') and self.arduino_sample_times:
+                avg_sample_time_sec = (sum(self.arduino_sample_times) / len(self.arduino_sample_times)) / 1e6
+            else:
+                avg_sample_time_sec = 0
+
+            # Data is ALREADY numpy array from buffer - no conversion needed!
+            # Extract and plot data for each channel
+            for ch_idx, channel in enumerate(unique_channels):
+                if channel not in selected_channels:
+                    continue
+
+                color = PLOT_COLORS[ch_idx % len(PLOT_COLORS)]
+
+                # Find all positions of this channel in the sequence
+                positions = [i for i, c in enumerate(channels) if c == channel]
+
+                # Extract data using numpy slicing (MUCH faster than loops!)
+                channel_data_list = []
+                channel_times_list = []
+                
+                for pos in positions:
+                    start_idx = pos * repeat_count
+                    end_idx = start_idx + repeat_count
+                    
+                    # Extract all repeats for this position across all sweeps (single numpy operation!)
+                    pos_data = data_array[:, start_idx:end_idx]  # Shape: (num_sweeps, repeat_count)
+                    
+                    # Flatten to 1D: [sweep0_r0, sweep0_r1, ..., sweep1_r0, sweep1_r1, ...]
+                    pos_data_flat = pos_data.flatten()
+                    channel_data_list.append(pos_data_flat)
+                    
+                    # Generate timestamps for all samples
+                    # Create time offsets for each sample within a sweep
+                    sample_indices = np.arange(start_idx, end_idx)
+                    time_offsets = sample_indices * avg_sample_time_sec
+                    
+                    # Repeat sweep timestamps for each repeat, then add offsets
+                    sweep_times = np.repeat(timestamps_array, repeat_count)
+                    offsets_tiled = np.tile(time_offsets, len(timestamps_array))
+                    pos_times = sweep_times + offsets_tiled
+                    channel_times_list.append(pos_times)
+                
+                # Concatenate all positions
+                if not channel_data_list:
+                    continue
+                    
+                channel_data = np.concatenate(channel_data_list)
+                channel_times = np.concatenate(channel_times_list)
+
+                # Convert to voltage if voltage units mode is enabled
+                if self.yaxis_units_combo.currentText() == "Voltage":
+                    vref = self.get_vref_voltage()
+                    max_value = (2 ** IADC_RESOLUTION_BITS) - 1
+                    channel_data = (channel_data / max_value) * vref
+
+                # Downsample if too many points for this channel
+                if len(channel_data) > MAX_SAMPLES_TO_DISPLAY:
+                    downsample_factor = len(channel_data) // MAX_SAMPLES_TO_DISPLAY
+                    channel_data = channel_data[::downsample_factor]
+                    channel_times = channel_times[::downsample_factor]
+
+                # Show based on visualization mode
+                if self.show_all_repeats_radio.isChecked() and repeat_count > 1:
+                    # Reshape to separate repeats
+                    try:
+                        num_samples = len(channel_data) // repeat_count
+                        if num_samples > 0:
+                            channel_data_2d = channel_data[:num_samples * repeat_count].reshape(-1, repeat_count)
+                            channel_times_2d = channel_times[:num_samples * repeat_count].reshape(-1, repeat_count)
+
+                            # Plot each repeat as a separate line
+                            for repeat_idx in range(repeat_count):
+                                repeat_data = channel_data_2d[:, repeat_idx]
+                                repeat_times = channel_times_2d[:, repeat_idx]
+
+                                # Use slightly different line styles for each repeat
+                                if repeat_idx == 0:
+                                    pen = pg.mkPen(color=color, width=2)
+                                else:
+                                    lighter_color = tuple(int(c * 0.7) for c in color)
+                                    pen = pg.mkPen(color=lighter_color, width=1.5, style=Qt.PenStyle.DashLine)
+                                
+                                name = f"Ch {channel}.{repeat_idx}"
+                                curve_key = ("repeat", channel, repeat_idx)
+                                desired_curve_keys.add(curve_key)
+                                
+                                curve = self._adc_curves.get(curve_key)
+                                if curve is None:
+                                    curve = self.plot_widget.plot([], pen=pen, name=name)
+                                    self._adc_curves[curve_key] = curve
+                                
+                                curve.setVisible(True)
+                                curve.setPen(pen)
+                                curve.setData(x=repeat_times, y=repeat_data)
+                    except Exception as e:
+                        self.log_status(f"ERROR: Failed to reshape repeat data - {e}")
+                        continue
+                else:
+                    # Single line for all data (either single repeat or averaging mode)
+                    if self.show_average_radio.isChecked() and repeat_count > 1:
+                        # Compute average across repeats
+                        try:
+                            num_samples = len(channel_data) // repeat_count
+                            if num_samples > 0:
+                                channel_data_2d = channel_data[:num_samples * repeat_count].reshape(-1, repeat_count)
+                                channel_times_2d = channel_times[:num_samples * repeat_count].reshape(-1, repeat_count)
+                                channel_data = np.mean(channel_data_2d, axis=1)
+                                channel_times = channel_times_2d[:, 0]  # Use first repeat's times
+                                name = f"Ch {channel} (avg)"
+                                pen = pg.mkPen(color=color, width=3, style=Qt.PenStyle.DashLine)
+                                curve_key = ("avg", channel, 0)
+                            else:
+                                continue
+                        except Exception as e:
+                            self.log_status(f"ERROR: Failed to average repeat data - {e}")
+                            continue
+                    else:
+                        # Single repeat or show all together
+                        name = f"Ch {channel}"
+                        pen = pg.mkPen(color=color, width=2)
+                        curve_key = ("single", channel, 0)
+                    
+                    desired_curve_keys.add(curve_key)
+                    curve = self._adc_curves.get(curve_key)
+                    if curve is None:
+                        curve = self.plot_widget.plot([], pen=pen, name=name)
+                        self._adc_curves[curve_key] = curve
+                    
+                    curve.setVisible(True)
+                    curve.setPen(pen)
+                    curve.setData(x=channel_times, y=channel_data)
+
+            # Hide curves that are not in use
+            for key, curve in self._adc_curves.items():
+                if key not in desired_curve_keys:
+                    curve.setVisible(False)
+
+            # Update axis labels
+            if self.yaxis_units_combo.currentText() == "Voltage":
+                self.plot_widget.setLabel('left', 'Voltage', units='V')
+            else:
+                self.plot_widget.setLabel('left', 'ADC Value', units='counts')
+            
+            self.plot_widget.setLabel('bottom', 'Time', units='s')
+
+            # Apply Y-axis range
+            self.apply_y_axis_range()
+
+        except Exception as e:
+            self.log_status(f"ERROR updating plot: {e}")
+        finally:
+            self.is_updating_plot = False
+    
+    def update_force_plot(self):
+        """Update the force measurement plot with time-based alignment to ADC data."""
+        show_x_force = self.force_x_checkbox and self.force_x_checkbox.isChecked()
+        show_z_force = self.force_z_checkbox and self.force_z_checkbox.isChecked()
+
+        # Hide curves if not selected
+        if not show_x_force and self._force_x_curve is not None:
+            self._force_x_curve.setVisible(False)
+        if not show_z_force and self._force_z_curve is not None:
+            self._force_z_curve.setVisible(False)
+
+        if not self.force_data or (not show_x_force and not show_z_force):
+            return
+        
+        # Need timestamps from buffer, not legacy list
+        if self.sweep_timestamps_buffer is None:
+            return
+        
+        # Get snapshot of buffer state with lock
+        with self.buffer_lock:
+            current_sweep_count = self.sweep_count
+            current_write_index = self.buffer_write_index
+            # Copy min/max timestamps while locked
+            actual_sweeps = min(current_sweep_count, self.MAX_SWEEPS_BUFFER)
+            
+            if actual_sweeps == 0:
+                return
+            
+            # Calculate indices and copy timestamps inside lock to avoid race
+            if self.is_full_view:
+                # Would need archive data
+                return
+            elif self.is_capturing:
+                window_size = self.window_size_spin.value()
+                window_size = min(window_size, actual_sweeps)
+                
+                if actual_sweeps < self.MAX_SWEEPS_BUFFER:
+                    start_idx = max(0, actual_sweeps - window_size)
+                    min_time = self.sweep_timestamps_buffer[start_idx]
+                    max_time = self.sweep_timestamps_buffer[actual_sweeps - 1]
+                else:
+                    write_pos = current_write_index % self.MAX_SWEEPS_BUFFER
+                    newest_idx = (write_pos - 1) % self.MAX_SWEEPS_BUFFER
+                    oldest_idx = (write_pos - window_size) % self.MAX_SWEEPS_BUFFER
+                    min_time = self.sweep_timestamps_buffer[oldest_idx]
+                    max_time = self.sweep_timestamps_buffer[newest_idx]
+            else:
+                # After capture
+                if actual_sweeps < self.MAX_SWEEPS_BUFFER:
+                    min_time = self.sweep_timestamps_buffer[0]
+                    max_time = self.sweep_timestamps_buffer[actual_sweeps - 1]
+                else:
+                    write_pos = current_write_index % self.MAX_SWEEPS_BUFFER
+                    oldest_idx = write_pos
+                    newest_idx = (write_pos - 1) % self.MAX_SWEEPS_BUFFER
+                    min_time = self.sweep_timestamps_buffer[oldest_idx]
+                    max_time = self.sweep_timestamps_buffer[newest_idx]
+        
+        if current_sweep_count == 0:
+            return
+
+        try:
+            # Filter and downsample force data
+            if not self.force_data:
+                return
+            
+            # Convert force data to numpy once if not already
+            # (Future optimization: store force_data as numpy buffer too)
+            force_array = np.array(self.force_data, dtype=np.float64)
+            force_times = force_array[:, 0]
+            
+            # Use numpy binary search (much faster than linear!)
+            start_idx = np.searchsorted(force_times, min_time, side='left')
+            end_idx = np.searchsorted(force_times, max_time, side='right')
+            
+            # Slice the relevant data
+            force_filtered = force_array[start_idx:end_idx]
+            if len(force_filtered) == 0:
+                return
+            
+            # Downsample after filtering
+            MAX_FORCE_POINTS = 2000
+            if len(force_filtered) > MAX_FORCE_POINTS:
+                downsample_factor = len(force_filtered) // MAX_FORCE_POINTS
+                force_filtered = force_filtered[::downsample_factor]
+
+            # Extract X and Z force data
+            times = force_filtered[:, 0]
+            x_forces = force_filtered[:, 1]
+            z_forces = force_filtered[:, 2]
+
+            # Plot X force (red)
+            if show_x_force:
+                if self._force_x_curve is None:
+                    pen = pg.mkPen(color='r', width=2)
+                    self._force_x_curve = pg.PlotDataItem([], pen=pen, name='X Force')
+                    self.force_viewbox.addItem(self._force_x_curve)
+                
+                self._force_x_curve.setVisible(True)
+                self._force_x_curve.setData(x=times, y=x_forces)
+
+            # Plot Z force (blue)
+            if show_z_force:
+                if self._force_z_curve is None:
+                    pen = pg.mkPen(color='b', width=2)
+                    self._force_z_curve = pg.PlotDataItem([], pen=pen, name='Z Force')
+                    self.force_viewbox.addItem(self._force_z_curve)
+                
+                self._force_z_curve.setVisible(True)
+                self._force_z_curve.setData(x=times, y=z_forces)
+
+        except Exception as e:
+            self.log_status(f"ERROR: Failed to update force plot - {e}")
+    
+    def apply_y_axis_range(self):
+        """Apply Y-axis range setting to the plot."""
+        range_text = self.yaxis_range_combo.currentText()
+        
+        if range_text == "Auto":
+            self.plot_widget.enableAutoRange(axis='y')
+        else:
+            # Parse range like "0-4096" or "0-3.3V"
+            try:
+                parts = range_text.replace('V', '').split('-')
+                if len(parts) == 2:
+                    y_min = float(parts[0])
+                    y_max = float(parts[1])
+                    self.plot_widget.setYRange(y_min, y_max, padding=0)
+            except:
+                self.plot_widget.enableAutoRange(axis='y')
+    
+    # ========================================================================
+    # Timing Display
+    # ========================================================================
+    
+    def update_timing_display(self):
+        """Update timing display based on Arduino measurements and buffer gap timing."""
+        try:
+            # Use only the most recent timing value from Arduino
+            arduino_avg_sample_time_us = 0
+            if hasattr(self, 'arduino_sample_times') and self.arduino_sample_times:
+                # Use only the last received value
+                arduino_avg_sample_time_us = self.arduino_sample_times[-1]
+            
+            # Calculate sampling rate from Arduino's measurement
+            arduino_sample_rate_hz = 0
+            arduino_per_channel_rate_hz = 0
+            if arduino_avg_sample_time_us > 0:
+                # Total sampling rate: 1,000,000 µs/s ÷ sample_time_us
+                arduino_sample_rate_hz = 1000000.0 / arduino_avg_sample_time_us
+                
+                # Per-channel rate: divide total rate by number of unique channels
+                channels = self.config.get('channels', [])
+                if channels:
+                    num_unique_channels = len(set(channels))
+                    arduino_per_channel_rate_hz = arduino_sample_rate_hz / num_unique_channels
+                else:
+                    arduino_per_channel_rate_hz = arduino_sample_rate_hz
+            
+            # Calculate gap between blocks (prefer MCU timing if available)
+            buffer_gap_time_ms = 0
+            if hasattr(self, 'mcu_block_gap_us') and self.mcu_block_gap_us:
+                buffer_gap_time_ms = self.mcu_block_gap_us[-1] / 1000.0
+            elif hasattr(self, 'buffer_gap_times') and self.buffer_gap_times:
+                # Average all host gap times to smooth out fluctuations
+                buffer_gap_time_ms = sum(self.buffer_gap_times) / len(self.buffer_gap_times)
+            
+            # Store timing data
+            self.timing_data['arduino_sample_time_us'] = arduino_avg_sample_time_us
+            self.timing_data['arduino_sample_rate_hz'] = arduino_sample_rate_hz
+            self.timing_data['per_channel_rate_hz'] = arduino_per_channel_rate_hz
+            self.timing_data['total_rate_hz'] = arduino_sample_rate_hz
+            self.timing_data['buffer_gap_time_ms'] = buffer_gap_time_ms
+            # Store latest MCU timing values (if available)
+            if hasattr(self, 'mcu_block_start_us') and self.mcu_block_start_us:
+                self.timing_data['mcu_block_start_us'] = self.mcu_block_start_us[-1]
+                self.timing_data['mcu_block_end_us'] = self.mcu_block_end_us[-1]
+                if self.mcu_block_gap_us:
+                    self.timing_data['mcu_block_gap_us'] = self.mcu_block_gap_us[-1]
+            
+            # Update timing labels with Arduino data
+            if arduino_avg_sample_time_us > 0:
+                self.per_channel_rate_label.setText(f"{arduino_per_channel_rate_hz:.2f} Hz")
+                self.total_rate_label.setText(f"{arduino_sample_rate_hz:.2f} Hz")
+                self.between_samples_label.setText(f"{arduino_avg_sample_time_us:.2f} µs")
+            else:
+                self.per_channel_rate_label.setText("- Hz")
+                self.total_rate_label.setText("- Hz")
+                self.between_samples_label.setText("- µs")
+            
+            # Display block gap time (always show if we have data)
+            if buffer_gap_time_ms > 0:
+                self.block_gap_label.setText(f"{buffer_gap_time_ms:.2f} ms")
+            elif hasattr(self, 'mcu_block_gap_us') and len(self.mcu_block_gap_us) > 0:
+                self.block_gap_label.setText(f"{(self.mcu_block_gap_us[-1] / 1000.0):.2f} ms")
+            elif hasattr(self, 'buffer_gap_times') and len(self.buffer_gap_times) > 0:
+                # Show even if current value is 0, as long as we have history
+                avg_gap = sum(self.buffer_gap_times) / len(self.buffer_gap_times)
+                self.block_gap_label.setText(f"{avg_gap:.2f} ms")
+            else:
+                self.block_gap_label.setText("- ms")
+            
+        except Exception as e:
+            self.log_status(f"ERROR: Failed to update timing display - {e}")
+    
+    # ========================================================================
+    # Capture Control
+    # ========================================================================
+    
+    def start_capture(self):
+        """Start data capture."""
+        if not self.config['channels']:
+            QMessageBox.warning(
+                self,
+                "Configuration Error",
+                "Please configure channels before starting capture."
+            )
+            return
+
+        # Configuration should already be done via Configure button
+        # No need to send it again here
+
+        # Lock configuration controls
+        self.set_controls_enabled(False)
+
+        # If currently in full view, reset to normal view before starting new capture
+        if self.is_full_view:
+            self.reset_graph_view()
+            self.log_status("Resetting from full view to normal view for new capture")
+        
+        # Disable Full View button during capture
+        self.full_view_btn.setEnabled(False)
+
+        # Clear previous data - thread safe
+        with self.buffer_lock:
+            self.raw_data.clear()
+            self.sweep_timestamps.clear()
+            self.sweep_count = 0
+            self.buffer_write_index = 0
+            # Zero out buffers to prevent old data from showing
+            if self.raw_data_buffer is not None:
+                self.raw_data_buffer.fill(0)
+            if self.sweep_timestamps_buffer is not None:
+                self.sweep_timestamps_buffer.fill(0)
+        
+        self.force_data.clear()
+        self.force_start_time = None
+        
+        # Reset timestamp reference to ensure time starts at 0
+        if hasattr(self, 'first_sweep_timestamp_us'):
+            delattr(self, 'first_sweep_timestamp_us')
+
+        # Clear timing data for new measurement
+        self.timing_data = {
+            'per_channel_rate_hz': None,
+            'total_rate_hz': None,
+            'between_samples_us': None,
+            'arduino_sample_time_us': None,
+            'arduino_sample_rate_hz': None,
+            'buffer_gap_time_ms': None,
+            'mcu_block_start_us': None,
+            'mcu_block_end_us': None,
+            'mcu_block_gap_us': None
+        }
+        self.capture_start_time = None
+        self.capture_end_time = None
+        self.last_buffer_time = None
+        self.last_buffer_end_time = None
+        self.buffer_receipt_times.clear()
+        self.buffer_gap_times.clear()
+        self.arduino_sample_times.clear()
+        self.block_sample_counts.clear()
+        self.block_sweeps_counts.clear()
+        self.block_samples_per_sweep.clear()
+        self.mcu_block_start_us.clear()
+        self.mcu_block_end_us.clear()
+        self.mcu_block_gap_us.clear()
+        self.mcu_last_block_end_us = None
+        self.per_channel_rate_label.setText("- Hz")
+        self.total_rate_label.setText("- Hz")
+        self.between_samples_label.setText("- µs")
+        self.block_gap_label.setText("- ms")
+
+        # Disable plot interactions during capture (scrolling mode)
+        self.plot_widget.setMouseEnabled(x=False, y=False)
+        self.plot_widget.setMenuEnabled(False)
+
+        # Switch to binary capture mode BEFORE sending run command
+        # Open an archive file so we persist every sweep to disk. This ensures we
+        # never lose access to data even though the in-memory buffer is a rolling window.
+        save_dir = Path(self.dir_input.text()) if hasattr(self, 'dir_input') else Path.cwd()
+        save_dir.mkdir(parents=True, exist_ok=True)
+        base_name = self.filename_input.text().strip() if hasattr(self, 'filename_input') else 'adc_data'
+        # Use minute-resolution filenames (no seconds)
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M')
+        archive_name = f"{base_name}_{timestamp}.jsonl"
+        archive_path = save_dir / archive_name
+        timing_name = f"{base_name}_{timestamp}_block_timing.csv"
+        timing_path = save_dir / timing_name
+
+        try:
+            # Open for write (overwrite any existing file with same name) and store handle
+            self._archive_file = open(archive_path, 'w', encoding='utf-8')
+            self._archive_path = str(archive_path)
+            self._archive_write_count = 0
+            # Write a metadata header line for later reference
+            try:
+                metadata = {
+                    'metadata': {
+                        'channels': self.config.get('channels', []),
+                        'repeat': self.config.get('repeat', 1),
+                        'ground_pin': self.config.get('ground_pin'),
+                        'use_ground': self.config.get('use_ground'),
+                        'osr': self.config.get('osr'),
+                        'gain': self.config.get('gain'),
+                        'reference': self.config.get('reference'),
+                        'notes': self.notes_input.toPlainText() if hasattr(self, 'notes_input') else None,
+                        'start_time': datetime.now().isoformat()
+                    }
+                }
+                self._archive_file.write(json.dumps(metadata) + '\n')
+            except Exception:
+                pass
+            self.log_status(f"Archive opened: {self._archive_path}")
+        except Exception as e:
+            self.log_status(f"WARNING: Could not open archive file: {e}")
+
+        try:
+            # Open block timing sidecar and write header
+            self._block_timing_file = open(timing_path, 'w', encoding='utf-8', newline='')
+            self._block_timing_path = str(timing_path)
+            try:
+                tw = csv.writer(self._block_timing_file)
+                tw.writerow(["sample_count", "samples_per_sweep", "sweeps_in_block", "avg_dt_us", "block_start_us", "block_end_us", "mcu_gap_us"])
+                self._block_timing_file.flush()
+            except Exception:
+                pass
+            if self._block_timing_path:
+                self.log_status(f"Block timing opened: {self._block_timing_path}")
+        except Exception as e:
+            self._block_timing_file = None
+            self._block_timing_path = None
+            self.log_status(f"WARNING: Could not open block timing file: {e}")
+
+        self.is_capturing = True
+        if self.serial_thread:
+            self.serial_thread.set_capturing(True)
+        
+        # Wait for thread to fully switch modes
+        time.sleep(0.05)
+
+        # Send run command - binary data will start flowing
+        if self.timed_run_check.isChecked():
+            duration_ms = self.timed_run_spin.value()
+            self.send_command(f"run {duration_ms}")
+            self.log_status(f"Starting timed capture for {duration_ms} ms")
+
+            # Set timer to re-enable controls after timed run
+            QTimer.singleShot(duration_ms + 500, self.on_capture_finished)
+        else:
+            self.send_command("run")
+            self.log_status("Starting continuous capture")
+
+        self.start_btn.setEnabled(False)
+        self.start_btn.setStyleSheet("QPushButton { background-color: #CCCCCC; color: #666666; font-weight: bold; }")
+        self.stop_btn.setEnabled(True)
+        self.stop_btn.setStyleSheet("QPushButton { background-color: #f44336; color: white; font-weight: bold; }")
+        self.statusBar().showMessage("Capturing - Scrolling Mode")
+
+    def stop_capture(self):
+        """Stop data capture."""
+        if not self.is_capturing:
+            self.log_status("Stop requested but capture already stopped")
+            return
+
+        self.log_status("Stopping capture")
+
+        # Ask MCU to stop and wait briefly for acknowledgement
+        success, _ = self.send_command_and_wait_ack(
+            "stop",
+            expected_value=None,
+            timeout=0.5,
+            max_retries=3
+        )
+
+        if not success:
+            self.log_status("WARNING: Stop command not acknowledged; halting locally")
+
+        # Immediately exit binary mode on the reader thread
+        if self.serial_thread:
+            self.serial_thread.set_capturing(False)
+
+        self.is_capturing = False
+
+        # Flush any residual binary bytes so the next run starts clean
+        self.drain_serial_input(0.5)
+
+        self.on_capture_finished()
+
+    def on_capture_finished(self):
+        """Handle capture finished (either stopped or timed out)."""
+        # Record end time
+        self.capture_end_time = time.time()
+        
+        self.is_capturing = False
+        
+        # Stop force data collection by clearing force_start_time
+        # This prevents force data from continuing after ADC stops
+        self.force_start_time = None
+        
+        # Notify serial thread that we're not capturing (disables binary mode)
+        if self.serial_thread:
+            self.serial_thread.set_capturing(False)
+        
+        # Log final timing summary
+        time.sleep(0.1)  # Wait for Arduino to finish sending binary data
+        if hasattr(self, 'arduino_sample_times') and self.arduino_sample_times:
+            avg_sample_time = sum(self.arduino_sample_times) / len(self.arduino_sample_times)
+            total_rate = 1000000.0 / avg_sample_time if avg_sample_time > 0 else 0
+            self.log_status(f"Capture complete - Sample interval: {avg_sample_time:.2f} µs, Total rate: {total_rate:.2f} Hz")
+        
+        if hasattr(self, 'buffer_gap_times') and self.buffer_gap_times:
+            avg_gap = sum(self.buffer_gap_times) / len(self.buffer_gap_times)
+            self.log_status(f"Average block gap: {avg_gap:.2f} ms ({len(self.buffer_gap_times)} blocks)")
+        
+        self.start_btn.setEnabled(True)
+        self.stop_btn.setEnabled(False)
+        self.stop_btn.setStyleSheet("QPushButton { background-color: #CCCCCC; color: #666666; font-weight: bold; }")
+        self.update_start_button_state()  # Restore start button to proper state
+        self.set_controls_enabled(True)
+
+        # Final safety: discard any leftover bytes so the next capture starts clean
+        self.drain_serial_input(0.3)
+        
+        # Enable Full View button now that capture is finished (unless already in full view)
+        if not self.is_full_view:
+            self.full_view_btn.setEnabled(True)
+
+        # Enable plot interactions for static mode (zoom/scroll enabled)
+        self.plot_widget.setMouseEnabled(x=True, y=True)
+        self.plot_widget.setMenuEnabled(True)
+
+        self.statusBar().showMessage("Connected - Static Display Mode")
+
+        # Final plot update (shows all data)
+        self.update_plot()
+        # Calculate total samples correctly from buffer
+        with self.buffer_lock:
+            actual_sweeps = min(self.sweep_count, self.MAX_SWEEPS_BUFFER)
+            total_samples = actual_sweeps * self.samples_per_sweep if self.samples_per_sweep > 0 else 0
+        force_samples = len(self.force_data)
+        self.plot_info_label.setText(
+            f"ADC - Sweeps: {self.sweep_count} | Samples: {total_samples}  |  Force: {force_samples} samples"
+        )
+
+        # Close archive file if open
+        try:
+            if self._archive_file:
+                try:
+                    self._archive_file.flush()
+                except Exception:
+                    pass
+                try:
+                    self._archive_file.close()
+                except Exception:
+                    pass
+                self.log_status(f"Archive saved: {self._archive_path}")
+        except Exception:
+            pass
+        # Close block timing file if open
+        try:
+            if self._block_timing_file:
+                try:
+                    self._block_timing_file.flush()
+                except Exception:
+                    pass
+                try:
+                    self._block_timing_file.close()
+                except Exception:
+                    pass
+                self.log_status(f"Block timing saved: {self._block_timing_path}")
+        except Exception:
+            pass
+
+        self.log_status(f"Capture finished. Total sweeps: {self.sweep_count}, Total samples: {total_samples}, Force samples: {force_samples}")
+
+    def set_controls_enabled(self, enabled: bool):
+        """Enable or disable configuration controls."""
+        # Serial connection
+        self.port_combo.setEnabled(enabled and not self.serial_port)
+        self.refresh_ports_btn.setEnabled(enabled and not self.serial_port)
+
+        # ADC configuration
+        self.vref_combo.setEnabled(enabled)
+        self.osr_combo.setEnabled(enabled)
+        self.gain_combo.setEnabled(enabled)
+
+        # Acquisition settings
+        self.channels_input.setEnabled(enabled)
+        self.ground_pin_spin.setEnabled(enabled)
+        self.use_ground_check.setEnabled(enabled)
+        self.repeat_spin.setEnabled(enabled)
+        self.buffer_spin.setEnabled(enabled)
+
+        # Run control
+        self.timed_run_check.setEnabled(enabled)
+        if enabled:
+            self.timed_run_spin.setEnabled(self.timed_run_check.isChecked())
+        else:
+            self.timed_run_spin.setEnabled(False)
+
+        # Visualization controls
+        self.window_size_spin.setEnabled(enabled)
+
+    def clear_data(self):
+        """Clear all captured data and completely reset plot to initial state."""
+        # Prevent clearing during capture to avoid race conditions
+        if self.is_capturing:
+            QMessageBox.warning(self, "Cannot Clear", "Cannot clear data during capture. Please stop capture first.")
+            return
+        
+        reply = QMessageBox.question(
+            self,
+            "Clear Data",
+            "Are you sure you want to clear all captured data?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            # Ensure any leftover bytes from a previous capture are discarded
+            self.drain_serial_input(0.3)
+
+            # Clear all data structures with thread safety
+            with self.buffer_lock:
+                self.raw_data.clear()
+                self.sweep_timestamps.clear()
+                self.sweep_count = 0
+                self.buffer_write_index = 0
+                # Reset buffer to zeros (optional, but cleaner)
+                if self.raw_data_buffer is not None:
+                    self.raw_data_buffer.fill(0)
+                    self.sweep_timestamps_buffer.fill(0)
+            
+            self.force_data.clear()
+            
+            # Reset ALL timestamp and timing references for next capture
+            if hasattr(self, 'first_sweep_timestamp_us'):
+                self.log_status(f"Clearing first_sweep_timestamp_us (was {self.first_sweep_timestamp_us} µs)")
+                delattr(self, 'first_sweep_timestamp_us')
+            else:
+                self.log_status("first_sweep_timestamp_us already cleared")
+            self.capture_start_time = None
+            self.capture_end_time = None
+            self.force_start_time = None
+            self.last_buffer_time = None
+            self.last_buffer_end_time = None
+            self.mcu_last_block_end_us = None
+            
+            # Clear all timing data lists
+            self.buffer_receipt_times.clear()
+            self.buffer_gap_times.clear()
+            self.arduino_sample_times.clear()
+            self.block_sample_counts.clear()
+            self.block_sweeps_counts.clear()
+            self.block_samples_per_sweep.clear()
+            self.mcu_block_start_us.clear()
+            self.mcu_block_end_us.clear()
+            self.mcu_block_gap_us.clear()
+            
+            # Reset samples_per_sweep to force buffer reinitialization
+            self.samples_per_sweep = 0
+            
+            # Reset view mode flags
+            self.is_full_view = False
+            self.full_view_btn.setEnabled(False)
+            
+            # COMPLETELY DELETE all ADC curves (not just hide)
+            for curve in self._adc_curves.values():
+                self.plot_widget.removeItem(curve)
+            self._adc_curves.clear()
+            
+            # COMPLETELY DELETE force curves
+            if self._force_x_curve is not None:
+                self.force_viewbox.removeItem(self._force_x_curve)
+                self._force_x_curve = None
+            if self._force_z_curve is not None:
+                self.force_viewbox.removeItem(self._force_z_curve)
+                self._force_z_curve = None
+            
+            # Clear and recreate legends to reset them
+            self.plot_widget.removeItem(self.adc_legend)
+            self.adc_legend = self.plot_widget.addLegend(offset=(10, 10))
+            
+            # Reset plot to initial state
+            self.plot_widget.setXRange(0, 1, padding=0)
+            self.plot_widget.setYRange(0, 1, padding=0)
+            self.force_viewbox.setXRange(0, 1, padding=0)
+            self.force_viewbox.setYRange(0, 1, padding=0)
+            
+            # Reset zoom/pan - enable auto range
+            self.plot_widget.enableAutoRange()
+            self.force_viewbox.enableAutoRange()
+            
+            # Reset axis labels to initial state
+            self.plot_widget.setLabel('left', 'ADC Value', units='counts')
+            self.plot_widget.setLabel('bottom', 'Time', units='s')
+            self.plot_widget.setLabel('right', 'Force (Raw)', units='')
+            
+            # Update info label
+            self.plot_info_label.setText("ADC - Sweeps: 0 | Samples: 0  |  Force: 0 samples")
+            self.log_status("Data cleared - plot reset to initial state")
+    
+    # ========================================================================
+    # Helper Methods
+    # ========================================================================
+    
+    def get_vref_voltage(self) -> float:
+        """Get the numeric voltage reference value."""
+        vref_str = self.config['reference']
+
+        # Map reference strings to voltage values
+        if vref_str == "1.2":
+            return 1.2
+        elif vref_str == "3.3" or vref_str == "vdd":
+            return 3.3
+        elif vref_str == "0.8vdd":
+            return 3.3 * 0.8  # 2.64V
+        elif vref_str == "ext":
+            return 1.25  # External reference
+        else:
+            return 3.3  # Default to VDD
+    
+    def log_status(self, message: str):
+        """Log a status message."""
+        timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        self.status_text.append(f"[{timestamp}] {message}")
+        
+        # Limit status text to prevent memory overflow during long sessions
+        # QTextEdit.toPlainText() includes all lines with newlines
+        current_text = self.status_text.toPlainText()
+        lines = current_text.split('\n')
+        if len(lines) > MAX_LOG_LINES:
+            # Keep only the most recent lines
+            self.status_text.setPlainText('\n'.join(lines[-MAX_LOG_LINES:]))
+        
+        # Auto-scroll to bottom
+        self.status_text.verticalScrollBar().setValue(
+            self.status_text.verticalScrollBar().maximum()
+        )

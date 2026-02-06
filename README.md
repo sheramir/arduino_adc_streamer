@@ -19,15 +19,27 @@ High-speed ADC data acquisition system for Arduino-based boards with real-time v
    python adc_gui.py
    # Or with uv:
    uv run adc_gui.py
+   
+   # To test the modular architecture (demo):
+   python adc_gui_refactored_demo.py
    ```
 
 ## 📁 Repository Contents
 
 ### Main Application Files
-- **`adc_gui.py`**: Full-featured Python GUI application with real-time plotting
+- **`adc_gui.py`**: Main GUI entry point
 - **`config_constants.py`**: Centralized configuration constants
 - **`buffer_utils.py`**: Buffer optimization and validation utilities
 - **`requirements.txt`**: Python package dependencies
+
+### Modular Code Structure
+- **`serial_communication/`**: Serial port handling and data acquisition threads
+- **`gui/`**: GUI component creation (planned)
+- **`data_processing/`**: Data processing and analysis (planned)
+- **`config/`**: Configuration management (planned)
+- **`file_operations/`**: Data export functionality (planned)
+
+See **[README_REFACTORING.md](README_REFACTORING.md)** for detailed architecture documentation.
 
 ### Arduino Sketches
 - **`Arduino_Sketches/MG24/ADC_Streamer_binary_scan/`**: **Current sketch** - Binary streaming with buffered blocks (recommended)
@@ -37,6 +49,7 @@ High-speed ADC data acquisition system for Arduino-based boards with real-time v
 
 ### Documentation
 - **`GUI_README.md`**: Comprehensive GUI user guide
+- **`README_REFACTORING.md`**: Code architecture and modularization guide
 - **`BUFFER_OPTIMIZATION.md`**: Buffer size optimization guide
 - **`IADC_UPDATE_CHANGES.md`**: IADC firmware update notes
 
@@ -135,6 +148,7 @@ status        - Print current configuration
 
 ## 📚 Documentation
 
+- **[README_REFACTORING.md](README_REFACTORING.md)**: Code architecture and modularization guide
 - **[GUI_README.md](GUI_README.md)**: Complete user guide with screenshots
 - **[BUFFER_OPTIMIZATION.md](BUFFER_OPTIMIZATION.md)**: Performance tuning guide
 - **[IADC_UPDATE_CHANGES.md](IADC_UPDATE_CHANGES.md)**: Firmware change notes

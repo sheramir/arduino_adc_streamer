@@ -57,7 +57,8 @@ class ConfigurationMixin:
                 self.update_channel_list()
                 self.config_is_valid = False
                 self.update_start_button_state()
-            except:
+            except ValueError:
+                # Invalid channel format - will be caught when configuring
                 pass
         
         # Don't send command immediately - will be sent on Start
@@ -126,7 +127,7 @@ class ConfigurationMixin:
                         f"({max_samples} samples) - Arduino buffer capacity is {MAX_SAMPLES_BUFFER} samples"
                     )
         except Exception as e:
-            pass  # Silently ignore validation errors
+            self.log_status(f"Buffer validation error: {e}")
 
     def on_yaxis_range_changed(self, text: str):
         """Handle Y-axis range change."""
@@ -159,7 +160,7 @@ class ConfigurationMixin:
         
         try:
             desired_channels = [int(c.strip()) for c in channels_text.split(',')]
-        except:
+        except ValueError:
             self.log_status("ERROR: Invalid channel format")
             return
         
@@ -201,7 +202,7 @@ class ConfigurationMixin:
                     time.sleep(0.05)  # Brief delay between retries
                     
             except Exception as e:
-                pass  # Silent error handling
+                self.log_status(f"Configuration error: {e}")
             finally:
                 # Set completion status for main thread to handle
                 if success_flag:
@@ -250,7 +251,6 @@ class ConfigurationMixin:
         """
         # Thread-safe check of serial port
         if not self.serial_port or not self.serial_port.is_open:
-            print("Serial port not available for configuration")
             return False
         
         all_success = True

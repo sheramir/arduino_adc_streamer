@@ -76,6 +76,7 @@ class ADCStreamerGUI(
         self._init_timing_state()
         self._init_config_state()
         self._init_ui_state()
+        self._init_heatmap_state()
         self._init_timers()
 
         # Build user interface
@@ -205,6 +206,24 @@ class ADCStreamerGUI(
         self._force_x_curve = None
         self._force_z_curve = None
         self.force_plot_debounce_ms = 100
+    
+    def _init_heatmap_state(self):
+        """Initialize heatmap processing state."""
+        import numpy as np
+        
+        # Smoothed values for CoP and intensity
+        self.smoothed_cop_x = 0.0
+        self.smoothed_cop_y = 0.0
+        self.smoothed_intensity = 0.0
+        
+        # Pre-allocate heatmap buffer
+        self.heatmap_buffer = np.zeros((HEATMAP_HEIGHT, HEATMAP_WIDTH), dtype=np.float32)
+        
+        # Pre-compute coordinate grids for Gaussian blob
+        y_coords = np.linspace(-1, 1, HEATMAP_HEIGHT).reshape(-1, 1)
+        x_coords = np.linspace(-1, 1, HEATMAP_WIDTH).reshape(1, -1)
+        self.heatmap_y_grid = np.tile(y_coords, (1, HEATMAP_WIDTH))
+        self.heatmap_x_grid = np.tile(x_coords, (HEATMAP_HEIGHT, 1))
 
     def _init_timers(self):
         """Initialize Qt timers."""
@@ -261,6 +280,9 @@ class ADCStreamerGUI(
 
         # Status bar
         self.statusBar().showMessage("Disconnected")
+        
+        # Connect tab change signal to start/stop heatmap simulation
+        self.visualization_tabs.currentChanged.connect(self.on_visualization_tab_changed)
 
     def _create_left_control_panel(self) -> QWidget:
         """Create left panel with all control sections."""
@@ -281,15 +303,13 @@ class ADCStreamerGUI(
         return panel
 
     def _create_right_visualization_panel(self) -> QWidget:
-        """Create right panel with plotting and visualization."""
+        """Create right panel with tabbed visualization."""
         from PyQt6.QtWidgets import QVBoxLayout
         panel = QWidget()
         layout = QVBoxLayout(panel)
 
-        # Add visualization sections from GUIComponentsMixin
+        # Add tabbed visualization (timing and controls are now inside timeseries tab)
         layout.addWidget(self.create_plot_section())
-        layout.addWidget(self.create_timing_section())
-        layout.addWidget(self.create_visualization_controls())
         
         # Connect tab change signal to start/stop heatmap simulation
         self.visualization_tabs.currentChanged.connect(self.on_visualization_tab_changed)
@@ -328,6 +348,17 @@ class ADCStreamerGUI(
     # ========================================================================
     # Heatmap Update Logic
     # ========================================================================
+    
+    def on_visualization_tab_changed(self, index):
+        """Handle tab change to start/stop heatmap simulation.
+        
+        Args:
+            index: Tab index (0=Time Series, 1=Heatmap)
+        """
+        if index == 1:  # Heatmap tab
+            self.start_heatmap_simulation()
+        else:  # Time Series or other tabs
+            self.stop_heatmap_simulation()
     
     def start_heatmap_simulation(self):
         """Start simulated sensor data source and heatmap updates."""

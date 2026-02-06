@@ -40,14 +40,18 @@ class DisplayPanelsMixin:
         
         return self.visualization_tabs
     
-    def create_timeseries_tab(self) -> QGroupBox:
-        """Create the traditional time-series plotting tab.
+    def create_timeseries_tab(self) -> QWidget:
+        """Create the traditional time-series plotting tab with controls.
         
         Returns:
-            QGroupBox: Group box containing pyqtgraph plot
+            QWidget: Widget containing plot, controls, and timing
         """
-        group = QGroupBox("Real-time Data Visualization")
+        tab_widget = QWidget()
         layout = QVBoxLayout()
+
+        # Plot section
+        plot_group = QGroupBox("Real-time Data Visualization")
+        plot_layout = QVBoxLayout()
 
         # Create main plot widget with dual Y-axes (ADC on left, Force on right)
         self.plot_widget = pg.PlotWidget()
@@ -72,14 +76,23 @@ class DisplayPanelsMixin:
         # Connect view resize to update force viewbox geometry
         self.plot_widget.getViewBox().sigResized.connect(self.update_force_viewbox)
 
-        layout.addWidget(self.plot_widget)
+        plot_layout.addWidget(self.plot_widget)
 
         # Combined info label
         self.plot_info_label = QLabel("ADC - Sweeps: 0 | Samples: 0  |  Force: 0 samples")
-        layout.addWidget(self.plot_info_label)
+        plot_layout.addWidget(self.plot_info_label)
 
-        group.setLayout(layout)
-        return group
+        plot_group.setLayout(plot_layout)
+        layout.addWidget(plot_group)
+        
+        # Add timing section
+        layout.addWidget(self.create_timing_section())
+        
+        # Add visualization controls
+        layout.addWidget(self.create_visualization_controls())
+
+        tab_widget.setLayout(layout)
+        return tab_widget
     
     def update_force_viewbox(self):
         """Update force viewbox geometry to match main plot viewbox."""

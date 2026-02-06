@@ -26,13 +26,13 @@ class HeatmapPanelMixin:
         heatmap_widget = QWidget()
         layout = QVBoxLayout()
         
-        # Create heatmap display
+        # Create heatmap display (takes most space)
         heatmap_display = self.create_heatmap_display()
-        layout.addWidget(heatmap_display, stretch=3)
+        layout.addWidget(heatmap_display, stretch=5)
         
-        # Create readouts panel
+        # Create readouts panel (compact)
         readouts_panel = self.create_heatmap_readouts()
-        layout.addWidget(readouts_panel, stretch=1)
+        layout.addWidget(readouts_panel, stretch=0)
         
         heatmap_widget.setLayout(layout)
         return heatmap_widget
@@ -50,8 +50,8 @@ class HeatmapPanelMixin:
         self.heatmap_plot_widget = pg.GraphicsLayoutWidget()
         self.heatmap_plot = self.heatmap_plot_widget.addPlot()
         
-        # Configure plot
-        self.heatmap_plot.setAspectLocked(False)
+        # Configure plot - lock aspect ratio for square display
+        self.heatmap_plot.setAspectLocked(True, ratio=1.0)
         self.heatmap_plot.showAxis('left', False)
         self.heatmap_plot.showAxis('bottom', False)
         self.heatmap_plot.setMouseEnabled(x=False, y=False)

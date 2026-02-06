@@ -69,7 +69,7 @@ from config_constants import (
 )
 
 # Import buffer optimization utilities
-from buffer_utils import validate_and_limit_sweeps_per_block
+from config.buffer_utils import validate_and_limit_sweeps_per_block
 
 
 class SerialReaderThread(QThread):

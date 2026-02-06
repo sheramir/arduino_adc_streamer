@@ -62,7 +62,7 @@ from pyqtgraph.exporters import ImageExporter
 from config_constants import *
 
 # Import buffer optimization utilities
-from buffer_utils import validate_and_limit_sweeps_per_block
+from config.buffer_utils import validate_and_limit_sweeps_per_block
 
 # Import refactored modules
 from serial_communication import ADCSerialMixin, ForceSerialMixin, SerialReaderThread, ForceReaderThread

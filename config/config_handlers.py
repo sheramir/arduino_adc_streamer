@@ -11,7 +11,7 @@ from PyQt6.QtCore import Qt
 from config_constants import (
     INTER_COMMAND_DELAY, MAX_SAMPLES_BUFFER, MAX_PLOT_COLUMNS
 )
-from buffer_utils import validate_and_limit_sweeps_per_block
+from config.buffer_utils import validate_and_limit_sweeps_per_block
 
 
 class ConfigurationMixin:

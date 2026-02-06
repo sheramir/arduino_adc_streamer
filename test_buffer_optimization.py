@@ -5,7 +5,7 @@ Demonstrates the calculation of optimal sweeps_per_block values.
 """
 
 from config_constants import MAX_SAMPLES_BUFFER, TARGET_LATENCY_SEC, BAUD_RATE
-from buffer_utils import calculate_optimal_sweeps_per_block, validate_and_limit_sweeps_per_block
+from config.buffer_utils import calculate_optimal_sweeps_per_block, validate_and_limit_sweeps_per_block
 
 def print_candidates(channel_count, repeat_count, baud_rate=BAUD_RATE):
     """Print detailed information about candidate sweeps_per_block values."""

@@ -22,25 +22,18 @@ import os
 os.environ['QT_LOGGING_RULES'] = 'qt.qpa.*=false'
 
 import sys
-import csv
-import json
-import time
 import threading
-from datetime import datetime
-from pathlib import Path
 from typing import List, Optional, Dict
 
-import numpy as np
 from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget, QCheckBox
 from PyQt6.QtCore import QTimer, Qt
 import serial
-import pyqtgraph as pg
 
 # Import configuration constants
 from config_constants import *
 
 # Import refactored modules
-from serial_communication import ADCSerialMixin, ForceSerialMixin, SerialReaderThread, ForceReaderThread
+from serial_communication import ADCSerialMixin, ForceSerialMixin
 from config import MCUDetectorMixin, ConfigurationMixin
 from gui import GUIComponentsMixin
 from data_processing import DataProcessorMixin

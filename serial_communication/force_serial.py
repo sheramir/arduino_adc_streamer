@@ -4,7 +4,6 @@ Force Serial Communication Mixin
 Handles force sensor serial port connection and communication.
 """
 
-import time
 import serial
 from PyQt6.QtWidgets import QMessageBox
 
@@ -38,6 +37,7 @@ class ForceSerialMixin:
             )
             
             # Clear any startup messages
+            import time
             time.sleep(0.5)
             self.force_serial_port.reset_input_buffer()
 

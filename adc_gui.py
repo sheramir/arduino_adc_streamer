@@ -660,8 +660,8 @@ class ADCStreamerGUI(QMainWindow):
         # Directory selection
         layout.addWidget(QLabel("Directory:"), 0, 0)
         self.dir_input = QLineEdit()
-        # Default save directory requested by user
-        self.dir_input.setText(r"C:/Users/maggi/Documents/sensetics/data/adc")
+        # Default save directory - uses current user's home directory
+        self.dir_input.setText(os.path.join(os.path.expanduser("~"), "Documents", "sensetics", "data", "adc"))
         layout.addWidget(self.dir_input, 0, 1)
 
         self.browse_btn = QPushButton("Browse")

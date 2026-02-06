@@ -263,10 +263,23 @@ class ADCStreamerGUI(QMainWindow):
         # Configuration completion tracking
         self.config_completion_status: Optional[bool] = None  # None=pending, True=success, False=failed
 
-        # Data storage
-        self.raw_data: List[List[int]] = []  # List of sweeps (each sweep is a list of values)
-        self.sweep_count = 0
+        # Data storage - Pre-allocated numpy arrays for performance
+        # Buffer size: 50K sweeps × ~20 samples/sweep × 4 bytes = ~4 MB (reasonable memory footprint)
+        # Adjust MAX_SWEEPS_IN_MEMORY in config_constants.py to change buffer size
+        self.MAX_SWEEPS_BUFFER = MAX_SWEEPS_IN_MEMORY  # Use constant from config
+        self.raw_data_buffer = None  # Numpy array: shape (MAX_SWEEPS_BUFFER, samples_per_sweep)
+        self.sweep_timestamps_buffer = None  # Numpy array: shape (MAX_SWEEPS_BUFFER,)
+        self.sweep_count = 0  # Current number of sweeps in buffer
+        self.buffer_write_index = 0  # Current write position in circular buffer
+        self.samples_per_sweep = 0  # Will be set when config is known
+        self.buffer_lock = threading.Lock()  # Thread safety for buffer access
+        
+        # Legacy list storage for archive and backward compatibility
+        self.raw_data: List[List[int]] = []  # List of sweeps (for archive writing only)
+        self.sweep_timestamps: List[float] = []  # Timestamp list (for archive writing only)
+        
         self.is_capturing = False
+        self.is_full_view = False  # Track if currently in full view mode
 
         # Archive file for storing every sweep to disk so we can save full capture
         self._archive_file = None  # file object opened for write during capture
@@ -710,21 +723,14 @@ class ADCStreamerGUI(QMainWindow):
         group = QGroupBox("Sampling Rate")
         layout = QHBoxLayout()
 
-        # Per-channel sampling rate
-        layout.addWidget(QLabel("Per Channel:"))
+        # Keep rate labels for internal timing updates but hide them from the GUI
         self.per_channel_rate_label = QLabel("- Hz")
         self.per_channel_rate_label.setStyleSheet("QLabel { font-weight: bold; color: #2196F3; }")
-        layout.addWidget(self.per_channel_rate_label)
+        self.per_channel_rate_label.setVisible(False)
 
-        layout.addWidget(QLabel("  |  "))
-
-        # Total sampling rate
-        layout.addWidget(QLabel("Total Rate:"))
         self.total_rate_label = QLabel("- Hz")
         self.total_rate_label.setStyleSheet("QLabel { font-weight: bold; color: #FF9800; }")
-        layout.addWidget(self.total_rate_label)
-
-        layout.addWidget(QLabel("  |  "))
+        self.total_rate_label.setVisible(False)
 
         # Between samples timing
         layout.addWidget(QLabel("Sample Interval:"))
@@ -878,8 +884,9 @@ class ADCStreamerGUI(QMainWindow):
 
         self.full_view_btn = QPushButton("Full View")
         self.full_view_btn.clicked.connect(self.full_graph_view)
-        self.full_view_btn.setToolTip("Show all data from 0 to last sample")
+        self.full_view_btn.setToolTip("Show all data from 0 to last sample (only available after capture finishes)")
         self.full_view_btn.setMaximumWidth(100)
+        self.full_view_btn.setEnabled(False)  # Disabled by default (enabled after capture)
         display_settings_layout.addWidget(self.full_view_btn, 1, 3)
 
         display_settings_group.setLayout(display_settings_layout)
@@ -1113,6 +1120,33 @@ class ADCStreamerGUI(QMainWindow):
         else:
             self.log_status("ERROR: Not connected to serial port")
 
+    def drain_serial_input(self, duration: float = 0.3):
+        """Drain pending serial bytes to avoid stale binary data after stopping."""
+        if not self.serial_port or not self.serial_port.is_open:
+            return
+
+        end_time = time.time() + duration
+        drained = 0
+
+        try:
+            while time.time() < end_time:
+                waiting = self.serial_port.in_waiting
+                if waiting > 0:
+                    drained += len(self.serial_port.read(waiting))
+                else:
+                    time.sleep(0.01)
+
+            try:
+                self.serial_port.reset_input_buffer()
+            except Exception:
+                pass
+        except Exception as e:
+            self.log_status(f"WARNING: Failed to drain serial input: {e}")
+            return
+
+        if drained > 0:
+            self.log_status(f"Drained {drained} bytes from serial input after stop")
+
     def send_command_and_wait_ack(self, command: str, expected_value: str = None, timeout: float = CONFIG_COMMAND_TIMEOUT, max_retries: int = CONFIG_RETRY_ATTEMPTS) -> tuple:
         """Send a command and wait for #OK acknowledgment with echoed argument verification.
         Thread-safe version - silent operation, no console output.
@@ -1303,8 +1337,11 @@ class ADCStreamerGUI(QMainWindow):
                 if len(self.buffer_receipt_times) > MAX_TIMING_SAMPLES:
                     self.buffer_receipt_times = self.buffer_receipt_times[-MAX_TIMING_SAMPLES:]
                 
-                # Track first sweep time for rate calculation
-                if self.sweep_count == 0:
+                # Track first sweep time for rate calculation - thread safe
+                with self.buffer_lock:
+                    is_first_sweep = (self.sweep_count == 0)
+                
+                if is_first_sweep:
                     self.capture_start_time = block_start_time
                     self.force_start_time = self.capture_start_time  # Sync force timing
                     self.last_buffer_time = block_start_time
@@ -1337,6 +1374,16 @@ class ADCStreamerGUI(QMainWindow):
                 if samples_per_sweep == 0:
                     self.log_status("ERROR: Invalid configuration, samples_per_sweep is 0")
                     return
+                
+                # Initialize numpy buffers if not done or if config changed - THREAD SAFE
+                with self.buffer_lock:
+                    if (self.raw_data_buffer is None or 
+                        self.samples_per_sweep != samples_per_sweep):
+                        self.samples_per_sweep = samples_per_sweep
+                        self.raw_data_buffer = np.zeros((self.MAX_SWEEPS_BUFFER, samples_per_sweep), dtype=np.float32)
+                        self.sweep_timestamps_buffer = np.zeros(self.MAX_SWEEPS_BUFFER, dtype=np.float64)
+                        self.buffer_write_index = 0
+                        self.log_status(f"Initialized numpy buffers: {self.MAX_SWEEPS_BUFFER} sweeps × {samples_per_sweep} samples")
                 
                 # The sample count comes from the header, which reflects what Arduino actually sent
                 # Arduino may reduce sweeps per block to fit in RAM, so use actual count
@@ -1386,46 +1433,67 @@ class ADCStreamerGUI(QMainWindow):
                         pass
                 
                 # Process each complete sweep in the block
+                # Write directly to numpy buffer (circular buffer)
                 for sweep_idx in range(sweeps_in_block):
                     start_idx = sweep_idx * samples_per_sweep
                     end_idx = start_idx + samples_per_sweep
                     sweep_samples = samples[start_idx:end_idx]
                     
-                    self.raw_data.append(sweep_samples)
-                    self.sweep_count += 1
+                    # Calculate timestamp for this sweep based on MCU timing
+                    # Use wrap-safe 32-bit arithmetic because Arduino micros() overflows ~71 minutes
+                    sweep_time_offset_us = start_idx * avg_sample_time_us
+                    sweep_timestamp_us = (block_start_us + sweep_time_offset_us) & 0xFFFFFFFF
+                    
+                    # Initialize first sweep timestamp - check outside lock, init inside lock
+                    if not hasattr(self, 'first_sweep_timestamp_us'):
+                        with self.buffer_lock:
+                            if not hasattr(self, 'first_sweep_timestamp_us'):
+                                self.first_sweep_timestamp_us = sweep_timestamp_us & 0xFFFFFFFF
+                                self.log_status(f"First sweep timestamp initialized: {self.first_sweep_timestamp_us} µs (wrap-safe)")
+                    
+                    # Calculate relative timestamp (should always start near 0 for new capture)
+                    # Wrap-safe delta to avoid negative time when MCU micros() overflows
+                    delta_us = (sweep_timestamp_us - self.first_sweep_timestamp_us) & 0xFFFFFFFF
+                    sweep_timestamp_sec = delta_us / 1e6
+                    
+                    # Write directly to numpy buffer (circular buffer) with thread safety
+                    with self.buffer_lock:
+                        write_pos = self.buffer_write_index % self.MAX_SWEEPS_BUFFER
+                        self.raw_data_buffer[write_pos, :] = sweep_samples
+                        self.sweep_timestamps_buffer[write_pos] = sweep_timestamp_sec
+                        self.buffer_write_index += 1
+                        self.sweep_count += 1
 
-                    # Persist sweep to archive file so full dataset is available even when
-                    # we enforce an in-memory rolling window. Write as JSON lines.
-                    try:
-                        if self._archive_file:
+                    # Also keep in list for archive writing (only if archive is active)
+                    if self._archive_file:
+                        try:
                             self._archive_file.write(json.dumps(sweep_samples) + '\n')
                             self._archive_write_count += 1
-                            # Periodically flush to ensure data is on disk without flushing every write
                             if self._archive_write_count % 1000 == 0:
                                 try:
                                     self._archive_file.flush()
                                 except Exception:
                                     pass
-                    except Exception:
-                        # Don't let archive errors interrupt capture
-                        pass
-
-                # Implement rolling window: keep only the most recent sweeps
-                # This prevents memory overflow during long captures
-                if len(self.raw_data) > MAX_SWEEPS_IN_MEMORY:
-                    self.raw_data = self.raw_data[-MAX_SWEEPS_IN_MEMORY:]
+                        except Exception:
+                            pass
 
                 # Update plot periodically for performance (after processing entire block)
                 if self.sweep_count % PLOT_UPDATE_FREQUENCY == 0:
                     self.update_plot()
-                    window_size = self.window_size_spin.value()
-                    displayed_sweeps = min(len(self.raw_data), window_size)
-                    # Calculate total samples correctly
-                    total_samples = sum(len(sweep) for sweep in self.raw_data)
+                    # Update info label based on current view mode - use buffer counts!
+                    actual_sweeps = min(self.sweep_count, self.MAX_SWEEPS_BUFFER)
+                    total_samples = actual_sweeps * samples_per_sweep
                     force_samples = len(self.force_data)
-                    self.plot_info_label.setText(
-                        f"ADC - Sweeps: {self.sweep_count} (showing last {displayed_sweeps}) | Samples: {total_samples}  |  Force: {force_samples} samples"
-                    )
+                    if self.is_full_view:
+                        self.plot_info_label.setText(
+                            f"ADC - Sweeps: {self.sweep_count} (full view) | Samples: {total_samples}  |  Force: {force_samples} samples"
+                        )
+                    else:
+                        window_size = self.window_size_spin.value()
+                        displayed_sweeps = min(actual_sweeps, window_size)
+                        self.plot_info_label.setText(
+                            f"ADC - Sweeps: {self.sweep_count} (showing last {displayed_sweeps}) | Samples: {total_samples}  |  Force: {force_samples} samples"
+                        )
                     self.update_force_plot()
                 
                 # Track when this buffer finished being received
@@ -1499,95 +1567,114 @@ class ADCStreamerGUI(QMainWindow):
                 pass
 
     def update_force_plot(self):
-        """Update the force measurement plot on the right Y-axis."""
-        # Throttle plotting work by downsampling force data and reusing curve objects.
+        """Update the force measurement plot with time-based alignment to ADC data."""
         show_x_force = self.force_x_checkbox and self.force_x_checkbox.isChecked()
         show_z_force = self.force_z_checkbox and self.force_z_checkbox.isChecked()
 
+        # Hide curves if not selected
         if not show_x_force and self._force_x_curve is not None:
             self._force_x_curve.setVisible(False)
         if not show_z_force and self._force_z_curve is not None:
             self._force_z_curve.setVisible(False)
 
-        if not self.force_data or not self.raw_data or (not show_x_force and not show_z_force):
+        if not self.force_data or (not show_x_force and not show_z_force):
+            return
+        
+        # Need timestamps from buffer, not legacy list
+        if self.sweep_timestamps_buffer is None:
+            return
+        
+        # Get snapshot of buffer state with lock
+        with self.buffer_lock:
+            current_sweep_count = self.sweep_count
+            current_write_index = self.buffer_write_index
+            # Copy min/max timestamps while locked
+            actual_sweeps = min(current_sweep_count, self.MAX_SWEEPS_BUFFER)
+            
+            if actual_sweeps == 0:
+                return
+            
+            # Calculate indices and copy timestamps inside lock to avoid race
+            if self.is_full_view:
+                # Would need archive data
+                return
+            elif self.is_capturing:
+                window_size = self.window_size_spin.value()
+                window_size = min(window_size, actual_sweeps)
+                
+                if actual_sweeps < self.MAX_SWEEPS_BUFFER:
+                    start_idx = max(0, actual_sweeps - window_size)
+                    min_time = self.sweep_timestamps_buffer[start_idx]
+                    max_time = self.sweep_timestamps_buffer[actual_sweeps - 1]
+                else:
+                    write_pos = current_write_index % self.MAX_SWEEPS_BUFFER
+                    newest_idx = (write_pos - 1) % self.MAX_SWEEPS_BUFFER
+                    oldest_idx = (write_pos - window_size) % self.MAX_SWEEPS_BUFFER
+                    min_time = self.sweep_timestamps_buffer[oldest_idx]
+                    max_time = self.sweep_timestamps_buffer[newest_idx]
+            else:
+                # After capture
+                if actual_sweeps < self.MAX_SWEEPS_BUFFER:
+                    min_time = self.sweep_timestamps_buffer[0]
+                    max_time = self.sweep_timestamps_buffer[actual_sweeps - 1]
+                else:
+                    write_pos = current_write_index % self.MAX_SWEEPS_BUFFER
+                    oldest_idx = write_pos
+                    newest_idx = (write_pos - 1) % self.MAX_SWEEPS_BUFFER
+                    min_time = self.sweep_timestamps_buffer[oldest_idx]
+                    max_time = self.sweep_timestamps_buffer[newest_idx]
+        
+        if current_sweep_count == 0:
             return
 
         try:
-            # During capture, use window size; otherwise use all data
-            if self.is_capturing:
-                window_size = self.window_size_spin.value()
-                data_to_show = self.raw_data[-window_size:] if len(self.raw_data) > window_size else self.raw_data
-            else:
-                data_to_show = self.raw_data
 
-            # Compute samples per sweep (assume uniform sweep length)
-            samples_per_sweep = len(data_to_show[0]) if data_to_show and len(data_to_show[0]) > 0 else 1
-
-            # Prepare force_data slice for plotting (time-windowed)
-            if self.is_capturing:
-                # Show force data from the same relative window
-                current_duration = time.time() - (self.capture_start_time or time.time())
-                window_duration = current_duration * (len(data_to_show) / len(self.raw_data)) if len(self.raw_data) > 0 else current_duration
-                min_time = max(0, current_duration - window_duration)
-                force_data_to_show = [(t, x, z) for t, x, z in self.force_data if t >= min_time]
-            else:
-                force_data_to_show = list(self.force_data)
-
-            if not force_data_to_show:
+            # Filter and downsample force data
+            if not self.force_data:
                 return
+            
+            # Convert force data to numpy once if not already
+            # (Future optimization: store force_data as numpy buffer too)
+            force_array = np.array(self.force_data, dtype=np.float64)
+            force_times = force_array[:, 0]
+            
+            # Use numpy binary search (much faster than linear!)
+            start_idx = np.searchsorted(force_times, min_time, side='left')
+            end_idx = np.searchsorted(force_times, max_time, side='right')
+            
+            # Slice the relevant data
+            force_filtered = force_array[start_idx:end_idx]
+            if len(force_filtered) == 0:
+                return
+            
+            # Downsample after filtering
+            MAX_FORCE_POINTS = 2000
+            if len(force_filtered) > MAX_FORCE_POINTS:
+                downsample_factor = len(force_filtered) // MAX_FORCE_POINTS
+                force_filtered = force_filtered[::downsample_factor]
 
-            # Downsample force data for plotting to limit number of points
-            MAX_FORCE_PLOT_POINTS = 2000
-            fd_len = len(force_data_to_show)
-            decim = max(1, fd_len // MAX_FORCE_PLOT_POINTS)
-            fd_sampled = force_data_to_show[::decim]
+            timestamps = force_filtered[:, 0]
+            x_forces = force_filtered[:, 1]
+            z_forces = force_filtered[:, 2]
 
-            timestamps = [d[0] for d in fd_sampled]
-            x_forces = [d[1] for d in fd_sampled]
-            z_forces = [d[2] for d in fd_sampled]
-
-            # Map force timestamps to approximate ADC sample indices by normalizing
-            # to the force time range and scaling to total ADC samples in view.
-            total_adc_samples = len(data_to_show) * samples_per_sweep
-            min_t = min(timestamps)
-            max_t = max(timestamps)
-            time_range = max_t - min_t if max_t > min_t else 1.0
-            force_x_indices = [((t - min_t) / time_range) * total_adc_samples for t in timestamps]
-
-            # Reuse cached curves if present, otherwise create them
+            # Plot X force
             if show_x_force:
                 if self._force_x_curve is None:
                     self._force_x_curve = pg.PlotCurveItem(pen=pg.mkPen(color=(255, 0, 0), width=2))
                     self.force_viewbox.addItem(self._force_x_curve)
-                    try:
-                        self.force_legend.addItem(self._force_x_curve, 'X Force')
-                    except Exception:
-                        pass
-                else:
-                    self._force_x_curve.setVisible(True)
-                self._force_x_curve.setData(force_x_indices, x_forces)
-            elif self._force_x_curve is not None:
-                self._force_x_curve.setVisible(False)
+                self._force_x_curve.setVisible(True)
+                self._force_x_curve.setData(x=timestamps, y=x_forces)
 
+            # Plot Z force
             if show_z_force:
                 if self._force_z_curve is None:
                     self._force_z_curve = pg.PlotCurveItem(pen=pg.mkPen(color=(0, 0, 255), width=2))
                     self.force_viewbox.addItem(self._force_z_curve)
-                    try:
-                        self.force_legend.addItem(self._force_z_curve, 'Z Force')
-                    except Exception:
-                        pass
-                else:
-                    self._force_z_curve.setVisible(True)
-                self._force_z_curve.setData(force_x_indices, z_forces)
-            elif self._force_z_curve is not None:
-                self._force_z_curve.setVisible(False)
+                self._force_z_curve.setVisible(True)
+                self._force_z_curve.setData(x=timestamps, y=z_forces)
 
-            # Update viewbox geometry and ranges
+            # Update viewbox
             self.update_force_viewbox()
-            self.force_viewbox.setXRange(0, total_adc_samples, padding=0)
-            self.force_viewbox.disableAutoRange(axis=pg.ViewBox.XAxis)
-            self.force_viewbox.enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
 
         except Exception as e:
             self.log_status(f"ERROR: Failed to update force plot - {e}")
@@ -2192,88 +2279,161 @@ class ADCStreamerGUI(QMainWindow):
         self.plot_update_timer.start(PLOT_UPDATE_DEBOUNCE)
 
     def reset_graph_view(self):
-        """Reset the plot view to window size (X: 0 to window size, Y: according to settings)."""
-        if not self.raw_data:
-            return
+        """Reset the plot view from full view back to normal windowed view."""
+        # Clear full view mode and restore normal buffer-based data
+        self.is_full_view = False
+        
+        # Clear archive data from memory (go back to using buffer)
+        with self.buffer_lock:
+            self.raw_data.clear()
+            self.sweep_timestamps.clear()
+        
+        # Re-enable button if not capturing
+        if not self.is_capturing:
+            self.full_view_btn.setEnabled(True)
+        
+        # Force plot update to show windowed data from buffer
+        self.update_plot()
+        self.update_force_plot()
+        
+        # Reset plot ranges to auto
+        self.plot_widget.enableAutoRange()
+        self.force_viewbox.enableAutoRange()
+        
+        self.log_status(f"Graph view reset to window mode")
 
-        # Calculate X-axis range based on window size
-        window_size = self.window_size_spin.value()
+    def load_archive_data(self):
+        """Load all sweep data from archive file for full view.
+        Returns (sweeps_list, timestamps_list) or (None, None) on error.
+        """
+        if not self._archive_path or not Path(self._archive_path).exists():
+            return None, None
         
-        # Determine which data would be plotted (same logic as update_plot)
-        if len(self.raw_data) > window_size:
-            data_to_show = self.raw_data[-window_size:]
-        else:
-            data_to_show = self.raw_data
-        
-        channels = self.config['channels']
-        repeat_count = self.config['repeat']
-        
-        if channels:
-            # Calculate samples per channel (not total samples)
-            # Each channel gets plotted separately with indices 0, 1, 2, ...
-            # Find positions of first channel to determine sample count
-            first_channel = channels[0]
-            positions = [i for i, c in enumerate(channels) if c == first_channel]
+        try:
+            self.log_status("Loading full data from archive...")
+            sweeps = []
+            timestamps = []
             
-            # Extract data for first channel to count samples
-            channel_samples = 0
-            for sweep in data_to_show:
-                for pos in positions:
-                    start_idx = pos * repeat_count
-                    end_idx = start_idx + repeat_count
-                    if end_idx <= len(sweep):
-                        channel_samples += (end_idx - start_idx)
+            with open(self._archive_path, 'r', encoding='utf-8') as f:
+                # First line is metadata - skip it
+                first_line = f.readline()
+                if first_line.strip():
+                    try:
+                        metadata = json.loads(first_line)
+                        # Could extract useful info from metadata if needed
+                    except json.JSONDecodeError:
+                        pass
+                
+                # Read all sweep lines
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        try:
+                            sweep_data = json.loads(line)
+                            sweeps.append(sweep_data)
+                        except json.JSONDecodeError:
+                            continue
             
-            # Set X-axis range to match the plotted data
-            self.plot_widget.setXRange(0, channel_samples, padding=0)
+            # Reconstruct timestamps from sweeps using the CSV timing sidecar
+            if self._block_timing_path and Path(self._block_timing_path).exists():
+                try:
+                    with open(self._block_timing_path, 'r', encoding='utf-8', newline='') as f:
+                        reader = csv.reader(f)
+                        header = next(reader, None)  # Skip header row
+
+                        # The CSV columns are: sample_count, samples_per_sweep, sweeps_in_block,
+                        # avg_dt_us, block_start_us, block_end_us, mcu_gap_us
+                        for row in reader:
+                            if len(row) < 6:
+                                continue
+
+                            try:
+                                samples_per_sweep = int(row[1])
+                                sweeps_in_block = int(row[2])
+                                avg_dt_us = float(row[3])
+                                block_start_us = int(row[4])
+                            except (ValueError, TypeError):
+                                continue
+
+                            # Initialize reference if missing
+                            if not hasattr(self, 'first_sweep_timestamp_us'):
+                                self.first_sweep_timestamp_us = block_start_us
+
+                            base_us = self.first_sweep_timestamp_us
+
+                            # Build timestamps for each sweep in this block
+                            for i in range(sweeps_in_block):
+                                ts_us = block_start_us + (i * samples_per_sweep * avg_dt_us)
+                                ts_sec = (ts_us - base_us) / 1e6
+                                timestamps.append(ts_sec)
+                except Exception:
+                    # Fall back to legacy behavior if parsing fails
+                    pass
             
-            # Set Y-axis according to current mode
-            self.apply_y_axis_range()
+            # Fallback: if no timing data or insufficient timestamps, use uniform spacing
+            if len(timestamps) < len(sweeps):
+                if self.sweep_timestamps:
+                    # Use last known sample rate
+                    avg_dt = (self.sweep_timestamps[-1] - self.sweep_timestamps[0]) / max(1, len(self.sweep_timestamps) - 1)
+                    last_t = self.sweep_timestamps[-1] if self.sweep_timestamps else 0
+                    for i in range(len(timestamps), len(sweeps)):
+                        timestamps.append(last_t + (i - len(self.sweep_timestamps) + 1) * avg_dt)
+                else:
+                    # Just use indices
+                    timestamps = list(range(len(sweeps)))
             
-            # Force plot update to apply the new range
-            self.update_plot()
+            self.log_status(f"Loaded {len(sweeps)} sweeps from archive")
+            return sweeps, timestamps
             
-            # Also update force plot to match
-            self.update_force_plot()
-            
-            self.log_status(f"Graph view reset to window size ({len(data_to_show)} sweeps, {channel_samples} samples per channel)")
+        except Exception as e:
+            self.log_status(f"ERROR: Failed to load archive: {e}")
+            return None, None
 
     def full_graph_view(self):
-        """Show full data view (X: 0 to last sample, Y: according to settings)."""
-        if not self.raw_data:
+        """Show full data view by loading ALL data from archive file."""
+        if self.is_capturing:
+            self.log_status("Cannot activate full view during capture")
             return
-
-        # Calculate samples per channel across all sweeps
-        total_sweeps = len(self.raw_data)
-        channels = self.config['channels']
-        repeat_count = self.config['repeat']
         
-        if channels:
-            # Calculate samples per channel (not total samples)
-            # Each channel gets plotted separately with indices 0, 1, 2, ...
-            # Find positions of first channel to determine sample count
-            first_channel = channels[0]
-            positions = [i for i, c in enumerate(channels) if c == first_channel]
-            
-            # Extract data for first channel to count samples
-            channel_samples = 0
-            for sweep in self.raw_data:
-                for pos in positions:
-                    start_idx = pos * repeat_count
-                    end_idx = start_idx + repeat_count
-                    if end_idx <= len(sweep):
-                        channel_samples += (end_idx - start_idx)
-            
-            # Set X-axis range to show all data
-            self.plot_widget.setXRange(0, channel_samples, padding=0)
-            
-            # Set Y-axis according to current mode
-            self.apply_y_axis_range()
-            
-            # Force plot update to apply the new range
-            self.update_plot()
-            
-            self.log_status(f"Graph view set to full data ({total_sweeps} sweeps, {channel_samples} samples per channel)")
+        if not self._archive_path:
+            self.log_status("No archive file available for full view")
+            return
+        
+        # Load all data from archive
+        self.log_status("Activating full view - loading from archive...")
+        QApplication.processEvents()  # Update UI
+        
+        all_sweeps, all_timestamps = self.load_archive_data()
+        if all_sweeps is None:
+            self.log_status("Failed to load archive data")
+            return
+        
+        # Temporarily store current data
+        backup_raw_data = self.raw_data
+        backup_timestamps = self.sweep_timestamps
+        
+        # Replace with full archive data
+        self.raw_data = all_sweeps
+        self.sweep_timestamps = all_timestamps
+        
+        # Mark that we're in full view mode
+        self.is_full_view = True
+        self.full_view_btn.setEnabled(False)
+        
+        # Update plots
+        self.update_plot()
+        self.update_force_plot()
+        
+        # Update info label
+        total_samples = sum(len(sweep) for sweep in self.raw_data)
+        force_samples = len(self.force_data)
+        time_range = self.sweep_timestamps[-1] - self.sweep_timestamps[0] if len(self.sweep_timestamps) > 1 else 0
+        
+        self.plot_info_label.setText(
+            f"ADC - Sweeps: {len(self.raw_data)} (FULL VIEW) | Samples: {total_samples} | Time: {time_range:.2f}s  |  Force: {force_samples} samples"
+        )
+        
+        self.log_status(f"Full view active: {len(self.raw_data)} sweeps, {time_range:.2f}s")
 
     def apply_y_axis_range(self):
         """Apply Y-axis range according to current settings (adaptive or full-scale)."""
@@ -2303,11 +2463,32 @@ class ADCStreamerGUI(QMainWindow):
         # Lock configuration controls
         self.set_controls_enabled(False)
 
-        # Clear previous data
-        self.raw_data.clear()
-        self.sweep_count = 0
+        # If currently in full view, reset to normal view before starting new capture
+        if self.is_full_view:
+            self.reset_graph_view()
+            self.log_status("Resetting from full view to normal view for new capture")
+        
+        # Disable Full View button during capture
+        self.full_view_btn.setEnabled(False)
+
+        # Clear previous data - thread safe
+        with self.buffer_lock:
+            self.raw_data.clear()
+            self.sweep_timestamps.clear()
+            self.sweep_count = 0
+            self.buffer_write_index = 0
+            # Zero out buffers to prevent old data from showing
+            if self.raw_data_buffer is not None:
+                self.raw_data_buffer.fill(0)
+            if self.sweep_timestamps_buffer is not None:
+                self.sweep_timestamps_buffer.fill(0)
+        
         self.force_data.clear()
         self.force_start_time = None
+        
+        # Reset timestamp reference to ensure time starts at 0
+        if hasattr(self, 'first_sweep_timestamp_us'):
+            delattr(self, 'first_sweep_timestamp_us')
 
         # Clear timing data for new measurement
         self.timing_data = {
@@ -2428,9 +2609,32 @@ class ADCStreamerGUI(QMainWindow):
 
     def stop_capture(self):
         """Stop data capture."""
-        self.send_command("stop")
+        if not self.is_capturing:
+            self.log_status("Stop requested but capture already stopped")
+            return
+
         self.log_status("Stopping capture")
-        
+
+        # Ask MCU to stop and wait briefly for acknowledgement
+        success, _ = self.send_command_and_wait_ack(
+            "stop",
+            expected_value=None,
+            timeout=0.5,
+            max_retries=3
+        )
+
+        if not success:
+            self.log_status("WARNING: Stop command not acknowledged; halting locally")
+
+        # Immediately exit binary mode on the reader thread
+        if self.serial_thread:
+            self.serial_thread.set_capturing(False)
+
+        self.is_capturing = False
+
+        # Flush any residual binary bytes so the next run starts clean
+        self.drain_serial_input(0.5)
+
         self.on_capture_finished()
 
     def on_capture_finished(self):
@@ -2439,6 +2643,10 @@ class ADCStreamerGUI(QMainWindow):
         self.capture_end_time = time.time()
         
         self.is_capturing = False
+        
+        # Stop force data collection by clearing force_start_time
+        # This prevents force data from continuing after ADC stops
+        self.force_start_time = None
         
         # Notify serial thread that we're not capturing (disables binary mode)
         if self.serial_thread:
@@ -2461,6 +2669,13 @@ class ADCStreamerGUI(QMainWindow):
         self.update_start_button_state()  # Restore start button to proper state
         self.set_controls_enabled(True)
 
+        # Final safety: discard any leftover bytes so the next capture starts clean
+        self.drain_serial_input(0.3)
+        
+        # Enable Full View button now that capture is finished (unless already in full view)
+        if not self.is_full_view:
+            self.full_view_btn.setEnabled(True)
+
         # Enable plot interactions for static mode (zoom/scroll enabled)
         self.plot_widget.setMouseEnabled(x=True, y=True)
         self.plot_widget.setMenuEnabled(True)
@@ -2469,8 +2684,10 @@ class ADCStreamerGUI(QMainWindow):
 
         # Final plot update (shows all data)
         self.update_plot()
-        # Calculate total samples correctly
-        total_samples = sum(len(sweep) for sweep in self.raw_data) if self.raw_data else 0
+        # Calculate total samples correctly from buffer
+        with self.buffer_lock:
+            actual_sweeps = min(self.sweep_count, self.MAX_SWEEPS_BUFFER)
+            total_samples = actual_sweeps * self.samples_per_sweep if self.samples_per_sweep > 0 else 0
         force_samples = len(self.force_data)
         self.plot_info_label.setText(
             f"ADC - Sweeps: {self.sweep_count} | Samples: {total_samples}  |  Force: {force_samples} samples"
@@ -2536,7 +2753,12 @@ class ADCStreamerGUI(QMainWindow):
         self.window_size_spin.setEnabled(enabled)
 
     def clear_data(self):
-        """Clear all captured data."""
+        """Clear all captured data and completely reset plot to initial state."""
+        # Prevent clearing during capture to avoid race conditions
+        if self.is_capturing:
+            QMessageBox.warning(self, "Cannot Clear", "Cannot clear data during capture. Please stop capture first.")
+            return
+        
         reply = QMessageBox.question(
             self,
             "Clear Data",
@@ -2546,13 +2768,88 @@ class ADCStreamerGUI(QMainWindow):
         )
 
         if reply == QMessageBox.StandardButton.Yes:
-            self.raw_data.clear()
-            self.sweep_count = 0
+            # Ensure any leftover bytes from a previous capture are discarded
+            self.drain_serial_input(0.3)
+
+            # Clear all data structures with thread safety
+            with self.buffer_lock:
+                self.raw_data.clear()
+                self.sweep_timestamps.clear()
+                self.sweep_count = 0
+                self.buffer_write_index = 0
+                # Reset buffer to zeros (optional, but cleaner)
+                if self.raw_data_buffer is not None:
+                    self.raw_data_buffer.fill(0)
+                    self.sweep_timestamps_buffer.fill(0)
+            
             self.force_data.clear()
-            self.update_plot()
-            self.update_force_plot()
+            
+            # Reset ALL timestamp and timing references for next capture
+            if hasattr(self, 'first_sweep_timestamp_us'):
+                self.log_status(f"Clearing first_sweep_timestamp_us (was {self.first_sweep_timestamp_us} µs)")
+                delattr(self, 'first_sweep_timestamp_us')
+            else:
+                self.log_status("first_sweep_timestamp_us already cleared")
+            self.capture_start_time = None
+            self.capture_end_time = None
+            self.force_start_time = None
+            self.last_buffer_time = None
+            self.last_buffer_end_time = None
+            self.mcu_last_block_end_us = None
+            
+            # Clear all timing data lists
+            self.buffer_receipt_times.clear()
+            self.buffer_gap_times.clear()
+            self.arduino_sample_times.clear()
+            self.block_sample_counts.clear()
+            self.block_sweeps_counts.clear()
+            self.block_samples_per_sweep.clear()
+            self.mcu_block_start_us.clear()
+            self.mcu_block_end_us.clear()
+            self.mcu_block_gap_us.clear()
+            
+            # Reset samples_per_sweep to force buffer reinitialization
+            self.samples_per_sweep = 0
+            
+            # Reset view mode flags
+            self.is_full_view = False
+            self.full_view_btn.setEnabled(False)
+            
+            # COMPLETELY DELETE all ADC curves (not just hide)
+            for curve in self._adc_curves.values():
+                self.plot_widget.removeItem(curve)
+            self._adc_curves.clear()
+            
+            # COMPLETELY DELETE force curves
+            if self._force_x_curve is not None:
+                self.force_viewbox.removeItem(self._force_x_curve)
+                self._force_x_curve = None
+            if self._force_z_curve is not None:
+                self.force_viewbox.removeItem(self._force_z_curve)
+                self._force_z_curve = None
+            
+            # Clear and recreate legends to reset them
+            self.plot_widget.removeItem(self.adc_legend)
+            self.adc_legend = self.plot_widget.addLegend(offset=(10, 10))
+            
+            # Reset plot to initial state
+            self.plot_widget.setXRange(0, 1, padding=0)
+            self.plot_widget.setYRange(0, 1, padding=0)
+            self.force_viewbox.setXRange(0, 1, padding=0)
+            self.force_viewbox.setYRange(0, 1, padding=0)
+            
+            # Reset zoom/pan - enable auto range
+            self.plot_widget.enableAutoRange()
+            self.force_viewbox.enableAutoRange()
+            
+            # Reset axis labels to initial state
+            self.plot_widget.setLabel('left', 'ADC Value', units='counts')
+            self.plot_widget.setLabel('bottom', 'Time', units='s')
+            self.plot_widget.setLabel('right', 'Force (Raw)', units='')
+            
+            # Update info label
             self.plot_info_label.setText("ADC - Sweeps: 0 | Samples: 0  |  Force: 0 samples")
-            self.log_status("Data cleared")
+            self.log_status("Data cleared - plot reset to initial state")
 
     # Helper methods for voltage conversion
 
@@ -2593,7 +2890,7 @@ class ADCStreamerGUI(QMainWindow):
     # Plotting methods
 
     def update_plot(self):
-        """Update the plot with current data."""
+        """Update the plot with current data - optimized for fast updates and max 10K samples."""
         # Prevent concurrent updates
         if self.is_updating_plot:
             return
@@ -2601,9 +2898,17 @@ class ADCStreamerGUI(QMainWindow):
         self.is_updating_plot = True
 
         try:
-            if not self.raw_data or not self.config['channels']:
+            if not self.is_capturing and self.raw_data_buffer is None:
+                # No data in buffer
                 for curve in self._adc_curves.values():
                     curve.setVisible(False)
+                self.is_updating_plot = False
+                return
+            
+            if not self.config['channels']:
+                for curve in self._adc_curves.values():
+                    curve.setVisible(False)
+                self.is_updating_plot = False
                 return
 
             # Get selected channels from checkboxes
@@ -2611,23 +2916,130 @@ class ADCStreamerGUI(QMainWindow):
             if not selected_channels:
                 for curve in self._adc_curves.values():
                     curve.setVisible(False)
+                self.is_updating_plot = False
                 return
 
-            # Determine which data to plot based on capture state
-            if self.is_capturing:
-                # Scrolling mode: show only last N sweeps
-                window_size = self.window_size_spin.value()
-                data_to_plot = self.raw_data[-window_size:] if len(self.raw_data) > window_size else self.raw_data
-            else:
-                # Static mode: show all data
-                data_to_plot = self.raw_data
-
-            # Process events to keep UI responsive
-            QApplication.processEvents()
-
-            # Parse data structure: each sweep contains [ch0_r1, ch0_r2, ..., ch1_r1, ...]
+            # Configuration
             channels = self.config['channels']
             repeat_count = self.config['repeat']
+            samples_per_sweep = len(channels) * repeat_count
+            MAX_SAMPLES_TO_DISPLAY = 10000
+            
+            # Determine which data to plot - use numpy buffer directly with thread safety!
+            if self.raw_data_buffer is None:
+                self.is_updating_plot = False
+                return
+            
+            # Get snapshot of buffer state with lock
+            with self.buffer_lock:
+                current_sweep_count = self.sweep_count
+                current_write_index = self.buffer_write_index
+            
+            # Calculate actual number of sweeps in buffer
+            actual_sweeps = min(current_sweep_count, self.MAX_SWEEPS_BUFFER)
+            
+            if actual_sweeps == 0:
+                for curve in self._adc_curves.values():
+                    curve.setVisible(False)
+                self.is_updating_plot = False
+                return
+            
+            if self.is_full_view:
+                # Full view: use legacy raw_data list loaded from archive
+                if not self.raw_data or not self.sweep_timestamps:
+                    self.is_updating_plot = False
+                    return
+                
+                # Convert list data to numpy for plotting
+                try:
+                    # All sweeps have same length
+                    samples_per_sweep = len(self.raw_data[0])
+                    num_sweeps = len(self.raw_data)
+                    
+                    # Create numpy array from list data
+                    data_array = np.array(self.raw_data, dtype=np.float32)  # shape: (num_sweeps, samples_per_sweep)
+                    timestamps_array = np.array(self.sweep_timestamps, dtype=np.float64)
+                except Exception as e:
+                    self.log_status(f"Error converting archive data: {e}")
+                    self.is_updating_plot = False
+                    return
+            elif self.is_capturing:
+                # During capture: show last window_size sweeps
+                window_size = self.window_size_spin.value()
+                window_size = min(window_size, actual_sweeps)
+                
+                # Use circular buffer logic
+                if actual_sweeps < self.MAX_SWEEPS_BUFFER:
+                    # Buffer not yet full - data is contiguous from start
+                    start_idx = max(0, actual_sweeps - window_size)
+                    end_idx = actual_sweeps
+                    data_array = self.raw_data_buffer[start_idx:end_idx, :].copy()
+                    timestamps_array = self.sweep_timestamps_buffer[start_idx:end_idx].copy()
+                else:
+                    # Buffer is full - need to handle circular wrap
+                    # write_index points to next write position (oldest data will be overwritten there)
+                    # So oldest data is at write_pos, newest is at write_pos-1
+                    write_pos = current_write_index % self.MAX_SWEEPS_BUFFER
+                    
+                    if window_size >= self.MAX_SWEEPS_BUFFER:
+                        # Show entire buffer - reorder to show oldest first
+                        data_array = np.concatenate([
+                            self.raw_data_buffer[write_pos:, :],
+                            self.raw_data_buffer[:write_pos, :]
+                        ])
+                        timestamps_array = np.concatenate([
+                            self.sweep_timestamps_buffer[write_pos:],
+                            self.sweep_timestamps_buffer[:write_pos]
+                        ])
+                    else:
+                        # Show last window_size from circular buffer
+                        # Newest is at write_pos-1, so we want [write_pos-window_size : write_pos]
+                        start_pos = (write_pos - window_size) % self.MAX_SWEEPS_BUFFER
+                        if start_pos < write_pos:
+                            data_array = self.raw_data_buffer[start_pos:write_pos, :].copy()
+                            timestamps_array = self.sweep_timestamps_buffer[start_pos:write_pos].copy()
+                        else:
+                            # Wrap around
+                            data_array = np.concatenate([
+                                self.raw_data_buffer[start_pos:, :],
+                                self.raw_data_buffer[:write_pos, :]
+                            ])
+                            timestamps_array = np.concatenate([
+                                self.sweep_timestamps_buffer[start_pos:],
+                                self.sweep_timestamps_buffer[:write_pos]
+                            ])
+            else:
+                # After capture: show same window as during capture for consistency
+                # Use the window_size setting so user sees what they were looking at
+                window_size = self.window_size_spin.value()
+                max_sweeps = min(window_size, actual_sweeps)
+                
+                # Extract from circular buffer
+                if actual_sweeps < self.MAX_SWEEPS_BUFFER:
+                    # Buffer not yet full
+                    start_idx = max(0, actual_sweeps - max_sweeps)
+                    data_array = self.raw_data_buffer[start_idx:actual_sweeps, :].copy()
+                    timestamps_array = self.sweep_timestamps_buffer[start_idx:actual_sweeps].copy()
+                else:
+                    # Buffer is full
+                    write_pos = current_write_index % self.MAX_SWEEPS_BUFFER
+                    start_pos = (write_pos - max_sweeps) % self.MAX_SWEEPS_BUFFER
+                    if start_pos < write_pos:
+                        data_array = self.raw_data_buffer[start_pos:write_pos, :].copy()
+                        timestamps_array = self.sweep_timestamps_buffer[start_pos:write_pos].copy()
+                    else:
+                        data_array = np.concatenate([
+                            self.raw_data_buffer[start_pos:, :],
+                            self.raw_data_buffer[:write_pos, :]
+                        ])
+                        timestamps_array = np.concatenate([
+                            self.sweep_timestamps_buffer[start_pos:],
+                            self.sweep_timestamps_buffer[:write_pos]
+                        ])
+            
+            if len(data_array) == 0 or len(timestamps_array) == 0:
+                self.is_updating_plot = False
+                return
 
             # Get unique channels in order
             unique_channels = []
@@ -2635,10 +3047,16 @@ class ADCStreamerGUI(QMainWindow):
                 if ch not in unique_channels:
                     unique_channels.append(ch)
 
-            max_channel_samples = 0
             desired_curve_keys = set()
+            
+            # Calculate average sample time for intra-sweep timing
+            if hasattr(self, 'arduino_sample_times') and self.arduino_sample_times:
+                avg_sample_time_sec = (sum(self.arduino_sample_times) / len(self.arduino_sample_times)) / 1e6
+            else:
+                avg_sample_time_sec = 0
 
-            # Extract data for each channel
+            # Data is ALREADY numpy array from buffer - no conversion needed!
+            # Extract and plot data for each channel
             for ch_idx, channel in enumerate(unique_channels):
                 if channel not in selected_channels:
                     continue
@@ -2648,170 +3066,143 @@ class ADCStreamerGUI(QMainWindow):
                 # Find all positions of this channel in the sequence
                 positions = [i for i, c in enumerate(channels) if c == channel]
 
-                # Extract data for this channel across sweeps (window or all)
-                channel_data = []
-                for sweep in data_to_plot:
-                    for pos in positions:
-                        start_idx = pos * repeat_count
-                        end_idx = start_idx + repeat_count
-                        if end_idx <= len(sweep):
-                            channel_data.extend(sweep[start_idx:end_idx])
-
-                if not channel_data:
+                # Extract data using numpy slicing (MUCH faster than loops!)
+                channel_data_list = []
+                channel_times_list = []
+                
+                for pos in positions:
+                    start_idx = pos * repeat_count
+                    end_idx = start_idx + repeat_count
+                    
+                    # Extract all repeats for this position across all sweeps (single numpy operation!)
+                    pos_data = data_array[:, start_idx:end_idx]  # Shape: (num_sweeps, repeat_count)
+                    
+                    # Flatten to 1D: [sweep0_r0, sweep0_r1, ..., sweep1_r0, sweep1_r1, ...]
+                    pos_data_flat = pos_data.flatten()
+                    channel_data_list.append(pos_data_flat)
+                    
+                    # Generate timestamps for all samples
+                    # Create time offsets for each sample within a sweep
+                    sample_indices = np.arange(start_idx, end_idx)
+                    time_offsets = sample_indices * avg_sample_time_sec
+                    
+                    # Repeat sweep timestamps for each repeat, then add offsets
+                    sweep_times = np.repeat(timestamps_array, repeat_count)
+                    offsets_tiled = np.tile(time_offsets, len(timestamps_array))
+                    pos_times = sweep_times + offsets_tiled
+                    channel_times_list.append(pos_times)
+                
+                # Concatenate all positions
+                if not channel_data_list:
                     continue
-
-                if len(channel_data) > max_channel_samples:
-                    max_channel_samples = len(channel_data)
+                    
+                channel_data = np.concatenate(channel_data_list)
+                channel_times = np.concatenate(channel_times_list)
 
                 # Convert to voltage if voltage units mode is enabled
                 if self.yaxis_units_combo.currentText() == "Voltage":
-                    channel_data = [self.convert_to_voltage(v) for v in channel_data]
+                    vref = self.get_vref_voltage()
+                    max_value = (2 ** IADC_RESOLUTION_BITS) - 1
+                    channel_data = (channel_data / max_value) * vref
 
-                # Process events periodically to keep UI responsive
-                if ch_idx % 2 == 0:  # Every other channel
-                    QApplication.processEvents()
+                # Downsample if too many points for this channel
+                if len(channel_data) > MAX_SAMPLES_TO_DISPLAY:
+                    downsample_factor = len(channel_data) // MAX_SAMPLES_TO_DISPLAY
+                    channel_data = channel_data[::downsample_factor]
+                    channel_times = channel_times[::downsample_factor]
 
                 # Show based on visualization mode
-                if self.show_all_repeats_radio.isChecked():
-                    # Plot each repeat as a separate line
-                    if repeat_count > 1:
-                        # Reshape data to separate repeats
+                if self.show_all_repeats_radio.isChecked() and repeat_count > 1:
+                    # Reshape to separate repeats
+                    try:
                         num_samples = len(channel_data) // repeat_count
                         if num_samples > 0:
-                            reshaped = np.array(channel_data[:num_samples * repeat_count]).reshape(-1, repeat_count)
+                            channel_data_2d = channel_data[:num_samples * repeat_count].reshape(-1, repeat_count)
+                            channel_times_2d = channel_times[:num_samples * repeat_count].reshape(-1, repeat_count)
 
                             # Plot each repeat as a separate line
                             for repeat_idx in range(repeat_count):
-                                repeat_data = reshaped[:, repeat_idx]
+                                repeat_data = channel_data_2d[:, repeat_idx]
+                                repeat_times = channel_times_2d[:, repeat_idx]
 
                                 # Use slightly different line styles for each repeat
                                 if repeat_idx == 0:
                                     pen = pg.mkPen(color=color, width=2)
-                                    name = f"Ch {channel}.{repeat_idx}"
                                 else:
-                                    # Lighter/thinner lines for additional repeats
                                     lighter_color = tuple(int(c * 0.7) for c in color)
                                     pen = pg.mkPen(color=lighter_color, width=1.5, style=Qt.PenStyle.DashLine)
-                                    name = f"Ch {channel}.{repeat_idx}"
-
+                                
+                                name = f"Ch {channel}.{repeat_idx}"
                                 curve_key = ("repeat", channel, repeat_idx)
                                 desired_curve_keys.add(curve_key)
+                                
                                 curve = self._adc_curves.get(curve_key)
                                 if curve is None:
                                     curve = self.plot_widget.plot([], pen=pen, name=name)
                                     self._adc_curves[curve_key] = curve
-                                    self._adc_curve_names[curve_key] = name
-                                    self._adc_curve_legend_added[curve_key] = True
-                                else:
-                                    curve.setPen(pen)
-                                    if not self._adc_curve_legend_added.get(curve_key, False):
-                                        try:
-                                            self.adc_legend.addItem(curve, self._adc_curve_names.get(curve_key, name))
-                                            self._adc_curve_legend_added[curve_key] = True
-                                        except Exception:
-                                            pass
-
+                                
                                 curve.setVisible(True)
-                                if len(repeat_data) > 10000:
-                                    curve.setData(
-                                        repeat_data,
-                                        downsample=10,
-                                        downsampleMethod='subsample'
-                                    )
-                                else:
-                                    curve.setData(repeat_data)
+                                curve.setPen(pen)
+                                curve.setData(x=repeat_times, y=repeat_data)
+                    except Exception as e:
+                        self.log_status(f"ERROR: Failed to reshape repeat data - {e}")
+                        continue
+                else:
+                    # Single line for all data (either single repeat or averaging mode)
+                    if self.show_average_radio.isChecked() and repeat_count > 1:
+                        # Compute average across repeats
+                        try:
+                            num_samples = len(channel_data) // repeat_count
+                            if num_samples > 0:
+                                channel_data_2d = channel_data[:num_samples * repeat_count].reshape(-1, repeat_count)
+                                channel_times_2d = channel_times[:num_samples * repeat_count].reshape(-1, repeat_count)
+                                channel_data = np.mean(channel_data_2d, axis=1)
+                                channel_times = channel_times_2d[:, 0]  # Use first repeat's times
+                                name = f"Ch {channel} (avg)"
+                                pen = pg.mkPen(color=color, width=3, style=Qt.PenStyle.DashLine)
+                                curve_key = ("avg", channel, 0)
+                            else:
+                                continue
+                        except Exception as e:
+                            self.log_status(f"ERROR: Failed to average repeat data - {e}")
+                            continue
                     else:
-                        # Single repeat: plot as before
-                        curve_key = ("single", channel, 0)
-                        desired_curve_keys.add(curve_key)
+                        # Single repeat or show all together
                         name = f"Ch {channel}"
                         pen = pg.mkPen(color=color, width=2)
-                        curve = self._adc_curves.get(curve_key)
-                        if curve is None:
-                            curve = self.plot_widget.plot([], pen=pen, name=name)
-                            self._adc_curves[curve_key] = curve
-                            self._adc_curve_names[curve_key] = name
-                            self._adc_curve_legend_added[curve_key] = True
-                        else:
-                            curve.setPen(pen)
-                            if not self._adc_curve_legend_added.get(curve_key, False):
-                                try:
-                                    self.adc_legend.addItem(curve, self._adc_curve_names.get(curve_key, name))
-                                    self._adc_curve_legend_added[curve_key] = True
-                                except Exception:
-                                    pass
+                        curve_key = ("single", channel, 0)
+                    
+                    desired_curve_keys.add(curve_key)
+                    curve = self._adc_curves.get(curve_key)
+                    if curve is None:
+                        curve = self.plot_widget.plot([], pen=pen, name=name)
+                        self._adc_curves[curve_key] = curve
+                    
+                    curve.setVisible(True)
+                    curve.setPen(pen)
+                    curve.setData(x=channel_times, y=channel_data)
 
-                        curve.setVisible(True)
-                        if len(channel_data) > 10000:
-                            curve.setData(
-                                channel_data,
-                                downsample=10,
-                                downsampleMethod='subsample'
-                            )
-                        else:
-                            curve.setData(channel_data)
-
-                if self.show_average_radio.isChecked():
-                    # Compute average across repeats
-                    # Reshape data into (num_samples_per_channel, repeat_count)
-                    num_samples = len(channel_data) // repeat_count
-                    if num_samples > 0:
-                        reshaped = np.array(channel_data[:num_samples * repeat_count]).reshape(-1, repeat_count)
-                        averaged = np.mean(reshaped, axis=1)
-
-                        curve_key = ("avg", channel, 0)
-                        desired_curve_keys.add(curve_key)
-                        name = f"Ch {channel} (avg)"
-                        pen = pg.mkPen(color=color, width=3, style=Qt.PenStyle.DashLine)
-                        curve = self._adc_curves.get(curve_key)
-                        if curve is None:
-                            curve = self.plot_widget.plot([], pen=pen, name=name)
-                            self._adc_curves[curve_key] = curve
-                            self._adc_curve_names[curve_key] = name
-                            self._adc_curve_legend_added[curve_key] = True
-                        else:
-                            curve.setPen(pen)
-                            if not self._adc_curve_legend_added.get(curve_key, False):
-                                try:
-                                    self.adc_legend.addItem(curve, self._adc_curve_names.get(curve_key, name))
-                                    self._adc_curve_legend_added[curve_key] = True
-                                except Exception:
-                                    pass
-
-                        curve.setVisible(True)
-                        curve.setData(averaged)
-
+            # Hide curves that are not in use
             for key, curve in self._adc_curves.items():
                 if key not in desired_curve_keys:
                     curve.setVisible(False)
-                    if self._adc_curve_legend_added.get(key):
-                        try:
-                            self.adc_legend.removeItem(curve)
-                        except Exception:
-                            pass
-                        self._adc_curve_legend_added[key] = False
 
-            if max_channel_samples > 0:
-                self.plot_widget.setXRange(0, max_channel_samples, padding=0)
-                self.plot_widget.disableAutoRange(axis=pg.ViewBox.XAxis)
-
-            # Apply Y-axis scaling mode
-            if self.yaxis_range_combo.currentText() == "Full-Scale":
-                # Full-scale mode: fixed range
-                y_min, y_max = self.get_fullscale_range()
-                self.plot_widget.setYRange(y_min, y_max, padding=0)
-            else:
-                # Adaptive mode: auto-range (pyqtgraph default)
-                self.plot_widget.enableAutoRange(axis='y')
-
-            # Update Y-axis label based on unit mode
+            # Update axis labels
             if self.yaxis_units_combo.currentText() == "Voltage":
                 self.plot_widget.setLabel('left', 'Voltage', units='V')
             else:
                 self.plot_widget.setLabel('left', 'ADC Value', units='counts')
+            
+            self.plot_widget.setLabel('bottom', 'Time', units='s')
 
+            # Apply Y-axis range
+            self.apply_y_axis_range()
+
+        except Exception as e:
+            self.log_status(f"ERROR: Plot update failed - {e}")
+            import traceback
+            traceback.print_exc()
         finally:
-            # Always clear the flag, even if there's an error
             self.is_updating_plot = False
 
     # File management methods

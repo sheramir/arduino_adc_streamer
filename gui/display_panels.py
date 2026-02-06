@@ -2,11 +2,12 @@
 Display Panels Mixin
 ====================
 GUI components for plot display, visualization controls, and timing information.
+Now includes tabbed interface for time-series and heatmap views.
 """
 
 from PyQt6.QtWidgets import (
     QGroupBox, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, 
-    QPushButton, QComboBox, QCheckBox, QSpinBox, QWidget, QScrollArea
+    QPushButton, QComboBox, QCheckBox, QSpinBox, QWidget, QScrollArea, QTabWidget
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
@@ -20,8 +21,31 @@ from config_constants import (
 class DisplayPanelsMixin:
     """Mixin class for display and visualization GUI components."""
     
-    def create_plot_section(self) -> QGroupBox:
-        """Create plotting section with pyqtgraph."""
+    def create_plot_section(self) -> QWidget:
+        """Create tabbed visualization section with time-series plot and heatmap.
+        
+        Returns:
+            QWidget: Widget containing tabbed display (Time Series + Heatmap)
+        """
+        # Create tab widget
+        self.visualization_tabs = QTabWidget()
+        
+        # Create time-series tab
+        timeseries_tab = self.create_timeseries_tab()
+        self.visualization_tabs.addTab(timeseries_tab, "Time Series")
+        
+        # Create heatmap tab (from HeatmapPanelMixin)
+        heatmap_tab = self.create_heatmap_tab()
+        self.visualization_tabs.addTab(heatmap_tab, "2D Heatmap")
+        
+        return self.visualization_tabs
+    
+    def create_timeseries_tab(self) -> QGroupBox:
+        """Create the traditional time-series plotting tab.
+        
+        Returns:
+            QGroupBox: Group box containing pyqtgraph plot
+        """
         group = QGroupBox("Real-time Data Visualization")
         layout = QVBoxLayout()
 

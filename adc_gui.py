@@ -36,7 +36,7 @@ from config_constants import *
 from serial_communication import ADCSerialMixin, ForceSerialMixin
 from config import MCUDetectorMixin, ConfigurationMixin
 from gui import GUIComponentsMixin
-from data_processing import DataProcessorMixin
+from data_processing import DataProcessorMixin, HeatmapProcessorMixin, SimulatedSensorThread
 from file_operations import FileOperationsMixin
 
 
@@ -45,10 +45,11 @@ class ADCStreamerGUI(
     ADCSerialMixin,         # ✅ Serial communication
     ForceSerialMixin,       # ✅ Force sensor communication
     MCUDetectorMixin,       # ✅ MCU detection
-    GUIComponentsMixin,     # ✅ GUI component creation
+    GUIComponentsMixin,     # ✅ GUI component creation (includes HeatmapPanelMixin)
     ConfigurationMixin,     # ✅ Configuration management
     DataProcessorMixin,     # ✅ Data processing
-    FileOperationsMixin,    # ✅ File operations
+    HeatmapProcessorMixin,  # ✅ Heatmap CoP calculation
+    FileOperationsMixin     # ✅ File operations
 ):
     """
     Production ADC Streamer GUI using fully modular architecture.
@@ -219,6 +220,16 @@ class ADCStreamerGUI(
         self.config_check_timer = QTimer()
         self.config_check_timer.timeout.connect(self.check_config_completion)
         self.config_check_timer.setInterval(CONFIG_CHECK_INTERVAL)
+        
+        # Heatmap update timer
+        self.heatmap_timer = QTimer()
+        self.heatmap_timer.timeout.connect(self.update_heatmap)
+        self.heatmap_timer.setInterval(int(1000 / HEATMAP_FPS))  # Convert FPS to milliseconds
+        
+        # Simulated sensor data source (for testing)
+        self.simulated_sensor_thread: Optional[SimulatedSensorThread] = None
+        self.use_simulated_data = True  # Flag to switch between simulated and real data
+        self.latest_sensor_values = [0.0, 0.0, 0.0, 0.0, 0.0]  # Initialize with zeros
 
     def _log_startup_message(self):
         """Log startup message to status window."""
@@ -279,8 +290,22 @@ class ADCStreamerGUI(
         layout.addWidget(self.create_plot_section())
         layout.addWidget(self.create_timing_section())
         layout.addWidget(self.create_visualization_controls())
+        
+        # Connect tab change signal to start/stop heatmap simulation
+        self.visualization_tabs.currentChanged.connect(self.on_visualization_tab_changed)
 
         return panel
+    
+    def on_visualization_tab_changed(self, index):
+        """Handle visualization tab change.
+        
+        Args:
+            index: Tab index (0=Time Series, 1=Heatmap)
+        """
+        if index == 1:  # Heatmap tab
+            self.start_heatmap_simulation()
+        else:  # Time Series tab
+            self.stop_heatmap_simulation()
 
     # ========================================================================
     # Window Management
@@ -292,7 +317,86 @@ class ADCStreamerGUI(
             self.disconnect_serial()
         if self.force_serial_port and self.force_serial_port.is_open:
             self.disconnect_force()
+        
+        # Stop heatmap simulation thread
+        if self.simulated_sensor_thread is not None:
+            self.simulated_sensor_thread.stop()
+            self.simulated_sensor_thread.wait()
+        
         event.accept()
+    
+    # ========================================================================
+    # Heatmap Update Logic
+    # ========================================================================
+    
+    def start_heatmap_simulation(self):
+        """Start simulated sensor data source and heatmap updates."""
+        if self.simulated_sensor_thread is None:
+            self.simulated_sensor_thread = SimulatedSensorThread(fps=HEATMAP_FPS)
+            self.simulated_sensor_thread.sensor_data_ready.connect(self.on_simulated_sensor_data)
+            self.simulated_sensor_thread.start()
+            self.log_status("🟢 Heatmap simulation started")
+        
+        # Start heatmap update timer
+        if not self.heatmap_timer.isActive():
+            self.heatmap_timer.start()
+    
+    def stop_heatmap_simulation(self):
+        """Stop simulated sensor data source and heatmap updates."""
+        if self.simulated_sensor_thread is not None:
+            self.simulated_sensor_thread.stop()
+            self.simulated_sensor_thread.wait()
+            self.simulated_sensor_thread = None
+            self.log_status("🔴 Heatmap simulation stopped")
+        
+        # Stop heatmap update timer
+        if self.heatmap_timer.isActive():
+            self.heatmap_timer.stop()
+    
+    def on_simulated_sensor_data(self, sensor_values):
+        """Handle new simulated sensor data (runs in main thread via signal).
+        
+        Args:
+            sensor_values: List of 5 sensor values
+        """
+        # Store latest sensor values for heatmap update
+        self.latest_sensor_values = sensor_values
+    
+    def update_heatmap(self):
+        """Update heatmap display (called by QTimer at HEATMAP_FPS rate)."""
+        # Check if we're on the heatmap tab
+        if self.visualization_tabs.currentIndex() != 1:
+            return
+        
+        # Check if we have the correct number of channels
+        num_channels = len(self.config.get('channels', []))
+        
+        if num_channels != HEATMAP_REQUIRED_CHANNELS:
+            # Show warning message
+            self.show_heatmap_channel_warning(num_channels)
+            return
+        else:
+            # Clear warning if it was showing
+            self.clear_heatmap_channel_warning()
+        
+        # Get sensor data
+        if self.use_simulated_data:
+            # Use simulated data
+            if not hasattr(self, 'latest_sensor_values'):
+                return
+            sensor_values = self.latest_sensor_values
+        else:
+            # TODO: Use real ADC data - extract latest 5 channel values from raw_data_buffer
+            # For now, fall back to simulation
+            if not hasattr(self, 'latest_sensor_values'):
+                return
+            sensor_values = self.latest_sensor_values
+        
+        # Process data and generate heatmap
+        heatmap, cop_x, cop_y, intensity, sensor_values = self.process_sensor_data_for_heatmap(sensor_values)
+        
+        # Update display
+        self.update_heatmap_display(heatmap, cop_x, cop_y, intensity, sensor_values)
 
 
 def main():

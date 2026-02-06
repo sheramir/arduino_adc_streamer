@@ -164,6 +164,42 @@ MAX_FORCE_SAMPLES = 50000
 MAX_LOG_LINES = 1000
 
 # ============================================================================
+# Heatmap Display Constants
+# ============================================================================
+
+# Heatmap update rate
+HEATMAP_FPS = 30  # Target frame rate for heatmap updates
+
+# Heatmap resolution
+HEATMAP_WIDTH = 160  # Heatmap resolution width
+HEATMAP_HEIGHT = 80  # Heatmap resolution height
+
+# Sensor positions in normalized coordinates [-1, 1]
+# Order: Top, Bottom, Right, Left, Center
+SENSOR_POS_X = [0.0, 0.0, 1.0, -1.0, 0.0]  # X positions
+SENSOR_POS_Y = [-1.0, 1.0, 0.0, 0.0, 0.0]  # Y positions
+
+# Sensor calibration scaling factors (to normalize sensor responses)
+SENSOR_CALIBRATION = [1.0, 1.5, 2.5, 1.0, 2.0]  # Per-sensor scale factors
+
+# Physical size between endpoint sensors (for reference)
+SENSOR_SIZE = 100.0  # mm or arbitrary units
+
+# Intensity mapping
+INTENSITY_SCALE = 0.001  # Scale factor to map signal to blob amplitude
+COP_EPS = 1e-6  # Small epsilon to avoid division by zero in CoP calculation
+
+# Gaussian blob parameters
+BLOB_SIGMA_X = 0.3  # Horizontal spread (in normalized coordinates)
+BLOB_SIGMA_Y = 0.2  # Vertical spread (in normalized coordinates)
+
+# Smoothing parameter (exponential moving average)
+SMOOTH_ALPHA = 0.2  # 0 = no smoothing, 1 = no history
+
+# Expected number of channels for heatmap
+HEATMAP_REQUIRED_CHANNELS = 5
+
+# ============================================================================
 # Plot Colors
 # ============================================================================
 

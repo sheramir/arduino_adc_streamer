@@ -419,13 +419,13 @@ class ADCStreamerGUI(
             return
         
         # Process data and generate heatmap
-        heatmap, cop_x, cop_y, intensity, sensor_values = self.process_sensor_data_for_heatmap(
+        heatmap, cop_x, cop_y, intensity, confidence, sensor_values = self.process_sensor_data_for_heatmap(
             sensor_values,
             settings,
         )
         
         # Update display
-        self.update_heatmap_display(heatmap, cop_x, cop_y, intensity, sensor_values)
+        self.update_heatmap_display(heatmap, cop_x, cop_y, intensity, confidence, sensor_values)
 
 
 def main():

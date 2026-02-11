@@ -16,7 +16,8 @@ from config_constants import (
     HEATMAP_WIDTH, HEATMAP_HEIGHT, SENSOR_CALIBRATION, SENSOR_SIZE,
     INTENSITY_SCALE, BLOB_SIGMA_X, BLOB_SIGMA_Y, SMOOTH_ALPHA,
     RMS_WINDOW_MS, SENSOR_NOISE_FLOOR, HEATMAP_DC_REMOVAL_MODE,
-    HPF_CUTOFF_HZ, HEATMAP_CHANNEL_SENSOR_MAP, HEATMAP_THRESHOLD
+    HPF_CUTOFF_HZ, HEATMAP_CHANNEL_SENSOR_MAP, HEATMAP_THRESHOLD,
+    CONFIDENCE_INTENSITY_REF, SIGMA_SPREAD_FACTOR
 )
 
 
@@ -131,6 +132,11 @@ class HeatmapPanelMixin:
         self.intensity_label = QLabel("0.0")
         self.intensity_label.setStyleSheet("font-weight: bold; font-family: monospace;")
         intensity_layout.addWidget(self.intensity_label)
+
+        intensity_layout.addWidget(QLabel("Confidence:"))
+        self.confidence_label = QLabel("0.00")
+        self.confidence_label.setStyleSheet("font-weight: bold; font-family: monospace;")
+        intensity_layout.addWidget(self.confidence_label)
         
         intensity_layout.addStretch()
         layout.addLayout(intensity_layout)
@@ -299,9 +305,11 @@ class HeatmapPanelMixin:
             'hpf_cutoff_hz': self.hpf_cutoff_spin.value(),
             'magnitude_threshold': self.magnitude_threshold_spin.value(),
             'channel_sensor_map': HEATMAP_CHANNEL_SENSOR_MAP,
+            'confidence_intensity_ref': CONFIDENCE_INTENSITY_REF,
+            'sigma_spread_factor': SIGMA_SPREAD_FACTOR,
         }
     
-    def update_heatmap_display(self, heatmap, cop_x, cop_y, intensity, sensor_values):
+    def update_heatmap_display(self, heatmap, cop_x, cop_y, intensity, confidence, sensor_values):
         """Update heatmap visualization with new data.
         
         Args:
@@ -318,6 +326,7 @@ class HeatmapPanelMixin:
         self.cop_x_label.setText(f"X: {cop_x:+.3f}")
         self.cop_y_label.setText(f"Y: {cop_y:+.3f}")
         self.intensity_label.setText(f"{intensity:.1f}")
+        self.confidence_label.setText(f"{confidence:.2f}")
         
         # Update sensor values
         sensor_names = ['T', 'B', 'R', 'L', 'C']

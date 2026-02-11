@@ -202,6 +202,10 @@ SMOOTH_ALPHA = 0.5  # 0 = no smoothing, 1 = no history
 # Magnitude threshold for heatmap (values below are set to 0)
 HEATMAP_THRESHOLD = 18.0
 
+# Confidence calculation parameters
+CONFIDENCE_INTENSITY_REF = 100.0
+SIGMA_SPREAD_FACTOR = 1.5
+
 # RMS calculation window (milliseconds)
 RMS_WINDOW_MS = 20
 

@@ -10,7 +10,7 @@ import numpy as np
 from config_constants import (
     HEATMAP_WIDTH, HEATMAP_HEIGHT, SENSOR_POS_X, SENSOR_POS_Y,
     INTENSITY_SCALE, COP_EPS, BLOB_SIGMA_X, BLOB_SIGMA_Y, SMOOTH_ALPHA,
-    HEATMAP_REQUIRED_CHANNELS
+    HEATMAP_REQUIRED_CHANNELS, CONFIDENCE_INTENSITY_REF, SIGMA_SPREAD_FACTOR
 )
 
 
@@ -82,6 +82,9 @@ class HeatmapProcessorMixin:
         # Gaussian distribution
         sigma_x = settings.get('blob_sigma_x', BLOB_SIGMA_X)
         sigma_y = settings.get('blob_sigma_y', BLOB_SIGMA_Y)
+        sigma_scale = settings.get('sigma_scale', 1.0)
+        sigma_x = max(1e-6, sigma_x * sigma_scale)
+        sigma_y = max(1e-6, sigma_y * sigma_scale)
         gaussian = np.exp(-(dx**2 / (2 * sigma_x**2) + dy**2 / (2 * sigma_y**2)))
         
         # Scale by intensity
@@ -104,11 +107,26 @@ class HeatmapProcessorMixin:
         """
         # Calculate CoP and intensity
         cop_x, cop_y, intensity = self.calculate_cop_and_intensity(sensor_values, settings)
+
+        weights = np.maximum(np.array(sensor_values, dtype=np.float32), 0.0)
+        confidence, concentration = self.calculate_confidence(weights, intensity, settings)
+        sigma_scale = 1.0 + (1.0 - concentration) * settings.get('sigma_spread_factor', SIGMA_SPREAD_FACTOR)
+        settings = dict(settings)
+        settings['sigma_scale'] = sigma_scale
         
         # Generate heatmap
         heatmap = self.generate_heatmap(cop_x, cop_y, intensity, settings)
         
-        return heatmap, cop_x, cop_y, intensity, sensor_values
+        return heatmap, cop_x, cop_y, intensity, confidence, sensor_values
+
+    def calculate_confidence(self, weights, intensity, settings):
+        if intensity <= 0:
+            return 0.0, 0.0
+
+        q_i = min(1.0, intensity / max(settings.get('confidence_intensity_ref', CONFIDENCE_INTENSITY_REF), 1e-6))
+        q_c = float(np.max(weights)) / float(intensity)
+        q_f = q_i * q_c
+        return q_f, q_c
 
     def _extract_heatmap_window_data(self, window_ms):
         if self.raw_data_buffer is None or self.samples_per_sweep <= 0:

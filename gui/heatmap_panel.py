@@ -89,6 +89,9 @@ class HeatmapPanelMixin:
         # Initialize with empty data
         empty_heatmap = np.zeros((HEATMAP_HEIGHT, HEATMAP_WIDTH), dtype=np.float32)
         self.heatmap_image.setImage(empty_heatmap, autoLevels=False, levels=(0, 1))
+
+        # Add static background overlay (circle + sensor markers)
+        self._add_heatmap_background_overlay()
         
         # Status label for channel warnings
         self.heatmap_status_label = QLabel("")
@@ -100,6 +103,59 @@ class HeatmapPanelMixin:
         group.setLayout(layout)
         
         return group
+
+    def _add_heatmap_background_overlay(self):
+        width = float(HEATMAP_WIDTH)
+        height = float(HEATMAP_HEIGHT)
+        center_x = (width - 1.0) / 2.0
+        center_y = (height - 1.0) / 2.0
+        radius = min(width, height) * 0.48
+
+        theta = np.linspace(0, 2 * np.pi, 200)
+        circle_x = center_x + radius * np.cos(theta)
+        circle_y = center_y + radius * np.sin(theta)
+        circle_pen = pg.mkPen((200, 200, 200, 160), width=2)
+        self.heatmap_circle = pg.PlotDataItem(circle_x, circle_y, pen=circle_pen)
+        self.heatmap_circle.setZValue(5)
+        self.heatmap_plot.addItem(self.heatmap_circle)
+
+        label_to_number = {
+            sensor_label: str(index + 1)
+            for index, sensor_label in enumerate(HEATMAP_CHANNEL_SENSOR_MAP)
+        }
+
+        marker_positions = [
+            (center_x + radius, center_y, label_to_number.get("R", "")),  # Right
+            (center_x, center_y + radius, label_to_number.get("B", "")),  # Bottom
+            (center_x, center_y, label_to_number.get("C", "")),          # Center
+            (center_x - radius, center_y, label_to_number.get("L", "")),  # Left
+            (center_x, center_y - radius, label_to_number.get("T", "")),  # Top
+        ]
+
+        marker_brush = pg.mkBrush(230, 230, 230, 200)
+        marker_pen = pg.mkPen(120, 120, 120, 200)
+        self.heatmap_marker_items = []
+        self.heatmap_marker_labels = []
+
+        for x_pos, y_pos, label in marker_positions:
+            marker = pg.ScatterPlotItem(
+                [x_pos],
+                [y_pos],
+                symbol='s',
+                size=14,
+                brush=marker_brush,
+                pen=marker_pen,
+            )
+            marker.setZValue(6)
+            self.heatmap_plot.addItem(marker)
+            self.heatmap_marker_items.append(marker)
+
+            text = pg.TextItem(label, color=(60, 60, 60))
+            text.setAnchor((0.5, 0.5))
+            text.setPos(x_pos, y_pos)
+            text.setZValue(7)
+            self.heatmap_plot.addItem(text)
+            self.heatmap_marker_labels.append(text)
     
     def create_heatmap_readouts(self):
         """Create numeric readout displays for CoP and sensor values.

@@ -193,11 +193,11 @@ INTENSITY_SCALE = 0.005  # Scale factor to map signal to blob amplitude
 COP_EPS = 1e-6  # Small epsilon to avoid division by zero in CoP calculation
 
 # Gaussian blob parameters
-BLOB_SIGMA_X = 0.3  # Horizontal spread (in normalized coordinates)
-BLOB_SIGMA_Y = 0.3  # Vertical spread (in normalized coordinates)
+BLOB_SIGMA_X = 0.15  # Horizontal spread (in normalized coordinates)
+BLOB_SIGMA_Y = 0.15  # Vertical spread (in normalized coordinates)
 
 # Smoothing parameter (exponential moving average)
-SMOOTH_ALPHA = 0.5  # 0 = no smoothing, 1 = no history
+SMOOTH_ALPHA = 0.8  # 0 = no smoothing, 1 = no history
 
 # Magnitude threshold for heatmap (values below are set to 0)
 HEATMAP_THRESHOLD = 18.0
@@ -205,6 +205,9 @@ HEATMAP_THRESHOLD = 18.0
 # Confidence calculation parameters
 CONFIDENCE_INTENSITY_REF = 100.0
 SIGMA_SPREAD_FACTOR = 1.5
+
+# Axis-based sigma modulation (0 = off)
+AXIS_SIGMA_FACTOR = 0.5
 
 # RMS calculation window (milliseconds)
 RMS_WINDOW_MS = 20

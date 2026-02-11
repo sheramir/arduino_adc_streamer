@@ -10,7 +10,8 @@ import numpy as np
 from config_constants import (
     HEATMAP_WIDTH, HEATMAP_HEIGHT, SENSOR_POS_X, SENSOR_POS_Y,
     INTENSITY_SCALE, COP_EPS, BLOB_SIGMA_X, BLOB_SIGMA_Y, SMOOTH_ALPHA,
-    HEATMAP_REQUIRED_CHANNELS, CONFIDENCE_INTENSITY_REF, SIGMA_SPREAD_FACTOR
+    HEATMAP_REQUIRED_CHANNELS, CONFIDENCE_INTENSITY_REF, SIGMA_SPREAD_FACTOR,
+    AXIS_SIGMA_FACTOR
 )
 
 
@@ -83,8 +84,10 @@ class HeatmapProcessorMixin:
         sigma_x = settings.get('blob_sigma_x', BLOB_SIGMA_X)
         sigma_y = settings.get('blob_sigma_y', BLOB_SIGMA_Y)
         sigma_scale = settings.get('sigma_scale', 1.0)
-        sigma_x = max(1e-6, sigma_x * sigma_scale)
-        sigma_y = max(1e-6, sigma_y * sigma_scale)
+        sigma_scale_x = settings.get('sigma_scale_x', 1.0)
+        sigma_scale_y = settings.get('sigma_scale_y', 1.0)
+        sigma_x = max(1e-6, sigma_x * sigma_scale * sigma_scale_x)
+        sigma_y = max(1e-6, sigma_y * sigma_scale * sigma_scale_y)
         gaussian = np.exp(-(dx**2 / (2 * sigma_x**2) + dy**2 / (2 * sigma_y**2)))
         
         # Scale by intensity
@@ -111,8 +114,24 @@ class HeatmapProcessorMixin:
         weights = np.maximum(np.array(sensor_values, dtype=np.float32), 0.0)
         confidence, concentration = self.calculate_confidence(weights, intensity, settings)
         sigma_scale = 1.0 + (1.0 - concentration) * settings.get('sigma_spread_factor', SIGMA_SPREAD_FACTOR)
+
+        axis_sigma_factor = settings.get('axis_sigma_factor', AXIS_SIGMA_FACTOR)
+        axis_sigma_factor = max(0.0, axis_sigma_factor)
+        x_sum = float(weights[2] + weights[3]) if weights.size >= 4 else 0.0
+        y_sum = float(weights[0] + weights[1]) if weights.size >= 2 else 0.0
+        axis_total = x_sum + y_sum
+        if axis_total > 0:
+            x_ratio = x_sum / axis_total
+            y_ratio = y_sum / axis_total
+            sigma_scale_x = 1.0 + axis_sigma_factor * ((x_ratio - 0.5) * 2.0)
+            sigma_scale_y = 1.0 + axis_sigma_factor * ((y_ratio - 0.5) * 2.0)
+        else:
+            sigma_scale_x = 1.0
+            sigma_scale_y = 1.0
         settings = dict(settings)
         settings['sigma_scale'] = sigma_scale
+        settings['sigma_scale_x'] = sigma_scale_x
+        settings['sigma_scale_y'] = sigma_scale_y
         
         # Generate heatmap
         heatmap = self.generate_heatmap(cop_x, cop_y, intensity, settings)

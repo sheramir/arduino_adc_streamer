@@ -61,7 +61,7 @@ class SerialReaderThread(QThread):
                 sample_count = buffer[2] | (buffer[3] << 8)
                 # New format: header(4) + samples(count*2) + avg_time(2) + block_start_us(4) + block_end_us(4)
                 packet_size = 4 + (sample_count * 2) + 2 + 8
-                
+
                 if len(buffer) < packet_size:
                     break  # Need more data for complete block
                 
@@ -128,6 +128,8 @@ class SerialReaderThread(QThread):
     def set_capturing(self, capturing):
         """Set whether we're currently capturing data."""
         self.is_capturing = capturing
+        if not capturing:
+            pass
 
     def stop(self):
         """Stop the thread."""

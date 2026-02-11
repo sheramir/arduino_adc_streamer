@@ -210,6 +210,7 @@ class ADCStreamerGUI(
     def _init_heatmap_state(self):
         """Initialize heatmap processing state."""
         import numpy as np
+        from data_processing.heatmap_signal_processing import HeatmapSignalProcessor
         
         # Smoothed values for CoP and intensity
         self.smoothed_cop_x = 0.0
@@ -224,6 +225,13 @@ class ADCStreamerGUI(
         x_coords = np.linspace(-1, 1, HEATMAP_WIDTH).reshape(1, -1)
         self.heatmap_y_grid = np.tile(y_coords, (1, HEATMAP_WIDTH))
         self.heatmap_x_grid = np.tile(x_coords, (HEATMAP_HEIGHT, 1))
+
+        self.heatmap_signal_processor = HeatmapSignalProcessor(
+            channel_count=HEATMAP_REQUIRED_CHANNELS,
+            bias_duration_sec=BIAS_CALIBRATION_DURATION_SEC,
+            hpf_cutoff_hz=HPF_CUTOFF_HZ,
+        )
+        self.last_heatmap_sweep_count = 0
 
     def _init_timers(self):
         """Initialize Qt timers."""
@@ -247,8 +255,8 @@ class ADCStreamerGUI(
         
         # Simulated sensor data source (for testing)
         self.simulated_sensor_thread: Optional[SimulatedSensorThread] = None
-        self.use_simulated_data = True  # Flag to switch between simulated and real data
-        self.latest_sensor_values = [0.0, 0.0, 0.0, 0.0, 0.0]  # Initialize with zeros
+        self.use_simulated_data = False
+        self.latest_sensor_values = [0.0, 0.0, 0.0, 0.0, 0.0]
 
     def _log_startup_message(self):
         """Log startup message to status window."""
@@ -361,24 +369,14 @@ class ADCStreamerGUI(
             self.stop_heatmap_simulation()
     
     def start_heatmap_simulation(self):
-        """Start simulated sensor data source and heatmap updates."""
-        if self.simulated_sensor_thread is None:
-            self.simulated_sensor_thread = SimulatedSensorThread(fps=HEATMAP_FPS)
-            self.simulated_sensor_thread.sensor_data_ready.connect(self.on_simulated_sensor_data)
-            self.simulated_sensor_thread.start()
-            self.log_status("🟢 Heatmap simulation started")
+        """Start heatmap updates."""
         
         # Start heatmap update timer
         if not self.heatmap_timer.isActive():
             self.heatmap_timer.start()
     
     def stop_heatmap_simulation(self):
-        """Stop simulated sensor data source and heatmap updates."""
-        if self.simulated_sensor_thread is not None:
-            self.simulated_sensor_thread.stop()
-            self.simulated_sensor_thread.wait()
-            self.simulated_sensor_thread = None
-            self.log_status("🔴 Heatmap simulation stopped")
+        """Stop heatmap updates."""
         
         # Stop heatmap update timer
         if self.heatmap_timer.isActive():
@@ -410,21 +408,21 @@ class ADCStreamerGUI(
             # Clear warning if it was showing
             self.clear_heatmap_channel_warning()
         
-        # Get sensor data
-        if self.use_simulated_data:
-            # Use simulated data
-            if not hasattr(self, 'latest_sensor_values'):
-                return
-            sensor_values = self.latest_sensor_values
-        else:
-            # TODO: Use real ADC data - extract latest 5 channel values from raw_data_buffer
-            # For now, fall back to simulation
-            if not hasattr(self, 'latest_sensor_values'):
-                return
-            sensor_values = self.latest_sensor_values
+        # Reset processing state if capture restarted
+        if self.sweep_count < self.last_heatmap_sweep_count:
+            self.heatmap_signal_processor.reset()
+        self.last_heatmap_sweep_count = self.sweep_count
+
+        settings = self.get_heatmap_settings()
+        sensor_values = self.compute_channel_intensities(settings)
+        if sensor_values is None:
+            return
         
         # Process data and generate heatmap
-        heatmap, cop_x, cop_y, intensity, sensor_values = self.process_sensor_data_for_heatmap(sensor_values)
+        heatmap, cop_x, cop_y, intensity, sensor_values = self.process_sensor_data_for_heatmap(
+            sensor_values,
+            settings,
+        )
         
         # Update display
         self.update_heatmap_display(heatmap, cop_x, cop_y, intensity, sensor_values)

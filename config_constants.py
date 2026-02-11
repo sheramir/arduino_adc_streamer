@@ -170,9 +170,9 @@ MAX_LOG_LINES = 1000
 # Heatmap update rate
 HEATMAP_FPS = 30  # Target frame rate for heatmap updates
 
-# Heatmap resolution
+# Heatmap resolution (square display)
 HEATMAP_WIDTH = 160  # Heatmap resolution width
-HEATMAP_HEIGHT = 80  # Heatmap resolution height
+HEATMAP_HEIGHT = 160  # Heatmap resolution height
 
 # Sensor positions in normalized coordinates [-1, 1]
 # Order: Top, Bottom, Right, Left, Center
@@ -180,21 +180,36 @@ SENSOR_POS_X = [0.0, 0.0, 1.0, -1.0, 0.0]  # X positions
 SENSOR_POS_Y = [-1.0, 1.0, 0.0, 0.0, 0.0]  # Y positions
 
 # Sensor calibration scaling factors (to normalize sensor responses)
-SENSOR_CALIBRATION = [1.0, 1.5, 2.5, 1.0, 2.0]  # Per-sensor scale factors
+SENSOR_CALIBRATION = [1.0, 1.0, 1.0, 1.0, 1.0]  # Per-sensor scale factors
+
+# Per-sensor baseline noise floor (RMS) to subtract after magnitude calculation
+SENSOR_NOISE_FLOOR = [0.01, 0.01, 0.01, 0.01, 0.01]
 
 # Physical size between endpoint sensors (for reference)
-SENSOR_SIZE = 100.0  # mm or arbitrary units
+SENSOR_SIZE = 0.8
 
 # Intensity mapping
-INTENSITY_SCALE = 0.001  # Scale factor to map signal to blob amplitude
+INTENSITY_SCALE = 0.005  # Scale factor to map signal to blob amplitude
 COP_EPS = 1e-6  # Small epsilon to avoid division by zero in CoP calculation
 
 # Gaussian blob parameters
 BLOB_SIGMA_X = 0.3  # Horizontal spread (in normalized coordinates)
-BLOB_SIGMA_Y = 0.2  # Vertical spread (in normalized coordinates)
+BLOB_SIGMA_Y = 0.3  # Vertical spread (in normalized coordinates)
 
 # Smoothing parameter (exponential moving average)
 SMOOTH_ALPHA = 0.2  # 0 = no smoothing, 1 = no history
+
+# RMS calculation window (milliseconds)
+RMS_WINDOW_MS = 20
+
+# DC removal settings
+BIAS_CALIBRATION_DURATION_SEC = 2.0
+HPF_CUTOFF_HZ = 0.5
+HEATMAP_DC_REMOVAL_MODE = "highpass"  # "bias" or "highpass"
+
+# Channel-to-sensor mapping for heatmap (order of selected channels)
+# Example: ["R", "B", "C", "L", "T"] means channel1->Right, channel2->Bottom, ...
+HEATMAP_CHANNEL_SENSOR_MAP = ["R", "B", "C", "L", "T"]
 
 # Expected number of channels for heatmap
 HEATMAP_REQUIRED_CHANNELS = 5

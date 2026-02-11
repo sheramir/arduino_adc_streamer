@@ -5,13 +5,19 @@ Provides UI components for real-time 2D heatmap visualization.
 """
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGroupBox
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGroupBox, QGridLayout,
+    QComboBox, QSpinBox, QDoubleSpinBox
 )
 from PyQt6.QtCore import Qt
 import pyqtgraph as pg
 import numpy as np
 
-from config_constants import HEATMAP_WIDTH, HEATMAP_HEIGHT
+from config_constants import (
+    HEATMAP_WIDTH, HEATMAP_HEIGHT, SENSOR_CALIBRATION, SENSOR_SIZE,
+    INTENSITY_SCALE, BLOB_SIGMA_X, BLOB_SIGMA_Y, SMOOTH_ALPHA,
+    RMS_WINDOW_MS, SENSOR_NOISE_FLOOR, HEATMAP_DC_REMOVAL_MODE,
+    HPF_CUTOFF_HZ, HEATMAP_CHANNEL_SENSOR_MAP
+)
 
 
 class HeatmapPanelMixin:
@@ -33,6 +39,10 @@ class HeatmapPanelMixin:
         # Create readouts panel (compact)
         readouts_panel = self.create_heatmap_readouts()
         layout.addWidget(readouts_panel, stretch=0)
+
+        # Create heatmap settings panel
+        settings_panel = self.create_heatmap_settings()
+        layout.addWidget(settings_panel, stretch=0)
         
         heatmap_widget.setLayout(layout)
         return heatmap_widget
@@ -52,6 +62,7 @@ class HeatmapPanelMixin:
         
         # Configure plot - lock aspect ratio for square display
         self.heatmap_plot.setAspectLocked(True, ratio=1.0)
+        self.heatmap_plot.invertY(True)
         self.heatmap_plot.showAxis('left', False)
         self.heatmap_plot.showAxis('bottom', False)
         self.heatmap_plot.setMouseEnabled(x=False, y=False)
@@ -141,6 +152,144 @@ class HeatmapPanelMixin:
         
         group.setLayout(layout)
         return group
+
+    def create_heatmap_settings(self):
+        """Create heatmap processing and calibration settings."""
+        group = QGroupBox("Heatmap Settings")
+        main_layout = QVBoxLayout()
+
+        # Signal processing controls
+        signal_group = QGroupBox("Signal Processing")
+        signal_layout = QGridLayout()
+
+        signal_layout.addWidget(QLabel("RMS Window (ms):"), 0, 0)
+        self.rms_window_spin = QSpinBox()
+        self.rms_window_spin.setRange(2, 5000)
+        self.rms_window_spin.setValue(RMS_WINDOW_MS)
+        signal_layout.addWidget(self.rms_window_spin, 0, 1)
+
+        signal_layout.addWidget(QLabel("DC Removal:"), 0, 2)
+        self.dc_removal_combo = QComboBox()
+        self.dc_removal_combo.addItems(["Bias (2s)", "High-pass"])
+        self.dc_removal_combo.setCurrentIndex(0 if HEATMAP_DC_REMOVAL_MODE == "bias" else 1)
+        signal_layout.addWidget(self.dc_removal_combo, 0, 3)
+
+        signal_layout.addWidget(QLabel("HPF Cutoff (Hz):"), 1, 0)
+        self.hpf_cutoff_spin = QDoubleSpinBox()
+        self.hpf_cutoff_spin.setRange(0.01, 50.0)
+        self.hpf_cutoff_spin.setDecimals(3)
+        self.hpf_cutoff_spin.setValue(HPF_CUTOFF_HZ)
+        signal_layout.addWidget(self.hpf_cutoff_spin, 1, 1)
+
+        self.dc_removal_combo.currentIndexChanged.connect(self._on_dc_mode_changed)
+        self._on_dc_mode_changed(self.dc_removal_combo.currentIndex())
+
+        signal_group.setLayout(signal_layout)
+        main_layout.addWidget(signal_group)
+
+        # Calibration controls
+        calib_group = QGroupBox("Per-Sensor Calibration")
+        calib_layout = QVBoxLayout()
+
+        sensor_labels = ['T', 'B', 'R', 'L', 'C']
+
+        gain_layout = QHBoxLayout()
+        gain_layout.addWidget(QLabel("Gain [T,B,R,L,C]:"))
+        self.sensor_gain_spins = []
+        for idx, label in enumerate(sensor_labels):
+            spin = QDoubleSpinBox()
+            spin.setRange(0.0, 1000.0)
+            spin.setDecimals(4)
+            spin.setValue(SENSOR_CALIBRATION[idx])
+            spin.setPrefix(f"{label}: ")
+            self.sensor_gain_spins.append(spin)
+            gain_layout.addWidget(spin)
+        gain_layout.addStretch()
+        calib_layout.addLayout(gain_layout)
+
+        noise_layout = QHBoxLayout()
+        noise_layout.addWidget(QLabel("Noise Floor [T,B,R,L,C]:"))
+        self.sensor_noise_spins = []
+        for idx, label in enumerate(sensor_labels):
+            spin = QDoubleSpinBox()
+            spin.setRange(0.0, 1e6)
+            spin.setDecimals(4)
+            spin.setValue(SENSOR_NOISE_FLOOR[idx])
+            spin.setPrefix(f"{label}: ")
+            self.sensor_noise_spins.append(spin)
+            noise_layout.addWidget(spin)
+        noise_layout.addStretch()
+        calib_layout.addLayout(noise_layout)
+
+        calib_group.setLayout(calib_layout)
+        main_layout.addWidget(calib_group)
+
+        # Heatmap parameters
+        heatmap_group = QGroupBox("Heatmap Parameters")
+        heatmap_layout = QGridLayout()
+
+        heatmap_layout.addWidget(QLabel("Sensor Size:"), 0, 0)
+        self.sensor_size_spin = QDoubleSpinBox()
+        self.sensor_size_spin.setRange(0.01, 10000.0)
+        self.sensor_size_spin.setDecimals(2)
+        self.sensor_size_spin.setValue(SENSOR_SIZE)
+        heatmap_layout.addWidget(self.sensor_size_spin, 0, 1)
+
+        heatmap_layout.addWidget(QLabel("Intensity Scale:"), 0, 2)
+        self.intensity_scale_spin = QDoubleSpinBox()
+        self.intensity_scale_spin.setRange(0.0, 1.0)
+        self.intensity_scale_spin.setDecimals(6)
+        self.intensity_scale_spin.setSingleStep(0.0001)
+        self.intensity_scale_spin.setValue(INTENSITY_SCALE)
+        heatmap_layout.addWidget(self.intensity_scale_spin, 0, 3)
+
+        heatmap_layout.addWidget(QLabel("Blob Sigma X:"), 1, 0)
+        self.blob_sigma_x_spin = QDoubleSpinBox()
+        self.blob_sigma_x_spin.setRange(0.01, 5.0)
+        self.blob_sigma_x_spin.setDecimals(4)
+        self.blob_sigma_x_spin.setValue(BLOB_SIGMA_X)
+        heatmap_layout.addWidget(self.blob_sigma_x_spin, 1, 1)
+
+        heatmap_layout.addWidget(QLabel("Blob Sigma Y:"), 1, 2)
+        self.blob_sigma_y_spin = QDoubleSpinBox()
+        self.blob_sigma_y_spin.setRange(0.01, 5.0)
+        self.blob_sigma_y_spin.setDecimals(4)
+        self.blob_sigma_y_spin.setValue(BLOB_SIGMA_Y)
+        heatmap_layout.addWidget(self.blob_sigma_y_spin, 1, 3)
+
+        heatmap_layout.addWidget(QLabel("Smooth Alpha:"), 2, 0)
+        self.smooth_alpha_spin = QDoubleSpinBox()
+        self.smooth_alpha_spin.setRange(0.0, 1.0)
+        self.smooth_alpha_spin.setDecimals(3)
+        self.smooth_alpha_spin.setSingleStep(0.01)
+        self.smooth_alpha_spin.setValue(SMOOTH_ALPHA)
+        heatmap_layout.addWidget(self.smooth_alpha_spin, 2, 1)
+
+        heatmap_group.setLayout(heatmap_layout)
+        main_layout.addWidget(heatmap_group)
+
+        group.setLayout(main_layout)
+        return group
+
+    def _on_dc_mode_changed(self, index):
+        use_hpf = (index == 1)
+        self.hpf_cutoff_spin.setEnabled(use_hpf)
+
+    def get_heatmap_settings(self):
+        dc_mode = "bias" if self.dc_removal_combo.currentIndex() == 0 else "highpass"
+        return {
+            'sensor_calibration': [spin.value() for spin in self.sensor_gain_spins],
+            'sensor_noise_floor': [spin.value() for spin in self.sensor_noise_spins],
+            'sensor_size': self.sensor_size_spin.value(),
+            'intensity_scale': self.intensity_scale_spin.value(),
+            'blob_sigma_x': self.blob_sigma_x_spin.value(),
+            'blob_sigma_y': self.blob_sigma_y_spin.value(),
+            'smooth_alpha': self.smooth_alpha_spin.value(),
+            'rms_window_ms': self.rms_window_spin.value(),
+            'dc_removal_mode': dc_mode,
+            'hpf_cutoff_hz': self.hpf_cutoff_spin.value(),
+            'channel_sensor_map': HEATMAP_CHANNEL_SENSOR_MAP,
+        }
     
     def update_heatmap_display(self, heatmap, cop_x, cop_y, intensity, sensor_values):
         """Update heatmap visualization with new data.
@@ -163,7 +312,7 @@ class HeatmapPanelMixin:
         # Update sensor values
         sensor_names = ['T', 'B', 'R', 'L', 'C']
         for i, (name, value) in enumerate(zip(sensor_names, sensor_values)):
-            self.sensor_labels[i].setText(f"{name}: {value:.0f}")
+            self.sensor_labels[i].setText(f"{name}: {value:.1f}")
     
     def show_heatmap_channel_warning(self, current_channels):
         """Display warning message when channel count is incorrect.

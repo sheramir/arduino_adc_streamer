@@ -186,7 +186,7 @@ SENSOR_CALIBRATION = [1.0, 1.0, 1.0, 1.0, 1.0]  # Per-sensor scale factors
 SENSOR_NOISE_FLOOR = [0.01, 0.01, 0.01, 0.01, 0.01]
 
 # Physical size between endpoint sensors (for reference)
-SENSOR_SIZE = 0.8
+SENSOR_SIZE = 0.5
 
 # Intensity mapping
 INTENSITY_SCALE = 0.005  # Scale factor to map signal to blob amplitude
@@ -197,7 +197,10 @@ BLOB_SIGMA_X = 0.3  # Horizontal spread (in normalized coordinates)
 BLOB_SIGMA_Y = 0.3  # Vertical spread (in normalized coordinates)
 
 # Smoothing parameter (exponential moving average)
-SMOOTH_ALPHA = 0.2  # 0 = no smoothing, 1 = no history
+SMOOTH_ALPHA = 0.5  # 0 = no smoothing, 1 = no history
+
+# Magnitude threshold for heatmap (values below are set to 0)
+HEATMAP_THRESHOLD = 18.0
 
 # RMS calculation window (milliseconds)
 RMS_WINDOW_MS = 20

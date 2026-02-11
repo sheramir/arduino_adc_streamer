@@ -33,6 +33,8 @@ class HeatmapSignalProcessor:
         self.bias_start_time = None
         self.hpf_prev_x = np.zeros(self.channel_count, dtype=np.float64)
         self.hpf_prev_y = np.zeros(self.channel_count, dtype=np.float64)
+        self.ema_values = np.zeros(self.channel_count, dtype=np.float64)
+        self.ema_initialized = False
 
     def update_channel_count(self, channel_count: int) -> None:
         if channel_count != self.channel_count:
@@ -112,3 +114,34 @@ class HeatmapSignalProcessor:
             rms_values.append(float(np.sqrt(np.mean(filtered ** 2))))
 
         return rms_values, self.bias_values.copy()
+
+    def smooth_and_threshold(
+        self,
+        values: List[float],
+        alpha: float,
+        threshold: float,
+    ) -> List[float]:
+        if not values:
+            return []
+
+        self.update_channel_count(len(values))
+        values_array = np.array(values, dtype=np.float64)
+
+        if alpha <= 0.0:
+            smoothed = values_array
+        elif alpha >= 1.0:
+            smoothed = values_array
+            self.ema_values = values_array
+            self.ema_initialized = True
+        else:
+            if not self.ema_initialized:
+                self.ema_values = values_array
+                self.ema_initialized = True
+            else:
+                self.ema_values = alpha * values_array + (1.0 - alpha) * self.ema_values
+            smoothed = self.ema_values
+
+        if threshold > 0.0:
+            smoothed = np.where(smoothed < threshold, 0.0, smoothed)
+
+        return smoothed.tolist()

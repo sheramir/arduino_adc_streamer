@@ -16,7 +16,7 @@ from config_constants import (
     HEATMAP_WIDTH, HEATMAP_HEIGHT, SENSOR_CALIBRATION, SENSOR_SIZE,
     INTENSITY_SCALE, BLOB_SIGMA_X, BLOB_SIGMA_Y, SMOOTH_ALPHA,
     RMS_WINDOW_MS, SENSOR_NOISE_FLOOR, HEATMAP_DC_REMOVAL_MODE,
-    HPF_CUTOFF_HZ, HEATMAP_CHANNEL_SENSOR_MAP
+    HPF_CUTOFF_HZ, HEATMAP_CHANNEL_SENSOR_MAP, HEATMAP_THRESHOLD
 )
 
 
@@ -161,6 +161,7 @@ class HeatmapPanelMixin:
         # Signal processing controls
         signal_group = QGroupBox("Signal Processing")
         signal_layout = QGridLayout()
+        signal_layout.setColumnMinimumWidth(2, 80)
 
         signal_layout.addWidget(QLabel("RMS Window (ms):"), 0, 0)
         self.rms_window_spin = QSpinBox()
@@ -168,11 +169,11 @@ class HeatmapPanelMixin:
         self.rms_window_spin.setValue(RMS_WINDOW_MS)
         signal_layout.addWidget(self.rms_window_spin, 0, 1)
 
-        signal_layout.addWidget(QLabel("DC Removal:"), 0, 2)
+        signal_layout.addWidget(QLabel("DC Removal:"), 0, 3)
         self.dc_removal_combo = QComboBox()
         self.dc_removal_combo.addItems(["Bias (2s)", "High-pass"])
         self.dc_removal_combo.setCurrentIndex(0 if HEATMAP_DC_REMOVAL_MODE == "bias" else 1)
-        signal_layout.addWidget(self.dc_removal_combo, 0, 3)
+        signal_layout.addWidget(self.dc_removal_combo, 0, 4)
 
         signal_layout.addWidget(QLabel("HPF Cutoff (Hz):"), 1, 0)
         self.hpf_cutoff_spin = QDoubleSpinBox()
@@ -180,6 +181,13 @@ class HeatmapPanelMixin:
         self.hpf_cutoff_spin.setDecimals(3)
         self.hpf_cutoff_spin.setValue(HPF_CUTOFF_HZ)
         signal_layout.addWidget(self.hpf_cutoff_spin, 1, 1)
+
+        signal_layout.addWidget(QLabel("Threshold:"), 1, 3)
+        self.magnitude_threshold_spin = QDoubleSpinBox()
+        self.magnitude_threshold_spin.setRange(0.0, 1e6)
+        self.magnitude_threshold_spin.setDecimals(4)
+        self.magnitude_threshold_spin.setValue(HEATMAP_THRESHOLD)
+        signal_layout.addWidget(self.magnitude_threshold_spin, 1, 4)
 
         self.dc_removal_combo.currentIndexChanged.connect(self._on_dc_mode_changed)
         self._on_dc_mode_changed(self.dc_removal_combo.currentIndex())
@@ -227,6 +235,7 @@ class HeatmapPanelMixin:
         # Heatmap parameters
         heatmap_group = QGroupBox("Heatmap Parameters")
         heatmap_layout = QGridLayout()
+        heatmap_layout.setColumnMinimumWidth(2, 80)
 
         heatmap_layout.addWidget(QLabel("Sensor Size:"), 0, 0)
         self.sensor_size_spin = QDoubleSpinBox()
@@ -235,13 +244,13 @@ class HeatmapPanelMixin:
         self.sensor_size_spin.setValue(SENSOR_SIZE)
         heatmap_layout.addWidget(self.sensor_size_spin, 0, 1)
 
-        heatmap_layout.addWidget(QLabel("Intensity Scale:"), 0, 2)
+        heatmap_layout.addWidget(QLabel("Intensity Scale:"), 0, 3)
         self.intensity_scale_spin = QDoubleSpinBox()
         self.intensity_scale_spin.setRange(0.0, 1.0)
         self.intensity_scale_spin.setDecimals(6)
         self.intensity_scale_spin.setSingleStep(0.0001)
         self.intensity_scale_spin.setValue(INTENSITY_SCALE)
-        heatmap_layout.addWidget(self.intensity_scale_spin, 0, 3)
+        heatmap_layout.addWidget(self.intensity_scale_spin, 0, 4)
 
         heatmap_layout.addWidget(QLabel("Blob Sigma X:"), 1, 0)
         self.blob_sigma_x_spin = QDoubleSpinBox()
@@ -250,12 +259,12 @@ class HeatmapPanelMixin:
         self.blob_sigma_x_spin.setValue(BLOB_SIGMA_X)
         heatmap_layout.addWidget(self.blob_sigma_x_spin, 1, 1)
 
-        heatmap_layout.addWidget(QLabel("Blob Sigma Y:"), 1, 2)
+        heatmap_layout.addWidget(QLabel("Blob Sigma Y:"), 1, 3)
         self.blob_sigma_y_spin = QDoubleSpinBox()
         self.blob_sigma_y_spin.setRange(0.01, 5.0)
         self.blob_sigma_y_spin.setDecimals(4)
         self.blob_sigma_y_spin.setValue(BLOB_SIGMA_Y)
-        heatmap_layout.addWidget(self.blob_sigma_y_spin, 1, 3)
+        heatmap_layout.addWidget(self.blob_sigma_y_spin, 1, 4)
 
         heatmap_layout.addWidget(QLabel("Smooth Alpha:"), 2, 0)
         self.smooth_alpha_spin = QDoubleSpinBox()
@@ -288,6 +297,7 @@ class HeatmapPanelMixin:
             'rms_window_ms': self.rms_window_spin.value(),
             'dc_removal_mode': dc_mode,
             'hpf_cutoff_hz': self.hpf_cutoff_spin.value(),
+            'magnitude_threshold': self.magnitude_threshold_spin.value(),
             'channel_sensor_map': HEATMAP_CHANNEL_SENSOR_MAP,
         }
     

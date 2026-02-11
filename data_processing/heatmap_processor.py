@@ -230,5 +230,10 @@ class HeatmapProcessorMixin:
         for value, noise, gain in zip(sensor_values, noise_floor, calibration):
             adjusted = max(0.0, value - noise)
             calibrated.append(adjusted * gain)
+        smoothed = self.heatmap_signal_processor.smooth_and_threshold(
+            calibrated,
+            settings.get('smooth_alpha', SMOOTH_ALPHA),
+            settings.get('magnitude_threshold', 0.0),
+        )
 
-        return calibrated
+        return smoothed

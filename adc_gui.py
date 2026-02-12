@@ -81,6 +81,7 @@ class ADCStreamerGUI(
 
         # Build user interface
         self.init_ui()
+        self.load_last_heatmap_settings()
 
         # Post-initialization
         self.update_port_list()
@@ -341,6 +342,8 @@ class ADCStreamerGUI(
 
     def closeEvent(self, event):
         """Handle window close event."""
+        self.save_last_heatmap_settings()
+
         if self.serial_port and self.serial_port.is_open:
             self.disconnect_serial()
         if self.force_serial_port and self.force_serial_port.is_open:

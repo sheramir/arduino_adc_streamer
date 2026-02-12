@@ -6,11 +6,13 @@ Provides UI components for real-time 2D heatmap visualization.
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGroupBox, QGridLayout,
-    QComboBox, QSpinBox, QDoubleSpinBox
+    QComboBox, QSpinBox, QDoubleSpinBox, QPushButton, QFileDialog
 )
 from PyQt6.QtCore import Qt
 import pyqtgraph as pg
 import numpy as np
+import json
+from pathlib import Path
 
 from config_constants import (
     HEATMAP_WIDTH, HEATMAP_HEIGHT, SENSOR_CALIBRATION, SENSOR_SIZE,
@@ -23,6 +25,155 @@ from config_constants import (
 
 class HeatmapPanelMixin:
     """Mixin providing heatmap visualization panel components."""
+
+    def _get_last_heatmap_settings_path(self):
+        return Path.home() / ".adc_streamer" / "heatmap" / "last_used_heatmap_settings.json"
+
+    def _serialize_heatmap_settings(self):
+        return {
+            'version': 1,
+            'heatmap_settings': self.get_heatmap_settings(),
+        }
+
+    def _apply_heatmap_settings(self, settings):
+        if not settings:
+            return False
+
+        changed = False
+
+        if 'sensor_calibration' in settings and isinstance(settings['sensor_calibration'], list):
+            for spin, value in zip(self.sensor_gain_spins, settings['sensor_calibration']):
+                spin.setValue(float(value))
+                changed = True
+
+        if 'sensor_noise_floor' in settings and isinstance(settings['sensor_noise_floor'], list):
+            for spin, value in zip(self.sensor_noise_spins, settings['sensor_noise_floor']):
+                spin.setValue(float(value))
+                changed = True
+
+        scalar_map = [
+            ('sensor_size', self.sensor_size_spin),
+            ('intensity_scale', self.intensity_scale_spin),
+            ('blob_sigma_x', self.blob_sigma_x_spin),
+            ('blob_sigma_y', self.blob_sigma_y_spin),
+            ('smooth_alpha', self.smooth_alpha_spin),
+            ('rms_window_ms', self.rms_window_spin),
+            ('hpf_cutoff_hz', self.hpf_cutoff_spin),
+            ('magnitude_threshold', self.magnitude_threshold_spin),
+        ]
+
+        for key, widget in scalar_map:
+            if key in settings:
+                widget.setValue(float(settings[key]))
+                changed = True
+
+        dc_mode = settings.get('dc_removal_mode')
+        if dc_mode == 'bias':
+            self.dc_removal_combo.setCurrentIndex(0)
+            changed = True
+        elif dc_mode == 'highpass':
+            self.dc_removal_combo.setCurrentIndex(1)
+            changed = True
+
+        return changed
+
+    def save_heatmap_settings_to_path(self, file_path, log_message=True):
+        path = Path(file_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = self._serialize_heatmap_settings()
+        with path.open('w', encoding='utf-8') as f:
+            json.dump(payload, f, indent=2)
+        if log_message:
+            self.log_status(f"Saved heatmap settings: {path}")
+
+    def load_heatmap_settings_from_path(self, file_path, log_message=True):
+        path = Path(file_path)
+        with path.open('r', encoding='utf-8') as f:
+            payload = json.load(f)
+
+        settings = payload.get('heatmap_settings', payload)
+        applied = self._apply_heatmap_settings(settings)
+
+        if log_message:
+            if applied:
+                self.log_status(f"Loaded heatmap settings: {path}")
+            else:
+                self.log_status(f"Heatmap settings file loaded, no applicable fields: {path}")
+
+        return applied
+
+    def save_last_heatmap_settings(self):
+        try:
+            self.save_heatmap_settings_to_path(self._get_last_heatmap_settings_path(), log_message=False)
+        except Exception as e:
+            self.log_status(f"Warning: could not save last heatmap settings: {e}")
+
+    def load_last_heatmap_settings(self):
+        path = self._get_last_heatmap_settings_path()
+        if not path.exists():
+            return False
+
+        try:
+            return self.load_heatmap_settings_from_path(path, log_message=True)
+        except Exception as e:
+            self.log_status(f"Warning: could not load last heatmap settings: {e}")
+            return False
+
+    def on_save_heatmap_settings_clicked(self):
+        default_dir = self._get_last_heatmap_settings_path().parent
+        default_dir.mkdir(parents=True, exist_ok=True)
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Heatmap Settings",
+            str(default_dir / "heatmap_settings.json"),
+            "JSON Files (*.json);;All Files (*)"
+        )
+
+        if not file_path:
+            return
+
+        try:
+            self.save_heatmap_settings_to_path(file_path, log_message=True)
+        except Exception as e:
+            self.log_status(f"Error saving heatmap settings: {e}")
+
+    def on_load_heatmap_settings_clicked(self):
+        default_dir = self._get_last_heatmap_settings_path().parent
+        default_dir.mkdir(parents=True, exist_ok=True)
+
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Load Heatmap Settings",
+            str(default_dir),
+            "JSON Files (*.json);;All Files (*)"
+        )
+
+        if not file_path:
+            return
+
+        try:
+            self.load_heatmap_settings_from_path(file_path, log_message=True)
+            self.save_last_heatmap_settings()
+        except Exception as e:
+            self.log_status(f"Error loading heatmap settings: {e}")
+
+    def _connect_heatmap_settings_autosave(self):
+        self.rms_window_spin.valueChanged.connect(self.save_last_heatmap_settings)
+        self.dc_removal_combo.currentIndexChanged.connect(self.save_last_heatmap_settings)
+        self.hpf_cutoff_spin.valueChanged.connect(self.save_last_heatmap_settings)
+        self.magnitude_threshold_spin.valueChanged.connect(self.save_last_heatmap_settings)
+
+        for spin in self.sensor_gain_spins:
+            spin.valueChanged.connect(self.save_last_heatmap_settings)
+        for spin in self.sensor_noise_spins:
+            spin.valueChanged.connect(self.save_last_heatmap_settings)
+
+        self.sensor_size_spin.valueChanged.connect(self.save_last_heatmap_settings)
+        self.intensity_scale_spin.valueChanged.connect(self.save_last_heatmap_settings)
+        self.blob_sigma_x_spin.valueChanged.connect(self.save_last_heatmap_settings)
+        self.blob_sigma_y_spin.valueChanged.connect(self.save_last_heatmap_settings)
+        self.smooth_alpha_spin.valueChanged.connect(self.save_last_heatmap_settings)
     
     def create_heatmap_tab(self):
         """Create the heatmap visualization tab.
@@ -220,6 +371,17 @@ class HeatmapPanelMixin:
         group = QGroupBox("Heatmap Settings")
         main_layout = QVBoxLayout()
 
+        actions_layout = QHBoxLayout()
+        self.save_heatmap_settings_btn = QPushButton("Save Settings...")
+        self.save_heatmap_settings_btn.clicked.connect(self.on_save_heatmap_settings_clicked)
+        actions_layout.addWidget(self.save_heatmap_settings_btn)
+
+        self.load_heatmap_settings_btn = QPushButton("Load Settings...")
+        self.load_heatmap_settings_btn.clicked.connect(self.on_load_heatmap_settings_clicked)
+        actions_layout.addWidget(self.load_heatmap_settings_btn)
+        actions_layout.addStretch()
+        main_layout.addLayout(actions_layout)
+
         # Signal processing controls
         signal_group = QGroupBox("Signal Processing")
         signal_layout = QGridLayout()
@@ -338,6 +500,8 @@ class HeatmapPanelMixin:
 
         heatmap_group.setLayout(heatmap_layout)
         main_layout.addWidget(heatmap_group)
+
+        self._connect_heatmap_settings_autosave()
 
         group.setLayout(main_layout)
         return group

@@ -36,7 +36,7 @@ from config_constants import *
 from serial_communication import ADCSerialMixin, ForceSerialMixin
 from config import MCUDetectorMixin, ConfigurationMixin
 from gui import GUIComponentsMixin
-from data_processing import DataProcessorMixin, HeatmapProcessorMixin, SimulatedSensorThread
+from data_processing import DataProcessorMixin, HeatmapProcessorMixin, SpectrumProcessorMixin, SimulatedSensorThread
 from file_operations import FileOperationsMixin
 
 
@@ -49,6 +49,7 @@ class ADCStreamerGUI(
     ConfigurationMixin,     # ✅ Configuration management
     DataProcessorMixin,     # ✅ Data processing
     HeatmapProcessorMixin,  # ✅ Heatmap CoP calculation
+    SpectrumProcessorMixin, # ✅ Spectrum processing
     FileOperationsMixin     # ✅ File operations
 ):
     """
@@ -77,11 +78,13 @@ class ADCStreamerGUI(
         self._init_config_state()
         self._init_ui_state()
         self._init_heatmap_state()
+        self._init_spectrum_state()
         self._init_timers()
 
         # Build user interface
         self.init_ui()
         self.load_last_heatmap_settings()
+        self.load_last_spectrum_settings()
 
         # Post-initialization
         self.update_port_list()
@@ -253,6 +256,11 @@ class ADCStreamerGUI(
         self.heatmap_timer = QTimer()
         self.heatmap_timer.timeout.connect(self.update_heatmap)
         self.heatmap_timer.setInterval(int(1000 / HEATMAP_FPS))  # Convert FPS to milliseconds
+
+        # Spectrum update timer
+        self.spectrum_timer = QTimer()
+        self.spectrum_timer.timeout.connect(self.update_spectrum)
+        self.spectrum_timer.setInterval(100)
         
         # Simulated sensor data source (for testing)
         self.simulated_sensor_thread: Optional[SimulatedSensorThread] = None
@@ -331,10 +339,17 @@ class ADCStreamerGUI(
         Args:
             index: Tab index (0=Time Series, 1=Heatmap)
         """
-        if index == 1:  # Heatmap tab
+        current_tab = self.visualization_tabs.tabText(index)
+
+        if current_tab == "2D Heatmap":
             self.start_heatmap_simulation()
         else:  # Time Series tab
             self.stop_heatmap_simulation()
+
+        if current_tab == "Spectrum":
+            self.start_spectrum_updates()
+        else:
+            self.stop_spectrum_updates()
 
     # ========================================================================
     # Window Management
@@ -343,11 +358,14 @@ class ADCStreamerGUI(
     def closeEvent(self, event):
         """Handle window close event."""
         self.save_last_heatmap_settings()
+        self.save_last_spectrum_settings()
 
         if self.serial_port and self.serial_port.is_open:
             self.disconnect_serial()
         if self.force_serial_port and self.force_serial_port.is_open:
             self.disconnect_force()
+
+        self.shutdown_spectrum_worker()
         
         # Stop heatmap simulation thread
         if self.simulated_sensor_thread is not None:
@@ -366,10 +384,17 @@ class ADCStreamerGUI(
         Args:
             index: Tab index (0=Time Series, 1=Heatmap)
         """
-        if index == 1:  # Heatmap tab
+        current_tab = self.visualization_tabs.tabText(index)
+
+        if current_tab == "2D Heatmap":
             self.start_heatmap_simulation()
         else:  # Time Series or other tabs
             self.stop_heatmap_simulation()
+
+        if current_tab == "Spectrum":
+            self.start_spectrum_updates()
+        else:
+            self.stop_spectrum_updates()
     
     def start_heatmap_simulation(self):
         """Start heatmap updates."""
@@ -384,6 +409,16 @@ class ADCStreamerGUI(
         # Stop heatmap update timer
         if self.heatmap_timer.isActive():
             self.heatmap_timer.stop()
+
+    def start_spectrum_updates(self):
+        """Start spectrum updates."""
+        if not self.spectrum_timer.isActive():
+            self.spectrum_timer.start()
+
+    def stop_spectrum_updates(self):
+        """Stop spectrum updates."""
+        if self.spectrum_timer.isActive():
+            self.spectrum_timer.stop()
     
     def on_simulated_sensor_data(self, sensor_values):
         """Handle new simulated sensor data (runs in main thread via signal).

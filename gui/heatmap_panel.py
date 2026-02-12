@@ -57,7 +57,6 @@ class HeatmapPanelMixin:
             ('blob_sigma_x', self.blob_sigma_x_spin),
             ('blob_sigma_y', self.blob_sigma_y_spin),
             ('smooth_alpha', self.smooth_alpha_spin),
-            ('rms_window_ms', self.rms_window_spin),
             ('hpf_cutoff_hz', self.hpf_cutoff_spin),
             ('magnitude_threshold', self.magnitude_threshold_spin),
         ]
@@ -66,6 +65,10 @@ class HeatmapPanelMixin:
             if key in settings:
                 widget.setValue(float(settings[key]))
                 changed = True
+
+        if 'rms_window_ms' in settings:
+            self.rms_window_spin.setValue(int(round(float(settings['rms_window_ms']))))
+            changed = True
 
         dc_mode = settings.get('dc_removal_mode')
         if dc_mode == 'bias':

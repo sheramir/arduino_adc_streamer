@@ -33,10 +33,17 @@ class DisplayPanelsMixin:
         # Create time-series tab
         timeseries_tab = self.create_timeseries_tab()
         self.visualization_tabs.addTab(timeseries_tab, "Time Series")
+        self.timeseries_tab_index = 0
         
         # Create heatmap tab (from HeatmapPanelMixin)
         heatmap_tab = self.create_heatmap_tab()
         self.visualization_tabs.addTab(heatmap_tab, "2D Heatmap")
+        self.heatmap_tab_index = 1
+
+        # Create spectrum tab (from SpectrumPanelMixin)
+        spectrum_tab = self.create_spectrum_tab()
+        self.visualization_tabs.addTab(spectrum_tab, "Spectrum")
+        self.spectrum_tab_index = 2
         
         return self.visualization_tabs
     

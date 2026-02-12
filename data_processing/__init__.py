@@ -15,6 +15,7 @@ Module structure:
 from data_processing.binary_processor import BinaryProcessorMixin
 from data_processing.force_processor import ForceProcessorMixin
 from data_processing.heatmap_processor import HeatmapProcessorMixin
+from data_processing.spectrum_processor import SpectrumProcessorMixin
 from data_processing.simulated_source import SimulatedSensorThread
 from data_processing.data_processor import DataProcessorMixin
 
@@ -23,5 +24,6 @@ __all__ = [
     'BinaryProcessorMixin',
     'ForceProcessorMixin',
     'HeatmapProcessorMixin',
+    'SpectrumProcessorMixin',
     'SimulatedSensorThread',
 ]

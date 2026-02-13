@@ -9,7 +9,8 @@ import threading
 from PyQt6.QtCore import Qt
 
 from config_constants import (
-    INTER_COMMAND_DELAY, MAX_SAMPLES_BUFFER, MAX_PLOT_COLUMNS
+    INTER_COMMAND_DELAY, MAX_SAMPLES_BUFFER, MAX_PLOT_COLUMNS,
+    ANALYZER555_DEFAULT_CF_UNIT, ANALYZER555_DEFAULT_CF_VALUE
 )
 from config.buffer_utils import validate_and_limit_sweeps_per_block
 
@@ -101,6 +102,70 @@ class ConfigurationMixin:
         self.config['sample_rate'] = value
         self.config_is_valid = False
         self.update_start_button_state()
+
+    def _get_cf_farads_from_controls(self) -> float:
+        unit = self.cf_unit_combo.currentText() if hasattr(self, 'cf_unit_combo') else ANALYZER555_DEFAULT_CF_UNIT
+        value = float(self.cf_value_spin.value()) if hasattr(self, 'cf_value_spin') else ANALYZER555_DEFAULT_CF_VALUE
+        scale = {'pF': 1e-12, 'nF': 1e-9, 'uF': 1e-6}.get(unit, 1e-9)
+        return value * scale
+
+    def on_rb_changed(self, value: float):
+        self.config['rb_ohms'] = float(value)
+        self.config_is_valid = False
+        self.update_start_button_state()
+
+    def on_rk_changed(self, value: float):
+        self.config['rk_ohms'] = float(value)
+        self.config_is_valid = False
+        self.update_start_button_state()
+
+    def on_cf_changed(self, _):
+        self.config['cf_farads'] = self._get_cf_farads_from_controls()
+        self.config_is_valid = False
+        self.update_start_button_state()
+
+    def on_rxmax_changed(self, value: float):
+        self.config['rxmax_ohms'] = float(value)
+        self.config_is_valid = False
+        self.update_start_button_state()
+
+    def _apply_555_parameter(self, command_name: str, value: str):
+        if not self.serial_port or not self.serial_port.is_open:
+            self.log_status("ERROR: Connect a device before applying 555 parameters")
+            return
+
+        if getattr(self, 'device_mode', 'adc') != '555':
+            self.log_status("Ignoring 555 parameter apply while not in 555 mode")
+            return
+
+        success, received = self.send_command_and_wait_ack(f"{command_name} {value}", None)
+        if success:
+            shown = received if received is not None and received != '' else value
+            self.log_status(f"Applied {command_name}={shown}")
+            self.config_is_valid = False
+            self.update_start_button_state()
+        else:
+            self.log_status(f"ERROR: Failed to apply {command_name}")
+
+    def on_apply_rb_clicked(self):
+        value = str(int(round(self.rb_spin.value())))
+        self.config['rb_ohms'] = float(value)
+        self._apply_555_parameter('rb', value)
+
+    def on_apply_rk_clicked(self):
+        value = str(int(round(self.rk_spin.value())))
+        self.config['rk_ohms'] = float(value)
+        self._apply_555_parameter('rk', value)
+
+    def on_apply_cf_clicked(self):
+        cf_farads = self._get_cf_farads_from_controls()
+        self.config['cf_farads'] = cf_farads
+        self._apply_555_parameter('cf', f"{cf_farads:.12g}")
+
+    def on_apply_rxmax_clicked(self):
+        value = str(int(round(self.rxmax_spin.value())))
+        self.config['rxmax_ohms'] = float(value)
+        self._apply_555_parameter('rxmax', value)
     
     def on_buffer_size_changed(self, value: int):
         """Handle buffer size change and validate against constraints."""
@@ -252,6 +317,9 @@ class ConfigurationMixin:
         # Thread-safe check of serial port
         if not self.serial_port or not self.serial_port.is_open:
             return False
+
+        if getattr(self, 'device_mode', 'adc') == '555':
+            return self._send_555_config_with_verification()
         
         all_success = True
         
@@ -382,8 +450,105 @@ class ConfigurationMixin:
         
         return all_success
 
+    def _send_555_config_with_verification(self) -> bool:
+        """Send only 555-analyzer supported configuration commands."""
+        all_success = True
+
+        channels_text = self.channels_input.text().strip()
+        if channels_text:
+            desired_channels = [int(c.strip()) for c in channels_text.split(',') if c.strip()]
+            success, received = self.send_command_and_wait_ack(f"channels {channels_text}", None)
+            if success:
+                if received:
+                    try:
+                        self.arduino_status['channels'] = [int(c.strip()) for c in received.split(',') if c.strip()]
+                    except Exception:
+                        self.arduino_status['channels'] = desired_channels
+                else:
+                    self.arduino_status['channels'] = desired_channels
+            else:
+                self.log_status(f"555 config command failed: channels {channels_text}")
+                all_success = False
+            time.sleep(0.05)
+
+        repeat = str(self.repeat_spin.value())
+        success, received = self.send_command_and_wait_ack(f"repeat {repeat}", None)
+        if success:
+            try:
+                self.arduino_status['repeat'] = int(received) if received not in (None, '') else int(repeat)
+            except Exception:
+                self.arduino_status['repeat'] = int(repeat)
+        else:
+            self.log_status(f"555 config command failed: repeat {repeat}")
+            all_success = False
+        time.sleep(0.05)
+
+        buffer_size = self.buffer_spin.value()
+        if buffer_size <= 0:
+            buffer_size = 1
+        if buffer_size > 256:
+            self.log_status(f"555 mode buffer limited from {buffer_size} to 256")
+            buffer_size = 256
+            self.buffer_spin.setValue(256)
+        buffer_str = str(int(buffer_size))
+        success, received = self.send_command_and_wait_ack(f"buffer {buffer_str}", None)
+        if success:
+            try:
+                self.arduino_status['buffer'] = int(received) if received not in (None, '') else int(buffer_str)
+            except Exception:
+                self.arduino_status['buffer'] = int(buffer_str)
+        else:
+            self.log_status(f"555 config command failed: buffer {buffer_str}")
+            all_success = False
+        time.sleep(0.05)
+
+        rb_value = str(int(round(self.rb_spin.value())))
+        rk_value = str(int(round(self.rk_spin.value())))
+        cf_farads = self._get_cf_farads_from_controls()
+        cf_value = f"{cf_farads:.12g}"
+        rxmax_value = str(int(round(self.rxmax_spin.value())))
+
+        self.config['rb_ohms'] = float(rb_value)
+        self.config['rk_ohms'] = float(rk_value)
+        self.config['cf_farads'] = cf_farads
+        self.config['rxmax_ohms'] = float(rxmax_value)
+
+        for cmd, value in [
+            ('rb', rb_value),
+            ('rk', rk_value),
+            ('cf', cf_value),
+            ('rxmax', rxmax_value),
+        ]:
+            success, _ = self.send_command_and_wait_ack(f"{cmd} {value}", None)
+            if not success:
+                self.log_status(f"555 config command failed: {cmd} {value}")
+                all_success = False
+            time.sleep(0.05)
+
+        return all_success
+
     def verify_configuration(self) -> bool:
         """Verify that Arduino status matches expected configuration."""
+        if getattr(self, 'device_mode', 'adc') == '555':
+            expected_channels = self.config.get('channels', [])
+            actual_channels = self.arduino_status.get('channels')
+            if actual_channels is None:
+                # Some 555 firmwares ACK without echoing values; use desired channels if
+                # command stage succeeded and no status payload was provided.
+                actual_channels = expected_channels
+                self.arduino_status['channels'] = actual_channels
+            if expected_channels != actual_channels:
+                self.log_status(f"MISMATCH: Expected channels {expected_channels}, got {actual_channels}")
+                return False
+            if self.arduino_status.get('repeat') is not None:
+                if self.arduino_status['repeat'] != self.config.get('repeat'):
+                    self.log_status(
+                        f"MISMATCH: Expected repeat {self.config.get('repeat')}, got {self.arduino_status['repeat']}"
+                    )
+                    return False
+            self.log_status(f"555 configuration matches: {actual_channels}")
+            return True
+
         # Check if we have valid status data
         if self.arduino_status['channels'] is None:
             self.log_status("No status data received yet")

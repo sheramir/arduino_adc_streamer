@@ -89,6 +89,16 @@ class DisplayPanelsMixin:
         self.plot_info_label = QLabel("ADC - Sweeps: 0 | Samples: 0  |  Force: 0 samples")
         plot_layout.addWidget(self.plot_info_label)
 
+        self.charge_time_label = QLabel("")
+        self.charge_time_label.setStyleSheet("font-family: monospace;")
+        self.charge_time_label.setVisible(False)
+        plot_layout.addWidget(self.charge_time_label)
+
+        self.discharge_time_label = QLabel("")
+        self.discharge_time_label.setStyleSheet("font-family: monospace;")
+        self.discharge_time_label.setVisible(False)
+        plot_layout.addWidget(self.discharge_time_label)
+
         plot_group.setLayout(plot_layout)
         layout.addWidget(plot_group)
         

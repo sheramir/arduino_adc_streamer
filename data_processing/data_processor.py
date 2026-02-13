@@ -26,7 +26,9 @@ import pyqtgraph as pg
 
 from config_constants import (
     MAX_TIMING_SAMPLES, PLOT_UPDATE_FREQUENCY, PLOT_COLORS,
-    MAX_FORCE_SAMPLES, MAX_LOG_LINES, IADC_RESOLUTION_BITS
+    MAX_FORCE_SAMPLES, MAX_LOG_LINES, IADC_RESOLUTION_BITS,
+    ANALYZER555_DEFAULT_CF_FARADS, ANALYZER555_DEFAULT_RB_OHMS,
+    ANALYZER555_DEFAULT_RK_OHMS
 )
 
 # Import sub-module mixins
@@ -201,6 +203,7 @@ class DataProcessorMixin(SerialParserMixin, BinaryProcessorMixin, ForceProcessor
                     unique_channels.append(ch)
 
             desired_curve_keys = set()
+            latest_channel_values = {}
             
             # Calculate average sample time for intra-sweep timing
             if hasattr(self, 'arduino_sample_times') and self.arduino_sample_times:
@@ -252,8 +255,11 @@ class DataProcessorMixin(SerialParserMixin, BinaryProcessorMixin, ForceProcessor
                 channel_data = np.concatenate(channel_data_list)
                 channel_times = np.concatenate(channel_times_list)
 
+                if len(channel_data) > 0:
+                    latest_channel_values[channel] = float(channel_data[-1])
+
                 # Convert to voltage if voltage units mode is enabled
-                if self.yaxis_units_combo.currentText() == "Voltage":
+                if getattr(self, 'device_mode', 'adc') != '555' and self.yaxis_units_combo.currentText() == "Voltage":
                     vref = self.get_vref_voltage()
                     max_adc_value = (2 ** IADC_RESOLUTION_BITS) - 1  # 4095 for 12-bit
                     channel_data = (channel_data / max_adc_value) * vref
@@ -341,7 +347,9 @@ class DataProcessorMixin(SerialParserMixin, BinaryProcessorMixin, ForceProcessor
                     curve.setVisible(False)
 
             # Update axis labels
-            if self.yaxis_units_combo.currentText() == "Voltage":
+            if getattr(self, 'device_mode', 'adc') == '555':
+                self.plot_widget.setLabel('left', 'Resistance', units='Ω')
+            elif self.yaxis_units_combo.currentText() == "Voltage":
                 self.plot_widget.setLabel('left', 'Voltage', units='V')
             else:
                 self.plot_widget.setLabel('left', 'ADC Value', units='counts')
@@ -350,6 +358,9 @@ class DataProcessorMixin(SerialParserMixin, BinaryProcessorMixin, ForceProcessor
 
             # Apply Y-axis range
             self.apply_y_axis_range()
+
+            # Update 555 analyzer timing readouts
+            self.update_555_timing_readouts(latest_channel_values)
 
         except Exception as e:
             self.log_status(f"ERROR updating plot: {e}")
@@ -472,6 +483,10 @@ class DataProcessorMixin(SerialParserMixin, BinaryProcessorMixin, ForceProcessor
     
     def apply_y_axis_range(self):
         """Apply Y-axis range setting to the plot."""
+        if getattr(self, 'device_mode', 'adc') == '555':
+            self.plot_widget.enableAutoRange(axis='y')
+            return
+
         range_text = self.yaxis_range_combo.currentText()
         units_text = self.yaxis_units_combo.currentText()
         
@@ -993,6 +1008,47 @@ class DataProcessorMixin(SerialParserMixin, BinaryProcessorMixin, ForceProcessor
             return 1.25  # External reference
         else:
             return 3.3  # Default to VDD
+
+    def _format_time_auto(self, seconds: float) -> str:
+        value = max(0.0, float(seconds))
+        if value < 1e-3:
+            return f"{value * 1e6:.2f} µs"
+        if value < 1.0:
+            return f"{value * 1e3:.2f} ms"
+        return f"{value:.4f} s"
+
+    def update_555_timing_readouts(self, latest_channel_values):
+        if not hasattr(self, 'charge_time_label') or not hasattr(self, 'discharge_time_label'):
+            return
+
+        if getattr(self, 'device_mode', 'adc') != '555':
+            self.charge_time_label.setVisible(False)
+            self.discharge_time_label.setVisible(False)
+            return
+
+        self.charge_time_label.setVisible(True)
+        self.discharge_time_label.setVisible(True)
+
+        cf_farads = float(self.config.get('cf_farads', ANALYZER555_DEFAULT_CF_FARADS))
+        rb_ohms = float(self.config.get('rb_ohms', ANALYZER555_DEFAULT_RB_OHMS))
+        rk_ohms = float(self.config.get('rk_ohms', ANALYZER555_DEFAULT_RK_OHMS))
+        ln2 = 0.69314718056
+
+        t_discharge = ln2 * cf_farads * rb_ohms
+
+        if not latest_channel_values:
+            self.charge_time_label.setText("Charge time: waiting for channel data...")
+            self.discharge_time_label.setText(f"Discharge time: {self._format_time_auto(t_discharge)}")
+            return
+
+        parts = []
+        for channel in sorted(latest_channel_values.keys()):
+            rx = max(0.0, float(latest_channel_values[channel]))
+            t_charge = ln2 * cf_farads * (rx + rk_ohms + rb_ohms)
+            parts.append(f"Ch{channel}: {self._format_time_auto(t_charge)}")
+
+        self.charge_time_label.setText("Charge time: " + " | ".join(parts))
+        self.discharge_time_label.setText(f"Discharge time: {self._format_time_auto(t_discharge)}")
     
     def log_status(self, message: str):
         """Log a status message."""

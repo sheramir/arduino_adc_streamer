@@ -57,6 +57,7 @@ See **[README_REFACTORING.md](README_REFACTORING.md)** for detailed architecture
 
 ### Hardware Support
 - 🔌 **XIAO MG24**: 12-bit IADC with oversampling (OSR 2×, 4×, 8×)
+- 🧪 **Teensy 4.0 + Teensy555_streamer**: 555 timing analyzer streaming resistance-like channel values
 - 📊 **Multi-channel scanning**: Up to 18 analog input pins
 - ⚡ **High-speed acquisition**: Up to 76 kHz per channel (OSR 2×)
 - 🔄 **Ground subtraction**: Automatic background subtraction with dedicated ground pin
@@ -100,6 +101,23 @@ See **[README_REFACTORING.md](README_REFACTORING.md)** for detailed architecture
 - **Oversampling (OSR)**: 2, 4, or 8 (higher = better SNR, lower sample rate)
 - **Analog Gain**: 1×, 2×, 3×, 4× (applied before ADC)
 
+### MCU-Aware Device Modes
+- The GUI detects MCU type automatically on connect.
+- If MCU name contains **`555`** (e.g. `Teensy555`), the app switches to **555 analyzer mode**.
+- Otherwise, it stays in **ADC streamer mode**.
+
+#### 555 Analyzer Mode
+- ADC-specific controls are hidden/disabled (ground pin, averaging/OSR, conversion speed, sampling speed).
+- 555 parameter controls are shown:
+   - **Cf** (with pF/nF/uF unit selector, converted to farads before send)
+   - **Rk** (ohms)
+   - **Rb** (ohms)
+   - **Rx max** (ohms)
+- Time-series plotting is interpreted as **resistance-like values** and labeled in ohms.
+- Time-series tab shows computed timing readouts:
+   - $T_{charge}=\ln(2)\,C_f\,(R_x + R_k + R_b)$
+   - $T_{discharge}=\ln(2)\,C_f\,R_b$
+
 ### Acquisition Settings
 - **Channel Sequence**: Comma-separated list (e.g., `0,1,2,3` or `0,1,1,2,3` for oversampling channel 1)
 - **Repeat Count**: 1-16 measurements per channel per sweep
@@ -123,6 +141,19 @@ repeat <count>     - Set repeat count: 1-16
 ground <pin|false> - Set ground pin (0-18) or disable ("false")
 buffer <size>      - Set sweeps per block
 ```
+
+### 555 Analyzer Commands
+When in 555 mode, configuration sends only this subset:
+```
+channels <list>
+repeat <count>
+buffer <size>
+rb <value>
+rk <value>
+cf <farads>
+rxmax <value>
+```
+ADC-only commands such as `ref`, `osr`, `gain`, and `ground` are not sent in 555 mode.
 
 ### Run Commands
 ```

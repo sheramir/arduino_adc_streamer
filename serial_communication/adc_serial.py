@@ -110,7 +110,9 @@ class ADCSerialMixin:
         
         # Reset MCU detection
         self.current_mcu = None
+        self.device_mode = 'adc'
         self.mcu_label.setText("MCU: -")
+        self.update_gui_for_mcu()
         
         # Reset last sent config
         self.last_sent_config = {

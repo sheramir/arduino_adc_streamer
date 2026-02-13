@@ -7,14 +7,17 @@ GUI components for serial connection, ADC configuration, acquisition settings, a
 import os
 from PyQt6.QtWidgets import (
     QGroupBox, QGridLayout, QLabel, QPushButton, QLineEdit, 
-    QComboBox, QCheckBox, QSpinBox
+    QComboBox, QCheckBox, QSpinBox, QDoubleSpinBox
 )
 from PyQt6.QtCore import Qt
 
 from config_constants import (
     GROUND_PIN_MIN, GROUND_PIN_MAX, REPEAT_COUNT_MIN, REPEAT_COUNT_MAX, 
     REPEAT_COUNT_DEFAULT, BUFFER_SIZE_MIN, BUFFER_SIZE_MAX, DEFAULT_BUFFER_SIZE,
-    TIMED_RUN_MIN, TIMED_RUN_MAX, TIMED_RUN_DEFAULT
+    TIMED_RUN_MIN, TIMED_RUN_MAX, TIMED_RUN_DEFAULT,
+    ANALYZER555_DEFAULT_RB_OHMS, ANALYZER555_DEFAULT_RK_OHMS,
+    ANALYZER555_DEFAULT_CF_VALUE, ANALYZER555_DEFAULT_CF_UNIT,
+    ANALYZER555_DEFAULT_RXMAX_OHMS
 )
 
 
@@ -129,6 +132,74 @@ class ControlPanelsMixin:
         self.sample_rate_label.hide()
         self.sample_rate_spin.hide()
 
+        # 555 Analyzer Parameters (shown only in 555 mode)
+        self.rb_label = QLabel("Rb [Ω]:")
+        layout.addWidget(self.rb_label, 6, 0)
+        self.rb_spin = QDoubleSpinBox()
+        self.rb_spin.setRange(0.0, 1e9)
+        self.rb_spin.setDecimals(2)
+        self.rb_spin.setValue(ANALYZER555_DEFAULT_RB_OHMS)
+        self.rb_spin.valueChanged.connect(self.on_rb_changed)
+        layout.addWidget(self.rb_spin, 6, 1)
+        self.rb_apply_btn = QPushButton("Apply")
+        self.rb_apply_btn.clicked.connect(self.on_apply_rb_clicked)
+        layout.addWidget(self.rb_apply_btn, 6, 2)
+
+        self.rk_label = QLabel("Rk [Ω]:")
+        layout.addWidget(self.rk_label, 7, 0)
+        self.rk_spin = QDoubleSpinBox()
+        self.rk_spin.setRange(0.0, 1e9)
+        self.rk_spin.setDecimals(2)
+        self.rk_spin.setValue(ANALYZER555_DEFAULT_RK_OHMS)
+        self.rk_spin.valueChanged.connect(self.on_rk_changed)
+        layout.addWidget(self.rk_spin, 7, 1)
+        self.rk_apply_btn = QPushButton("Apply")
+        self.rk_apply_btn.clicked.connect(self.on_apply_rk_clicked)
+        layout.addWidget(self.rk_apply_btn, 7, 2)
+
+        self.cf_label = QLabel("Cf:")
+        layout.addWidget(self.cf_label, 8, 0)
+        self.cf_value_spin = QDoubleSpinBox()
+        self.cf_value_spin.setRange(0.0001, 1e6)
+        self.cf_value_spin.setDecimals(6)
+        self.cf_value_spin.setValue(ANALYZER555_DEFAULT_CF_VALUE)
+        self.cf_value_spin.valueChanged.connect(self.on_cf_changed)
+        layout.addWidget(self.cf_value_spin, 8, 1)
+        self.cf_unit_combo = QComboBox()
+        self.cf_unit_combo.addItems(["pF", "nF", "uF"])
+        self.cf_unit_combo.setCurrentText(ANALYZER555_DEFAULT_CF_UNIT)
+        self.cf_unit_combo.currentTextChanged.connect(self.on_cf_changed)
+        layout.addWidget(self.cf_unit_combo, 8, 2)
+        self.cf_apply_btn = QPushButton("Apply")
+        self.cf_apply_btn.clicked.connect(self.on_apply_cf_clicked)
+        layout.addWidget(self.cf_apply_btn, 8, 3)
+
+        self.rxmax_label = QLabel("Rx max [Ω]:")
+        layout.addWidget(self.rxmax_label, 9, 0)
+        self.rxmax_spin = QDoubleSpinBox()
+        self.rxmax_spin.setRange(1.0, 1e12)
+        self.rxmax_spin.setDecimals(2)
+        self.rxmax_spin.setValue(ANALYZER555_DEFAULT_RXMAX_OHMS)
+        self.rxmax_spin.valueChanged.connect(self.on_rxmax_changed)
+        layout.addWidget(self.rxmax_spin, 9, 1)
+        self.rxmax_apply_btn = QPushButton("Apply")
+        self.rxmax_apply_btn.clicked.connect(self.on_apply_rxmax_clicked)
+        layout.addWidget(self.rxmax_apply_btn, 9, 2)
+
+        self.rb_label.hide()
+        self.rb_spin.hide()
+        self.rb_apply_btn.hide()
+        self.rk_label.hide()
+        self.rk_spin.hide()
+        self.rk_apply_btn.hide()
+        self.cf_label.hide()
+        self.cf_value_spin.hide()
+        self.cf_unit_combo.hide()
+        self.cf_apply_btn.hide()
+        self.rxmax_label.hide()
+        self.rxmax_spin.hide()
+        self.rxmax_apply_btn.hide()
+
         group.setLayout(layout)
         return group
 
@@ -145,7 +216,8 @@ class ControlPanelsMixin:
         layout.addWidget(self.channels_input, 0, 1, 1, 2)
 
         # Ground pin
-        layout.addWidget(QLabel("Ground Pin:"), 1, 0)
+        self.ground_pin_label = QLabel("Ground Pin:")
+        layout.addWidget(self.ground_pin_label, 1, 0)
         self.ground_pin_spin = QSpinBox()
         self.ground_pin_spin.setRange(GROUND_PIN_MIN, GROUND_PIN_MAX)
         self.ground_pin_spin.setValue(0)  # Default to pin 0

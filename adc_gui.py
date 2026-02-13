@@ -161,6 +161,8 @@ class ADCStreamerGUI(
 
     def _init_config_state(self):
         """Initialize configuration state."""
+        self.device_mode = 'adc'
+
         self.config = {
             'channels': [],
             'repeat': 1,
@@ -171,7 +173,11 @@ class ADCStreamerGUI(
             'reference': 'vdd',
             'conv_speed': 'med',
             'samp_speed': 'med',
-            'sample_rate': 0
+            'sample_rate': 0,
+            'rb_ohms': ANALYZER555_DEFAULT_RB_OHMS,
+            'rk_ohms': ANALYZER555_DEFAULT_RK_OHMS,
+            'cf_farads': ANALYZER555_DEFAULT_CF_FARADS,
+            'rxmax_ohms': ANALYZER555_DEFAULT_RXMAX_OHMS,
         }
         
         self.last_sent_config = {
@@ -194,7 +200,11 @@ class ADCStreamerGUI(
             'osr': None,
             'gain': None,
             'reference': None,
-            'buffer': None
+            'buffer': None,
+            'rb': None,
+            'rk': None,
+            'cf': None,
+            'rxmax': None,
         }
 
     def _init_ui_state(self):

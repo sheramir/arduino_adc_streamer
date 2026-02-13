@@ -141,6 +141,20 @@ IADC_RESOLUTION_BITS = 12
 PLOT_EXPORT_WIDTH = 1920
 
 # ============================================================================
+# 555 Analyzer Constants
+# ============================================================================
+
+# Default 555 model parameters
+ANALYZER555_DEFAULT_RB_OHMS = 470.0
+ANALYZER555_DEFAULT_RK_OHMS = 0.0
+ANALYZER555_DEFAULT_CF_FARADS = 0.0022e-6
+ANALYZER555_DEFAULT_RXMAX_OHMS = 500000.0
+
+# GUI defaults for Cf entry
+ANALYZER555_DEFAULT_CF_VALUE = 2.2
+ANALYZER555_DEFAULT_CF_UNIT = "nF"
+
+# ============================================================================
 # Memory Management Settings
 # ============================================================================
 

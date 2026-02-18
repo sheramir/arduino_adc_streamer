@@ -76,6 +76,19 @@ See **[README_REFACTORING.md](README_REFACTORING.md)** for detailed architecture
 - 🔍 **Zoom/pan**: Interactive plot navigation
 - 📏 **Dual Y-axes**: ADC values or voltage conversion
 - 💪 **Force sensor support**: Dual-axis force measurement overlay (115200 baud CSV)
+- 🎛️ **Real-time filtering**: User-configurable Notch/LP/HP/BP filtering with shared processing for time-series + spectrum
+
+### Filtering (Time Series + Spectrum)
+- Filter controls are in the **Spectrum** tab under **Filtering**.
+- One master toggle controls filtering ON/OFF.
+- Supports up to 3 notch filters (default: 60 Hz + 120 Hz enabled), each with enable/frequency/Q.
+- Supports one main filter at a time: **Low-pass**, **High-pass**, or **Band-pass**.
+- Notch filters can be combined with one main filter.
+- The pipeline is shared:
+   - `raw samples -> optional filter engine -> processed samples`
+   - time-series uses processed samples when filtering is ON
+   - spectrum/FFT uses the same processed samples when filtering is ON
+- Uses stable IIR SOS filtering (SciPy) with per-channel state continuity across blocks.
 
 ### Data Management
 - 💾 **CSV export**: Timestamped data with full metadata

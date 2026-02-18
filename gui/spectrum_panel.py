@@ -28,7 +28,14 @@ from PyQt6.QtWidgets import (
 )
 from pyqtgraph.exporters import ImageExporter
 
-from config_constants import PLOT_COLORS, PLOT_EXPORT_WIDTH
+from config_constants import (
+    PLOT_COLORS, PLOT_EXPORT_WIDTH,
+    FILTER_DEFAULT_ENABLED, FILTER_DEFAULT_MAIN_TYPE, FILTER_DEFAULT_ORDER,
+    FILTER_DEFAULT_LOW_CUTOFF_HZ, FILTER_DEFAULT_HIGH_CUTOFF_HZ,
+    FILTER_NOTCH1_DEFAULT_ENABLED, FILTER_NOTCH1_DEFAULT_FREQ_HZ, FILTER_NOTCH1_DEFAULT_Q,
+    FILTER_NOTCH2_DEFAULT_ENABLED, FILTER_NOTCH2_DEFAULT_FREQ_HZ, FILTER_NOTCH2_DEFAULT_Q,
+    FILTER_NOTCH3_DEFAULT_ENABLED, FILTER_NOTCH3_DEFAULT_FREQ_HZ, FILTER_NOTCH3_DEFAULT_Q,
+)
 
 
 class SpectrumPanelMixin:
@@ -80,6 +87,10 @@ class SpectrumPanelMixin:
         self.spectrum_snap_peak_check.setChecked(bool(settings.get('snap_to_peak', False)))
         self.on_spectrum_update_rate_changed(self.spectrum_update_rate_spin.value())
 
+        filter_settings = settings.get('filter_settings')
+        if filter_settings and hasattr(self, 'filter_master_check'):
+            self._apply_filter_widgets(filter_settings)
+
     def save_last_spectrum_settings(self):
         try:
             path = self._get_last_spectrum_settings_path()
@@ -96,7 +107,11 @@ class SpectrumPanelMixin:
                 return
             with path.open('r', encoding='utf-8') as f:
                 payload = json.load(f)
-            self._apply_spectrum_settings(payload.get('spectrum_settings', payload))
+            loaded_settings = payload.get('spectrum_settings', payload)
+            self._apply_spectrum_settings(loaded_settings)
+            filter_settings = loaded_settings.get('filter_settings')
+            if filter_settings:
+                self.apply_filter_settings(filter_settings, reprocess_existing=False)
             self.log_status(f"Loaded spectrum settings: {path}")
         except Exception as e:
             self.log_status(f"Warning: could not load spectrum settings: {e}")
@@ -121,6 +136,20 @@ class SpectrumPanelMixin:
             self.spectrum_update_rate_spin,
             self.spectrum_remove_dc_check,
             self.spectrum_snap_peak_check,
+            self.filter_master_check,
+            self.filter_main_type_combo,
+            self.filter_order_spin,
+            self.filter_low_cutoff_spin,
+            self.filter_high_cutoff_spin,
+            self.notch1_enable_check,
+            self.notch1_freq_spin,
+            self.notch1_q_spin,
+            self.notch2_enable_check,
+            self.notch2_freq_spin,
+            self.notch2_q_spin,
+            self.notch3_enable_check,
+            self.notch3_freq_spin,
+            self.notch3_q_spin,
         ]
 
         for widget in controls:
@@ -292,6 +321,97 @@ class SpectrumPanelMixin:
 
         root_layout.addWidget(control_group)
 
+        filter_group = QGroupBox('Filtering')
+        filter_layout = QGridLayout(filter_group)
+
+        self.filter_master_check = QCheckBox('Filtering ON')
+        self.filter_master_check.setChecked(FILTER_DEFAULT_ENABLED)
+        filter_layout.addWidget(self.filter_master_check, 0, 0)
+
+        filter_layout.addWidget(QLabel('Main filter:'), 0, 1)
+        self.filter_main_type_combo = QComboBox()
+        self.filter_main_type_combo.addItems(['None', 'Low-pass', 'High-pass', 'Band-pass'])
+        default_main_text = {
+            'none': 'None',
+            'lowpass': 'Low-pass',
+            'highpass': 'High-pass',
+            'bandpass': 'Band-pass',
+        }.get(FILTER_DEFAULT_MAIN_TYPE, 'None')
+        self.filter_main_type_combo.setCurrentText(default_main_text)
+        filter_layout.addWidget(self.filter_main_type_combo, 0, 2)
+
+        filter_layout.addWidget(QLabel('Order:'), 0, 3)
+        self.filter_order_spin = QSpinBox()
+        self.filter_order_spin.setRange(1, 8)
+        self.filter_order_spin.setValue(FILTER_DEFAULT_ORDER)
+        filter_layout.addWidget(self.filter_order_spin, 0, 4)
+
+        filter_layout.addWidget(QLabel('Low cutoff (Hz):'), 0, 5)
+        self.filter_low_cutoff_spin = QDoubleSpinBox()
+        self.filter_low_cutoff_spin.setRange(0.01, 1_000_000.0)
+        self.filter_low_cutoff_spin.setDecimals(2)
+        self.filter_low_cutoff_spin.setValue(FILTER_DEFAULT_LOW_CUTOFF_HZ)
+        filter_layout.addWidget(self.filter_low_cutoff_spin, 0, 6)
+
+        filter_layout.addWidget(QLabel('High cutoff (Hz):'), 0, 7)
+        self.filter_high_cutoff_spin = QDoubleSpinBox()
+        self.filter_high_cutoff_spin.setRange(0.01, 1_000_000.0)
+        self.filter_high_cutoff_spin.setDecimals(2)
+        self.filter_high_cutoff_spin.setValue(FILTER_DEFAULT_HIGH_CUTOFF_HZ)
+        filter_layout.addWidget(self.filter_high_cutoff_spin, 0, 8)
+
+        self.notch1_enable_check = QCheckBox('Notch1')
+        self.notch1_enable_check.setChecked(FILTER_NOTCH1_DEFAULT_ENABLED)
+        filter_layout.addWidget(self.notch1_enable_check, 1, 0)
+        self.notch1_freq_spin = QDoubleSpinBox()
+        self.notch1_freq_spin.setRange(1.0, 1_000_000.0)
+        self.notch1_freq_spin.setDecimals(2)
+        self.notch1_freq_spin.setValue(FILTER_NOTCH1_DEFAULT_FREQ_HZ)
+        filter_layout.addWidget(self.notch1_freq_spin, 1, 1)
+        self.notch1_q_spin = QDoubleSpinBox()
+        self.notch1_q_spin.setRange(0.1, 200.0)
+        self.notch1_q_spin.setDecimals(2)
+        self.notch1_q_spin.setValue(FILTER_NOTCH1_DEFAULT_Q)
+        filter_layout.addWidget(self.notch1_q_spin, 1, 2)
+
+        self.notch2_enable_check = QCheckBox('Notch2')
+        self.notch2_enable_check.setChecked(FILTER_NOTCH2_DEFAULT_ENABLED)
+        filter_layout.addWidget(self.notch2_enable_check, 1, 3)
+        self.notch2_freq_spin = QDoubleSpinBox()
+        self.notch2_freq_spin.setRange(1.0, 1_000_000.0)
+        self.notch2_freq_spin.setDecimals(2)
+        self.notch2_freq_spin.setValue(FILTER_NOTCH2_DEFAULT_FREQ_HZ)
+        filter_layout.addWidget(self.notch2_freq_spin, 1, 4)
+        self.notch2_q_spin = QDoubleSpinBox()
+        self.notch2_q_spin.setRange(0.1, 200.0)
+        self.notch2_q_spin.setDecimals(2)
+        self.notch2_q_spin.setValue(FILTER_NOTCH2_DEFAULT_Q)
+        filter_layout.addWidget(self.notch2_q_spin, 1, 5)
+
+        self.notch3_enable_check = QCheckBox('Notch3')
+        self.notch3_enable_check.setChecked(FILTER_NOTCH3_DEFAULT_ENABLED)
+        filter_layout.addWidget(self.notch3_enable_check, 1, 6)
+        self.notch3_freq_spin = QDoubleSpinBox()
+        self.notch3_freq_spin.setRange(1.0, 1_000_000.0)
+        self.notch3_freq_spin.setDecimals(2)
+        self.notch3_freq_spin.setValue(FILTER_NOTCH3_DEFAULT_FREQ_HZ)
+        filter_layout.addWidget(self.notch3_freq_spin, 1, 7)
+        self.notch3_q_spin = QDoubleSpinBox()
+        self.notch3_q_spin.setRange(0.1, 200.0)
+        self.notch3_q_spin.setDecimals(2)
+        self.notch3_q_spin.setValue(FILTER_NOTCH3_DEFAULT_Q)
+        filter_layout.addWidget(self.notch3_q_spin, 1, 8)
+
+        self.filter_apply_btn = QPushButton('Apply Filter')
+        self.filter_apply_btn.clicked.connect(self.on_apply_filter_clicked)
+        filter_layout.addWidget(self.filter_apply_btn, 2, 0)
+
+        self.filter_reset_btn = QPushButton('Reset Filter Defaults')
+        self.filter_reset_btn.clicked.connect(self.on_reset_filter_defaults_clicked)
+        filter_layout.addWidget(self.filter_reset_btn, 2, 1, 1, 3)
+
+        root_layout.addWidget(filter_group)
+
         plot_group = QGroupBox('Spectrum Display')
         plot_layout = QVBoxLayout(plot_group)
 
@@ -360,6 +480,7 @@ class SpectrumPanelMixin:
 
         self.spectrum_mode_combo.currentTextChanged.connect(self._on_spectrum_mode_changed)
         self._on_spectrum_mode_changed(self.spectrum_mode_combo.currentText())
+        self._apply_filter_widgets(self.get_default_filter_settings())
         self._connect_spectrum_settings_autosave()
 
         return tab
@@ -394,6 +515,90 @@ class SpectrumPanelMixin:
             self.spectrum_freeze_btn.setText('Resume')
         else:
             self.spectrum_freeze_btn.setText('Freeze/Hold')
+
+    def _filter_main_type_to_code(self, text: str) -> str:
+        mapping = {
+            'None': 'none',
+            'Low-pass': 'lowpass',
+            'High-pass': 'highpass',
+            'Band-pass': 'bandpass',
+        }
+        return mapping.get(text, 'none')
+
+    def _filter_main_code_to_text(self, code: str) -> str:
+        mapping = {
+            'none': 'None',
+            'lowpass': 'Low-pass',
+            'highpass': 'High-pass',
+            'bandpass': 'Band-pass',
+        }
+        return mapping.get(code, 'None')
+
+    def get_filter_settings_from_ui(self) -> dict:
+        return {
+            'enabled': bool(self.filter_master_check.isChecked()),
+            'main_type': self._filter_main_type_to_code(self.filter_main_type_combo.currentText()),
+            'order': int(self.filter_order_spin.value()),
+            'low_cutoff_hz': float(self.filter_low_cutoff_spin.value()),
+            'high_cutoff_hz': float(self.filter_high_cutoff_spin.value()),
+            'notches': [
+                {
+                    'enabled': bool(self.notch1_enable_check.isChecked()),
+                    'freq_hz': float(self.notch1_freq_spin.value()),
+                    'q': float(self.notch1_q_spin.value()),
+                },
+                {
+                    'enabled': bool(self.notch2_enable_check.isChecked()),
+                    'freq_hz': float(self.notch2_freq_spin.value()),
+                    'q': float(self.notch2_q_spin.value()),
+                },
+                {
+                    'enabled': bool(self.notch3_enable_check.isChecked()),
+                    'freq_hz': float(self.notch3_freq_spin.value()),
+                    'q': float(self.notch3_q_spin.value()),
+                },
+            ],
+        }
+
+    def _apply_filter_widgets(self, settings: dict):
+        self.filter_master_check.setChecked(bool(settings.get('enabled', FILTER_DEFAULT_ENABLED)))
+        self.filter_main_type_combo.setCurrentText(self._filter_main_code_to_text(settings.get('main_type', FILTER_DEFAULT_MAIN_TYPE)))
+        self.filter_order_spin.setValue(int(settings.get('order', FILTER_DEFAULT_ORDER)))
+        self.filter_low_cutoff_spin.setValue(float(settings.get('low_cutoff_hz', FILTER_DEFAULT_LOW_CUTOFF_HZ)))
+        self.filter_high_cutoff_spin.setValue(float(settings.get('high_cutoff_hz', FILTER_DEFAULT_HIGH_CUTOFF_HZ)))
+
+        notches = settings.get('notches', [])
+        while len(notches) < 3:
+            notches.append({'enabled': False, 'freq_hz': 60.0, 'q': 30.0})
+
+        self.notch1_enable_check.setChecked(bool(notches[0].get('enabled', FILTER_NOTCH1_DEFAULT_ENABLED)))
+        self.notch1_freq_spin.setValue(float(notches[0].get('freq_hz', FILTER_NOTCH1_DEFAULT_FREQ_HZ)))
+        self.notch1_q_spin.setValue(float(notches[0].get('q', FILTER_NOTCH1_DEFAULT_Q)))
+
+        self.notch2_enable_check.setChecked(bool(notches[1].get('enabled', FILTER_NOTCH2_DEFAULT_ENABLED)))
+        self.notch2_freq_spin.setValue(float(notches[1].get('freq_hz', FILTER_NOTCH2_DEFAULT_FREQ_HZ)))
+        self.notch2_q_spin.setValue(float(notches[1].get('q', FILTER_NOTCH2_DEFAULT_Q)))
+
+        self.notch3_enable_check.setChecked(bool(notches[2].get('enabled', FILTER_NOTCH3_DEFAULT_ENABLED)))
+        self.notch3_freq_spin.setValue(float(notches[2].get('freq_hz', FILTER_NOTCH3_DEFAULT_FREQ_HZ)))
+        self.notch3_q_spin.setValue(float(notches[2].get('q', FILTER_NOTCH3_DEFAULT_Q)))
+
+    def on_apply_filter_clicked(self):
+        settings = self.get_filter_settings_from_ui()
+        success, error = self.apply_filter_settings(settings, reprocess_existing=True)
+        if success:
+            state = 'ON' if settings.get('enabled') else 'OFF'
+            self.log_status(f'Filtering applied ({state})')
+            self.trigger_plot_update()
+            self.update_spectrum()
+        else:
+            self.log_status(f'Filter apply failed: {error}')
+            QMessageBox.warning(self, 'Filter Error', error)
+
+    def on_reset_filter_defaults_clicked(self):
+        defaults = self.get_default_filter_settings()
+        self._apply_filter_widgets(defaults)
+        self.on_apply_filter_clicked()
 
     def get_spectrum_settings(self):
         nfft_text = self.spectrum_nfft_combo.currentText()
@@ -435,6 +640,7 @@ class SpectrumPanelMixin:
             'update_rate_hz': int(self.spectrum_update_rate_spin.value()),
             'remove_dc': bool(self.spectrum_remove_dc_check.isChecked()),
             'snap_to_peak': bool(self.spectrum_snap_peak_check.isChecked()),
+            'filter_settings': self.get_filter_settings_from_ui(),
         }
 
     def show_spectrum_status(self, message):

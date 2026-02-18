@@ -155,6 +155,29 @@ ANALYZER555_DEFAULT_CF_VALUE = 22.0
 ANALYZER555_DEFAULT_CF_UNIT = "nF"
 
 # ============================================================================
+# Filtering Constants
+# ============================================================================
+
+FILTER_DEFAULT_ENABLED = False
+FILTER_DEFAULT_MAIN_TYPE = "none"  # one of: none, lowpass, highpass, bandpass
+FILTER_DEFAULT_ORDER = 2
+FILTER_DEFAULT_LOW_CUTOFF_HZ = 5.0
+FILTER_DEFAULT_HIGH_CUTOFF_HZ = 200.0
+
+# Up to 3 notch filters (enable/frequency/Q)
+FILTER_NOTCH1_DEFAULT_ENABLED = True
+FILTER_NOTCH1_DEFAULT_FREQ_HZ = 60.0
+FILTER_NOTCH1_DEFAULT_Q = 30.0
+
+FILTER_NOTCH2_DEFAULT_ENABLED = True
+FILTER_NOTCH2_DEFAULT_FREQ_HZ = 120.0
+FILTER_NOTCH2_DEFAULT_Q = 30.0
+
+FILTER_NOTCH3_DEFAULT_ENABLED = False
+FILTER_NOTCH3_DEFAULT_FREQ_HZ = 180.0
+FILTER_NOTCH3_DEFAULT_Q = 30.0
+
+# ============================================================================
 # Memory Management Settings
 # ============================================================================
 

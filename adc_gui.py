@@ -101,11 +101,13 @@ class ADCStreamerGUI(
         """Initialize data storage buffers."""
         self.MAX_SWEEPS_BUFFER = MAX_SWEEPS_IN_MEMORY
         self.raw_data_buffer = None
+        self.processed_data_buffer = None
         self.sweep_timestamps_buffer = None
         self.sweep_count = 0
         self.buffer_write_index = 0
         self.samples_per_sweep = 0
         self.buffer_lock = threading.Lock()
+        self._init_filter_state()
         
         # Legacy list storage for archive
         self.raw_data: List[List[int]] = []

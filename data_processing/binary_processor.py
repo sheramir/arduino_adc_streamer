@@ -85,9 +85,12 @@ class BinaryProcessorMixin:
                         self.samples_per_sweep != samples_per_sweep):
                         self.samples_per_sweep = samples_per_sweep
                         self.raw_data_buffer = np.zeros((self.MAX_SWEEPS_BUFFER, samples_per_sweep), dtype=np.float32)
+                        self.processed_data_buffer = np.zeros((self.MAX_SWEEPS_BUFFER, samples_per_sweep), dtype=np.float32)
                         self.sweep_timestamps_buffer = np.zeros(self.MAX_SWEEPS_BUFFER, dtype=np.float64)
                         self.buffer_write_index = 0
                         self.log_status(f"Initialized numpy buffers: {self.MAX_SWEEPS_BUFFER} sweeps × {samples_per_sweep} samples")
+                    elif self.processed_data_buffer is None or self.processed_data_buffer.shape != self.raw_data_buffer.shape:
+                        self.processed_data_buffer = np.zeros_like(self.raw_data_buffer, dtype=np.float32)
                 
                 # The sample count comes from the header, which reflects what Arduino actually sent
                 # Arduino may reduce sweeps per block to fit in RAM, so use actual count
@@ -101,6 +104,15 @@ class BinaryProcessorMixin:
                 
                 # Calculate actual sweeps in this block (may be less than requested buffer size)
                 sweeps_in_block = total_samples // samples_per_sweep
+
+                block_samples_array = np.array(samples[:total_samples], dtype=np.float32).reshape(sweeps_in_block, samples_per_sweep)
+                total_fs_hz = (1000000.0 / avg_sample_time_us) if avg_sample_time_us > 0 else 0.0
+                try:
+                    filtered_block_array = self.filter_sweeps_block(block_samples_array, total_fs_hz)
+                except Exception as e:
+                    self.log_status(f"WARNING: filtering bypassed due to error: {e}")
+                    self.filtering_enabled = False
+                    filtered_block_array = block_samples_array
 
                 # Track block sizing for timing export (keep only recent)
                 self.block_sample_counts.append(total_samples)
@@ -142,6 +154,7 @@ class BinaryProcessorMixin:
                     start_idx = sweep_idx * samples_per_sweep
                     end_idx = start_idx + samples_per_sweep
                     sweep_samples = samples[start_idx:end_idx]
+                    filtered_sweep_samples = filtered_block_array[sweep_idx, :]
                     
                     # Calculate timestamp for this sweep based on MCU timing
                     # Use wrap-safe 32-bit arithmetic because Arduino micros() overflows ~71 minutes
@@ -164,6 +177,7 @@ class BinaryProcessorMixin:
                     with self.buffer_lock:
                         write_pos = self.buffer_write_index % self.MAX_SWEEPS_BUFFER
                         self.raw_data_buffer[write_pos, :] = sweep_samples
+                        self.processed_data_buffer[write_pos, :] = filtered_sweep_samples
                         self.sweep_timestamps_buffer[write_pos] = sweep_timestamp_sec
                         self.buffer_write_index += 1
                         self.sweep_count += 1

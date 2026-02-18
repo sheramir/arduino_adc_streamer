@@ -34,10 +34,11 @@ from config_constants import (
 # Import sub-module mixins
 from serial_communication.serial_parser import SerialParserMixin
 from data_processing.binary_processor import BinaryProcessorMixin
+from data_processing.filter_processor import FilterProcessorMixin
 from data_processing.force_processor import ForceProcessorMixin
 
 
-class DataProcessorMixin(SerialParserMixin, BinaryProcessorMixin, ForceProcessorMixin):
+class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcessorMixin, ForceProcessorMixin):
     """Main mixin class for data processing, visualization, and capture control."""
     
     # ========================================================================
@@ -53,7 +54,9 @@ class DataProcessorMixin(SerialParserMixin, BinaryProcessorMixin, ForceProcessor
         self.is_updating_plot = True
 
         try:
-            if not self.is_capturing and self.raw_data_buffer is None:
+            active_data_buffer = self.get_active_data_buffer()
+
+            if not self.is_capturing and active_data_buffer is None:
                 # No data in buffer
                 for curve in self._adc_curves.values():
                     curve.setVisible(False)
@@ -81,7 +84,7 @@ class DataProcessorMixin(SerialParserMixin, BinaryProcessorMixin, ForceProcessor
             MAX_SAMPLES_TO_DISPLAY = 10000
             
             # Determine which data to plot - use numpy buffer directly with thread safety!
-            if self.raw_data_buffer is None:
+            if active_data_buffer is None:
                 self.is_updating_plot = False
                 return
             
@@ -128,7 +131,7 @@ class DataProcessorMixin(SerialParserMixin, BinaryProcessorMixin, ForceProcessor
                     # Buffer not yet full - data is contiguous from start
                     start_idx = max(0, actual_sweeps - window_size)
                     end_idx = actual_sweeps
-                    data_array = self.raw_data_buffer[start_idx:end_idx, :].copy()
+                    data_array = active_data_buffer[start_idx:end_idx, :].copy()
                     timestamps_array = self.sweep_timestamps_buffer[start_idx:end_idx].copy()
                 else:
                     # Buffer is full - need to handle circular wrap
@@ -139,8 +142,8 @@ class DataProcessorMixin(SerialParserMixin, BinaryProcessorMixin, ForceProcessor
                     if window_size >= self.MAX_SWEEPS_BUFFER:
                         # Show entire buffer - reorder to show oldest first
                         data_array = np.concatenate([
-                            self.raw_data_buffer[write_pos:, :],
-                            self.raw_data_buffer[:write_pos, :]
+                            active_data_buffer[write_pos:, :],
+                            active_data_buffer[:write_pos, :]
                         ])
                         timestamps_array = np.concatenate([
                             self.sweep_timestamps_buffer[write_pos:],
@@ -151,13 +154,13 @@ class DataProcessorMixin(SerialParserMixin, BinaryProcessorMixin, ForceProcessor
                         # Newest is at write_pos-1, so we want [write_pos-window_size : write_pos]
                         start_pos = (write_pos - window_size) % self.MAX_SWEEPS_BUFFER
                         if start_pos < write_pos:
-                            data_array = self.raw_data_buffer[start_pos:write_pos, :].copy()
+                            data_array = active_data_buffer[start_pos:write_pos, :].copy()
                             timestamps_array = self.sweep_timestamps_buffer[start_pos:write_pos].copy()
                         else:
                             # Wrap around
                             data_array = np.concatenate([
-                                self.raw_data_buffer[start_pos:, :],
-                                self.raw_data_buffer[:write_pos, :]
+                                active_data_buffer[start_pos:, :],
+                                active_data_buffer[:write_pos, :]
                             ])
                             timestamps_array = np.concatenate([
                                 self.sweep_timestamps_buffer[start_pos:],
@@ -173,19 +176,19 @@ class DataProcessorMixin(SerialParserMixin, BinaryProcessorMixin, ForceProcessor
                 if actual_sweeps < self.MAX_SWEEPS_BUFFER:
                     # Buffer not yet full
                     start_idx = max(0, actual_sweeps - max_sweeps)
-                    data_array = self.raw_data_buffer[start_idx:actual_sweeps, :].copy()
+                    data_array = active_data_buffer[start_idx:actual_sweeps, :].copy()
                     timestamps_array = self.sweep_timestamps_buffer[start_idx:actual_sweeps].copy()
                 else:
                     # Buffer is full
                     write_pos = current_write_index % self.MAX_SWEEPS_BUFFER
                     start_pos = (write_pos - max_sweeps) % self.MAX_SWEEPS_BUFFER
                     if start_pos < write_pos:
-                        data_array = self.raw_data_buffer[start_pos:write_pos, :].copy()
+                        data_array = active_data_buffer[start_pos:write_pos, :].copy()
                         timestamps_array = self.sweep_timestamps_buffer[start_pos:write_pos].copy()
                     else:
                         data_array = np.concatenate([
-                            self.raw_data_buffer[start_pos:, :],
-                            self.raw_data_buffer[:write_pos, :]
+                            active_data_buffer[start_pos:, :],
+                            active_data_buffer[:write_pos, :]
                         ])
                         timestamps_array = np.concatenate([
                             self.sweep_timestamps_buffer[start_pos:],
@@ -618,8 +621,13 @@ class DataProcessorMixin(SerialParserMixin, BinaryProcessorMixin, ForceProcessor
             # Zero out buffers to prevent old data from showing
             if self.raw_data_buffer is not None:
                 self.raw_data_buffer.fill(0)
+            if self.processed_data_buffer is not None:
+                self.processed_data_buffer.fill(0)
             if self.sweep_timestamps_buffer is not None:
                 self.sweep_timestamps_buffer.fill(0)
+
+        self.filter_apply_pending = True
+        self.reset_filter_states()
         
         self.force_data.clear()
         self.force_start_time = None
@@ -918,6 +926,8 @@ class DataProcessorMixin(SerialParserMixin, BinaryProcessorMixin, ForceProcessor
                 # Reset buffer to zeros (optional, but cleaner)
                 if self.raw_data_buffer is not None:
                     self.raw_data_buffer.fill(0)
+                    if self.processed_data_buffer is not None:
+                        self.processed_data_buffer.fill(0)
                     self.sweep_timestamps_buffer.fill(0)
             
             self.force_data.clear()
@@ -948,6 +958,8 @@ class DataProcessorMixin(SerialParserMixin, BinaryProcessorMixin, ForceProcessor
             
             # Reset samples_per_sweep to force buffer reinitialization
             self.samples_per_sweep = 0
+            self.filter_apply_pending = True
+            self.reset_filter_states()
             
             # Reset view mode flags
             self.is_full_view = False

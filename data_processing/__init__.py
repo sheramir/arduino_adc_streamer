@@ -6,6 +6,7 @@ ADC and force data processing, plotting, timing calculations, and heatmap genera
 Module structure:
 - serial_parser.py: Parse ASCII serial messages
 - binary_processor.py: Process binary ADC data blocks
+- filter_processor.py: Real-time IIR filter pipeline (raw -> processed)
 - force_processor.py: Process force sensor data
 - heatmap_processor.py: Calculate CoP and generate 2D heatmaps
 - simulated_source.py: Simulated sensor data source for testing
@@ -13,6 +14,7 @@ Module structure:
 """
 
 from data_processing.binary_processor import BinaryProcessorMixin
+from data_processing.filter_processor import FilterProcessorMixin
 from data_processing.force_processor import ForceProcessorMixin
 from data_processing.heatmap_processor import HeatmapProcessorMixin
 from data_processing.spectrum_processor import SpectrumProcessorMixin
@@ -22,6 +24,7 @@ from data_processing.data_processor import DataProcessorMixin
 __all__ = [
     'DataProcessorMixin',
     'BinaryProcessorMixin',
+    'FilterProcessorMixin',
     'ForceProcessorMixin',
     'HeatmapProcessorMixin',
     'SpectrumProcessorMixin',

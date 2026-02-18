@@ -277,7 +277,8 @@ class SpectrumProcessorMixin:
             self.spectrum_worker.wait(1500)
 
     def _extract_recent_sweeps(self, required_sweeps: int):
-        if self.raw_data_buffer is None or self.samples_per_sweep <= 0:
+        data_buffer = self.get_active_data_buffer()
+        if data_buffer is None or self.samples_per_sweep <= 0:
             return None
 
         with self.buffer_lock:
@@ -293,17 +294,17 @@ class SpectrumProcessorMixin:
 
             if actual_sweeps < self.MAX_SWEEPS_BUFFER:
                 start_idx = max(0, actual_sweeps - take_sweeps)
-                data_array = self.raw_data_buffer[start_idx:actual_sweeps, :].copy()
+                data_array = data_buffer[start_idx:actual_sweeps, :].copy()
                 sweep_timestamps = self.sweep_timestamps_buffer[start_idx:actual_sweeps].copy()
             else:
                 start_pos = (write_pos - take_sweeps) % self.MAX_SWEEPS_BUFFER
                 if start_pos < write_pos:
-                    data_array = self.raw_data_buffer[start_pos:write_pos, :].copy()
+                    data_array = data_buffer[start_pos:write_pos, :].copy()
                     sweep_timestamps = self.sweep_timestamps_buffer[start_pos:write_pos].copy()
                 else:
                     data_array = np.concatenate([
-                        self.raw_data_buffer[start_pos:, :],
-                        self.raw_data_buffer[:write_pos, :]
+                        data_buffer[start_pos:, :],
+                        data_buffer[:write_pos, :]
                     ])
                     sweep_timestamps = np.concatenate([
                         self.sweep_timestamps_buffer[start_pos:],

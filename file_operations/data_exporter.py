@@ -91,6 +91,8 @@ class DataExporterMixin:
         metadata_path = directory / f"{filename}_{timestamp}_metadata.json"
 
         try:
+            is_555_mode = (getattr(self, 'device_mode', 'adc') == '555') or ('555' in (self.current_mcu or ''))
+
             # Determine if we have force data
             has_force_x = any(d[1] != 0 for d in self.force_data) if self.force_data else False
             has_force_z = any(d[2] != 0 for d in self.force_data) if self.force_data else False
@@ -108,6 +110,8 @@ class DataExporterMixin:
 
                 # Write header
                 header = [f"CH{ch}" for ch in self.config['channels']] * self.config['repeat']
+                if is_555_mode:
+                    header.insert(0, "Timestamp_s")
                 header.extend(["Force_X", "Force_Z"])
                 writer.writerow(header)
 
@@ -122,11 +126,33 @@ class DataExporterMixin:
                 if self.capture_start_time and self.capture_end_time:
                     capture_duration = self.capture_end_time - self.capture_start_time
 
+                # Approximate row timestamp in seconds from capture start
+                def get_row_timestamp(saved_idx):
+                    if capture_duration is None or saved_total <= 0:
+                        return 0.0
+                    return (saved_idx / saved_total) * capture_duration
+
+                def parse_archive_sweep_entry(line_text):
+                    payload = json.loads(line_text)
+
+                    # New format: {"timestamp_s": ..., "samples": [...]}
+                    if isinstance(payload, dict) and 'samples' in payload:
+                        timestamp_s = payload.get('timestamp_s')
+                        samples = payload.get('samples')
+                        if isinstance(samples, list):
+                            return samples, (float(timestamp_s) if timestamp_s is not None else None)
+
+                    # Legacy format: [samples...]
+                    if isinstance(payload, list):
+                        return payload, None
+
+                    return None, None
+
                 # Helper to find closest force sample given a normalized saved_index
                 def get_closest_force(saved_idx):
                     if not force_dict or capture_duration is None or saved_total <= 0:
                         return (0.0, 0.0)
-                    sweep_time = (saved_idx / saved_total) * capture_duration
+                    sweep_time = get_row_timestamp(saved_idx)
                     closest_force = (0.0, 0.0)
                     min_diff = float('inf')
                     for f_time, (x, z) in force_dict.items():
@@ -146,8 +172,12 @@ class DataExporterMixin:
                                 break
                             if global_idx >= save_min:
                                 try:
-                                    sweep = json.loads(line)
+                                    sweep, row_timestamp = parse_archive_sweep_entry(line)
                                 except Exception:
+                                    global_idx += 1
+                                    continue
+
+                                if sweep is None:
                                     global_idx += 1
                                     continue
 
@@ -155,6 +185,9 @@ class DataExporterMixin:
                                     first_sweep_len = len(sweep)
 
                                 row = list(sweep)
+                                if is_555_mode:
+                                    timestamp_to_write = row_timestamp if row_timestamp is not None else float(get_row_timestamp(saved_index))
+                                    row.insert(0, float(timestamp_to_write))
                                 row.extend(list(get_closest_force(saved_index)))
                                 writer.writerow(row)
                                 saved_index += 1
@@ -169,6 +202,8 @@ class DataExporterMixin:
                                 first_sweep_len = len(sweep)
 
                             row = list(sweep)
+                            if is_555_mode:
+                                row.insert(0, float(get_row_timestamp(saved_index)))
                             row.extend(list(get_closest_force(saved_index)))
                             writer.writerow(row)
                             saved_index += 1
@@ -215,6 +250,11 @@ class DataExporterMixin:
                     "calibration_offset_x": self.force_calibration_offset['x'],
                     "calibration_offset_z": self.force_calibration_offset['z'],
                     "note": "Force data not available" if not self.force_data else "Force data synchronized with ADC samples (calibrated to zero at connection)"
+                },
+                "row_timestamp": {
+                    "included_in_csv": bool(is_555_mode),
+                    "column_name": "Timestamp_s" if is_555_mode else None,
+                    "source": "mcu_sweep_timestamp_from_archive_with_linear_fallback"
                 }
             }
 

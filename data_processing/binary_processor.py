@@ -185,7 +185,11 @@ class BinaryProcessorMixin:
                     # Also keep in list for archive writing (only if archive is active)
                     if self._archive_file:
                         try:
-                            self._archive_file.write(json.dumps(sweep_samples) + '\n')
+                            archive_entry = {
+                                'timestamp_s': float(sweep_timestamp_sec),
+                                'samples': list(sweep_samples)
+                            }
+                            self._archive_file.write(json.dumps(archive_entry) + '\n')
                             self._archive_write_count += 1
                             if self._archive_write_count % 1000 == 0:
                                 try:

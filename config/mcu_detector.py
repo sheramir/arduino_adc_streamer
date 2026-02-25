@@ -59,6 +59,9 @@ class MCUDetectorMixin:
 
         self.device_mode = '555' if is_555 else 'adc'
 
+        if hasattr(self, 'update_heatmap_ui_for_mode'):
+            self.update_heatmap_ui_for_mode()
+
         # 555 analyzer mode: hide ADC-specific controls, show 555 parameter controls
         if is_555:
             if hasattr(self, 'ground_pin_label'):
@@ -200,3 +203,6 @@ class MCUDetectorMixin:
             self.sample_rate_spin.hide()
 
         self.log_status("Device mode: ADC streamer")
+
+        if hasattr(self, 'update_heatmap_ui_for_mode'):
+            self.update_heatmap_ui_for_mode()

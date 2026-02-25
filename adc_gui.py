@@ -247,6 +247,7 @@ class ADCStreamerGUI(
             bias_duration_sec=BIAS_CALIBRATION_DURATION_SEC,
             hpf_cutoff_hz=HPF_CUTOFF_HZ,
         )
+        self.reset_555_heatmap_state()
         self.last_heatmap_sweep_count = 0
 
     def _init_timers(self):
@@ -446,13 +447,23 @@ class ADCStreamerGUI(
         # Check if we're on the heatmap tab
         if self.visualization_tabs.currentIndex() != 1:
             return
+
+        if hasattr(self, 'update_heatmap_ui_for_mode'):
+            self.update_heatmap_ui_for_mode()
         
-        # Check if we have the correct number of channels
-        num_channels = len(self.config.get('channels', []))
-        
-        if num_channels != HEATMAP_REQUIRED_CHANNELS:
+        channels = self.config.get('channels', [])
+        unique_channels = []
+        for ch in channels:
+            if ch not in unique_channels:
+                unique_channels.append(ch)
+        num_channels = len(unique_channels)
+
+        is_555_mode = self.is_555_analyzer_mode()
+        required_channels = R_HEATMAP_REQUIRED_CHANNELS if is_555_mode else HEATMAP_REQUIRED_CHANNELS
+
+        if num_channels != required_channels:
             # Show warning message
-            self.show_heatmap_channel_warning(num_channels)
+            self.show_heatmap_channel_warning(num_channels, required_channels)
             return
         else:
             # Clear warning if it was showing
@@ -461,18 +472,25 @@ class ADCStreamerGUI(
         # Reset processing state if capture restarted
         if self.sweep_count < self.last_heatmap_sweep_count:
             self.heatmap_signal_processor.reset()
+            self.reset_555_heatmap_state()
         self.last_heatmap_sweep_count = self.sweep_count
 
         settings = self.get_heatmap_settings()
-        sensor_values = self.compute_channel_intensities(settings)
-        if sensor_values is None:
-            return
-        
-        # Process data and generate heatmap
-        heatmap, cop_x, cop_y, intensity, confidence, sensor_values = self.process_sensor_data_for_heatmap(
-            sensor_values,
-            settings,
-        )
+        if is_555_mode:
+            processed = self.process_555_displacement_heatmap(settings)
+            if processed is None:
+                return
+            heatmap, cop_x, cop_y, intensity, confidence, sensor_values = processed
+        else:
+            sensor_values = self.compute_channel_intensities(settings)
+            if sensor_values is None:
+                return
+
+            # Process data and generate heatmap
+            heatmap, cop_x, cop_y, intensity, confidence, sensor_values = self.process_sensor_data_for_heatmap(
+                sensor_values,
+                settings,
+            )
         
         # Update display
         self.update_heatmap_display(heatmap, cop_x, cop_y, intensity, confidence, sensor_values)

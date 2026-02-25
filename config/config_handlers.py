@@ -629,7 +629,7 @@ class ConfigurationMixin:
         if self.force_serial_port and self.force_serial_port.is_open:
             from PyQt6.QtWidgets import QCheckBox
             # X Force checkbox
-            self.force_x_checkbox = QCheckBox("X Force")
+            self.force_x_checkbox = QCheckBox("X Force [N]")
             self.force_x_checkbox.setChecked(True)
             self.force_x_checkbox.setStyleSheet("QCheckBox { color: red; }")
             self.force_x_checkbox.stateChanged.connect(self.trigger_plot_update)
@@ -638,7 +638,7 @@ class ConfigurationMixin:
             self.channel_checkboxes_layout.addWidget(self.force_x_checkbox, row, col)
             
             # Z Force checkbox
-            self.force_z_checkbox = QCheckBox("Z Force")
+            self.force_z_checkbox = QCheckBox("Z Force [N]")
             self.force_z_checkbox.setChecked(True)
             self.force_z_checkbox.setStyleSheet("QCheckBox { color: blue; }")
             self.force_z_checkbox.stateChanged.connect(self.trigger_plot_update)

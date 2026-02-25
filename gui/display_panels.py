@@ -72,7 +72,7 @@ class DisplayPanelsMixin:
         self.plot_widget.scene().addItem(self.force_viewbox)
         self.plot_widget.getAxis('right').linkToView(self.force_viewbox)
         self.force_viewbox.setXLink(self.plot_widget)  # Link X-axis
-        self.plot_widget.setLabel('right', 'Force (Raw)', units='')
+        self.plot_widget.setLabel('right', 'Force', units='N')
         self.plot_widget.showAxis('right')
         
         # Add legends

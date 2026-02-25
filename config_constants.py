@@ -196,6 +196,11 @@ MAX_SWEEPS_IN_MEMORY = 50000
 # Higher values = more force data for analysis, but more memory usage
 MAX_FORCE_SAMPLES = 50000
 
+# Force sensor conversion factors (raw counts per Newton)
+# Newtons = calibrated_raw / FORCE_SENSOR_TO_NEWTON
+X_FORCE_SENSOR_TO_NEWTON = 44600.0
+Z_FORCE_SENSOR_TO_NEWTON = 44900.0
+
 # Maximum number of log lines to keep in status text window
 # Prevents excessive memory usage from log accumulation during long sessions
 MAX_LOG_LINES = 1000

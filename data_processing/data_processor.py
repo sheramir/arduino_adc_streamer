@@ -28,7 +28,7 @@ from config_constants import (
     MAX_TIMING_SAMPLES, PLOT_UPDATE_FREQUENCY, PLOT_COLORS,
     MAX_FORCE_SAMPLES, MAX_LOG_LINES, IADC_RESOLUTION_BITS,
     ANALYZER555_DEFAULT_CF_FARADS, ANALYZER555_DEFAULT_RB_OHMS,
-    ANALYZER555_DEFAULT_RK_OHMS
+    ANALYZER555_DEFAULT_RK_OHMS,`r`n    X_FORCE_SENSOR_TO_NEWTON, Z_FORCE_SENSOR_TO_NEWTON
 )
 
 # Import sub-module mixins
@@ -458,14 +458,14 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
 
             # Extract X and Z force data
             times = force_filtered[:, 0]
-            x_forces = force_filtered[:, 1]
-            z_forces = force_filtered[:, 2]
+            x_forces = force_filtered[:, 1] / X_FORCE_SENSOR_TO_NEWTON
+            z_forces = force_filtered[:, 2] / Z_FORCE_SENSOR_TO_NEWTON
 
             # Plot X force (red)
             if show_x_force:
                 if self._force_x_curve is None:
                     pen = pg.mkPen(color='r', width=2)
-                    self._force_x_curve = pg.PlotDataItem([], pen=pen, name='X Force')
+                    self._force_x_curve = pg.PlotDataItem([], pen=pen, name='X Force [N]')
                     self.force_viewbox.addItem(self._force_x_curve)
                 
                 self._force_x_curve.setVisible(True)
@@ -475,7 +475,7 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
             if show_z_force:
                 if self._force_z_curve is None:
                     pen = pg.mkPen(color='b', width=2)
-                    self._force_z_curve = pg.PlotDataItem([], pen=pen, name='Z Force')
+                    self._force_z_curve = pg.PlotDataItem([], pen=pen, name='Z Force [N]')
                     self.force_viewbox.addItem(self._force_z_curve)
                 
                 self._force_z_curve.setVisible(True)
@@ -995,7 +995,7 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
             # Reset axis labels to initial state
             self.plot_widget.setLabel('left', 'ADC Value', units='counts')
             self.plot_widget.setLabel('bottom', 'Time', units='s')
-            self.plot_widget.setLabel('right', 'Force (Raw)', units='')
+            self.plot_widget.setLabel('right', 'Force', units='N')
             
             # Update info label
             self.plot_info_label.setText("ADC - Sweeps: 0 | Samples: 0  |  Force: 0 samples")
@@ -1043,7 +1043,7 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
 
         cf_farads = float(self.config.get('cf_farads', ANALYZER555_DEFAULT_CF_FARADS))
         rb_ohms = float(self.config.get('rb_ohms', ANALYZER555_DEFAULT_RB_OHMS))
-        rk_ohms = float(self.config.get('rk_ohms', ANALYZER555_DEFAULT_RK_OHMS))
+        rk_ohms = float(self.config.get('rk_ohms', ANALYZER555_DEFAULT_RK_OHMS,`r`n    X_FORCE_SENSOR_TO_NEWTON, Z_FORCE_SENSOR_TO_NEWTON))
         ln2 = 0.69314718056
 
         t_discharge = ln2 * cf_farads * rb_ohms

@@ -28,7 +28,8 @@ from config_constants import (
     MAX_TIMING_SAMPLES, PLOT_UPDATE_FREQUENCY, PLOT_COLORS,
     MAX_FORCE_SAMPLES, MAX_LOG_LINES, IADC_RESOLUTION_BITS,
     ANALYZER555_DEFAULT_CF_FARADS, ANALYZER555_DEFAULT_RB_OHMS,
-    ANALYZER555_DEFAULT_RK_OHMS,`r`n    X_FORCE_SENSOR_TO_NEWTON, Z_FORCE_SENSOR_TO_NEWTON
+    ANALYZER555_DEFAULT_RK_OHMS,
+    X_FORCE_SENSOR_TO_NEWTON, Z_FORCE_SENSOR_TO_NEWTON,
 )
 
 # Import sub-module mixins
@@ -1043,7 +1044,7 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
 
         cf_farads = float(self.config.get('cf_farads', ANALYZER555_DEFAULT_CF_FARADS))
         rb_ohms = float(self.config.get('rb_ohms', ANALYZER555_DEFAULT_RB_OHMS))
-        rk_ohms = float(self.config.get('rk_ohms', ANALYZER555_DEFAULT_RK_OHMS,`r`n    X_FORCE_SENSOR_TO_NEWTON, Z_FORCE_SENSOR_TO_NEWTON))
+        rk_ohms = float(self.config.get('rk_ohms', ANALYZER555_DEFAULT_RK_OHMS))
         ln2 = 0.69314718056
 
         t_discharge = ln2 * cf_farads * rb_ohms

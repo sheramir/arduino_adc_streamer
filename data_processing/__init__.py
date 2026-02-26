@@ -8,7 +8,9 @@ Module structure:
 - binary_processor.py: Process binary ADC data blocks
 - filter_processor.py: Real-time IIR filter pipeline (raw -> processed)
 - force_processor.py: Process force sensor data
-- heatmap_processor.py: Calculate CoP and generate 2D heatmaps
+- heatmap_piezo_processor.py: Piezoelectric heatmap processing pipeline
+- heatmap_555_processor.py: 555 resistance displacement heatmap pipeline
+- heatmap_processor.py: Coordinator mixin composing both heatmap pipelines
 - simulated_source.py: Simulated sensor data source for testing
 - data_processor.py: Main mixin combining all functionality
 """

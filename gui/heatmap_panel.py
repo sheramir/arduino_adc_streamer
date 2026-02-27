@@ -32,6 +32,9 @@ from config_constants import (
 class HeatmapPanelMixin:
     """Mixin providing heatmap visualization panel components."""
 
+    def enable_heatmap_settings_autosave(self):
+        self._heatmap_autosave_enabled = True
+
     def _get_last_heatmap_settings_path(self):
         return Path.home() / ".adc_streamer" / "heatmap" / "last_used_heatmap_settings.json"
 
@@ -138,6 +141,8 @@ class HeatmapPanelMixin:
         return applied
 
     def save_last_heatmap_settings(self):
+        if not getattr(self, '_heatmap_autosave_enabled', False):
+            return
         try:
             self.save_heatmap_settings_to_path(self._get_last_heatmap_settings_path(), log_message=False)
         except Exception as e:
@@ -312,6 +317,7 @@ class HeatmapPanelMixin:
             interactive=False
         )
         self.heatmap_colorbar.setImageItem(self.heatmap_image)
+        self._configure_heatmap_colorbar_display()
         self.heatmap_plot_widget.addItem(self.heatmap_colorbar)
         
         # Initialize with empty data
@@ -332,6 +338,12 @@ class HeatmapPanelMixin:
         group.setLayout(layout)
         
         return group
+
+    def _configure_heatmap_colorbar_display(self):
+        """Configure colorbar display scale/units without changing heatmap calculations."""
+        ticks = [(i / 50.0, ("50>" if i == 50 else str(i))) for i in range(0, 51, 10)]
+        self.heatmap_colorbar.axis.setTicks([ticks])
+        self.heatmap_colorbar.axis.setLabel(text='N/s')
 
     def _clear_heatmap_background_overlay(self):
         for attr in ['heatmap_circle']:

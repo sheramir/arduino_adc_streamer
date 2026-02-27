@@ -84,6 +84,7 @@ class ADCStreamerGUI(
         # Build user interface
         self.init_ui()
         self.load_last_heatmap_settings()
+        self.enable_heatmap_settings_autosave()
         self.load_last_spectrum_settings()
 
         # Post-initialization
@@ -214,6 +215,7 @@ class ADCStreamerGUI(
         self.channel_checkboxes: Dict[int, QCheckBox] = {}
         self.force_x_checkbox: Optional[QCheckBox] = None
         self.force_z_checkbox: Optional[QCheckBox] = None
+        self._heatmap_autosave_enabled = False
         
         self.is_updating_plot = False
         self._adc_curves = {}

@@ -263,7 +263,8 @@ HEATMAP_DC_REMOVAL_MODE = "highpass"  # "bias" or "highpass"
 # Example: ["R", "B", "C", "L", "T"] means channel1->Right, channel2->Bottom, ...
 # Configuration for PLUS sensors: HEATMAP_CHANNEL_SENSOR_MAP = ["R", "B", "C", "L", "T"]
 # Configuration for Single Octo sensors: HEATMAP_CHANNEL_SENSOR_MAP = ["R", "C", "B", "L", "T"]
-HEATMAP_CHANNEL_SENSOR_MAP = ["B", "R", "C", "L", "T"]
+# HEATMAP_CHANNEL_SENSOR_MAP = ["B", "R", "C", "L", "T"]
+HEATMAP_CHANNEL_SENSOR_MAP = ["R", "B", "C", "L", "T"]
 
 # Expected number of channels for heatmap
 HEATMAP_REQUIRED_CHANNELS = 5

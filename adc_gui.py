@@ -343,29 +343,8 @@ class ADCStreamerGUI(
         # Add tabbed visualization (timing and controls are now inside timeseries tab)
         layout.addWidget(self.create_plot_section())
         
-        # Connect tab change signal to start/stop heatmap simulation
-        self.visualization_tabs.currentChanged.connect(self.on_visualization_tab_changed)
-
         return panel
     
-    def on_visualization_tab_changed(self, index):
-        """Handle visualization tab change.
-        
-        Args:
-            index: Tab index (0=Time Series, 1=Heatmap)
-        """
-        current_tab = self.visualization_tabs.tabText(index)
-
-        if current_tab == "2D Heatmap":
-            self.start_heatmap_simulation()
-        else:  # Time Series tab
-            self.stop_heatmap_simulation()
-
-        if current_tab == "Spectrum":
-            self.start_spectrum_updates()
-        else:
-            self.stop_spectrum_updates()
-
     # ========================================================================
     # Window Management
     # ========================================================================

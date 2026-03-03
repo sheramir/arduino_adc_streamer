@@ -25,6 +25,7 @@ class ArchiveLoaderMixin:
             self.log_status("Loading full data from archive...")
             sweeps = []
             timestamps = []
+            archive_timestamps = []  # timestamps embedded per sweep (new-format archives)
             
             with open(self._archive_path, 'r', encoding='utf-8') as f:
                 # First line is metadata - skip it
@@ -42,12 +43,31 @@ class ArchiveLoaderMixin:
                     if line:
                         try:
                             sweep_data = json.loads(line)
-                            sweeps.append(sweep_data)
+
+                            # New format: {"timestamp_s": float, "samples": [...]}
+                            if isinstance(sweep_data, dict) and 'samples' in sweep_data:
+                                sweeps.append(sweep_data.get('samples', []))
+                                ts_val = sweep_data.get('timestamp_s')
+                                archive_timestamps.append(ts_val if isinstance(ts_val, (int, float)) else None)
+
+                            # Legacy format: raw list of samples per sweep
+                            elif isinstance(sweep_data, list):
+                                sweeps.append(sweep_data)
+                                archive_timestamps.append(None)
+
+                            # Unknown format: skip
+                            else:
+                                archive_timestamps.append(None)
+                                continue
                         except json.JSONDecodeError:
                             continue
             
-            # Reconstruct timestamps from sweeps using the CSV timing sidecar
-            if self._block_timing_path and Path(self._block_timing_path).exists():
+            # Prefer per-sweep timestamps embedded in archive (if present for all sweeps)
+            if len(archive_timestamps) == len(sweeps) and all(ts is not None for ts in archive_timestamps):
+                timestamps = [float(ts) for ts in archive_timestamps]
+
+            # Otherwise reconstruct timestamps from the CSV timing sidecar
+            elif self._block_timing_path and Path(self._block_timing_path).exists():
                 try:
                     with open(self._block_timing_path, 'r', encoding='utf-8', newline='') as f:
                         reader = csv.reader(f)

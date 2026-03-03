@@ -18,11 +18,11 @@ class SerialReaderThread(QThread):
         self.serial_port = serial_port
         self.running = True
         self.is_capturing = False
+        # Persistent buffer that holds partial binary packets between reads
+        self.binary_buffer = bytearray()
 
     def run(self):
         """Continuously read from serial port and emit signals."""
-        binary_buffer = bytearray()
-        
         while self.running:
             try:
                 if self.serial_port and self.serial_port.is_open:
@@ -31,8 +31,8 @@ class SerialReaderThread(QThread):
                         
                         # Always process as binary buffer to handle mixed binary/ASCII data
                         # This prevents "Unexpected ASCII" errors when MCU sends binary packets
-                        binary_buffer.extend(data)
-                        binary_buffer = self.process_binary_data(binary_buffer)
+                        self.binary_buffer.extend(data)
+                        self.binary_buffer = self.process_binary_data(self.binary_buffer)
                 else:
                     break
 
@@ -129,7 +129,12 @@ class SerialReaderThread(QThread):
         """Set whether we're currently capturing data."""
         self.is_capturing = capturing
         if not capturing:
-            pass
+            # Drop any partial/queued binary data between captures so timestamps restart clean
+            self.binary_buffer.clear()
+
+    def clear_buffer(self):
+        """Explicitly clear the internal binary buffer."""
+        self.binary_buffer.clear()
 
     def stop(self):
         """Stop the thread."""

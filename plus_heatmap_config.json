@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "heatmap_settings": {
+    "sensor_calibration": [
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      0.5
+    ],
+    "sensor_noise_floor": [
+      1.01,
+      1.01,
+      1.01,
+      1.01,
+      1.01
+    ],
+    "sensor_size": 0.4,
+    "intensity_scale": 0.005,
+    "blob_sigma_x": 0.15,
+    "blob_sigma_y": 0.15,
+    "smooth_alpha": 0.5,
+    "rms_window_ms": 20,
+    "dc_removal_mode": "highpass",
+    "hpf_cutoff_hz": 0.5,
+    "magnitude_threshold": 18.0,
+    "channel_sensor_map": [
+      "R",
+      "B",
+      "C",
+      "L",
+      "T"
+    ],
+    "confidence_intensity_ref": 100.0,
+    "sigma_spread_factor": 1.5
+  }
+}

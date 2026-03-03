@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 import pyqtgraph as pg
+import types
 
 from config_constants import (
     WINDOW_SIZE_MIN, WINDOW_SIZE_MAX, DEFAULT_WINDOW_SIZE, CHANNEL_SCROLL_HEIGHT
@@ -74,6 +75,30 @@ class DisplayPanelsMixin:
         self.force_viewbox.setXLink(self.plot_widget)  # Link X-axis
         self.plot_widget.setLabel('right', 'Force', units='N')
         self.plot_widget.showAxis('right')
+
+        # Guard wheel zoom during capture to avoid heavy redraws freezing UI
+        vb = self.plot_widget.getViewBox()
+        vb._orig_wheel_event = vb.wheelEvent
+
+        def wheel_event_guard(_self, event):
+            if getattr(self, 'is_capturing', False):
+                event.ignore()
+                return
+            vb._orig_wheel_event(event)
+
+        vb.wheelEvent = types.MethodType(wheel_event_guard, vb)
+
+        # Also guard at the PlotWidget level in case wheel events are caught there first
+        pw = self.plot_widget
+        pw._orig_wheel_event = pw.wheelEvent
+
+        def pw_wheel_event_guard(_self, event):
+            if getattr(self, 'is_capturing', False):
+                event.ignore()
+                return
+            pw._orig_wheel_event(event)
+
+        pw.wheelEvent = types.MethodType(pw_wheel_event_guard, pw)
         
         # Add legends
         self.adc_legend = self.plot_widget.addLegend(offset=(10, 10))

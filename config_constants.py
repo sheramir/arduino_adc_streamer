@@ -140,6 +140,12 @@ IADC_RESOLUTION_BITS = 12
 # Width of exported plot images (pixels)
 PLOT_EXPORT_WIDTH = 1920
 
+# Capture cache subdirectory name (created inside selected data directory)
+CACHE_SUBDIR_NAME = "cache"
+
+# Automatically clear capture cache on ADC disconnect/exit
+CLEAR_CACHE_ON_EXIT = True
+
 # ============================================================================
 # 555 Analyzer Constants
 # ============================================================================
@@ -263,7 +269,7 @@ HEATMAP_DC_REMOVAL_MODE = "highpass"  # "bias" or "highpass"
 # Example: ["R", "B", "C", "L", "T"] means channel1->Right, channel2->Bottom, ...
 # Configuration for PLUS sensors: HEATMAP_CHANNEL_SENSOR_MAP = ["R", "B", "C", "L", "T"]
 # Configuration for Single Octo sensors: HEATMAP_CHANNEL_SENSOR_MAP = ["R", "C", "B", "L", "T"]
-# HEATMAP_CHANNEL_SENSOR_MAP = ["B", "R", "C", "L", "T"]
+# HEATMAP_CHANNEL_SENSOR_MAP = ["B", "R", "C", "L", "T"] # False mapping swap R and B channels
 HEATMAP_CHANNEL_SENSOR_MAP = ["R", "B", "C", "L", "T"]
 
 # Expected number of channels for heatmap

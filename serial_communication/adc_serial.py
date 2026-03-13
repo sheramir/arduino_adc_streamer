@@ -11,7 +11,8 @@ from PyQt6.QtWidgets import QMessageBox
 
 from config_constants import (
     BAUD_RATE, SERIAL_TIMEOUT, COMMAND_TERMINATOR, ARDUINO_RESET_DELAY,
-    CONFIG_COMMAND_TIMEOUT, CONFIG_RETRY_ATTEMPTS, CONFIG_RETRY_DELAY
+    CONFIG_COMMAND_TIMEOUT, CONFIG_RETRY_ATTEMPTS, CONFIG_RETRY_DELAY,
+    CLEAR_CACHE_ON_EXIT,
 )
 from serial_communication.serial_threads import SerialReaderThread
 
@@ -97,6 +98,9 @@ class ADCSerialMixin:
         """Disconnect from the serial port."""
         if self.is_capturing:
             self.stop_capture()
+
+        if CLEAR_CACHE_ON_EXIT and hasattr(self, 'cleanup_capture_cache'):
+            self.cleanup_capture_cache()
 
         if self.serial_thread:
             self.serial_thread.stop()

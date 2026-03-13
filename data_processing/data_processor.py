@@ -29,7 +29,7 @@ from config_constants import (
     MAX_FORCE_SAMPLES, MAX_LOG_LINES, IADC_RESOLUTION_BITS,
     ANALYZER555_DEFAULT_CF_FARADS, ANALYZER555_DEFAULT_RB_OHMS,
     ANALYZER555_DEFAULT_RK_OHMS,
-    X_FORCE_SENSOR_TO_NEWTON, Z_FORCE_SENSOR_TO_NEWTON,
+    X_FORCE_SENSOR_TO_NEWTON, Z_FORCE_SENSOR_TO_NEWTON, CACHE_SUBDIR_NAME,
 )
 
 # Import sub-module mixins
@@ -677,13 +677,16 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
         # never lose access to data even though the in-memory buffer is a rolling window.
         save_dir = Path(self.dir_input.text()) if hasattr(self, 'dir_input') else Path.cwd()
         save_dir.mkdir(parents=True, exist_ok=True)
+        cache_dir = save_dir / CACHE_SUBDIR_NAME
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        self._cache_dir_path = str(cache_dir)
         base_name = self.filename_input.text().strip() if hasattr(self, 'filename_input') else 'adc_data'
         # Use minute-resolution filenames (no seconds)
         timestamp = datetime.now().strftime('%Y%m%d_%H%M')
         archive_name = f"{base_name}_{timestamp}.jsonl"
-        archive_path = save_dir / archive_name
+        archive_path = cache_dir / archive_name
         timing_name = f"{base_name}_{timestamp}_block_timing.csv"
-        timing_path = save_dir / timing_name
+        timing_path = cache_dir / timing_name
 
         try:
             # Open for write (overwrite any existing file with same name) and store handle
@@ -1001,10 +1004,76 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
             # Update info label
             self.plot_info_label.setText("ADC - Sweeps: 0 | Samples: 0  |  Force: 0 samples")
             self.log_status("Data cleared - plot reset to initial state")
+            self.cleanup_capture_cache()
     
     # ========================================================================
     # Helper Methods
     # ========================================================================
+
+    def _close_capture_cache_handles(self):
+        """Close open cache file handles, if any."""
+        try:
+            if self._archive_file:
+                try:
+                    self._archive_file.flush()
+                except Exception:
+                    pass
+                try:
+                    self._archive_file.close()
+                except Exception:
+                    pass
+        finally:
+            self._archive_file = None
+
+        try:
+            if self._block_timing_file:
+                try:
+                    self._block_timing_file.flush()
+                except Exception:
+                    pass
+                try:
+                    self._block_timing_file.close()
+                except Exception:
+                    pass
+        finally:
+            self._block_timing_file = None
+
+    def cleanup_capture_cache(self):
+        """Delete capture cache files and remove empty cache directory."""
+        self._close_capture_cache_handles()
+
+        removed_files = 0
+        for cache_path in [
+            getattr(self, '_archive_path', None),
+            getattr(self, '_block_timing_path', None),
+        ]:
+            if not cache_path:
+                continue
+            try:
+                path_obj = Path(cache_path)
+                if path_obj.exists() and path_obj.is_file():
+                    path_obj.unlink()
+                    removed_files += 1
+            except Exception as e:
+                self.log_status(f"WARNING: Failed to remove cache file {cache_path}: {e}")
+
+        cache_dir_path = getattr(self, '_cache_dir_path', None)
+        if cache_dir_path:
+            try:
+                cache_dir = Path(cache_dir_path)
+                if cache_dir.exists() and cache_dir.is_dir() and not any(cache_dir.iterdir()):
+                    cache_dir.rmdir()
+            except Exception as e:
+                self.log_status(f"WARNING: Failed to remove cache directory {cache_dir_path}: {e}")
+
+        self._archive_path = None
+        self._block_timing_path = None
+        self._cache_dir_path = None
+        self._archive_write_count = 0
+        self._block_timing_write_count = 0
+
+        if removed_files > 0:
+            self.log_status(f"Cache cleaned: removed {removed_files} file(s)")
     
     def get_vref_voltage(self) -> float:
         """Get the numeric voltage reference value."""

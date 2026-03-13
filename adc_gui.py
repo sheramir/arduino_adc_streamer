@@ -125,6 +125,7 @@ class ADCStreamerGUI(
         self._block_timing_file = None
         self._block_timing_path: Optional[str] = None
         self._block_timing_write_count = 0
+        self._cache_dir_path: Optional[str] = None
 
     def _init_force_state(self):
         """Initialize force sensor state."""

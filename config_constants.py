@@ -294,6 +294,31 @@ R_HEATMAP_AXIS_ADAPT_STRENGTH = 0.5
 R_HEATMAP_MAP_SMOOTH_ALPHA = 0.2
 
 # ============================================================================
+# Shear / CoP Visualization Constants
+# ============================================================================
+
+# Signed integration window for shear extraction
+SHEAR_INTEGRATION_WINDOW_MS = 16.0
+
+# EMA coefficients for baseline tracking and light conditioning
+SHEAR_BASELINE_ALPHA = 0.05
+SHEAR_CONDITIONING_ALPHA = 0.25
+
+# Deadband / signed calibration defaults
+SHEAR_DEADBAND_THRESHOLD = 0.0
+SHEAR_CHANNEL_GAINS = [1.0, 1.0, 1.0, 1.0, 1.0]  # [C, R, B, L, T]
+SHEAR_CHANNEL_BASELINES = [0.0, 0.0, 0.0, 0.0, 0.0]  # [C, R, B, L, T]
+
+# Gaussian CoP blob and arrow visualization
+SHEAR_GAUSSIAN_SIGMA_X = 0.18
+SHEAR_GAUSSIAN_SIGMA_Y = 0.18
+SHEAR_INTENSITY_SCALE = 0.2
+SHEAR_ARROW_SCALE = 0.35
+
+# Confidence scoring reference magnitude
+SHEAR_CONFIDENCE_SIGNAL_REF = 0.02
+
+# ============================================================================
 # Plot Colors
 # ============================================================================
 

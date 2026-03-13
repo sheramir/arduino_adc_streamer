@@ -71,6 +71,7 @@ See **[README_REFACTORING.md](README_REFACTORING.md)** for detailed architecture
 
 ### Visualization & Analysis
 - 📈 **Real-time plotting**: Fast pyqtgraph-based visualization with scrolling window
+- 🧭 **Shear / CoP tab**: Live MG-24 shear vector extraction with a Gaussian CoP blob, arrow overlay, and confidence score
 - 🎨 **Channel selection**: Individual channel display control
 - 📊 **Display modes**: View all repeats or averaged data
 - 🔍 **Zoom/pan**: Interactive plot navigation
@@ -141,6 +142,38 @@ See **[README_REFACTORING.md](README_REFACTORING.md)** for detailed architecture
 The GUI automatically validates buffer size against hardware limits:
 - **Formula**: `buffer_size × channels × repeat_count ≤ 32,000 samples`
 - See `BUFFER_OPTIMIZATION.md` for tuning guidelines
+
+### Shear / CoP Tab
+- The **Shear** tab is an additive live view for the existing 5-channel MG-24 piezo layout using `HEATMAP_CHANNEL_SENSOR_MAP = ["C", "R", "B", "L", "T"]`.
+- It performs per-channel baseline centering, light smoothing, signed moving-window integration, deadbanding, and sign-preserving gain calibration.
+- Shear is extracted only from the opposite-sign pairs:
+  - `R/L` for `x_shear`
+  - `T/B` for `y_shear`
+- Residual channel values are shifted non-negative if needed and then reused for CoP estimation with the center sensor included.
+- The tab shows a 2D Gaussian blob at `(X_CoP, Y_CoP)`, a shear arrow, and live numeric readouts for magnitude, angle, confidence, `X_CoP`, and `Y_CoP`.
+- The feature is intended for the MG-24 5-channel piezo path and is not enabled for 555 analyzer mode.
+
+#### Shear Parameters
+New defaults were added in [config_constants.py](/c:/Code/arduino_adc_streamer/config_constants.py):
+- `SHEAR_INTEGRATION_WINDOW_MS`
+- `SHEAR_BASELINE_ALPHA`
+- `SHEAR_CONDITIONING_ALPHA`
+- `SHEAR_DEADBAND_THRESHOLD`
+- `SHEAR_CHANNEL_GAINS`
+- `SHEAR_CHANNEL_BASELINES`
+- `SHEAR_GAUSSIAN_SIGMA_X`
+- `SHEAR_GAUSSIAN_SIGMA_Y`
+- `SHEAR_INTENSITY_SCALE`
+- `SHEAR_ARROW_SCALE`
+- `SHEAR_CONFIDENCE_SIGNAL_REF`
+
+#### Shear Algorithm Flow
+1. Extract the latest per-sensor sample window from the existing circular buffer without changing serial parsing.
+2. Remove tracked baseline/DC, optionally smooth, and integrate the signed signal over the configured window.
+3. Apply signed deadband + per-channel calibration: `signed_mag_i = sign(I_i) * max(0, abs(I_i) - b_i) * g_i`.
+4. Extract shear from opposite-sign `R/L` and `T/B` pairs by canceling the shared magnitude.
+5. Use the residual values to estimate CoP and draw a Gaussian blob.
+6. Score confidence from signal strength, directional dominance, and short-term temporal stability.
 
 ## 📊 Arduino Protocol
 

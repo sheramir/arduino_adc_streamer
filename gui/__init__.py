@@ -8,6 +8,7 @@ from gui.control_panels import ControlPanelsMixin
 from gui.display_panels import DisplayPanelsMixin
 from gui.file_panels import FilePanelsMixin
 from gui.heatmap_panel import HeatmapPanelMixin
+from gui.shear_panel import ShearPanelMixin
 from gui.spectrum_panel import SpectrumPanelMixin
 from gui.gui_components import GUIComponentsMixin
 
@@ -16,6 +17,7 @@ __all__ = [
     'DisplayPanelsMixin',
     'FilePanelsMixin',
     'HeatmapPanelMixin',
+    'ShearPanelMixin',
     'SpectrumPanelMixin',
     'GUIComponentsMixin',
 ]

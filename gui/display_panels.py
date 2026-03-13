@@ -41,10 +41,14 @@ class DisplayPanelsMixin:
         self.visualization_tabs.addTab(heatmap_tab, "2D Heatmap")
         self.heatmap_tab_index = 1
 
+        shear_tab = self.create_shear_tab()
+        self.visualization_tabs.addTab(shear_tab, "Shear")
+        self.shear_tab_index = 2
+
         # Create spectrum tab (from SpectrumPanelMixin)
         spectrum_tab = self.create_spectrum_tab()
         self.visualization_tabs.addTab(spectrum_tab, "Spectrum")
-        self.spectrum_tab_index = 2
+        self.spectrum_tab_index = 3
         
         return self.visualization_tabs
     

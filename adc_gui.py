@@ -36,7 +36,13 @@ from config_constants import *
 from serial_communication import ADCSerialMixin, ForceSerialMixin
 from config import MCUDetectorMixin, ConfigurationMixin
 from gui import GUIComponentsMixin
-from data_processing import DataProcessorMixin, HeatmapProcessorMixin, SpectrumProcessorMixin, SimulatedSensorThread
+from data_processing import (
+    DataProcessorMixin,
+    HeatmapProcessorMixin,
+    ShearProcessorMixin,
+    SpectrumProcessorMixin,
+    SimulatedSensorThread,
+)
 from file_operations import FileOperationsMixin
 
 
@@ -49,6 +55,7 @@ class ADCStreamerGUI(
     ConfigurationMixin,     # ✅ Configuration management
     DataProcessorMixin,     # ✅ Data processing
     HeatmapProcessorMixin,  # ✅ Heatmap CoP calculation
+    ShearProcessorMixin,    # ✅ Shear / CoP calculation
     SpectrumProcessorMixin, # ✅ Spectrum processing
     FileOperationsMixin     # ✅ File operations
 ):
@@ -78,6 +85,7 @@ class ADCStreamerGUI(
         self._init_config_state()
         self._init_ui_state()
         self._init_heatmap_state()
+        self._init_shear_state()
         self._init_spectrum_state()
         self._init_timers()
 
@@ -253,6 +261,10 @@ class ADCStreamerGUI(
         self.reset_555_heatmap_state()
         self.last_heatmap_sweep_count = 0
 
+    def _init_shear_state(self):
+        """Initialize shear / CoP processing state."""
+        self.init_shear_processing_state()
+
     def _init_timers(self):
         """Initialize Qt timers."""
         self.plot_update_timer = QTimer()
@@ -381,7 +393,7 @@ class ADCStreamerGUI(
         """
         current_tab = self.visualization_tabs.tabText(index)
 
-        if current_tab == "2D Heatmap":
+        if current_tab in {"2D Heatmap", "Shear"}:
             self.start_heatmap_simulation()
         else:  # Time Series or other tabs
             self.stop_heatmap_simulation()
@@ -426,8 +438,8 @@ class ADCStreamerGUI(
     
     def update_heatmap(self):
         """Update heatmap display (called by QTimer at HEATMAP_FPS rate)."""
-        # Check if we're on the heatmap tab
-        if self.visualization_tabs.currentIndex() != 1:
+        current_tab = self.visualization_tabs.tabText(self.visualization_tabs.currentIndex())
+        if current_tab not in {"2D Heatmap", "Shear"}:
             return
 
         if hasattr(self, 'update_heatmap_ui_for_mode'):
@@ -441,21 +453,41 @@ class ADCStreamerGUI(
         num_channels = len(unique_channels)
 
         is_555_mode = self.is_555_analyzer_mode()
-        required_channels = R_HEATMAP_REQUIRED_CHANNELS if is_555_mode else HEATMAP_REQUIRED_CHANNELS
+        if current_tab == "Shear":
+            required_channels = HEATMAP_REQUIRED_CHANNELS
+        else:
+            required_channels = R_HEATMAP_REQUIRED_CHANNELS if is_555_mode else HEATMAP_REQUIRED_CHANNELS
 
         if num_channels != required_channels:
-            # Show warning message
-            self.show_heatmap_channel_warning(num_channels, required_channels)
+            if current_tab == "Shear":
+                self.show_shear_channel_warning(num_channels, required_channels)
+            else:
+                self.show_heatmap_channel_warning(num_channels, required_channels)
             return
         else:
-            # Clear warning if it was showing
             self.clear_heatmap_channel_warning()
+            self.clear_shear_channel_warning()
         
         # Reset processing state if capture restarted
         if self.sweep_count < self.last_heatmap_sweep_count:
             self.heatmap_signal_processor.reset()
             self.reset_555_heatmap_state()
+            self.reset_shear_processing_state()
         self.last_heatmap_sweep_count = self.sweep_count
+        self.last_shear_sweep_count = self.sweep_count
+
+        if current_tab == "Shear":
+            if is_555_mode:
+                self.show_shear_channel_warning(num_channels, HEATMAP_REQUIRED_CHANNELS)
+                return
+
+            processed = self.compute_shear_visualization(self.get_shear_settings())
+            if processed is None:
+                return
+
+            shear_heatmap, shear_result = processed
+            self.update_shear_display(shear_heatmap, shear_result)
+            return
 
         settings = self.get_heatmap_settings()
         if is_555_mode:

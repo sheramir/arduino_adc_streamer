@@ -1,0 +1,100 @@
+"""
+Shear Processor Mixin
+=====================
+Coordinates live extraction of 5-channel piezo data into shear / CoP outputs.
+"""
+
+from __future__ import annotations
+
+from typing import Dict
+
+import numpy as np
+
+from config_constants import HEATMAP_CHANNEL_SENSOR_MAP, HEATMAP_HEIGHT, HEATMAP_REQUIRED_CHANNELS, HEATMAP_WIDTH
+from data_processing.shear_cop_processor import (
+    SHEAR_SENSOR_ORDER,
+    ShearCoPProcessor,
+    generate_gaussian_blob,
+)
+
+
+class ShearProcessorMixin:
+    """Mixin for real-time shear / CoP computation from the MG-24 channel window."""
+
+    def init_shear_processing_state(self) -> None:
+        self.shear_processor = ShearCoPProcessor()
+        self.last_shear_sweep_count = 0
+        self.shear_heatmap_buffer = np.zeros((HEATMAP_HEIGHT, HEATMAP_WIDTH), dtype=np.float32)
+
+    def reset_shear_processing_state(self) -> None:
+        if hasattr(self, "shear_processor"):
+            self.shear_processor.reset()
+        self.last_shear_sweep_count = 0
+        if hasattr(self, "shear_heatmap_buffer"):
+            self.shear_heatmap_buffer.fill(0)
+
+    def _extract_shear_sensor_samples(self, settings: Dict[str, object]):
+        extract_result = self._extract_heatmap_window_data(settings.get("integration_window_ms", 16.0))
+        if extract_result is None:
+            return None
+
+        data_array, _, avg_sample_time_us = extract_result
+        channels = self.config.get("channels", [])
+        repeat_count = self.config.get("repeat", 1)
+        if not channels or repeat_count <= 0:
+            return None
+
+        unique_channels = []
+        for channel in channels:
+            if channel not in unique_channels:
+                unique_channels.append(channel)
+
+        if len(unique_channels) != HEATMAP_REQUIRED_CHANNELS:
+            return None
+
+        sensor_streams = {name: np.array([], dtype=np.float64) for name in SHEAR_SENSOR_ORDER}
+        channel_sensor_map = list(settings.get("channel_sensor_map", HEATMAP_CHANNEL_SENSOR_MAP))
+
+        for channel_index, channel in enumerate(unique_channels):
+            positions = [idx for idx, seq_channel in enumerate(channels) if seq_channel == channel]
+            channel_data_list = []
+            for pos in positions:
+                start_idx = pos * repeat_count
+                end_idx = start_idx + repeat_count
+                if end_idx > data_array.shape[1]:
+                    continue
+                channel_data_list.append(data_array[:, start_idx:end_idx].reshape(-1))
+
+            if not channel_data_list or channel_index >= len(channel_sensor_map):
+                continue
+
+            sensor_name = channel_sensor_map[channel_index]
+            sensor_streams[sensor_name] = np.concatenate(channel_data_list).astype(np.float64, copy=False)
+
+        total_sample_rate_hz = 1_000_000.0 / float(avg_sample_time_us) if avg_sample_time_us > 0 else 0.0
+        per_channel_rate_hz = total_sample_rate_hz / max(len(unique_channels), 1)
+        return sensor_streams, per_channel_rate_hz
+
+    def compute_shear_visualization(self, settings: Dict[str, object]):
+        sample_result = self._extract_shear_sensor_samples(settings)
+        if sample_result is None:
+            return None
+
+        sensor_streams, sample_rate_hz = sample_result
+        if sample_rate_hz <= 0:
+            return None
+
+        result = self.shear_processor.process(sensor_streams, sample_rate_hz, settings)
+        amplitude = min(1.0, result.total_weight * float(settings.get("intensity_scale", 1.0)))
+        blob = generate_gaussian_blob(
+            self.shear_x_grid,
+            self.shear_y_grid,
+            result.cop_x,
+            result.cop_y,
+            float(settings.get("blob_sigma_x", 0.18)),
+            float(settings.get("blob_sigma_y", 0.18)),
+            amplitude,
+        )
+        np.clip(blob, 0.0, 1.0, out=blob)
+        self.shear_heatmap_buffer[:, :] = blob.astype(np.float32, copy=False)
+        return self.shear_heatmap_buffer, result

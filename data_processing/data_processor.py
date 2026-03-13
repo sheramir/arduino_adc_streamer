@@ -964,6 +964,8 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
             self.samples_per_sweep = 0
             self.filter_apply_pending = True
             self.reset_filter_states()
+            if hasattr(self, 'reset_shear_processing_state'):
+                self.reset_shear_processing_state()
             
             # Reset view mode flags
             self.is_full_view = False

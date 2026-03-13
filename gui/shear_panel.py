@@ -339,10 +339,10 @@ class ShearPanelMixin:
         self.shear_image.setImage(heatmap, autoLevels=False, levels=(0, 1))
 
         arrow_scale = self.shear_arrow_scale_spin.value()
-        arrow_end_x = result.cop_x + result.shear_x * arrow_scale
-        arrow_end_y = result.cop_y + result.shear_y * arrow_scale
+        arrow_end_x = result.shear_x * arrow_scale
+        arrow_end_y = result.shear_y * arrow_scale
 
-        self.shear_arrow_line.setData([result.cop_x, arrow_end_x], [result.cop_y, arrow_end_y])
+        self.shear_arrow_line.setData([0.0, arrow_end_x], [0.0, arrow_end_y])
         self.shear_arrow_head.setPos(arrow_end_x, arrow_end_y)
         self.shear_arrow_head.setStyle(angle=-result.shear_angle_deg + 90.0)
         self.shear_cop_marker.setData([result.cop_x], [result.cop_y])

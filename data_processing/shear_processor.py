@@ -95,6 +95,11 @@ class ShearProcessorMixin:
             float(settings.get("blob_sigma_y", 0.18)),
             amplitude,
         )
+        # Remove the Gaussian tails so the display behaves like a localized blob
+        # instead of tinting the whole image background.
+        if amplitude > 0.0:
+            tail_threshold = max(0.02 * amplitude, 1e-4)
+            blob[blob < tail_threshold] = 0.0
         np.clip(blob, 0.0, 1.0, out=blob)
         self.shear_heatmap_buffer[:, :] = blob.astype(np.float32, copy=False)
         return self.shear_heatmap_buffer, result

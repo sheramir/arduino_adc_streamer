@@ -1,6 +1,8 @@
 /*
  * High-speed IADC Binary Sweeper with Blocked Output — XIAO MG24
  * --------------------------------------------------------------
+ * Change log:
+ * Ver 1.1: Added reset (on high) for charge-amp reset before switching MUX.
  *
  * Core behavior (same protocol as before):
  *   - Configure channels with:
@@ -108,17 +110,22 @@ static const int PIN_MUX_A0       = 3;
 static const int PIN_MUX_A1       = 2;
 static const int PIN_MUX_A2       = 1;
 static const int PIN_MUX_A3       = 9;
-static const int PIN_MUX_EN       = 4; // Actually EN is not used - fixed to vcc
+static const int PIN_MUX_EN       = -1; // Actually EN is not used - fixed to vcc
+static const int PIN_RESET        = -1; // Reset charge amp capacitor (on high). Use -1 if no charge amp
 
 // MUX COM (buffer output) into MG24 ADC
-static const int PIN_ADC_MUX_COM  = 6;
+static const int PIN_ADC_MUX_COM  = 7;
 
 // Set to true if EN=HIGH enables the MUX (as in ADC_MUX1_test.ino).
 // Set to false if EN is active-low in your wiring.
-static const bool MUX_ENABLE_ACTIVE_HIGH = true;
+//static const bool MUX_ENABLE_ACTIVE_HIGH = true;
 
-// MUX settling time after switching address (microseconds)
-static uint32_t g_mux_settle_us = 2;
+// MUX settling time before using the ADC (microseconds)
+static uint32_t g_mux_settle_us = 30;
+
+// Charge-Amp reset time before and after switching to new address (microseconds)
+static uint32_t g_chargeAmp_reset_us = 0;  // use 0 if no charge amp
+static uint32_t g_mux_enable_settle_us = 0;   // optional, can be 0 or 1
 
 // ADG1206 is 16:1 => channels 0..15
 static const uint8_t MUX_CHANNEL_MAX = 15;
@@ -338,14 +345,17 @@ static void allocateAnalogBusForPin(PinName pinName) {
 
 static bool g_muxPinsInited = false;
 
+// Set MUX enable
 static inline void muxEnable(bool en) {
-  if (MUX_ENABLE_ACTIVE_HIGH) {
-    digitalWrite(PIN_MUX_EN, en ? HIGH : LOW);
-  } else {
-    digitalWrite(PIN_MUX_EN, en ? LOW : HIGH);
-  }
+  if (PIN_MUX_EN >= 0) digitalWrite(PIN_MUX_EN, en ? HIGH : LOW);
 }
 
+// Send reset to charge-amp cap (using switches such as TMUX1112)
+static inline void resetChargeAmp(bool reset) {
+  if (PIN_RESET >= 0) digitalWrite(PIN_RESET, reset ? HIGH : LOW);
+}
+
+// Initialize MUX pins
 static inline void muxInitPins() {
   if (g_muxPinsInited) return;
 
@@ -353,29 +363,69 @@ static inline void muxInitPins() {
   pinMode(PIN_MUX_A1, OUTPUT);
   pinMode(PIN_MUX_A2, OUTPUT);
   pinMode(PIN_MUX_A3, OUTPUT);
-  pinMode(PIN_MUX_EN, OUTPUT);
+  if (PIN_MUX_EN >= 0) pinMode(PIN_MUX_EN, OUTPUT);
+  if (PIN_RESET >= 0) pinMode(PIN_RESET, OUTPUT);
 
   digitalWrite(PIN_MUX_A0, LOW);
   digitalWrite(PIN_MUX_A1, LOW);
   digitalWrite(PIN_MUX_A2, LOW);
   digitalWrite(PIN_MUX_A3, LOW);
-  muxEnable(true);
+
+  muxEnable(false);  // keep MUX disconnected at startup
+  resetChargeAmp(true);  // hold charge amp in reset at startup
 
   g_muxPinsInited = true;
 }
 
+static uint8_t g_lastMuxCh = 0xFF;
+
+// Switch to new MUX channel (including ChargeAmp reset)
 static inline void muxSelect(uint8_t ch) {
+  // 1) Disconnect current sensor first
   muxEnable(false);
 
-  digitalWrite(PIN_MUX_A0, (ch & 0x01) ? HIGH : LOW);
-  digitalWrite(PIN_MUX_A1, (ch & 0x02) ? HIGH : LOW);
-  digitalWrite(PIN_MUX_A2, (ch & 0x04) ? HIGH : LOW);
-  digitalWrite(PIN_MUX_A3, (ch & 0x08) ? HIGH : LOW);
+  // 2) Reset the charge amp while isolated
+  if (PIN_RESET >= 0) {
+    resetChargeAmp(true);
+    if (g_chargeAmp_reset_us) delayMicroseconds(g_chargeAmp_reset_us);
+  }
 
+  // 3) Program next channel address
+  // digitalWrite(PIN_MUX_A0, (ch & 0x01) ? HIGH : LOW);
+  // digitalWrite(PIN_MUX_A1, (ch & 0x02) ? HIGH : LOW);
+  // digitalWrite(PIN_MUX_A2, (ch & 0x04) ? HIGH : LOW);
+  // digitalWrite(PIN_MUX_A3, (ch & 0x08) ? HIGH : LOW);
+  uint8_t diff = ch ^ g_lastMuxCh; // check which address bits need to change
+
+  if (g_lastMuxCh == 0xFF || (diff & 0x01)) {
+    digitalWrite(PIN_MUX_A0, (ch & 0x01) ? HIGH : LOW);
+  }
+  if (g_lastMuxCh == 0xFF || (diff & 0x02)) {
+    digitalWrite(PIN_MUX_A1, (ch & 0x02) ? HIGH : LOW);
+  }
+  if (g_lastMuxCh == 0xFF || (diff & 0x04)) {
+    digitalWrite(PIN_MUX_A2, (ch & 0x04) ? HIGH : LOW);
+  }
+  if (g_lastMuxCh == 0xFF || (diff & 0x08)) {
+    digitalWrite(PIN_MUX_A3, (ch & 0x08) ? HIGH : LOW);
+  }
+
+  g_lastMuxCh = ch;
+
+  // 4) Connect new channel
   muxEnable(true);
 
+  // Optional: let MUX path settle before releasing reset on charge amp
+  if (g_mux_enable_settle_us) delayMicroseconds(g_mux_enable_settle_us);
+
+  // 5) Release reset
+   if (PIN_RESET >= 0) resetChargeAmp(false);
+
+  // 6) Final settle before ADC read
   if (g_mux_settle_us) delayMicroseconds(g_mux_settle_us);
+
 }
+
 
 // ---------------------------------------------------------------------
 // IADC single-conversion helpers (used with external MUX)
@@ -387,20 +437,26 @@ static IADC_PosInput_t  g_muxPosInput = iadcPosInputPortAPin0; // overwritten in
 static inline uint16_t iadcReadOnce12() {
   if (!g_iadcReady) return 0;
 
-  while (IADC_getSingleFifoCnt(IADC0) > 0) {
-    (void)IADC_pullSingleFifoResult(IADC0);
-  }
+  // Uncomment to do FIFO flash (commented to reduce lag)
+  // while (IADC_getSingleFifoCnt(IADC0) > 0) {
+  //   (void)IADC_pullSingleFifoResult(IADC0);
+  // }
 
   IADC_command(IADC0, iadcCmdStartSingle);
 
-  uint32_t t0 = micros();
+  // uint32_t t0 = micros();
+  // while (IADC_getSingleFifoCnt(IADC0) == 0) {
+  //   if ((uint32_t)(micros() - t0) > 100000UL) { // 100 ms timeout
+  //     Serial.println(F("# ERROR: IADC single timeout. Stopping run."));
+  //     isRunning = false;
+  //     timedRun  = false;
+  //     return 0;
+  //   }
+  // }
+
+  // Tight poll, no micros() in the hot loop
   while (IADC_getSingleFifoCnt(IADC0) == 0) {
-    if ((uint32_t)(micros() - t0) > 100000UL) { // 100 ms timeout
-      Serial.println(F("# ERROR: IADC single timeout. Stopping run."));
-      isRunning = false;
-      timedRun  = false;
-      return 0;
-    }
+    ;
   }
 
   IADC_Result_t res = IADC_pullSingleFifoResult(IADC0);
@@ -782,10 +838,15 @@ void doOneBlock() {
 
   blockStartMicros = micros();
   uint32_t idx = 0;
+  g_lastMuxCh = 0xFF;
 
   for (uint16_t s = 0; s < sweepsPerBlock && idx < totalSamples; ++s) {
     for (uint16_t e = 0; e < scanEntriesPerSweep && idx < totalSamples; ++e) {
-      muxSelect(entryMuxChannel[e]);
+      uint8_t ch = entryMuxChannel[e];
+
+      if (ch != g_lastMuxCh) {
+          muxSelect(ch);
+      }
 
       uint16_t data = iadcReadOnce12();
 
@@ -1005,6 +1066,7 @@ bool handleRun(const String &args) {
   // Ensure IADC is initialized with current config
   g_configDirty = true;
   
+  g_lastMuxCh = 0xFF;
   // Run configurable warm-up sweeps
   discardWarmupSweeps(IADC_WARMUP_SWEEPS);  // e.g. 48 sweeps of 6 channels
   return true;

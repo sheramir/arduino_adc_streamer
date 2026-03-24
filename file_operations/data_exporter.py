@@ -92,6 +92,14 @@ class DataExporterMixin:
 
         try:
             is_555_mode = (getattr(self, 'device_mode', 'adc') == '555') or ('555' in (self.current_mcu or ''))
+            repeat_count = max(1, int(self.config.get('repeat', 1)))
+            if self.is_array_pzt1_mode():
+                header = []
+                for channel in self.config['channels']:
+                    for _ in range(repeat_count):
+                        header.extend([f"M1_Ch{channel}", f"M2_Ch{channel}"])
+            else:
+                header = [f"CH{ch}" for ch in self.config['channels']] * repeat_count
 
             # Determine if we have force data
             has_force_x = any(d[1] != 0 for d in self.force_data) if self.force_data else False
@@ -109,7 +117,6 @@ class DataExporterMixin:
                 writer = csv.writer(f)
 
                 # Write header
-                header = [f"CH{ch}" for ch in self.config['channels']] * self.config['repeat']
                 if is_555_mode:
                     header.insert(0, "Timestamp_s")
                 header.extend(["Force_X", "Force_Z"])
@@ -257,7 +264,7 @@ class DataExporterMixin:
                     "osr": self.config['osr'],
                     "gain": self.config['gain'],
                     "buffer_sweeps_per_block": self.buffer_spin.value(),
-                    "buffer_total_samples": self.buffer_spin.value() * len(self.config['channels']) * self.config['repeat']
+                    "buffer_total_samples": self.buffer_spin.value() * self.get_effective_samples_per_sweep()
                 },
                 "block_timing_csv": self._block_timing_path,
                 "timing": {

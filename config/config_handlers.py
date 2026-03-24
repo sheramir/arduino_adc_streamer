@@ -17,6 +17,73 @@ from config.buffer_utils import validate_and_limit_sweeps_per_block
 
 class ConfigurationMixin:
     """Mixin class for configuration management and event handlers."""
+
+    def is_array_pzt1_mode(self) -> bool:
+        """Return True when the connected MCU streams paired MUX data."""
+        return (self.current_mcu or "").strip().lower() == "array_pzt1".lower()
+
+    def get_effective_channel_multiplier(self) -> int:
+        """Return how many physical samples each requested channel produces."""
+        return 2 if self.is_array_pzt1_mode() else 1
+
+    def get_effective_samples_per_sweep(self, channels=None, repeat_count=None) -> int:
+        """Return the physical sample width of one sweep for the active MCU."""
+        if channels is None:
+            channels = self.config.get('channels', [])
+        if repeat_count is None:
+            repeat_count = self.config.get('repeat', 1)
+        return len(channels) * max(1, int(repeat_count)) * self.get_effective_channel_multiplier()
+
+    def get_display_channel_specs(self, channels=None, repeat_count=None):
+        """Build display-channel metadata for plotting and channel selectors."""
+        if channels is None:
+            channels = self.config.get('channels', [])
+        if repeat_count is None:
+            repeat_count = self.config.get('repeat', 1)
+        repeat_count = max(1, int(repeat_count))
+
+        unique_channels = []
+        for channel in channels:
+            if channel not in unique_channels:
+                unique_channels.append(channel)
+
+        specs = []
+        if self.is_array_pzt1_mode():
+            for mux_index in range(2):
+                mux_number = mux_index + 1
+                for display_order, channel in enumerate(unique_channels):
+                    sample_indices = []
+                    for seq_idx, seq_channel in enumerate(channels):
+                        if seq_channel != channel:
+                            continue
+                        base_idx = seq_idx * repeat_count * 2
+                        for repeat_idx in range(repeat_count):
+                            sample_indices.append(base_idx + (repeat_idx * 2) + mux_index)
+
+                    specs.append({
+                        'key': ('mux', mux_number, channel),
+                        'label': f"M{mux_number}_Ch{channel}",
+                        'sample_indices': sample_indices,
+                        'color_slot': mux_index * max(1, len(unique_channels)) + display_order,
+                    })
+            return specs
+
+        for display_order, channel in enumerate(unique_channels):
+            sample_indices = []
+            for seq_idx, seq_channel in enumerate(channels):
+                if seq_channel != channel:
+                    continue
+                base_idx = seq_idx * repeat_count
+                sample_indices.extend(range(base_idx, base_idx + repeat_count))
+
+            specs.append({
+                'key': ('adc', channel),
+                'label': f"Ch {channel}",
+                'sample_indices': sample_indices,
+                'color_slot': display_order,
+            })
+
+        return specs
     
     # ========================================================================
     # Configuration Event Handlers (on_*_changed methods)
@@ -174,7 +241,7 @@ class ConfigurationMixin:
             repeat_count = self.config.get('repeat', 1)
             
             if channels and repeat_count > 0:
-                channel_count = len(channels)
+                channel_count = len(channels) * self.get_effective_channel_multiplier()
                 validated_value = validate_and_limit_sweeps_per_block(
                     value, channel_count, repeat_count
                 )
@@ -426,7 +493,7 @@ class ConfigurationMixin:
         time.sleep(0.05)
         buffer_size = self.buffer_spin.value()
         # Validate buffer size
-        channel_count = len(self.config.get('channels', []))
+        channel_count = len(self.config.get('channels', [])) * self.get_effective_channel_multiplier()
         repeat_count = self.config.get('repeat', 1)
         
         if buffer_size <= 0:
@@ -606,16 +673,12 @@ class ConfigurationMixin:
         if not self.config['channels']:
             return
 
-        # Get unique channels while preserving order
-        unique_channels = []
-        for ch in self.config['channels']:
-            if ch not in unique_channels:
-                unique_channels.append(ch)
+        display_specs = self.get_display_channel_specs()
 
         # Create checkboxes in a compact grid
-        for idx, ch in enumerate(unique_channels):
+        for idx, spec in enumerate(display_specs):
             from PyQt6.QtWidgets import QCheckBox
-            checkbox = QCheckBox(str(ch))
+            checkbox = QCheckBox(spec['label'])
             checkbox.setChecked(True)  # Select all by default
             checkbox.stateChanged.connect(self.trigger_plot_update)
 
@@ -623,7 +686,7 @@ class ConfigurationMixin:
             col = idx % MAX_PLOT_COLUMNS
             self.channel_checkboxes_layout.addWidget(checkbox, row, col)
 
-            self.channel_checkboxes[ch] = checkbox
+            self.channel_checkboxes[spec['key']] = checkbox
         
         # Add force sensor checkboxes if force data is available
         if self.force_serial_port and self.force_serial_port.is_open:
@@ -633,8 +696,8 @@ class ConfigurationMixin:
             self.force_x_checkbox.setChecked(True)
             self.force_x_checkbox.setStyleSheet("QCheckBox { color: red; }")
             self.force_x_checkbox.stateChanged.connect(self.trigger_plot_update)
-            row = len(unique_channels) // MAX_PLOT_COLUMNS
-            col = len(unique_channels) % MAX_PLOT_COLUMNS
+            row = len(display_specs) // MAX_PLOT_COLUMNS
+            col = len(display_specs) % MAX_PLOT_COLUMNS
             self.channel_checkboxes_layout.addWidget(self.force_x_checkbox, row, col)
             
             # Z Force checkbox
@@ -642,8 +705,8 @@ class ConfigurationMixin:
             self.force_z_checkbox.setChecked(True)
             self.force_z_checkbox.setStyleSheet("QCheckBox { color: blue; }")
             self.force_z_checkbox.stateChanged.connect(self.trigger_plot_update)
-            row = (len(unique_channels) + 1) // MAX_PLOT_COLUMNS
-            col = (len(unique_channels) + 1) % MAX_PLOT_COLUMNS
+            row = (len(display_specs) + 1) // MAX_PLOT_COLUMNS
+            col = (len(display_specs) + 1) % MAX_PLOT_COLUMNS
             self.channel_checkboxes_layout.addWidget(self.force_z_checkbox, row, col)
 
     def select_all_channels(self):

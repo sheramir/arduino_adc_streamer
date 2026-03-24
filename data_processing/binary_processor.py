@@ -75,7 +75,7 @@ class BinaryProcessorMixin:
                 self.mcu_last_block_end_us = block_end_us
                 
                 # Calculate samples per sweep from configuration
-                channel_count = len(self.config.get('channels', []))
+                channel_count = len(self.config.get('channels', [])) * self.get_effective_channel_multiplier()
                 repeat_count = self.config.get('repeat', 1)
                 samples_per_sweep = channel_count * repeat_count
                 
@@ -203,8 +203,15 @@ class BinaryProcessorMixin:
                         except Exception:
                             pass
 
-                # Update plot periodically for performance (after processing entire block)
-                if store_capture_data and self.sweep_count % PLOT_UPDATE_FREQUENCY == 0:
+                # Update plot periodically for performance, but render the first few
+                # sweeps immediately so slow/low-buffer devices still show activity.
+                should_refresh_plot = (
+                    store_capture_data and (
+                        self.sweep_count <= PLOT_UPDATE_FREQUENCY
+                        or self.sweep_count % PLOT_UPDATE_FREQUENCY == 0
+                    )
+                )
+                if should_refresh_plot:
                     self.update_plot()
                     # Update info label based on current view mode - use buffer counts!
                     actual_sweeps = min(self.sweep_count, self.MAX_SWEEPS_BUFFER)

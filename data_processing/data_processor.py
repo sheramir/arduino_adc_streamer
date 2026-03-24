@@ -70,8 +70,12 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
                 self.is_updating_plot = False
                 return
 
+            display_specs = self.get_display_channel_specs()
+
             # Get selected channels from checkboxes
-            selected_channels = [ch for ch, checkbox in self.channel_checkboxes.items() if checkbox.isChecked()]
+            selected_channels = {
+                channel_key for channel_key, checkbox in self.channel_checkboxes.items() if checkbox.isChecked()
+            }
             if not selected_channels:
                 for curve in self._adc_curves.values():
                     curve.setVisible(False)
@@ -81,7 +85,7 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
             # Configuration
             channels = self.config['channels']
             repeat_count = self.config['repeat']
-            samples_per_sweep = len(channels) * repeat_count
+            samples_per_sweep = self.get_effective_samples_per_sweep(channels, repeat_count)
             MAX_TOTAL_POINTS_TO_DISPLAY = 12000
             
             # Determine which data to plot - use numpy buffer directly with thread safety!
@@ -200,12 +204,6 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
                 self.is_updating_plot = False
                 return
 
-            # Get unique channels in order
-            unique_channels = []
-            for ch in channels:
-                if ch not in unique_channels:
-                    unique_channels.append(ch)
-
             desired_curve_keys = set()
             latest_channel_values = {}
             visible_series_count = max(1, len(selected_channels))
@@ -219,50 +217,25 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
 
             # Data is ALREADY numpy array from buffer - no conversion needed!
             # Extract and plot data for each channel
-            for ch_idx, channel in enumerate(unique_channels):
-                if channel not in selected_channels:
+            for spec in display_specs:
+                if spec['key'] not in selected_channels:
                     continue
 
-                color = PLOT_COLORS[ch_idx % len(PLOT_COLORS)]
-
-                # Find all positions of this channel in the sequence
-                positions = [i for i, c in enumerate(channels) if c == channel]
-
-                # Extract data using numpy slicing (MUCH faster than loops!)
-                channel_data_list = []
-                channel_times_list = []
-                
-                for pos in positions:
-                    start_idx = pos * repeat_count
-                    end_idx = start_idx + repeat_count
-                    
-                    # Extract all repeats for this position across all sweeps (single numpy operation!)
-                    pos_data = data_array[:, start_idx:end_idx]  # Shape: (num_sweeps, repeat_count)
-                    
-                    # Flatten to 1D: [sweep0_r0, sweep0_r1, ..., sweep1_r0, sweep1_r1, ...]
-                    pos_data_flat = pos_data.flatten()
-                    channel_data_list.append(pos_data_flat)
-                    
-                    # Generate timestamps for all samples
-                    # Create time offsets for each sample within a sweep
-                    sample_indices = np.arange(start_idx, end_idx)
-                    time_offsets = sample_indices * avg_sample_time_sec
-                    
-                    # Repeat sweep timestamps for each repeat, then add offsets
-                    sweep_times = np.repeat(timestamps_array, repeat_count)
-                    offsets_tiled = np.tile(time_offsets, len(timestamps_array))
-                    pos_times = sweep_times + offsets_tiled
-                    channel_times_list.append(pos_times)
-                
-                # Concatenate all positions
-                if not channel_data_list:
+                color = PLOT_COLORS[spec['color_slot'] % len(PLOT_COLORS)]
+                sample_indices = spec['sample_indices']
+                if not sample_indices:
                     continue
-                    
-                channel_data = np.concatenate(channel_data_list)
-                channel_times = np.concatenate(channel_times_list)
+
+                sample_index_array = np.asarray(sample_indices, dtype=np.int32)
+                channel_data = data_array[:, sample_index_array].reshape(-1)
+
+                time_offsets = sample_index_array.astype(np.float64) * avg_sample_time_sec
+                channel_times = (
+                    timestamps_array.reshape(-1, 1) + time_offsets.reshape(1, -1)
+                ).reshape(-1)
 
                 if len(channel_data) > 0:
-                    latest_channel_values[channel] = float(channel_data[-1])
+                    latest_channel_values[spec['label']] = float(channel_data[-1])
 
                 # Convert to voltage if voltage units mode is enabled
                 if getattr(self, 'device_mode', 'adc') != '555' and self.yaxis_units_combo.currentText() == "Voltage":
@@ -297,8 +270,8 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
                                     lighter_color = tuple(int(c * 0.7) for c in color)
                                     pen = pg.mkPen(color=lighter_color, width=1.5, style=Qt.PenStyle.DashLine)
                                 
-                                name = f"Ch {channel}.{repeat_idx}"
-                                curve_key = ("repeat", channel, repeat_idx)
+                                name = f"{spec['label']}.{repeat_idx}"
+                                curve_key = ("repeat", spec['key'], repeat_idx)
                                 desired_curve_keys.add(curve_key)
                                 
                                 curve = self._adc_curves.get(curve_key)
@@ -323,9 +296,9 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
                                 channel_times_2d = channel_times[:num_samples * repeat_count].reshape(-1, repeat_count)
                                 channel_data = np.mean(channel_data_2d, axis=1)
                                 channel_times = channel_times_2d[:, 0]  # Use first repeat's times
-                                name = f"Ch {channel} (avg)"
+                                name = f"{spec['label']} (avg)"
                                 pen = pg.mkPen(color=color, width=3, style=Qt.PenStyle.DashLine)
-                                curve_key = ("avg", channel, 0)
+                                curve_key = ("avg", spec['key'], 0)
                             else:
                                 continue
                         except Exception as e:
@@ -333,9 +306,9 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
                             continue
                     else:
                         # Single repeat or show all together
-                        name = f"Ch {channel}"
+                        name = spec['label']
                         pen = pg.mkPen(color=color, width=2)
-                        curve_key = ("single", channel, 0)
+                        curve_key = ("single", spec['key'], 0)
                     
                     desired_curve_keys.add(curve_key)
                     curve = self._adc_curves.get(curve_key)
@@ -534,9 +507,9 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
                 arduino_sample_rate_hz = 1000000.0 / arduino_avg_sample_time_us
                 
                 # Per-channel rate: divide total rate by number of unique channels
-                channels = self.config.get('channels', [])
-                if channels:
-                    num_unique_channels = len(set(channels))
+                display_channels = self.get_display_channel_specs()
+                if display_channels:
+                    num_unique_channels = len(display_channels)
                     arduino_per_channel_rate_hz = arduino_sample_rate_hz / num_unique_channels
                 else:
                     arduino_per_channel_rate_hz = arduino_sample_rate_hz
@@ -736,7 +709,7 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
 
         self.is_capturing = True
         if self.serial_thread:
-            expected_samples_per_sweep = len(self.config.get('channels', [])) * max(1, int(self.config.get('repeat', 1)))
+            expected_samples_per_sweep = self.get_effective_samples_per_sweep()
             self.serial_thread.set_capturing(True, expected_samples_per_sweep=expected_samples_per_sweep)
         
         # Wait for thread to fully switch modes

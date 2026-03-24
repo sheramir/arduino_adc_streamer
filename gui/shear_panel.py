@@ -173,7 +173,7 @@ class ShearPanelMixin:
         image.setColorMap(pg.colormap.get("viridis"))
         image.setImage(np.full((HEATMAP_HEIGHT, HEATMAP_WIDTH), np.nan, dtype=np.float32), autoLevels=False, levels=(0, 1))
         image.setRect(QRectF(-self.SHEAR_VIEW_EXTENT, -self.SHEAR_VIEW_EXTENT, 2.0 * self.SHEAR_VIEW_EXTENT, 2.0 * self.SHEAR_VIEW_EXTENT))
-        plot.addItem(image)
+        # plot.addItem(image)  # Removed heatmap visualization
         arrow_line = pg.PlotDataItem([], [], pen=pg.mkPen((235, 80, 60), width=3))
         arrow_line.setZValue(10)
         plot.addItem(arrow_line)

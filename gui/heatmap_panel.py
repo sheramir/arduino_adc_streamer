@@ -20,10 +20,37 @@ from config_constants import (
     R_HEATMAP_INTENSITY_MAX, R_HEATMAP_AXIS_ADAPT_STRENGTH,
     R_HEATMAP_MAP_SMOOTH_ALPHA, R_HEATMAP_SENSOR_POS_X,
     R_HEATMAP_SENSOR_POS_Y, MAX_SENSOR_PACKAGES,
+    SHEAR_ARROW_HEAD_LENGTH_AMPLIFIER, SHEAR_ARROW_HEAD_LENGTH_BASE_PX,
+    SHEAR_ARROW_SCALE, SHEAR_ARROW_THICKNESS_AMPLIFIER,
 )
 
 
 class HeatmapPanelMixin:
+    HEATMAP_VIEW_EXTENT = 1.25  # Scaling factor for arrow visualization
+    
+    def _arrow_item_angle_from_vector(self, dx: float, dy: float) -> float:
+        """Calculate angle in degrees for arrow from vector components."""
+        import math
+        return math.degrees(math.atan2(float(-dy), float(dx))) - 180.0
+    
+    def _arrow_head_tip_position(self, card, line_end_x: float, line_end_y: float, head_length_px: float):
+        """Calculate arrow head tip position based on line endpoint and head length."""
+        import math
+        arrow_length = math.hypot(line_end_x, line_end_y)
+        if arrow_length <= 1e-12:
+            return line_end_x, line_end_y
+        view_box = card["plot"].getViewBox()
+        x_range, y_range = view_box.viewRange()
+        rect = view_box.sceneBoundingRect()
+        width = max(float(rect.width()), 1.0)
+        height = max(float(rect.height()), 1.0)
+        unit_x = line_end_x / arrow_length
+        unit_y = line_end_y / arrow_length
+        return (
+            line_end_x + unit_x * ((x_range[1] - x_range[0]) / width) * head_length_px,
+            line_end_y + unit_y * ((y_range[1] - y_range[0]) / height) * head_length_px,
+        )
+
     def _get_channel_group_title(self, package_index):
         channels = self.config.get("channels", []) if hasattr(self, "config") else []
         unique_channels = []
@@ -187,6 +214,13 @@ class HeatmapPanelMixin:
         image.setColorMap(pg.colormap.get("viridis"))
         image.setImage(np.zeros((HEATMAP_HEIGHT, HEATMAP_WIDTH), dtype=np.float32), autoLevels=False, levels=(0, 1))
         plot.addItem(image)
+        # Add shear arrow visualization
+        arrow_line = pg.PlotDataItem([], [], pen=pg.mkPen((235, 80, 60), width=3))
+        arrow_line.setZValue(10)
+        plot.addItem(arrow_line)
+        arrow_head = pg.ArrowItem(angle=0.0, headLen=SHEAR_ARROW_HEAD_LENGTH_BASE_PX, tipAngle=28, baseAngle=20, brush=(235, 80, 60), pen=pg.mkPen((235, 80, 60)))
+        arrow_head.setZValue(11)
+        plot.addItem(arrow_head)
         row1 = QHBoxLayout()
         labels = {}
         for key, text in [("cop_x", "X: 0.000"), ("cop_y", "Y: 0.000"), ("intensity", "I: 0.0"), ("confidence", "Q: 0.00")]:
@@ -219,6 +253,7 @@ class HeatmapPanelMixin:
         return {
             "group": group, "plot": plot, "image": image, "labels": labels, "sensor_labels": sensor_labels,
             "debug_rd": debug_rd, "debug_a": debug_a, "debug_xyiq": debug_xyiq, "circle": None, "markers": [], "marker_labels": [],
+            "arrow_line": arrow_line, "arrow_head": arrow_head,
         }
 
     def create_heatmap_tab(self):
@@ -546,9 +581,11 @@ class HeatmapPanelMixin:
                 widget.setVisible(not is_555_mode)
         self._refresh_heatmap_background_overlay(force=True)
 
-    def update_heatmap_display(self, package_results):
+    def update_heatmap_display(self, package_results, shear_results=None):
+        import math
         is_555_mode = bool(hasattr(self, "is_555_analyzer_mode") and self.is_555_analyzer_mode())
         self.update_visible_heatmap_cards(len(package_results))
+        shear_results = shear_results or []
         for index, result in enumerate(package_results):
             heatmap, cop_x, cop_y, intensity, confidence, sensor_values = result
             card = self.heatmap_cards[index]
@@ -580,6 +617,37 @@ class HeatmapPanelMixin:
                 card["debug_rd"].setText("R/DR: -")
                 card["debug_a"].setText("A: -")
                 card["debug_xyiq"].setText("x/y/I/Q: -")
+            
+            # Draw shear arrow if shear data is available
+            if index < len(shear_results):
+                heatmap_shear, shear_result = shear_results[index]
+                # Scale shear coordinates to heatmap space
+                center_x = (float(HEATMAP_WIDTH) - 1.0) / 2.0
+                center_y = (float(HEATMAP_HEIGHT) - 1.0) / 2.0
+                radius = min(float(HEATMAP_WIDTH), float(HEATMAP_HEIGHT)) * 0.48
+                arrow_end_x = float(shear_result.shear_x) * radius * getattr(self, "shear_arrow_scale_spin", None).value() if hasattr(self, "shear_arrow_scale_spin") else float(shear_result.shear_x) * radius
+                arrow_end_y = float(shear_result.shear_y) * radius * getattr(self, "shear_arrow_scale_spin", None).value() if hasattr(self, "shear_arrow_scale_spin") else float(shear_result.shear_y) * radius
+                arrow_length = math.hypot(arrow_end_x, arrow_end_y)
+                rel = min(arrow_length / (self.HEATMAP_VIEW_EXTENT * radius), 1.0)
+                has_arrow = float(shear_result.shear_magnitude) > 1e-6 and (abs(arrow_end_x) > 1e-6 or abs(arrow_end_y) > 1e-6)
+                if has_arrow:
+                    head_len = SHEAR_ARROW_HEAD_LENGTH_BASE_PX + rel * SHEAR_ARROW_HEAD_LENGTH_AMPLIFIER
+                    card["arrow_line"].setPen(pg.mkPen((235, 80, 60), width=3.0))
+                    card["arrow_line"].setData([center_x, center_x + arrow_end_x], [center_y, center_y + arrow_end_y])
+                    tip_x, tip_y = self._arrow_head_tip_position(card, arrow_end_x, arrow_end_y, head_len)
+                    card["arrow_head"].setPos(center_x + tip_x, center_y + tip_y)
+                    # Account for inverted Y-axis in heatmap by negating arrow_end_y
+                    card["arrow_head"].setStyle(angle=self._arrow_item_angle_from_vector(arrow_end_x, -arrow_end_y), headLen=head_len)
+                    card["arrow_line"].setVisible(True)
+                    card["arrow_head"].setVisible(True)
+                else:
+                    card["arrow_line"].setData([], [])
+                    card["arrow_line"].setVisible(False)
+                    card["arrow_head"].setVisible(False)
+            else:
+                card["arrow_line"].setData([], [])
+                card["arrow_line"].setVisible(False)
+                card["arrow_head"].setVisible(False)
 
     def show_heatmap_channel_warning(self, current_channels, required_channels="5"):
         self.heatmap_status_label.setText(f"Heatmap requires {required_channels} channels (currently {current_channels} selected)")

@@ -578,11 +578,16 @@ class ADCStreamerGUI(
                 for index, sensor_values in enumerate(sensor_packages)
             ]
         
+        # Compute shear data for arrow visualization
+        shear_settings = self.get_shear_settings()
+        shear_processed = self.compute_shear_visualization(shear_settings)
+        shear_results = shear_processed if shear_processed is not None else []
+        
         # Update display
         if is_555_mode:
-            self.update_heatmap_display([(heatmap, cop_x, cop_y, intensity, confidence, sensor_values)])
+            self.update_heatmap_display([(heatmap, cop_x, cop_y, intensity, confidence, sensor_values)], shear_results=shear_results)
         else:
-            self.update_heatmap_display(package_results)
+            self.update_heatmap_display(package_results, shear_results=shear_results)
 
 
 def main():

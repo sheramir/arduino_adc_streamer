@@ -738,7 +738,8 @@ class SpectrumPanelMixin:
             band_mask = (freqs_show >= band_f1) & (freqs_show <= band_f2)
             if np.any(band_mask):
                 if mode == 'welch':
-                    band_power = float(np.trapz(display_linear[band_mask], freqs_show[band_mask]))
+                    integrate_trapezoid = getattr(np, 'trapezoid', np.trapz)
+                    band_power = float(integrate_trapezoid(display_linear[band_mask], freqs_show[band_mask]))
                     band_rms = float(np.sqrt(max(band_power, 0.0)))
                 else:
                     band_rms = float(np.sqrt(np.mean(display_linear[band_mask] ** 2)))

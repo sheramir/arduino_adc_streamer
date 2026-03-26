@@ -517,8 +517,8 @@ class HeatmapPanelMixin:
             card["debug_a"].setText("A: -")
             card["debug_xyiq"].setText("x/y/I/Q: -")
             
-            # Draw shear arrow if shear data is available
-            if index < len(shear_results):
+            # Draw shear arrow if shear data is available (not drawn for PZR/555 mode)
+            if index < len(shear_results) and getattr(self, 'device_mode', 'adc') != '555':
                 heatmap_shear, shear_result = shear_results[index]
                 # Scale shear coordinates to heatmap space
                 center_x = (float(HEATMAP_WIDTH) - 1.0) / 2.0

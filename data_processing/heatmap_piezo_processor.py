@@ -182,6 +182,7 @@ class PiezoHeatmapProcessorMixin:
         per_channel_rate_hz = sample_rate_hz / max(len(unique_channels), 1)
         window_end_time_sec = float(timestamps[-1]) if timestamps.size else None
         channel_to_sensor = settings.get('channel_sensor_map', [])
+        channel_to_baseline = settings.get('channel_to_baseline', {})
         sensor_labels = ['T', 'B', 'R', 'L', 'C']
         package_sensor_values = []
 
@@ -199,6 +200,12 @@ class PiezoHeatmapProcessorMixin:
                     if end_idx > data_array.shape[1]:
                         continue
                     pos_data = data_array[:, start_idx:end_idx]
+                    
+                    # Apply baseline subtraction if baseline is available for this channel
+                    if channel in channel_to_baseline:
+                        baseline_value = float(channel_to_baseline[channel])
+                        pos_data = pos_data - baseline_value
+                    
                     channel_data_list.append(pos_data.reshape(-1))
 
                 if channel_data_list:

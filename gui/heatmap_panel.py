@@ -15,11 +15,7 @@ from config_constants import (
     RMS_WINDOW_MS, SENSOR_NOISE_FLOOR, HEATMAP_DC_REMOVAL_MODE,
     HPF_CUTOFF_HZ, HEATMAP_CHANNEL_SENSOR_MAP, HEATMAP_THRESHOLD,
     CONFIDENCE_INTENSITY_REF, SIGMA_SPREAD_FACTOR,
-    R_HEATMAP_CHANNEL_SENSOR_MAP, R_HEATMAP_DELTA_THRESHOLD,
-    R_HEATMAP_DELTA_RELEASE_THRESHOLD, R_HEATMAP_INTENSITY_MIN,
-    R_HEATMAP_INTENSITY_MAX, R_HEATMAP_AXIS_ADAPT_STRENGTH,
-    R_HEATMAP_MAP_SMOOTH_ALPHA, R_HEATMAP_SENSOR_POS_X,
-    R_HEATMAP_SENSOR_POS_Y, MAX_SENSOR_PACKAGES,
+    MAX_SENSOR_PACKAGES,
     SHEAR_ARROW_HEAD_LENGTH_AMPLIFIER, SHEAR_ARROW_HEAD_LENGTH_BASE_PX,
     SHEAR_ARROW_SCALE, SHEAR_ARROW_THICKNESS_AMPLIFIER,
 )
@@ -97,13 +93,6 @@ class HeatmapPanelMixin:
             ("smooth_alpha", self.smooth_alpha_spin),
             ("hpf_cutoff_hz", self.hpf_cutoff_spin),
             ("magnitude_threshold", self.magnitude_threshold_spin),
-            ("delta_threshold", getattr(self, "r555_delta_threshold_spin", None)),
-            ("delta_release_threshold", getattr(self, "r555_delta_release_spin", None)),
-            ("axis_adapt_strength", getattr(self, "r555_axis_adapt_spin", None)),
-            ("cop_smooth_alpha", getattr(self, "r555_cop_alpha_spin", None)),
-            ("map_smooth_alpha", getattr(self, "r555_map_alpha_spin", None)),
-            ("intensity_min", getattr(self, "r555_i_min_spin", None)),
-            ("intensity_max", getattr(self, "r555_i_max_spin", None)),
         ]
         for key, widget in scalar_map:
             if key in settings and widget is not None:
@@ -176,29 +165,14 @@ class HeatmapPanelMixin:
         for widget in [
             self.rms_window_spin, self.dc_removal_combo, self.hpf_cutoff_spin, self.magnitude_threshold_spin,
             self.sensor_size_spin, self.intensity_scale_spin, self.blob_sigma_x_spin, self.blob_sigma_y_spin, self.smooth_alpha_spin,
-            self.r555_delta_threshold_spin, self.r555_delta_release_spin, self.r555_axis_adapt_spin, self.r555_cop_alpha_spin,
-            self.r555_map_alpha_spin, self.r555_i_min_spin, self.r555_i_max_spin,
         ]:
             signal = getattr(widget, "valueChanged", None)
             if signal is not None:
                 signal.connect(self.save_last_heatmap_settings)
         self.dc_removal_combo.currentIndexChanged.connect(self.save_last_heatmap_settings)
-        self.r555_same_release_checkbox.stateChanged.connect(self._on_r555_release_checkbox_changed)
-        self.r555_delta_threshold_spin.valueChanged.connect(self._on_r555_delta_threshold_changed)
         for spin in self.sensor_gain_spins + self.sensor_noise_spins:
             spin.valueChanged.connect(self.save_last_heatmap_settings)
 
-    def _on_r555_delta_threshold_changed(self, *args):
-        if self.r555_same_release_checkbox.isChecked():
-            self.r555_delta_release_spin.setValue(self.r555_delta_threshold_spin.value())
-        self.save_last_heatmap_settings()
-
-    def _on_r555_release_checkbox_changed(self, *args):
-        checked = self.r555_same_release_checkbox.isChecked()
-        self.r555_delta_release_spin.setEnabled(not checked)
-        if checked:
-            self.r555_delta_release_spin.setValue(self.r555_delta_threshold_spin.value())
-        self.save_last_heatmap_settings()
 
     def _create_heatmap_card(self, package_index):
         group = QGroupBox(self._get_channel_group_title(package_index))
@@ -315,8 +289,8 @@ class HeatmapPanelMixin:
             card["marker_labels"] = []
 
     def _refresh_heatmap_background_overlay(self, force=False):
-        mode = "555" if (hasattr(self, "is_555_analyzer_mode") and self.is_555_analyzer_mode()) else "adc"
-        if getattr(self, "heatmap_overlay_mode", None) == mode and not force:
+        # PZR and PZT modes now use the same sensor configuration
+        if getattr(self, "heatmap_overlay_mode", None) == "unified" and not force:
             return
         self._clear_heatmap_background_overlay()
         center_x = (float(HEATMAP_WIDTH) - 1.0) / 2.0
@@ -325,21 +299,15 @@ class HeatmapPanelMixin:
         theta = np.linspace(0, 2 * np.pi, 200)
         circle_x = center_x + radius * np.cos(theta)
         circle_y = center_y + radius * np.sin(theta)
-        if mode == "555":
-            marker_positions = [
-                (center_x + radius * float(x), center_y - radius * float(y), str(index))
-                for index, (x, y) in enumerate(zip(R_HEATMAP_SENSOR_POS_X, R_HEATMAP_SENSOR_POS_Y))
-            ]
-        else:
-            mapping = self.get_active_channel_sensor_map() if hasattr(self, "get_active_channel_sensor_map") else HEATMAP_CHANNEL_SENSOR_MAP
-            numbers = {label: str(index + 1) for index, label in enumerate(mapping)}
-            marker_positions = [
-                (center_x + radius, center_y, numbers.get("R", "")),
-                (center_x, center_y + radius, numbers.get("B", "")),
-                (center_x, center_y, numbers.get("C", "")),
-                (center_x - radius, center_y, numbers.get("L", "")),
-                (center_x, center_y - radius, numbers.get("T", "")),
-            ]
+        mapping = self.get_active_channel_sensor_map() if hasattr(self, "get_active_channel_sensor_map") else HEATMAP_CHANNEL_SENSOR_MAP
+        numbers = {label: str(index + 1) for index, label in enumerate(mapping)}
+        marker_positions = [
+            (center_x + radius, center_y, numbers.get("R", "")),
+            (center_x, center_y + radius, numbers.get("B", "")),
+            (center_x, center_y, numbers.get("C", "")),
+            (center_x - radius, center_y, numbers.get("L", "")),
+            (center_x, center_y - radius, numbers.get("T", "")),
+        ]
         for card in getattr(self, "heatmap_cards", []):
             circle = pg.PlotDataItem(circle_x, circle_y, pen=pg.mkPen((200, 200, 200, 160), width=2))
             circle.setZValue(5)
@@ -356,7 +324,7 @@ class HeatmapPanelMixin:
                 text.setZValue(7)
                 card["plot"].addItem(text)
                 card["marker_labels"].append(text)
-        self.heatmap_overlay_mode = mode
+        self.heatmap_overlay_mode = "unified"
 
     def update_visible_heatmap_cards(self, visible_count):
         for index, card in enumerate(getattr(self, "heatmap_cards", [])):
@@ -476,60 +444,7 @@ class HeatmapPanelMixin:
         params_group.setLayout(params_layout)
         main_layout.addWidget(params_group)
 
-        r555_group = QGroupBox("555 Displacement Controls")
-        r555_layout = QGridLayout()
-        r555_layout.addWidget(QLabel("TH (DR):"), 0, 0)
-        self.r555_delta_threshold_spin = QDoubleSpinBox()
-        self.r555_delta_threshold_spin.setRange(0.0, 1e9)
-        self.r555_delta_threshold_spin.setDecimals(4)
-        self.r555_delta_threshold_spin.setValue(R_HEATMAP_DELTA_THRESHOLD)
-        r555_layout.addWidget(self.r555_delta_threshold_spin, 0, 1)
-        self.r555_same_release_checkbox = QCheckBox("TH_RELEASE = TH")
-        self.r555_same_release_checkbox.setChecked(True)
-        r555_layout.addWidget(self.r555_same_release_checkbox, 0, 2)
-        r555_layout.addWidget(QLabel("TH_RELEASE:"), 1, 0)
-        self.r555_delta_release_spin = QDoubleSpinBox()
-        self.r555_delta_release_spin.setRange(0.0, 1e9)
-        self.r555_delta_release_spin.setDecimals(4)
-        self.r555_delta_release_spin.setValue(R_HEATMAP_DELTA_RELEASE_THRESHOLD)
-        self.r555_delta_release_spin.setEnabled(False)
-        r555_layout.addWidget(self.r555_delta_release_spin, 1, 1)
-        r555_layout.addWidget(QLabel("Axis Adapt K:"), 1, 2)
-        self.r555_axis_adapt_spin = QDoubleSpinBox()
-        self.r555_axis_adapt_spin.setRange(0.0, 5.0)
-        self.r555_axis_adapt_spin.setDecimals(3)
-        self.r555_axis_adapt_spin.setValue(R_HEATMAP_AXIS_ADAPT_STRENGTH)
-        r555_layout.addWidget(self.r555_axis_adapt_spin, 1, 3)
-        r555_layout.addWidget(QLabel("CoP Alpha:"), 2, 0)
-        self.r555_cop_alpha_spin = QDoubleSpinBox()
-        self.r555_cop_alpha_spin.setRange(0.0, 1.0)
-        self.r555_cop_alpha_spin.setDecimals(3)
-        self.r555_cop_alpha_spin.setValue(SMOOTH_ALPHA)
-        r555_layout.addWidget(self.r555_cop_alpha_spin, 2, 1)
-        r555_layout.addWidget(QLabel("Map Alpha:"), 2, 2)
-        self.r555_map_alpha_spin = QDoubleSpinBox()
-        self.r555_map_alpha_spin.setRange(0.0, 1.0)
-        self.r555_map_alpha_spin.setDecimals(3)
-        self.r555_map_alpha_spin.setValue(R_HEATMAP_MAP_SMOOTH_ALPHA)
-        r555_layout.addWidget(self.r555_map_alpha_spin, 2, 3)
-        r555_layout.addWidget(QLabel("I Min:"), 3, 0)
-        self.r555_i_min_spin = QDoubleSpinBox()
-        self.r555_i_min_spin.setRange(-1e9, 1e9)
-        self.r555_i_min_spin.setDecimals(3)
-        self.r555_i_min_spin.setValue(R_HEATMAP_INTENSITY_MIN)
-        r555_layout.addWidget(self.r555_i_min_spin, 3, 1)
-        r555_layout.addWidget(QLabel("I Max:"), 3, 2)
-        self.r555_i_max_spin = QDoubleSpinBox()
-        self.r555_i_max_spin.setRange(-1e9, 1e9)
-        self.r555_i_max_spin.setDecimals(3)
-        self.r555_i_max_spin.setValue(R_HEATMAP_INTENSITY_MAX)
-        r555_layout.addWidget(self.r555_i_max_spin, 3, 3)
-        r555_group.setLayout(r555_layout)
-        self.r555_controls_group = r555_group
-        main_layout.addWidget(r555_group)
-
         self._connect_heatmap_settings_autosave()
-        self._on_r555_release_checkbox_changed()
         self.update_heatmap_ui_for_mode()
         group.setLayout(main_layout)
         return group
@@ -538,11 +453,23 @@ class HeatmapPanelMixin:
         self.hpf_cutoff_spin.setEnabled(index == 1)
 
     def get_heatmap_settings(self):
-        is_555_mode = bool(hasattr(self, "is_555_analyzer_mode") and self.is_555_analyzer_mode())
-        channel_sensor_map = R_HEATMAP_CHANNEL_SENSOR_MAP if is_555_mode else (self.get_active_channel_sensor_map() if hasattr(self, "get_active_channel_sensor_map") else HEATMAP_CHANNEL_SENSOR_MAP)
+        # PZR and PZT modes now share the same heatmap processing
+        channel_sensor_map = self.get_active_channel_sensor_map() if hasattr(self, "get_active_channel_sensor_map") else HEATMAP_CHANNEL_SENSOR_MAP
         calibration = [spin.value() for spin in self.sensor_gain_spins]
-        if is_555_mode and len(calibration) >= 5:
-            calibration = [calibration[2], calibration[1], calibration[3], calibration[0]]
+        
+        # Build channel-to-baseline mapping from plot_baselines if available
+        channel_to_baseline = {}
+        if hasattr(self, 'plot_baselines') and hasattr(self, 'get_display_channel_specs'):
+            display_specs = self.get_display_channel_specs()
+            for spec in display_specs:
+                spec_key = spec.get('key')
+                if spec_key in self.plot_baselines:
+                    # Extract channel from spec key
+                    # Key format: ('adc', channel) or ('mux', mux_num, channel) or ('sensor', sensor_id, placement, channel, mux_num)
+                    if isinstance(spec_key, tuple) and len(spec_key) >= 2:
+                        channel = spec_key[-2] if len(spec_key) >= 3 and isinstance(spec_key[-1], int) and spec_key[0] == 'sensor' else spec_key[-1]
+                        channel_to_baseline[channel] = self.plot_baselines[spec_key]
+        
         return {
             "sensor_calibration": calibration,
             "sensor_noise_floor": [spin.value() for spin in self.sensor_noise_spins],
@@ -556,34 +483,22 @@ class HeatmapPanelMixin:
             "hpf_cutoff_hz": self.hpf_cutoff_spin.value(),
             "magnitude_threshold": self.magnitude_threshold_spin.value(),
             "channel_sensor_map": channel_sensor_map,
+            "channel_to_baseline": channel_to_baseline,
             "confidence_intensity_ref": CONFIDENCE_INTENSITY_REF,
             "sigma_spread_factor": SIGMA_SPREAD_FACTOR,
-            "sensor_order": ["R", "B", "L", "T"],
-            "sensor_pos_x": R_HEATMAP_SENSOR_POS_X,
-            "sensor_pos_y": [-float(v) for v in R_HEATMAP_SENSOR_POS_Y] if is_555_mode else R_HEATMAP_SENSOR_POS_Y,
-            "delta_threshold": self.r555_delta_threshold_spin.value(),
-            "delta_release_threshold": self.r555_delta_threshold_spin.value() if self.r555_same_release_checkbox.isChecked() else self.r555_delta_release_spin.value(),
-            "cop_smooth_alpha": self.r555_cop_alpha_spin.value(),
-            "map_smooth_alpha": self.r555_map_alpha_spin.value(),
-            "intensity_min": self.r555_i_min_spin.value(),
-            "intensity_max": self.r555_i_max_spin.value(),
-            "axis_adapt_strength": self.r555_axis_adapt_spin.value(),
-            "delta_release_same_as_threshold": self.r555_same_release_checkbox.isChecked(),
         }
 
     def update_heatmap_ui_for_mode(self):
-        is_555_mode = bool(hasattr(self, "is_555_analyzer_mode") and self.is_555_analyzer_mode())
-        self.r555_controls_group.setVisible(is_555_mode)
-        self.heatmap_signal_group.setVisible(not is_555_mode)
+        # PZR and PZT modes now use the same heatmap processing
+        self.heatmap_signal_group.setVisible(True)
         for idx in range(self.sensor_noise_row_layout.count()):
             widget = self.sensor_noise_row_layout.itemAt(idx).widget()
             if widget is not None:
-                widget.setVisible(not is_555_mode)
+                widget.setVisible(True)
         self._refresh_heatmap_background_overlay(force=True)
 
     def update_heatmap_display(self, package_results, shear_results=None):
         import math
-        is_555_mode = bool(hasattr(self, "is_555_analyzer_mode") and self.is_555_analyzer_mode())
         self.update_visible_heatmap_cards(len(package_results))
         shear_results = shear_results or []
         for index, result in enumerate(package_results):
@@ -595,31 +510,15 @@ class HeatmapPanelMixin:
             card["labels"]["cop_y"].setText(f"Y: {cop_y:+.3f}")
             card["labels"]["intensity"].setText(f"I: {intensity:.1f}")
             card["labels"]["confidence"].setText(f"Q: {confidence:.2f}")
-            if is_555_mode:
-                sensor_names = ["R", "B", "L", "T"]
-                for idx, label in enumerate(card["sensor_labels"]):
-                    if idx < len(sensor_names) and idx < len(sensor_values):
-                        label.setText(f"{sensor_names[idx]}: {sensor_values[idx]:.1f}")
-                    elif idx < len(sensor_names):
-                        label.setText(f"{sensor_names[idx]}: -")
-                    else:
-                        label.setText("-: -")
-                r_vals = getattr(self, "r555_last_sensor_values", [])
-                d_vals = getattr(self, "r555_last_deltas", [])
-                a_vals = getattr(self, "r555_accumulators", [])
-                pairs = [f"{r_vals[i]:.2f}/{d_vals[i]:+.2f}" for i in range(min(len(r_vals), len(d_vals), 4))]
-                card["debug_rd"].setText("R/DR: " + ", ".join(pairs) if pairs else "R/DR: -")
-                card["debug_a"].setText("A: " + ", ".join(f"{value:+.2f}" for value in a_vals[:4]))
-                card["debug_xyiq"].setText(f"x/y/I/Q: {cop_x:+.3f}, {cop_y:+.3f}, {intensity:+.3f}, {confidence:.3f}")
-            else:
-                for idx, name in enumerate(["T", "B", "R", "L", "C"]):
-                    card["sensor_labels"][idx].setText(f"{name}: {sensor_values[idx]:.1f}" if idx < len(sensor_values) else f"{name}: -")
-                card["debug_rd"].setText("R/DR: -")
-                card["debug_a"].setText("A: -")
-                card["debug_xyiq"].setText("x/y/I/Q: -")
+            # PZR and PZT modes now both use the same processing
+            for idx, name in enumerate(["T", "B", "R", "L", "C"]):
+                card["sensor_labels"][idx].setText(f"{name}: {sensor_values[idx]:.1f}" if idx < len(sensor_values) else f"{name}: -")
+            card["debug_rd"].setText("R/DR: -")
+            card["debug_a"].setText("A: -")
+            card["debug_xyiq"].setText("x/y/I/Q: -")
             
-            # Draw shear arrow if shear data is available
-            if index < len(shear_results):
+            # Draw shear arrow if shear data is available (not drawn for PZR/555 mode)
+            if index < len(shear_results) and getattr(self, 'device_mode', 'adc') != '555':
                 heatmap_shear, shear_result = shear_results[index]
                 # Scale shear coordinates to heatmap space
                 center_x = (float(HEATMAP_WIDTH) - 1.0) / 2.0

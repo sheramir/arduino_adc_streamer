@@ -282,23 +282,12 @@ HEATMAP_CHANNEL_SENSOR_MAP = list(DEFAULT_SENSOR_CONFIGURATION["channel_sensor_m
 HEATMAP_REQUIRED_CHANNELS = 5
 MAX_SENSOR_PACKAGES = 4
 
-# 555 analyzer 4-sensor displacement heatmap mapping (no center sensor)
-# Channel order maps to sensor labels used by the 555 heatmap pipeline.
-R_HEATMAP_CHANNEL_SENSOR_MAP = ["R", "B", "L", "T"]
-R_HEATMAP_REQUIRED_CHANNELS = 4
-
-# 555 sensor geometry (normalized coordinates in heatmap space)
-# Sensor indices 1..4 follow R_HEATMAP_CHANNEL_SENSOR_MAP order.
-R_HEATMAP_SENSOR_POS_X = [1.0, 0.0, -1.0, 0.0]
-R_HEATMAP_SENSOR_POS_Y = [0.0, -1.0, 0.0, 1.0]
-
-# 555 displacement heatmap defaults
-R_HEATMAP_DELTA_THRESHOLD = 1.0
-R_HEATMAP_DELTA_RELEASE_THRESHOLD = 1.0
-R_HEATMAP_INTENSITY_MIN = 10.0
-R_HEATMAP_INTENSITY_MAX = 200.0
-R_HEATMAP_AXIS_ADAPT_STRENGTH = 0.5
-R_HEATMAP_MAP_SMOOTH_ALPHA = 0.2
+# PZR sensor (555 analyzer mode) now uses 5 channels like PZT
+# Shares the same heatmap configuration as standard piezo sensors
+R_HEATMAP_CHANNEL_SENSOR_MAP = HEATMAP_CHANNEL_SENSOR_MAP
+R_HEATMAP_REQUIRED_CHANNELS = HEATMAP_REQUIRED_CHANNELS
+R_HEATMAP_SENSOR_POS_X = SENSOR_POS_X
+R_HEATMAP_SENSOR_POS_Y = SENSOR_POS_Y
 
 # ============================================================================
 # Shear / CoP Visualization Constants

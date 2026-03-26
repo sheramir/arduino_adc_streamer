@@ -11,21 +11,17 @@ from config_constants import (
     HEATMAP_HEIGHT,
 )
 
-from data_processing.heatmap_555_processor import Heatmap555ProcessorMixin
 from data_processing.heatmap_piezo_processor import PiezoHeatmapProcessorMixin
 
 
-class HeatmapProcessorMixin(Heatmap555ProcessorMixin, PiezoHeatmapProcessorMixin):
+class HeatmapProcessorMixin(PiezoHeatmapProcessorMixin):
     """Coordinator mixin for processing sensor data into heatmap visualizations."""
     
     def __init__(self):
         """Initialize heatmap processor state."""
         super().__init__()
         
-        # Smoothed values
-        self.smoothed_cop_x = 0.0
-        self.smoothed_cop_y = 0.0
-        self.smoothed_intensity = 0.0
+        # Smoothed values (handled by parent PiezoHeatmapProcessorMixin)
         
         # Pre-allocate heatmap buffer
         self.heatmap_buffer = np.zeros((HEATMAP_HEIGHT, HEATMAP_WIDTH), dtype=np.float32)

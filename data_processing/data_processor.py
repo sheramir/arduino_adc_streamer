@@ -46,6 +46,11 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
     # Plotting and Visualization
     # ========================================================================
     
+    def zero_plot_baselines(self):
+        """Zero out the plot baselines using current data."""
+        self.plot_baselines = {}
+        self.trigger_plot_update()
+
     def update_plot(self):
         """Update the plot with current data - optimized for fast updates and max 10K samples."""
         # Prevent concurrent updates
@@ -242,6 +247,30 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
                     vref = self.get_vref_voltage()
                     max_adc_value = (2 ** IADC_RESOLUTION_BITS) - 1  # 4095 for 12-bit
                     channel_data = (channel_data / max_adc_value) * vref
+
+                # Apply baseline subtraction if enabled
+                if getattr(self, 'subtract_baseline_check', None) and self.subtract_baseline_check.isChecked():
+                    if not hasattr(self, 'plot_baselines'):
+                        self.plot_baselines = {}
+                    
+                    if spec['key'] not in self.plot_baselines:
+                        # Capture baseline dynamically if not zeroed explicitly
+                        # Only take baseline after 1.5 seconds of measurement
+                        if len(channel_times) > 0 and channel_times[-1] >= 1.5:
+                            # Find samples roughly after 1.5 seconds
+                            valid_indices = np.where(channel_times >= 1.5)[0]
+                            if len(valid_indices) > 0:
+                                start_idx = valid_indices[0]
+                                end_idx = min(start_idx + 500, len(channel_data))
+                                n_samples_actual = end_idx - start_idx
+                                
+                                if n_samples_actual > 0:
+                                    self.plot_baselines[spec['key']] = np.mean(channel_data[start_idx:end_idx])
+                                else:
+                                    self.plot_baselines[spec['key']] = 0.0
+                    
+                    if spec['key'] in self.plot_baselines:
+                        channel_data = channel_data - self.plot_baselines[spec['key']]
 
                 # Downsample if too many points for this channel
                 if len(channel_data) > max_samples_per_series:
@@ -574,6 +603,7 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
             )
             return
 
+        self.plot_baselines = {}
         # Configuration should already be done via Configure button
         # No need to send it again here
 

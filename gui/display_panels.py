@@ -247,6 +247,18 @@ class DisplayPanelsMixin:
         self.show_average_radio.setChecked(False)
         self.show_average_radio.toggled.connect(self.trigger_plot_update)
         repeats_layout.addWidget(self.show_average_radio)
+        
+        self.subtract_baseline_check = QCheckBox("Subtract Baseline")
+        self.subtract_baseline_check.setChecked(False)
+        self.subtract_baseline_check.setToolTip("Subtract the initial DC baseline from each channel")
+        self.subtract_baseline_check.stateChanged.connect(self.trigger_plot_update)
+        repeats_layout.addWidget(self.subtract_baseline_check)
+
+        self.zero_signals_btn = QPushButton("Zero Signals")
+        self.zero_signals_btn.setToolTip("Reset the baseline to the current values")
+        self.zero_signals_btn.setMaximumWidth(90)
+        self.zero_signals_btn.clicked.connect(self.zero_plot_baselines)
+        repeats_layout.addWidget(self.zero_signals_btn)
 
         repeats_layout.addStretch()
         repeats_group.setLayout(repeats_layout)

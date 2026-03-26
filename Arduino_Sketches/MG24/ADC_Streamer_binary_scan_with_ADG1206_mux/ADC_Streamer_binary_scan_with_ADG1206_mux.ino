@@ -106,22 +106,22 @@ const uint32_t BAUD_RATE          = 460800; // High-speed baud
 //   - ADG1206 COM/OUT -> MG24 analog-capable pin below (after your buffer op-amp)
 //
 // Edit these to match your PCB wiring.
-static const int PIN_MUX_A0       = 3;
-static const int PIN_MUX_A1       = 2;
-static const int PIN_MUX_A2       = 1;
-static const int PIN_MUX_A3       = 9;
+static const int PIN_MUX_A0       = 3;  // Breadboard - 3, PCB - 3
+static const int PIN_MUX_A1       = 4;  // Breadboard - 2, PCB - 4
+static const int PIN_MUX_A2       = 5;  // Breadboard - 1, PCB - 5
+static const int PIN_MUX_A3       = 6;  // Breadboard - 9, PCB - 6
 static const int PIN_MUX_EN       = -1; // Actually EN is not used - fixed to vcc
 static const int PIN_RESET        = -1; // Reset charge amp capacitor (on high). Use -1 if no charge amp
 
 // MUX COM (buffer output) into MG24 ADC
-static const int PIN_ADC_MUX_COM  = 7;
+static const int PIN_ADC_MUX_COM  = 1;  // Breadboard - 7, PCB - 1/MUX1 or 2/MUX2
 
 // Set to true if EN=HIGH enables the MUX (as in ADC_MUX1_test.ino).
 // Set to false if EN is active-low in your wiring.
 //static const bool MUX_ENABLE_ACTIVE_HIGH = true;
 
 // MUX settling time before using the ADC (microseconds)
-static uint32_t g_mux_settle_us = 30;
+static uint32_t g_mux_settle_us = 15; // was 30
 
 // Charge-Amp reset time before and after switching to new address (microseconds)
 static uint32_t g_chargeAmp_reset_us = 0;  // use 0 if no charge amp
@@ -159,8 +159,8 @@ static const uint16_t MAX_CMD_LENGTH   = 512;    // Max input line length
 // Faster ADC clock  -> shorter conversion time, higher throughput, more noise.
 // Slower ADC clock  -> longer conversion, lower throughput, better SNR.
 //
-const uint32_t IADC_SRC_CLK_TARGET_HZ = 20000000UL;  // was fixed at 20 MHz
-const uint32_t IADC_ADC_CLK_TARGET_HZ = 10000000UL;  // was fixed at 10 MHz
+const uint32_t IADC_SRC_CLK_TARGET_HZ = 10000000UL;  // was fixed at 20 MHz
+const uint32_t IADC_ADC_CLK_TARGET_HZ = 5000000UL;  // was fixed at 10 MHz
 
 // ---------------------------------------------------------------------
 // Warm-up sweeps before real data capture

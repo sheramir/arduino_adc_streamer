@@ -456,6 +456,20 @@ class HeatmapPanelMixin:
         # PZR and PZT modes now share the same heatmap processing
         channel_sensor_map = self.get_active_channel_sensor_map() if hasattr(self, "get_active_channel_sensor_map") else HEATMAP_CHANNEL_SENSOR_MAP
         calibration = [spin.value() for spin in self.sensor_gain_spins]
+        
+        # Build channel-to-baseline mapping from plot_baselines if available
+        channel_to_baseline = {}
+        if hasattr(self, 'plot_baselines') and hasattr(self, 'get_display_channel_specs'):
+            display_specs = self.get_display_channel_specs()
+            for spec in display_specs:
+                spec_key = spec.get('key')
+                if spec_key in self.plot_baselines:
+                    # Extract channel from spec key
+                    # Key format: ('adc', channel) or ('mux', mux_num, channel) or ('sensor', sensor_id, placement, channel, mux_num)
+                    if isinstance(spec_key, tuple) and len(spec_key) >= 2:
+                        channel = spec_key[-2] if len(spec_key) >= 3 and isinstance(spec_key[-1], int) and spec_key[0] == 'sensor' else spec_key[-1]
+                        channel_to_baseline[channel] = self.plot_baselines[spec_key]
+        
         return {
             "sensor_calibration": calibration,
             "sensor_noise_floor": [spin.value() for spin in self.sensor_noise_spins],
@@ -469,6 +483,7 @@ class HeatmapPanelMixin:
             "hpf_cutoff_hz": self.hpf_cutoff_spin.value(),
             "magnitude_threshold": self.magnitude_threshold_spin.value(),
             "channel_sensor_map": channel_sensor_map,
+            "channel_to_baseline": channel_to_baseline,
             "confidence_intensity_ref": CONFIDENCE_INTENSITY_REF,
             "sigma_spread_factor": SIGMA_SPREAD_FACTOR,
         }

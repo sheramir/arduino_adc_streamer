@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGroupBox, QGridLayout,
     QComboBox, QSpinBox, QDoubleSpinBox, QPushButton, QFileDialog, QCheckBox,
-    QScrollArea, QApplication,
+    QScrollArea, QApplication, QSizePolicy,
 )
 from PyQt6.QtCore import Qt
 import pyqtgraph as pg
@@ -243,6 +243,8 @@ class HeatmapPanelMixin:
         group = QGroupBox(self._get_channel_group_title(package_index))
         layout = QVBoxLayout()
         plot_widget = pg.GraphicsLayoutWidget()
+        plot_widget.setMinimumSize(220, 220)
+        plot_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         plot = plot_widget.addPlot()
         plot.setAspectLocked(True, ratio=1.0)
         plot.invertY(True)
@@ -313,8 +315,11 @@ class HeatmapPanelMixin:
             display.setMaximumHeight(max(320, int(height * 0.88)))
         layout.addWidget(display, stretch=10)
         settings_panel = self.create_heatmap_settings()
+        settings_panel.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.heatmap_settings_scroll = QScrollArea()
-        self.heatmap_settings_scroll.setWidgetResizable(True)
+        self.heatmap_settings_scroll.setWidgetResizable(False)
+        self.heatmap_settings_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.heatmap_settings_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.heatmap_settings_scroll.setWidget(settings_panel)
         self.heatmap_settings_scroll.setMaximumHeight(260)
         layout.addWidget(self.heatmap_settings_scroll, stretch=2)
@@ -354,7 +359,6 @@ class HeatmapPanelMixin:
             card["marker_labels"] = []
 
     def _refresh_heatmap_background_overlay(self, force=False):
-        # PZR and PZT modes now use the same sensor configuration
         if getattr(self, "heatmap_overlay_mode", None) == "unified" and not force:
             return
         self._clear_heatmap_background_overlay()
@@ -574,7 +578,6 @@ class HeatmapPanelMixin:
         self.hpf_cutoff_spin.setEnabled(index == 1)
 
     def get_heatmap_settings(self):
-        # PZR and PZT modes now share the same heatmap processing
         channel_sensor_map = self.get_active_channel_sensor_map() if hasattr(self, "get_active_channel_sensor_map") else HEATMAP_CHANNEL_SENSOR_MAP
         calibration = [spin.value() for spin in self.sensor_gain_spins]
         
@@ -646,7 +649,6 @@ class HeatmapPanelMixin:
             card["labels"]["cop_y"].setText(f"Y: {cop_y:+.3f}")
             card["labels"]["intensity"].setText(f"I: {intensity:.1f}")
             card["labels"]["confidence"].setText(f"Q: {confidence:.2f}")
-            # PZR and PZT modes now both use the same processing
             for idx, name in enumerate(["T", "B", "R", "L", "C"]):
                 card["sensor_labels"][idx].setText(f"{name}: {sensor_values[idx]:.1f}" if idx < len(sensor_values) else f"{name}: -")
             card["debug_rd"].setText("R/DR: -")

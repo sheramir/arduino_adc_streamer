@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -162,6 +163,8 @@ class ShearPanelMixin:
         group = QGroupBox(self._get_channel_group_title(package_index))
         layout = QVBoxLayout()
         plot_widget = pg.GraphicsLayoutWidget()
+        plot_widget.setMinimumSize(220, 220)
+        plot_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         plot_widget.setBackground("k")
         plot = plot_widget.addPlot()
         plot.setAspectLocked(True, ratio=1.0)
@@ -228,8 +231,11 @@ class ShearPanelMixin:
             display.setMaximumHeight(max(360, int(height * 0.88)))
         layout.addWidget(display, stretch=10)
         settings = self.create_shear_settings()
+        settings.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.shear_settings_scroll = QScrollArea()
-        self.shear_settings_scroll.setWidgetResizable(True)
+        self.shear_settings_scroll.setWidgetResizable(False)
+        self.shear_settings_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.shear_settings_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.shear_settings_scroll.setWidget(settings)
         self.shear_settings_scroll.setMaximumHeight(240)
         layout.addWidget(self.shear_settings_scroll, stretch=2)

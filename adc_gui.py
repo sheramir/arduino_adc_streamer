@@ -324,13 +324,18 @@ class ADCStreamerGUI(
         self.setWindowTitle("ADC Streamer - Modular Architecture")
 
         # Main widget and layout
-        from PyQt6.QtWidgets import QSplitter, QVBoxLayout
+        from PyQt6.QtWidgets import QSplitter, QVBoxLayout, QSizePolicy, QLayout
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
         main_layout = QVBoxLayout(main_widget)
+        main_layout.setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
+        main_widget.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
+        main_widget.setMinimumSize(0, 0)
 
         # Create splitter for resizable panels
         splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setChildrenCollapsible(True)
+        splitter.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
         main_layout.addWidget(splitter)
 
         # Create and add panels
@@ -345,29 +350,43 @@ class ADCStreamerGUI(
         # Connect tab change signal to start/stop heatmap simulation
         self.visualization_tabs.currentChanged.connect(self.on_visualization_tab_changed)
 
+        self._fit_window_to_screen()
+        QTimer.singleShot(0, self._fit_window_to_screen)
+
+    def _fit_window_to_screen(self):
+        """Clamp window geometry to current screen and relax oversize minimums."""
         screen = QGuiApplication.primaryScreen()
-        if screen is not None:
-            available = screen.availableGeometry()
-            horizontal_padding = 80
-            vertical_padding = 120
-            max_width = max(900, available.width() - horizontal_padding)
-            max_height = max(700, available.height() - vertical_padding)
-            preferred_width = max(WINDOW_WIDTH, self.minimumSizeHint().width())
-            preferred_height = max(WINDOW_HEIGHT, self.minimumSizeHint().height())
-            target_width = min(preferred_width, max_width)
-            target_height = min(preferred_height, max_height)
-            self.resize(target_width, target_height)
-            self.move(
-                available.x() + max(0, (available.width() - target_width) // 2),
-                available.y() + max(0, (available.height() - target_height) // 2),
-            )
-        else:
+        if screen is None:
             self.resize(WINDOW_WIDTH, WINDOW_HEIGHT)
+            return
+
+        available = screen.availableGeometry()
+        max_width = max(900, available.width() - 16)
+        max_height = max(700, available.height() - 16)
+
+        if self.minimumSizeHint().width() > max_width or self.minimumSizeHint().height() > max_height:
+            self.setMinimumSize(0, 0)
+            central = self.centralWidget()
+            if central is not None:
+                central.setMinimumSize(0, 0)
+
+        preferred_width = max(WINDOW_WIDTH, min(self.width() if self.width() > 0 else WINDOW_WIDTH, max_width))
+        preferred_height = max(WINDOW_HEIGHT, min(self.height() if self.height() > 0 else WINDOW_HEIGHT, max_height))
+        target_width = min(preferred_width, max_width)
+        target_height = min(preferred_height, max_height)
+
+        self.resize(target_width, target_height)
+        self.move(
+            available.x() + max(0, (available.width() - target_width) // 2),
+            available.y() + max(0, (available.height() - target_height) // 2),
+        )
 
     def _create_left_control_panel(self) -> QWidget:
         """Create left panel with all control sections."""
-        from PyQt6.QtWidgets import QVBoxLayout
+        from PyQt6.QtWidgets import QVBoxLayout, QSizePolicy
         panel = QWidget()
+        panel.setMinimumSize(0, 0)
+        panel.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         layout = QVBoxLayout(panel)
         layout.setSpacing(10)
 
@@ -384,8 +403,10 @@ class ADCStreamerGUI(
 
     def _create_right_visualization_panel(self) -> QWidget:
         """Create right panel with tabbed visualization."""
-        from PyQt6.QtWidgets import QVBoxLayout
+        from PyQt6.QtWidgets import QVBoxLayout, QSizePolicy
         panel = QWidget()
+        panel.setMinimumSize(0, 0)
+        panel.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         layout = QVBoxLayout(panel)
 
         # Add tabbed visualization (timing and controls are now inside timeseries tab)
@@ -532,7 +553,6 @@ class ADCStreamerGUI(
                 unique_channels.append(ch)
         num_channels = len(unique_channels)
 
-        # PZR and PZT modes now both use 5 channels and share the same processing
         valid_channel_count = (
             num_channels >= HEATMAP_REQUIRED_CHANNELS
             and num_channels <= HEATMAP_REQUIRED_CHANNELS * MAX_SENSOR_PACKAGES

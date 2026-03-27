@@ -114,8 +114,8 @@ static const uint32_t MUX_SETTLE_US      = 30;
 // ── IADC clock targets ────────────────────────────────────────────────
 // Faster ADC clock → higher throughput, more noise.
 // Slower ADC clock → better SNR, lower throughput.
-static const uint32_t IADC_SRC_CLK_HZ   = 20000000UL; // source clock (Hz)
-static const uint32_t IADC_ADC_CLK_HZ   = 10000000UL; // ADC clock   (Hz)
+static const uint32_t IADC_SRC_CLK_HZ   = 10000000UL; // source clock (Hz) / orig was 20000000UL 20Mhz
+static const uint32_t IADC_ADC_CLK_HZ   = 5000000UL; // ADC clock   (Hz) / orig was 10000000UL 10Mhz
 
 // ── IADC warm-up ─────────────────────────────────────────────────────
 // Number of full sweeps discarded after RUN starts so that the IADC

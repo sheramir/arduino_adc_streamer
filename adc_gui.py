@@ -547,18 +547,29 @@ class ADCStreamerGUI(
             self.update_heatmap_ui_for_mode()
         
         channels = self.config.get('channels', [])
-        unique_channels = []
-        for ch in channels:
-            if ch not in unique_channels:
-                unique_channels.append(ch)
-        num_channels = len(unique_channels)
+        num_channels = len(channels)
 
-        valid_channel_count = (
-            num_channels >= HEATMAP_REQUIRED_CHANNELS
-            and num_channels <= HEATMAP_REQUIRED_CHANNELS * MAX_SENSOR_PACKAGES
-            and num_channels % HEATMAP_REQUIRED_CHANNELS == 0
-        )
-        sensor_package_count = max(1, num_channels // HEATMAP_REQUIRED_CHANNELS) if valid_channel_count else 1
+        if hasattr(self, 'is_array_sensor_selection_mode') and self.is_array_sensor_selection_mode():
+            sensor_groups = self.get_array_selected_sensor_groups() if hasattr(self, 'get_array_selected_sensor_groups') else []
+            valid_channel_count = (
+                len(sensor_groups) > 0
+                and len(sensor_groups) <= MAX_SENSOR_PACKAGES
+                and all(len(group.get('channels', [])) == HEATMAP_REQUIRED_CHANNELS for group in sensor_groups)
+            )
+            sensor_package_count = len(sensor_groups) if valid_channel_count else 1
+        else:
+            unique_channels = []
+            for ch in channels:
+                if ch not in unique_channels:
+                    unique_channels.append(ch)
+            num_channels = len(unique_channels)
+            valid_channel_count = (
+                num_channels >= HEATMAP_REQUIRED_CHANNELS
+                and num_channels <= HEATMAP_REQUIRED_CHANNELS * MAX_SENSOR_PACKAGES
+                and num_channels % HEATMAP_REQUIRED_CHANNELS == 0
+            )
+            sensor_package_count = max(1, num_channels // HEATMAP_REQUIRED_CHANNELS) if valid_channel_count else 1
+
         required_channels = "5, 10, 15, or 20"
 
         self.active_sensor_package_count = sensor_package_count

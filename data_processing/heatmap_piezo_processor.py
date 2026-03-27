@@ -165,21 +165,35 @@ class PiezoHeatmapProcessorMixin:
         if not channels or repeat_count <= 0:
             return None
 
-        unique_channels = []
-        for ch in channels:
-            if ch not in unique_channels:
-                unique_channels.append(ch)
+        use_array_sensor_groups = hasattr(self, 'is_array_sensor_selection_mode') and self.is_array_sensor_selection_mode()
+        array_sensor_groups = self.get_array_selected_sensor_groups() if use_array_sensor_groups else []
 
-        if (
-            len(unique_channels) < HEATMAP_REQUIRED_CHANNELS
-            or len(unique_channels) % HEATMAP_REQUIRED_CHANNELS != 0
-        ):
-            return None
+        standard_package_channels = []
+        if use_array_sensor_groups and array_sensor_groups:
+            if any(len(group.get('channels', [])) != HEATMAP_REQUIRED_CHANNELS for group in array_sensor_groups):
+                return None
+            package_count = len(array_sensor_groups)
+        else:
+            unique_channels = []
+            for ch in channels:
+                if ch not in unique_channels:
+                    unique_channels.append(ch)
 
-        package_count = len(unique_channels) // HEATMAP_REQUIRED_CHANNELS
+            if (
+                len(unique_channels) < HEATMAP_REQUIRED_CHANNELS
+                or len(unique_channels) % HEATMAP_REQUIRED_CHANNELS != 0
+            ):
+                return None
+
+            package_count = len(unique_channels) // HEATMAP_REQUIRED_CHANNELS
+            for package_index in range(package_count):
+                start = package_index * HEATMAP_REQUIRED_CHANNELS
+                end = (package_index + 1) * HEATMAP_REQUIRED_CHANNELS
+                standard_package_channels.append(unique_channels[start:end])
+            array_sensor_groups = []
 
         sample_rate_hz = 1000000.0 / avg_sample_time_us
-        per_channel_rate_hz = sample_rate_hz / max(len(unique_channels), 1)
+        per_channel_rate_hz = sample_rate_hz / max(len(channels), 1)
         window_end_time_sec = float(timestamps[-1]) if timestamps.size else None
         channel_to_sensor = settings.get('channel_sensor_map', [])
         channel_to_baseline = settings.get('channel_to_baseline', {})
@@ -187,12 +201,20 @@ class PiezoHeatmapProcessorMixin:
         package_sensor_values = []
 
         for package_index in range(package_count):
-            package_channels = unique_channels[
-                package_index * HEATMAP_REQUIRED_CHANNELS:(package_index + 1) * HEATMAP_REQUIRED_CHANNELS
-            ]
+            if array_sensor_groups:
+                group = array_sensor_groups[package_index]
+                package_channels = list(group.get('channels', []))
+                package_positions = list(group.get('positions', []))
+            else:
+                package_channels = list(standard_package_channels[package_index])
+                package_positions = []
+
             channel_samples = []
-            for channel in package_channels:
-                positions = [i for i, c in enumerate(channels) if c == channel]
+            for local_idx, channel in enumerate(package_channels):
+                if package_positions:
+                    positions = [int(package_positions[local_idx])] if local_idx < len(package_positions) else []
+                else:
+                    positions = [i for i, c in enumerate(channels) if c == channel]
                 channel_data_list = []
                 for pos in positions:
                     start_idx = pos * repeat_count

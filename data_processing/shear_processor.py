@@ -48,28 +48,51 @@ class ShearProcessorMixin:
         if not channels or repeat_count <= 0:
             return None
 
-        unique_channels = []
-        for channel in channels:
-            if channel not in unique_channels:
-                unique_channels.append(channel)
+        use_array_sensor_groups = hasattr(self, 'is_array_sensor_selection_mode') and self.is_array_sensor_selection_mode()
+        array_sensor_groups = self.get_array_selected_sensor_groups() if use_array_sensor_groups else []
 
-        if (
-            len(unique_channels) < HEATMAP_REQUIRED_CHANNELS
-            or len(unique_channels) % HEATMAP_REQUIRED_CHANNELS != 0
-        ):
-            return None
+        standard_package_channels = []
+        if use_array_sensor_groups and array_sensor_groups:
+            if any(len(group.get('channels', [])) != HEATMAP_REQUIRED_CHANNELS for group in array_sensor_groups):
+                return None
+            package_count = len(array_sensor_groups)
+        else:
+            unique_channels = []
+            for channel in channels:
+                if channel not in unique_channels:
+                    unique_channels.append(channel)
+
+            if (
+                len(unique_channels) < HEATMAP_REQUIRED_CHANNELS
+                or len(unique_channels) % HEATMAP_REQUIRED_CHANNELS != 0
+            ):
+                return None
+
+            package_count = len(unique_channels) // HEATMAP_REQUIRED_CHANNELS
+            for package_index in range(package_count):
+                start = package_index * HEATMAP_REQUIRED_CHANNELS
+                end = (package_index + 1) * HEATMAP_REQUIRED_CHANNELS
+                standard_package_channels.append(unique_channels[start:end])
+            array_sensor_groups = []
 
         channel_sensor_map = list(settings.get("channel_sensor_map", HEATMAP_CHANNEL_SENSOR_MAP))
-        package_count = len(unique_channels) // HEATMAP_REQUIRED_CHANNELS
         package_sensor_streams = []
 
         for package_index in range(package_count):
             sensor_streams = {name: np.array([], dtype=np.float64) for name in SHEAR_SENSOR_ORDER}
-            package_channels = unique_channels[
-                package_index * HEATMAP_REQUIRED_CHANNELS:(package_index + 1) * HEATMAP_REQUIRED_CHANNELS
-            ]
+            if array_sensor_groups:
+                group = array_sensor_groups[package_index]
+                package_channels = list(group.get('channels', []))
+                package_positions = list(group.get('positions', []))
+            else:
+                package_channels = list(standard_package_channels[package_index])
+                package_positions = []
+
             for channel_index, channel in enumerate(package_channels):
-                positions = [idx for idx, seq_channel in enumerate(channels) if seq_channel == channel]
+                if package_positions:
+                    positions = [int(package_positions[channel_index])] if channel_index < len(package_positions) else []
+                else:
+                    positions = [idx for idx, seq_channel in enumerate(channels) if seq_channel == channel]
                 channel_data_list = []
                 for pos in positions:
                     start_idx = pos * repeat_count
@@ -86,7 +109,7 @@ class ShearProcessorMixin:
             package_sensor_streams.append(sensor_streams)
 
         total_sample_rate_hz = 1_000_000.0 / float(avg_sample_time_us) if avg_sample_time_us > 0 else 0.0
-        per_channel_rate_hz = total_sample_rate_hz / max(len(unique_channels), 1)
+        per_channel_rate_hz = total_sample_rate_hz / max(len(channels), 1)
         return package_sensor_streams, per_channel_rate_hz
 
     def compute_shear_visualization(self, settings: Dict[str, object]):

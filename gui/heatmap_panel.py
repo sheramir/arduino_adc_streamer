@@ -91,6 +91,11 @@ class HeatmapPanelMixin:
         )
 
     def _get_channel_group_title(self, package_index):
+        if hasattr(self, 'is_array_sensor_selection_mode') and self.is_array_sensor_selection_mode():
+            selected = list(self.config.get('selected_array_sensors', [])) if hasattr(self, 'config') else []
+            if package_index < len(selected):
+                return str(selected[package_index])
+
         channels = self.config.get("channels", []) if hasattr(self, "config") else []
         unique_channels = []
         for channel in channels:

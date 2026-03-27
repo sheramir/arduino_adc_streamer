@@ -173,8 +173,7 @@ class ConfigurationMixin:
                     raise ValueError(f"Invalid channel configured for {sensor_id}") from exc
                 if channel < 0 or channel > 15:
                     raise ValueError(f"Out-of-range channel configured for {sensor_id}: {channel}")
-                if channel not in channels:
-                    channels.append(channel)
+                channels.append(channel)
 
         if not channels:
             raise ValueError("Selected sensors did not resolve to any channels")
@@ -184,6 +183,73 @@ class ConfigurationMixin:
     def get_effective_channel_multiplier(self) -> int:
         """Return how many physical samples each requested channel produces."""
         return 2 if self.is_array_pzt1_mode() else 1
+
+    def is_array_sensor_selection_mode(self) -> bool:
+        """Return True when active channel selection comes from Array sensor IDs."""
+        return (
+            self.is_array_mcu_mode()
+            and str(self.config.get('channel_selection_source', 'none')).lower() == 'array'
+            and bool(self.config.get('selected_array_sensors', []))
+        )
+
+    def get_array_selected_sensor_groups(self):
+        """Return ordered selected Array sensor groups with sequence positions."""
+        if not self.is_array_sensor_selection_mode():
+            return []
+
+        selected_sensors = list(self.config.get('selected_array_sensors', []))
+        active_config = self.get_active_sensor_configuration() if hasattr(self, 'get_active_sensor_configuration') else {}
+        mux_mapping = active_config.get('mux_mapping', {}) if isinstance(active_config, dict) else {}
+
+        groups = []
+        seq_cursor = 0
+        for sensor_id in selected_sensors:
+            sensor_mapping = mux_mapping.get(sensor_id, {}) if isinstance(mux_mapping, dict) else {}
+            if not isinstance(sensor_mapping, dict):
+                continue
+
+            sensor_channels = []
+            for value in sensor_mapping.get('channels', []):
+                try:
+                    sensor_channels.append(int(value))
+                except (ValueError, TypeError):
+                    continue
+
+            if not sensor_channels:
+                continue
+
+            groups.append({
+                'sensor_id': sensor_id,
+                'mux': int(sensor_mapping.get('mux', 1)),
+                'channels': sensor_channels,
+                'positions': list(range(seq_cursor, seq_cursor + len(sensor_channels))),
+            })
+            seq_cursor += len(sensor_channels)
+
+        return groups
+
+    def get_channels_for_arduino_command(self):
+        """Return channel list to send to firmware.
+
+        In array sensor-selection mode, internal channel lists can intentionally
+        contain duplicates (for per-sensor grouping). Firmware expects one
+        channel-address set, so send first-occurrence unique channels only.
+        """
+        channels = list(self.config.get('channels', []))
+        if not channels:
+            return []
+
+        if self.is_array_sensor_selection_mode():
+            unique_channels = []
+            seen = set()
+            for channel in channels:
+                if channel in seen:
+                    continue
+                seen.add(channel)
+                unique_channels.append(channel)
+            return unique_channels
+
+        return channels
 
     def get_effective_samples_per_sweep(self, channels=None, repeat_count=None) -> int:
         """Return the physical sample width of one sweep for the active MCU."""
@@ -211,31 +277,20 @@ class ConfigurationMixin:
         selected_array_sensors = self.config.get('selected_array_sensors', [])
 
         if self.is_array_mcu_mode() and selection_source == 'array' and selected_array_sensors:
-            active_config = self.get_active_sensor_configuration() if hasattr(self, 'get_active_sensor_configuration') else {}
-            mux_mapping = active_config.get('mux_mapping', {}) if isinstance(active_config, dict) else {}
+            sensor_groups = self.get_array_selected_sensor_groups()
             channel_sensor_map = self.get_active_channel_sensor_map() if hasattr(self, 'get_active_channel_sensor_map') else ["T", "R", "C", "L", "B"]
 
             color_slot = 0
-            for sensor_id in selected_array_sensors:
-                sensor_mapping = mux_mapping.get(sensor_id, {}) if isinstance(mux_mapping, dict) else {}
-                if not isinstance(sensor_mapping, dict):
-                    continue
-
-                mux_num = int(sensor_mapping.get('mux', 1))
-                sensor_channels = []
-                for value in sensor_mapping.get('channels', []):
-                    try:
-                        sensor_channels.append(int(value))
-                    except (ValueError, TypeError):
-                        continue
-                sensor_channels = sorted(sensor_channels)
+            for group in sensor_groups:
+                sensor_id = group['sensor_id']
+                mux_num = int(group.get('mux', 1))
+                sensor_channels = list(group.get('channels', []))
+                seq_positions = list(group.get('positions', []))
 
                 for local_idx, channel in enumerate(sensor_channels):
                     sample_indices = []
-                    for seq_idx, seq_channel in enumerate(channels):
-                        if seq_channel != channel:
-                            continue
-
+                    if local_idx < len(seq_positions):
+                        seq_idx = int(seq_positions[local_idx])
                         if self.is_array_pzt1_mode():
                             mux_index = max(0, min(1, mux_num - 1))
                             base_idx = seq_idx * repeat_count * 2
@@ -741,8 +796,9 @@ class ConfigurationMixin:
                 all_success = False
             time.sleep(INTER_COMMAND_DELAY)
         
-        # Send channels
-        channels_text = ",".join(str(channel) for channel in self.config.get('channels', []))
+        # Send channels to firmware (array sensor mode uses unique channel addresses)
+        channels_to_send = self.get_channels_for_arduino_command()
+        channels_text = ",".join(str(channel) for channel in channels_to_send)
         if channels_text:
             success, received = self.send_command_and_wait_ack(f"channels {channels_text}", channels_text)
             if success and received:
@@ -782,8 +838,8 @@ class ConfigurationMixin:
         # Send buffer size (sweeps per block)
         time.sleep(0.05)
         buffer_size = self.buffer_spin.value()
-        # Validate buffer size
-        channel_count = len(self.config.get('channels', [])) * self.get_effective_channel_multiplier()
+        # Validate buffer size using firmware channel sequence
+        channel_count = len(channels_to_send) * self.get_effective_channel_multiplier()
         repeat_count = self.config.get('repeat', 1)
         
         if buffer_size <= 0:
@@ -811,7 +867,8 @@ class ConfigurationMixin:
         """Send only 555-analyzer supported configuration commands."""
         all_success = True
 
-        channels_text = ",".join(str(channel) for channel in self.config.get('channels', []))
+        channels_to_send = self.get_channels_for_arduino_command()
+        channels_text = ",".join(str(channel) for channel in channels_to_send)
         if channels_text:
             desired_channels = [int(c.strip()) for c in channels_text.split(',') if c.strip()]
             success, received = self.send_command_and_wait_ack(f"channels {channels_text}", None)
@@ -912,10 +969,29 @@ class ConfigurationMixin:
             return False
         
         # Compare channels (most critical)
+        # For array mode with duplicate channels (dual MUX), Arduino may echo unique channels only
         expected_channels = self.config.get('channels', [])
         actual_channels = self.arduino_status['channels']
         
-        if expected_channels != actual_channels:
+        # First try exact match
+        if expected_channels == actual_channels:
+            pass  # Match successful
+        elif self.is_array_sensor_selection_mode():
+            # In array sensor selection mode, Arduino might deduplicate the echo
+            # Check if unique versions match
+            expected_unique = []
+            for ch in expected_channels:
+                if ch not in expected_unique:
+                    expected_unique.append(ch)
+            actual_unique = []
+            for ch in actual_channels:
+                if ch not in actual_unique:
+                    actual_unique.append(ch)
+            
+            if expected_unique != actual_unique:
+                self.log_status(f"MISMATCH: Expected channels {expected_channels}, got {actual_channels}")
+                return False
+        else:
             self.log_status(f"MISMATCH: Expected channels {expected_channels}, got {actual_channels}")
             return False
         

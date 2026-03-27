@@ -19,7 +19,7 @@ from config_constants import (
 
 
 class Heatmap555ProcessorMixin:
-    """555 resistance mode displacement heatmap pipeline (5-channel packages)."""
+    """555 resistance mode (4-sensor) displacement heatmap pipeline."""
 
     def reset_555_heatmap_state(self):
         self.r555_package_states = {}

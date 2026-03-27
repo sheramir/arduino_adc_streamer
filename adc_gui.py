@@ -450,7 +450,7 @@ class ADCStreamerGUI(
         """
         current_tab = self.visualization_tabs.tabText(index)
 
-        if current_tab in {"2D Heatmap", "Shear"}:
+        if current_tab in {"2D Heatmap", "Shear", "Display"}:
             self.start_heatmap_simulation()
         else:  # Time Series or other tabs
             self.stop_heatmap_simulation()
@@ -473,7 +473,7 @@ class ADCStreamerGUI(
 
     def is_live_visualization_only_tab(self) -> bool:
         """Return True when current tab should avoid time-series capture by default."""
-        return self.get_current_visualization_tab_name() in {"2D Heatmap", "Shear"}
+        return self.get_current_visualization_tab_name() in {"2D Heatmap", "Shear", "Display"}
 
     def should_store_capture_data(self) -> bool:
         """Return True when capture should persist/archive time-series data."""
@@ -540,7 +540,7 @@ class ADCStreamerGUI(
     def update_heatmap(self):
         """Update heatmap display (called by QTimer at HEATMAP_FPS rate)."""
         current_tab = self.visualization_tabs.tabText(self.visualization_tabs.currentIndex())
-        if current_tab not in {"2D Heatmap", "Shear"}:
+        if current_tab not in {"2D Heatmap", "Shear", "Display"}:
             return
 
         if hasattr(self, 'update_heatmap_ui_for_mode'):
@@ -577,6 +577,8 @@ class ADCStreamerGUI(
             self.update_visible_heatmap_cards(sensor_package_count)
         if hasattr(self, "update_visible_shear_cards"):
             self.update_visible_shear_cards(sensor_package_count)
+        if hasattr(self, "update_visible_display_cards"):
+            self.update_visible_display_cards(sensor_package_count)
 
         if not valid_channel_count:
             if current_tab == "Shear":
@@ -612,7 +614,13 @@ class ADCStreamerGUI(
             pzr_results = self.process_555_displacement_heatmap(settings)
             if pzr_results is None:
                 return
-            self.update_heatmap_display(pzr_results, shear_results=[])
+            shear_settings = self.get_shear_settings()
+            shear_processed = self.compute_shear_visualization(shear_settings)
+            shear_results = shear_processed if shear_processed is not None else []
+            if current_tab == "Display" and hasattr(self, "update_display_tab"):
+                self.update_display_tab(pzr_results, shear_results=shear_results)
+            else:
+                self.update_heatmap_display(pzr_results, shear_results=[])
             return
 
         sensor_packages = self.compute_channel_intensities(settings)
@@ -630,7 +638,10 @@ class ADCStreamerGUI(
         shear_results = shear_processed if shear_processed is not None else []
 
         # Update display
-        self.update_heatmap_display(package_results, shear_results=shear_results)
+        if current_tab == "Display" and hasattr(self, "update_display_tab"):
+            self.update_display_tab(package_results, shear_results=shear_results)
+        else:
+            self.update_heatmap_display(package_results, shear_results=shear_results)
 
 
 def main():

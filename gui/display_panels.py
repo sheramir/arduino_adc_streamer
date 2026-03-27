@@ -45,14 +45,18 @@ class DisplayPanelsMixin:
         self.visualization_tabs.addTab(shear_tab, "Shear")
         self.shear_tab_index = 2
 
+        display_tab = self.create_display_tab()
+        self.visualization_tabs.addTab(display_tab, "Display")
+        self.display_tab_index = 3
+
         sensor_tab = self.create_sensor_tab()
         self.visualization_tabs.addTab(sensor_tab, "Sensor")
-        self.sensor_tab_index = 3
+        self.sensor_tab_index = 4
 
         # Create spectrum tab (from SpectrumPanelMixin)
         spectrum_tab = self.create_spectrum_tab()
         self.visualization_tabs.addTab(spectrum_tab, "Spectrum")
-        self.spectrum_tab_index = 4
+        self.spectrum_tab_index = 5
         
         return self.visualization_tabs
     

@@ -3,7 +3,7 @@ from PyQt6.QtWidgets import (
     QComboBox, QPushButton, QFileDialog, QCheckBox, QLineEdit,
     QScrollArea, QApplication, QSizePolicy,
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QRectF
 from PyQt6.QtGui import QDoubleValidator
 import pyqtgraph as pg
 import numpy as np
@@ -514,6 +514,202 @@ class HeatmapPanelMixin:
         self._refresh_heatmap_background_overlay(force=True)
         self.update_visible_heatmap_cards(1)
         return group
+
+    def _get_array_sensor_position_map(self):
+        if not (hasattr(self, "is_array_sensor_selection_mode") and self.is_array_sensor_selection_mode()):
+            return {}
+        if not hasattr(self, "get_active_sensor_configuration"):
+            return {}
+
+        config = self.get_active_sensor_configuration()
+        if not isinstance(config, dict):
+            return {}
+
+        array_layout = config.get("array_layout", {})
+        cells = array_layout.get("cells", []) if isinstance(array_layout, dict) else []
+        if not isinstance(cells, list):
+            return {}
+
+        position_map = {}
+        for row_idx, row in enumerate(cells):
+            if not isinstance(row, list):
+                continue
+            for col_idx, value in enumerate(row):
+                if value is None:
+                    continue
+                sensor_id = str(value).strip().upper()
+                if sensor_id:
+                    position_map[sensor_id] = (row_idx, col_idx)
+        return position_map
+
+    def _get_display_package_positions(self, visible_count):
+        visible_count = max(0, int(visible_count))
+        if visible_count == 0:
+            return [], 1, 1
+
+        if hasattr(self, "is_array_sensor_selection_mode") and self.is_array_sensor_selection_mode():
+            selected = list(self.config.get("selected_array_sensors", [])) if hasattr(self, "config") else []
+            position_map = self._get_array_sensor_position_map()
+            positions = []
+            max_row = 0
+            max_col = 0
+            for index in range(min(visible_count, len(selected))):
+                sensor_id = str(selected[index]).strip().upper()
+                if sensor_id in position_map:
+                    row, col = position_map[sensor_id]
+                else:
+                    row, col = index // 2, index % 2
+                positions.append((row, col))
+                max_row = max(max_row, row)
+                max_col = max(max_col, col)
+
+            if positions:
+                return positions, max_row + 1, max_col + 1
+
+        cols = min(2, visible_count)
+        rows = int(np.ceil(visible_count / max(cols, 1)))
+        positions = [(index // cols, index % cols) for index in range(visible_count)]
+        return positions, max(rows, 1), max(cols, 1)
+
+    def _update_display_plot_view(self):
+        if not hasattr(self, "display_plot"):
+            return
+
+        visible_count = getattr(self, "display_visible_count", 1)
+        positions, _, _ = self._get_display_package_positions(visible_count)
+        spacing = float(getattr(self, "display_cell_spacing", 220.0))
+        heatmap_size = float(getattr(self, "display_heatmap_size", 250.0))
+        extra_margin = float(getattr(self, "display_canvas_extra_margin", 0.0))
+        if not positions:
+            half = heatmap_size * 0.5 + 40.0
+            self.display_plot.setXRange(-half, half, padding=0.0)
+            self.display_plot.setYRange(-half, half, padding=0.0)
+            self.display_plot.setLimits(xMin=-half, xMax=half, yMin=-half, yMax=half)
+            return
+
+        x_centers = [float(col) * spacing for row, col in positions]
+        y_centers = [float(row) * spacing for row, col in positions]
+        content_half = heatmap_size * 0.5
+
+        arrow_scale_widget = getattr(self, "shear_arrow_scale_spin", None)
+        arrow_scale = float(arrow_scale_widget.value()) if arrow_scale_widget is not None else 1.0
+        # Keep additional room for long arrows and slightly spread blobs.
+        overflow = (content_half * max(0.0, self.HEATMAP_VIEW_EXTENT - 1.0) * max(1.0, arrow_scale))
+        margin = max(24.0, heatmap_size * 0.08 + overflow + extra_margin)
+
+        x_min = min(x_centers) - content_half - margin
+        x_max = max(x_centers) + content_half + margin
+        y_min = min(y_centers) - content_half - margin
+        y_max = max(y_centers) + content_half + margin
+
+        self.display_plot.setXRange(x_min, x_max, padding=0.0)
+        self.display_plot.setYRange(y_min, y_max, padding=0.0)
+        self.display_plot.setLimits(xMin=x_min, xMax=x_max, yMin=y_min, yMax=y_max)
+
+    def update_visible_display_cards(self, visible_count):
+        self.display_visible_count = max(0, int(visible_count))
+        self._update_display_plot_view()
+
+    def create_display_tab(self):
+        display_widget = QWidget()
+        main_layout = QVBoxLayout()
+
+        display_group = QGroupBox("Display")
+        group_layout = QVBoxLayout()
+        self.display_plot_widget = pg.GraphicsLayoutWidget()
+        self.display_plot_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.display_plot = self.display_plot_widget.addPlot()
+        self.display_plot.setAspectLocked(True, ratio=1.0)
+        self.display_plot.invertY(True)
+        self.display_plot.showAxis("left", False)
+        self.display_plot.showAxis("bottom", False)
+        self.display_plot.setMouseEnabled(x=False, y=False)
+
+        self.display_cell_spacing = 220.0
+        self.display_heatmap_size = 280.0
+        self.display_canvas_extra_margin = 24.0
+        self.display_items = []
+        for _ in range(MAX_SENSOR_PACKAGES):
+            image = pg.ImageItem()
+            image.setColorMap(pg.colormap.get("viridis"))
+            image.setImage(np.zeros((HEATMAP_HEIGHT, HEATMAP_WIDTH), dtype=np.float32), autoLevels=False, levels=(0, 1))
+            image.setVisible(False)
+            self.display_plot.addItem(image)
+
+            arrow_line = pg.PlotDataItem([], [], pen=pg.mkPen((235, 80, 60), width=3))
+            arrow_line.setZValue(10)
+            arrow_line.setVisible(False)
+            self.display_plot.addItem(arrow_line)
+
+            arrow_head = pg.ArrowItem(angle=0.0, headLen=SHEAR_ARROW_HEAD_LENGTH_BASE_PX, tipAngle=28, baseAngle=20, brush=(235, 80, 60), pen=pg.mkPen((235, 80, 60)))
+            arrow_head.setZValue(11)
+            arrow_head.setVisible(False)
+            self.display_plot.addItem(arrow_head)
+
+            self.display_items.append({
+                "image": image,
+                "arrow_line": arrow_line,
+                "arrow_head": arrow_head,
+            })
+
+        group_layout.addWidget(self.display_plot_widget)
+        display_group.setLayout(group_layout)
+        main_layout.addWidget(display_group)
+        display_widget.setLayout(main_layout)
+        self.update_visible_display_cards(1)
+        return display_widget
+
+    def update_display_tab(self, package_results, shear_results=None):
+        import math
+        self.update_visible_display_cards(len(package_results))
+        shear_results = shear_results or []
+        positions, _, _ = self._get_display_package_positions(len(package_results))
+        spacing = float(getattr(self, "display_cell_spacing", 220.0))
+        heatmap_size = float(getattr(self, "display_heatmap_size", 250.0))
+        local_radius = heatmap_size * 0.48
+
+        for item in getattr(self, "display_items", []):
+            item["image"].setVisible(False)
+            item["arrow_line"].setData([], [])
+            item["arrow_line"].setVisible(False)
+            item["arrow_head"].setVisible(False)
+
+        for index, result in enumerate(package_results):
+            if index >= len(getattr(self, "display_items", [])) or index >= len(positions):
+                break
+
+            heatmap, _, _, _, _, _ = result
+            item = self.display_items[index]
+            row, col = positions[index]
+            center_x = float(col) * spacing
+            center_y = float(row) * spacing
+
+            item["image"].setImage(heatmap.T, autoLevels=False, levels=(0, 1))
+            item["image"].setRect(QRectF(center_x - (heatmap_size * 0.5), center_y - (heatmap_size * 0.5), heatmap_size, heatmap_size))
+            item["image"].setVisible(True)
+
+            if index < len(shear_results):
+                _, shear_result = shear_results[index]
+                arrow_scale_widget = getattr(self, "shear_arrow_scale_spin", None)
+                arrow_scale = float(arrow_scale_widget.value()) if arrow_scale_widget is not None else 1.0
+                arrow_end_x = float(shear_result.shear_x) * local_radius * arrow_scale
+                arrow_end_y = float(shear_result.shear_y) * local_radius * arrow_scale
+                arrow_length = math.hypot(arrow_end_x, arrow_end_y)
+                rel = min(arrow_length / (self.HEATMAP_VIEW_EXTENT * local_radius), 1.0)
+                has_arrow = float(shear_result.shear_magnitude) > 1e-6 and (abs(arrow_end_x) > 1e-6 or abs(arrow_end_y) > 1e-6)
+
+                if has_arrow:
+                    head_len = SHEAR_ARROW_HEAD_LENGTH_BASE_PX + rel * SHEAR_ARROW_HEAD_LENGTH_AMPLIFIER
+                    item["arrow_line"].setPen(pg.mkPen((235, 80, 60), width=3.0))
+                    item["arrow_line"].setData([center_x, center_x + arrow_end_x], [center_y, center_y + arrow_end_y])
+                    item["arrow_head"].setPos(center_x + arrow_end_x, center_y + arrow_end_y)
+                    item["arrow_head"].setStyle(angle=self._arrow_item_angle_from_vector(arrow_end_x, -arrow_end_y), headLen=head_len)
+                    item["arrow_line"].setVisible(True)
+                    item["arrow_head"].setVisible(True)
+                else:
+                    item["arrow_line"].setData([], [])
+                    item["arrow_line"].setVisible(False)
+                    item["arrow_head"].setVisible(False)
 
     def _clear_heatmap_background_overlay(self):
         for card in getattr(self, "heatmap_cards", []):

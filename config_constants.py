@@ -233,6 +233,22 @@ SENSOR_CALIBRATION = [1.0, 1.0, 1.0, 1.0, 1.0]  # Per-sensor scale factors
 # Per-sensor baseline noise floor (RMS) to subtract after magnitude calculation
 SENSOR_NOISE_FLOOR = [0.01, 0.01, 0.01, 0.01, 0.01]
 
+# ============================================================================
+# Per-Sensor Threshold and Gain Settings (Mode-Specific)
+# ============================================================================
+# These settings allow individual tuning of threshold and gain for each sensor [T,B,R,L,C]
+# Total threshold applied = general threshold + individual sensor threshold
+# Stored as dict keyed by sensor ID (e.g., "PZR2", "PZT1", "Sensor1" for non-array)
+# Default: empty dict (use global defaults from constants below when sensor not found)
+PZT_SENSOR_CALIBRATION = {}  # {"PZT1": {"gains": [...], "thresholds": [...]}}
+R_SENSOR_CALIBRATION = {}    # {"PZR2": {"gains": [...], "thresholds": [...]}}
+
+# Global defaults when per-sensor settings not available
+PZT_THRESHOLD_DEFAULT = 0.0
+PZT_GAIN_DEFAULT = 1.0
+R_THRESHOLD_DEFAULT = 0.0  # (%)
+R_GAIN_DEFAULT = 1.0
+
 # Physical size between endpoint sensors (for reference)
 SENSOR_SIZE = 0.5
 

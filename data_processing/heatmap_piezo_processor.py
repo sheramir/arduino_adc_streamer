@@ -252,15 +252,54 @@ class PiezoHeatmapProcessorMixin:
             sensor_values = [sensor_values_map[label] for label in sensor_labels]
             noise_floor = settings.get('sensor_noise_floor', [0.0] * len(sensor_values))
             calibration = settings.get('sensor_calibration', [1.0] * len(sensor_values))
+            
+            # Determine sensor_id for this package
+            if use_array_sensor_groups and package_index < len(array_sensor_groups):
+                sensor_id = array_sensor_groups[package_index].get('sensor_id', '')
+            else:
+                sensor_id = f"Sensor{package_index + 1}"
+            
+            # Get per-sensor gains and thresholds from sensor_calibration_dict
+            sensor_calibration_dict = settings.get('sensor_calibration_dict', {})
+            per_sensor_gains = [1.0] * len(sensor_values)
+            per_sensor_thresholds = [0.0] * len(sensor_values)
+            
+            if sensor_id in sensor_calibration_dict:
+                calib_data = sensor_calibration_dict[sensor_id]
+                if 'gains' in calib_data and isinstance(calib_data['gains'], (list, np.ndarray)):
+                    gains = calib_data['gains']
+                    # Map 5-element gain array to per-channel gains
+                    for idx in range(min(len(sensor_values), len(gains))):
+                        per_sensor_gains[idx] = float(gains[idx])
+                if 'thresholds' in calib_data and isinstance(calib_data['thresholds'], (list, np.ndarray)):
+                    thresholds = calib_data['thresholds']
+                    # Map 5-element threshold array to per-channel thresholds
+                    for idx in range(min(len(sensor_values), len(thresholds))):
+                        per_sensor_thresholds[idx] = float(thresholds[idx])
+            
             calibrated = []
-            for value, noise, gain in zip(sensor_values, noise_floor, calibration):
+            for value, noise, gain, per_gain, per_thresh in zip(sensor_values, noise_floor, calibration, per_sensor_gains, per_sensor_thresholds):
                 adjusted = max(0.0, value - noise)
-                calibrated.append(adjusted * gain)
+                # Apply both general calibration gain and per-sensor gain
+                calibrated_val = adjusted * gain * per_gain
+                calibrated.append(calibrated_val)
 
+            # Apply general threshold + per-sensor thresholds
+            general_threshold = settings.get('general_threshold', settings.get('magnitude_threshold', 0.0))
+            total_thresholds = [general_threshold + per_thresh for per_thresh in per_sensor_thresholds]
+            
+            # Apply per-sensor thresholds before smoothing
+            thresholded = []
+            for val, thresh in zip(calibrated, total_thresholds):
+                if thresh > 0.0:
+                    thresholded.append(max(0.0, val - thresh))
+                else:
+                    thresholded.append(val)
+            
             smoothed = processor.smooth_and_threshold(
-                calibrated,
+                thresholded,
                 settings.get('smooth_alpha', SMOOTH_ALPHA),
-                settings.get('magnitude_threshold', 0.0),
+                0.0,  # No additional threshold since we already applied per-sensor thresholds
             )
             package_sensor_values.append(smoothed)
 

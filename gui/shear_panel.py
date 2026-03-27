@@ -9,7 +9,6 @@ import pyqtgraph as pg
 from PyQt6.QtCore import QRectF, Qt
 from PyQt6.QtWidgets import (
     QApplication,
-    QDoubleSpinBox,
     QFileDialog,
     QGridLayout,
     QGroupBox,
@@ -21,6 +20,8 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from gui.custom_widgets import NonScrollableDoubleSpinBox as QDoubleSpinBox
 
 from config_constants import (
     HEATMAP_HEIGHT,

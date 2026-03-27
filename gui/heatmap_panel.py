@@ -1,13 +1,16 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGroupBox, QGridLayout,
-    QComboBox, QSpinBox, QDoubleSpinBox, QPushButton, QFileDialog, QCheckBox,
+    QComboBox, QPushButton, QFileDialog, QCheckBox, QLineEdit,
     QScrollArea, QApplication, QSizePolicy,
 )
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QDoubleValidator
 import pyqtgraph as pg
 import numpy as np
 import json
 from pathlib import Path
+
+from gui.custom_widgets import NonScrollableSpinBox as QSpinBox, NonScrollableDoubleSpinBox as QDoubleSpinBox
 
 from config_constants import (
     HEATMAP_WIDTH, HEATMAP_HEIGHT, SENSOR_CALIBRATION, SENSOR_SIZE,
@@ -20,6 +23,8 @@ from config_constants import (
     R_HEATMAP_INTENSITY_MIN, R_HEATMAP_INTENSITY_MAX,
     R_HEATMAP_AXIS_ADAPT_STRENGTH, R_HEATMAP_MAP_SMOOTH_ALPHA,
     R_HEATMAP_COP_SMOOTH_ALPHA,
+    PZT_SENSOR_CALIBRATION, R_SENSOR_CALIBRATION,
+    PZT_THRESHOLD_DEFAULT, PZT_GAIN_DEFAULT, R_THRESHOLD_DEFAULT, R_GAIN_DEFAULT,
     SHEAR_ARROW_HEAD_LENGTH_AMPLIFIER, SHEAR_ARROW_HEAD_LENGTH_BASE_PX,
     SHEAR_ARROW_SCALE, SHEAR_ARROW_THICKNESS_AMPLIFIER,
 )
@@ -37,6 +42,8 @@ class HeatmapPanelMixin:
         if mode == "pzr":
             return {
                 "sensor_calibration",
+                "global_channel_thresholds",
+                "global_channel_release_thresholds",
                 "intensity_scale",
                 "blob_sigma_x",
                 "blob_sigma_y",
@@ -48,10 +55,13 @@ class HeatmapPanelMixin:
                 "intensity_max",
                 "axis_adapt_strength",
                 "map_smooth_alpha",
+                "sensor_calibration_dict",  # Per-sensor calibration indexed by sensor ID
             }
         return {
             "sensor_calibration",
             "sensor_noise_floor",
+            "global_channel_thresholds",
+            "global_channel_release_thresholds",
             "sensor_size",
             "intensity_scale",
             "blob_sigma_x",
@@ -60,7 +70,8 @@ class HeatmapPanelMixin:
             "rms_window_ms",
             "dc_removal_mode",
             "hpf_cutoff_hz",
-            "magnitude_threshold",
+            "general_threshold",  # Changed from magnitude_threshold
+            "sensor_calibration_dict",  # Per-sensor calibration indexed by sensor ID
         }
 
     def _filter_heatmap_settings_for_mode(self, settings: dict, mode_key: str | None = None) -> dict:
@@ -108,6 +119,113 @@ class HeatmapPanelMixin:
             return "CH " + ",".join(str(channel) for channel in group_channels)
         return f"CH Group {package_index + 1}"
 
+    def _get_sensor_id_for_package(self, package_index: int) -> str:
+        """Get the sensor ID for a given heatmap package index."""
+        if hasattr(self, 'is_array_sensor_selection_mode') and self.is_array_sensor_selection_mode():
+            selected = list(self.config.get('selected_array_sensors', [])) if hasattr(self, 'config') else []
+            if package_index < len(selected):
+                return str(selected[package_index])
+        # Non-array mode: derive sensor ID from package index
+        return f"Sensor{package_index + 1}"
+
+    def _get_visible_sensor_ids(self) -> list[str]:
+        """Get list of visible sensor IDs based on current heatmap display."""
+        if hasattr(self, 'is_array_sensor_selection_mode') and self.is_array_sensor_selection_mode():
+            return list(self.config.get('selected_array_sensors', [])) if hasattr(self, 'config') else []
+        # Non-array: determine count from active heatmap cards
+        count = getattr(self, 'active_sensor_package_count', 1)
+        return [f"Sensor{i+1}" for i in range(count)]
+
+    def _clear_layout_recursive(self, layout):
+        """Recursively remove all items from a layout."""
+        while layout.count():
+            item = layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+            elif item.layout():
+                self._clear_layout_recursive(item.layout())
+
+    def _create_numeric_line_edit(self, value, minimum, maximum, decimals=4):
+        line_edit = QLineEdit(f"{float(value):.{decimals}f}")
+        validator = QDoubleValidator(minimum, maximum, decimals, line_edit)
+        validator.setNotation(QDoubleValidator.Notation.StandardNotation)
+        line_edit.setValidator(validator)
+        line_edit.setFixedWidth(84)
+        line_edit.setMinimumHeight(28)
+        line_edit.setAlignment(Qt.AlignmentFlag.AlignRight)
+        line_edit.editingFinished.connect(self.save_last_heatmap_settings)
+        return line_edit
+
+    def _get_numeric_input_value(self, widget, default):
+        try:
+            if hasattr(widget, "value"):
+                return float(widget.value())
+            text = widget.text().strip()
+            return float(text) if text else float(default)
+        except (AttributeError, TypeError, ValueError, RuntimeError):
+            return float(default)
+
+    def _set_numeric_input_value(self, widget, value, decimals=4):
+        if hasattr(widget, "setValue"):
+            widget.setValue(float(value))
+            return
+        widget.setText(f"{float(value):.{decimals}f}")
+
+    def _build_per_sensor_calibration_ui(self):
+        """Dynamically build per-sensor calibration controls based on visible sensors."""
+        # Disconnect old signals
+        for sensor_id, spinboxes in self.sensor_calibration_spins.items():
+            for spin_list in [spinboxes.get('threshold_spins', []), spinboxes.get('gain_spins', [])]:
+                for spin in spin_list:
+                    try:
+                        signal = getattr(spin, "valueChanged", None) or getattr(spin, "editingFinished", None)
+                        if signal is not None:
+                            signal.disconnect()
+                    except (TypeError, RuntimeError):
+                        pass
+
+        # Clear layout
+        self._clear_layout_recursive(self.per_sensor_calibration_layout)
+
+        self.sensor_calibration_spins = {}
+        is_pzr_mode = self._get_heatmap_mode_key() == "pzr"
+        sensor_ids = self._get_visible_sensor_ids()
+
+        if not sensor_ids:
+            label = QLabel("No sensors configured")
+            self.per_sensor_calibration_layout.addWidget(label)
+            return
+
+        for sensor_id in sensor_ids:
+            self.sensor_calibration_spins[sensor_id] = {'threshold_spins': [], 'gain_spins': []}
+
+            # Sensor label
+            self.per_sensor_calibration_layout.addWidget(QLabel(f"<b>{sensor_id}</b>"))
+
+            # Threshold row - same pattern as Global Sensor Calibration
+            threshold_row = QHBoxLayout()
+            threshold_row.addWidget(QLabel(f"Thresholds {'(%)' if is_pzr_mode else ''}  [T,B,R,L,C]:"))
+            for name in ["T", "B", "R", "L", "C"]:
+                spin = self._create_numeric_line_edit(0.0, 0.0, 1000.0 if is_pzr_mode else 1e6)
+                self.sensor_calibration_spins[sensor_id]['threshold_spins'].append(spin)
+                threshold_row.addWidget(QLabel(f"{name}:"))
+                threshold_row.addWidget(spin)
+            threshold_row.addStretch()
+            self.per_sensor_calibration_layout.addLayout(threshold_row)
+
+            # Gain row - same pattern as Global Sensor Calibration
+            gain_row = QHBoxLayout()
+            gain_row.addWidget(QLabel(f"Gains  [T,B,R,L,C]:"))
+            for name in ["T", "B", "R", "L", "C"]:
+                spin = self._create_numeric_line_edit(1.0, 0.0, 1000.0)
+                self.sensor_calibration_spins[sensor_id]['gain_spins'].append(spin)
+                gain_row.addWidget(QLabel(f"{name}:"))
+                gain_row.addWidget(spin)
+            gain_row.addStretch()
+            self.per_sensor_calibration_layout.addLayout(gain_row)
+
+        self.per_sensor_calibration_layout.addStretch()
+
     def enable_heatmap_settings_autosave(self):
         self._heatmap_autosave_enabled = True
 
@@ -130,18 +248,48 @@ class HeatmapPanelMixin:
         changed = False
         try:
             mode_settings = self._filter_heatmap_settings_for_mode(settings)
-            if "sensor_calibration" in mode_settings and isinstance(mode_settings["sensor_calibration"], list):
-                values = mode_settings["sensor_calibration"]
-                is_555_mode = bool(hasattr(self, "is_555_analyzer_mode") and self.is_555_analyzer_mode())
-                if is_555_mode and len(values) == 4 and len(self.sensor_gain_spins) >= 5:
-                    values = [float(values[3]), float(values[1]), float(values[0]), float(values[2]), self.sensor_gain_spins[4].value()]
-                for spin, value in zip(self.sensor_gain_spins, values):
+            if "global_channel_thresholds" in mode_settings and isinstance(mode_settings["global_channel_thresholds"], list):
+                for spin, value in zip(self.global_threshold_spins, mode_settings["global_channel_thresholds"]):
                     spin.setValue(float(value))
                     changed = True
-            if "sensor_noise_floor" in mode_settings and isinstance(mode_settings["sensor_noise_floor"], list):
-                for spin, value in zip(self.sensor_noise_spins, mode_settings["sensor_noise_floor"]):
+            if "global_channel_release_thresholds" in mode_settings and isinstance(mode_settings["global_channel_release_thresholds"], list):
+                for spin, value in zip(self.global_release_threshold_spins, mode_settings["global_channel_release_thresholds"]):
                     spin.setValue(float(value))
                     changed = True
+            
+            # Load per-sensor calibration dict (indexed by sensor ID)
+            if "sensor_calibration_dict" in mode_settings and isinstance(mode_settings["sensor_calibration_dict"], dict):
+                calib_dict = mode_settings["sensor_calibration_dict"]
+                for sensor_id, settings_data in calib_dict.items():
+                    if sensor_id not in self.sensor_calibration_spins:
+                        # Sensor not currently visible, skip
+                        continue
+                    
+                    # Load thresholds
+                    threshold_values = settings_data.get('thresholds', [])
+                    for spin, value in zip(self.sensor_calibration_spins[sensor_id]['threshold_spins'], threshold_values):
+                        try:
+                            self._set_numeric_input_value(spin, value)
+                        except (RuntimeError, AttributeError, TypeError):
+                            pass  # Widget may have been deleted
+                    
+                    # Load gains
+                    gain_values = settings_data.get('gains', [])
+                    for spin, value in zip(self.sensor_calibration_spins[sensor_id]['gain_spins'], gain_values):
+                        try:
+                            self._set_numeric_input_value(spin, value)
+                        except (RuntimeError, AttributeError, TypeError):
+                            pass  # Widget may have been deleted
+                    
+                    changed = True
+            
+            # Load general threshold for PZT or PZR
+            if "general_threshold" in mode_settings:
+                value = float(mode_settings["general_threshold"])
+                for spin in self.global_threshold_spins:
+                    spin.setValue(value)
+                changed = True
+            
             scalar_map = [
                 ("sensor_size", self.sensor_size_spin),
                 ("intensity_scale", self.intensity_scale_spin),
@@ -149,9 +297,6 @@ class HeatmapPanelMixin:
                 ("blob_sigma_y", self.blob_sigma_y_spin),
                 ("smooth_alpha", self.smooth_alpha_spin),
                 ("hpf_cutoff_hz", self.hpf_cutoff_spin),
-                ("magnitude_threshold", self.magnitude_threshold_spin),
-                ("delta_threshold", getattr(self, "r555_delta_threshold_spin", None)),
-                ("delta_release_threshold", getattr(self, "r555_delta_release_spin", None)),
                 ("cop_smooth_alpha", getattr(self, "r555_cop_smooth_alpha_spin", None)),
                 ("intensity_min", getattr(self, "r555_intensity_min_spin", None)),
                 ("intensity_max", getattr(self, "r555_intensity_max_spin", None)),
@@ -162,6 +307,16 @@ class HeatmapPanelMixin:
                 if key in mode_settings and widget is not None:
                     widget.setValue(float(mode_settings[key]))
                     changed = True
+            if "delta_threshold" in mode_settings:
+                value = float(mode_settings["delta_threshold"])
+                for spin in self.global_threshold_spins:
+                    spin.setValue(value)
+                changed = True
+            if "delta_release_threshold" in mode_settings:
+                value = float(mode_settings["delta_release_threshold"])
+                for spin in self.global_release_threshold_spins:
+                    spin.setValue(value)
+                changed = True
             if "rms_window_ms" in mode_settings:
                 self.rms_window_spin.setValue(int(round(float(mode_settings["rms_window_ms"]))))
                 changed = True
@@ -229,20 +384,23 @@ class HeatmapPanelMixin:
             self.save_last_heatmap_settings()
 
     def _connect_heatmap_settings_autosave(self):
-        for widget in [
+        # Build list of widgets to connect, excluding those that might not exist
+        widgets = [
             self.rms_window_spin, self.dc_removal_combo, self.hpf_cutoff_spin, self.magnitude_threshold_spin,
             self.sensor_size_spin, self.intensity_scale_spin, self.blob_sigma_x_spin, self.blob_sigma_y_spin, self.smooth_alpha_spin,
-            self.r555_delta_threshold_spin, self.r555_delta_release_spin, self.r555_cop_smooth_alpha_spin,
+            self.r555_cop_smooth_alpha_spin,
             self.r555_intensity_min_spin, self.r555_intensity_max_spin, self.r555_axis_adapt_spin,
             self.r555_map_smooth_alpha_spin,
-        ]:
+        ]
+        widgets.extend(self.global_threshold_spins)
+        widgets.extend(self.global_release_threshold_spins)
+        
+        for widget in widgets:
             signal = getattr(widget, "valueChanged", None)
             if signal is not None:
                 signal.connect(self.save_last_heatmap_settings)
         self.dc_removal_combo.currentIndexChanged.connect(self.save_last_heatmap_settings)
-        for spin in self.sensor_gain_spins + self.sensor_noise_spins:
-            spin.valueChanged.connect(self.save_last_heatmap_settings)
-
+        # Note: Per-sensor threshold and gain spinboxes are connected in _build_per_sensor_calibration_ui()
 
     def _create_heatmap_card(self, package_index):
         group = QGroupBox(self._get_channel_group_title(package_index))
@@ -328,6 +486,7 @@ class HeatmapPanelMixin:
         self.heatmap_settings_scroll.setWidget(settings_panel)
         self.heatmap_settings_scroll.setMaximumHeight(260)
         layout.addWidget(self.heatmap_settings_scroll, stretch=2)
+        self.update_heatmap_ui_for_mode()
         heatmap_widget.setLayout(layout)
         if hasattr(self, "sync_visualization_capture_buttons"):
             self.sync_visualization_capture_buttons()
@@ -447,131 +606,146 @@ class HeatmapPanelMixin:
         self._on_dc_mode_changed(self.dc_removal_combo.currentIndex())
         self.heatmap_signal_group = signal_group
         signal_group.setLayout(signal_layout)
-        main_layout.addWidget(signal_group)
 
-        pzr_group = QGroupBox("PZR Heatmap Settings")
-        pzr_layout = QGridLayout()
-        pzr_layout.addWidget(QLabel("Noise Threshold (%):"), 0, 0)
-        self.r555_delta_threshold_spin = QDoubleSpinBox()
-        self.r555_delta_threshold_spin.setRange(0.0, 1000.0)
-        self.r555_delta_threshold_spin.setDecimals(4)
-        self.r555_delta_threshold_spin.setValue(R_HEATMAP_DELTA_THRESHOLD)
-        pzr_layout.addWidget(self.r555_delta_threshold_spin, 0, 1)
-
-        pzr_layout.addWidget(QLabel("Release Threshold (%):"), 0, 2)
-        self.r555_delta_release_spin = QDoubleSpinBox()
-        self.r555_delta_release_spin.setRange(0.0, 1000.0)
-        self.r555_delta_release_spin.setDecimals(4)
-        self.r555_delta_release_spin.setValue(R_HEATMAP_DELTA_RELEASE_THRESHOLD)
-        pzr_layout.addWidget(self.r555_delta_release_spin, 0, 3)
-
-        pzr_layout.addWidget(QLabel("CoP Smooth Alpha:"), 1, 0)
+        pzr_group = QGroupBox("PZR Parameters")
+        pzr_group.setMinimumHeight(120)
+        pzr_layout = QVBoxLayout()
+        pzr_layout.setSpacing(6)
+        
+        # Row 1: CoP Smooth Alpha and Intensity Min
+        row1 = QHBoxLayout()
+        row1.addWidget(QLabel("CoP Smooth Alpha (position):"), 0)
         self.r555_cop_smooth_alpha_spin = QDoubleSpinBox()
         self.r555_cop_smooth_alpha_spin.setRange(0.0, 1.0)
         self.r555_cop_smooth_alpha_spin.setDecimals(3)
         self.r555_cop_smooth_alpha_spin.setSingleStep(0.01)
         self.r555_cop_smooth_alpha_spin.setValue(R_HEATMAP_COP_SMOOTH_ALPHA)
-        pzr_layout.addWidget(self.r555_cop_smooth_alpha_spin, 1, 1)
-
-        pzr_layout.addWidget(QLabel("Intensity Min (%):"), 1, 2)
+        row1.addWidget(self.r555_cop_smooth_alpha_spin, 0)
+        row1.addWidget(QLabel("Intensity Min (%):"), 0)
         self.r555_intensity_min_spin = QDoubleSpinBox()
         self.r555_intensity_min_spin.setRange(0.0, 1000.0)
         self.r555_intensity_min_spin.setDecimals(4)
         self.r555_intensity_min_spin.setValue(R_HEATMAP_INTENSITY_MIN)
-        pzr_layout.addWidget(self.r555_intensity_min_spin, 1, 3)
+        row1.addWidget(self.r555_intensity_min_spin, 0)
+        row1.addStretch()
+        pzr_layout.addLayout(row1)
 
-        pzr_layout.addWidget(QLabel("Intensity Max (%):"), 2, 0)
+        # Row 2: Intensity Max and Axis Adapt
+        row2 = QHBoxLayout()
+        row2.addWidget(QLabel("Intensity Max (%):"), 0)
         self.r555_intensity_max_spin = QDoubleSpinBox()
         self.r555_intensity_max_spin.setRange(0.0, 1000.0)
         self.r555_intensity_max_spin.setDecimals(4)
         self.r555_intensity_max_spin.setValue(R_HEATMAP_INTENSITY_MAX)
-        pzr_layout.addWidget(self.r555_intensity_max_spin, 2, 1)
-
-        pzr_layout.addWidget(QLabel("Axis Adapt:"), 2, 2)
+        row2.addWidget(self.r555_intensity_max_spin, 0)
+        row2.addWidget(QLabel("Axis Adapt:"), 0)
         self.r555_axis_adapt_spin = QDoubleSpinBox()
         self.r555_axis_adapt_spin.setRange(0.0, 5.0)
         self.r555_axis_adapt_spin.setDecimals(3)
         self.r555_axis_adapt_spin.setValue(R_HEATMAP_AXIS_ADAPT_STRENGTH)
-        pzr_layout.addWidget(self.r555_axis_adapt_spin, 2, 3)
+        row2.addWidget(self.r555_axis_adapt_spin, 0)
+        row2.addStretch()
+        pzr_layout.addLayout(row2)
 
-        pzr_layout.addWidget(QLabel("Map Smooth Alpha:"), 3, 0)
+        # Row 3: Map Smooth Alpha
+        row3 = QHBoxLayout()
+        row3.addWidget(QLabel("Map Smooth Alpha (image):"), 0)
         self.r555_map_smooth_alpha_spin = QDoubleSpinBox()
         self.r555_map_smooth_alpha_spin.setRange(0.0, 1.0)
         self.r555_map_smooth_alpha_spin.setDecimals(3)
         self.r555_map_smooth_alpha_spin.setSingleStep(0.01)
         self.r555_map_smooth_alpha_spin.setValue(R_HEATMAP_MAP_SMOOTH_ALPHA)
-        pzr_layout.addWidget(self.r555_map_smooth_alpha_spin, 3, 1)
+        row3.addWidget(self.r555_map_smooth_alpha_spin, 0)
+        row3.addStretch()
+        pzr_layout.addLayout(row3)
+        
         pzr_group.setLayout(pzr_layout)
         self.heatmap_pzr_group = pzr_group
-        main_layout.addWidget(pzr_group)
 
-        calib_group = QGroupBox("Per-Sensor Calibration")
+        calib_group = QGroupBox("Global Sensor Calibration")
         calib_layout = QVBoxLayout()
-        self.sensor_gain_spins = []
+        self.global_threshold_spins = []
         row = QHBoxLayout()
-        row.addWidget(QLabel("Gain [T,B,R,L,C]:"))
+        row.addWidget(QLabel("Global Threshold (%) [T,B,R,L,C]:"))
         for idx, name in enumerate(["T", "B", "R", "L", "C"]):
             spin = QDoubleSpinBox()
             spin.setRange(0.0, 1000.0)
             spin.setDecimals(4)
-            spin.setValue(SENSOR_CALIBRATION[idx])
+            spin.setValue(R_HEATMAP_DELTA_THRESHOLD)
             spin.setPrefix(f"{name}: ")
-            self.sensor_gain_spins.append(spin)
+            self.global_threshold_spins.append(spin)
             row.addWidget(spin)
         row.addStretch()
         calib_layout.addLayout(row)
-        self.sensor_noise_spins = []
+
+        self.global_release_threshold_spins = []
         row = QHBoxLayout()
-        row.addWidget(QLabel("Noise Floor [T,B,R,L,C]:"))
+        row.addWidget(QLabel("Global Release Threshold (%) [T,B,R,L,C]:"))
         for idx, name in enumerate(["T", "B", "R", "L", "C"]):
             spin = QDoubleSpinBox()
-            spin.setRange(0.0, 1e6)
+            spin.setRange(0.0, 1000.0)
             spin.setDecimals(4)
-            spin.setValue(SENSOR_NOISE_FLOOR[idx])
+            spin.setValue(R_HEATMAP_DELTA_RELEASE_THRESHOLD)
             spin.setPrefix(f"{name}: ")
-            self.sensor_noise_spins.append(spin)
+            self.global_release_threshold_spins.append(spin)
             row.addWidget(spin)
         row.addStretch()
-        self.sensor_noise_row_layout = row
         calib_layout.addLayout(row)
         calib_group.setLayout(calib_layout)
-        main_layout.addWidget(calib_group)
+
+        # Per-sensor calibration - will be populated dynamically
+        self.per_sensor_calibration_group = QGroupBox("Per-Sensor Calibration (Mode-Specific)")
+        self.per_sensor_calibration_layout = QVBoxLayout()
+        self.per_sensor_calibration_group.setLayout(self.per_sensor_calibration_layout)
+        
+        # Dictionary to store spinboxes by sensor ID
+        self.sensor_calibration_spins = {}  # {"PZR2": {"gain_spins": [...], "threshold_spins": [...]}}
 
         params_group = QGroupBox("Heatmap Parameters")
-        params_layout = QGridLayout()
-        params_layout.addWidget(QLabel("Sensor Size:"), 0, 0)
+        params_layout = QVBoxLayout()
+
+        display_layout = QGridLayout()
+        display_layout.addWidget(QLabel("Sensor Size:"), 0, 0)
         self.sensor_size_spin = QDoubleSpinBox()
         self.sensor_size_spin.setRange(0.01, 10000.0)
         self.sensor_size_spin.setDecimals(2)
         self.sensor_size_spin.setValue(SENSOR_SIZE)
-        params_layout.addWidget(self.sensor_size_spin, 0, 1)
-        params_layout.addWidget(QLabel("Intensity Scale:"), 0, 2)
+        display_layout.addWidget(self.sensor_size_spin, 0, 1)
+        display_layout.addWidget(QLabel("Intensity Scale:"), 0, 2)
         self.intensity_scale_spin = QDoubleSpinBox()
         self.intensity_scale_spin.setRange(0.0, 1.0)
         self.intensity_scale_spin.setDecimals(6)
         self.intensity_scale_spin.setSingleStep(0.0001)
         self.intensity_scale_spin.setValue(INTENSITY_SCALE)
-        params_layout.addWidget(self.intensity_scale_spin, 0, 3)
-        params_layout.addWidget(QLabel("Blob Sigma X:"), 1, 0)
+        display_layout.addWidget(self.intensity_scale_spin, 0, 3)
+        display_layout.addWidget(QLabel("Blob Sigma X:"), 1, 0)
         self.blob_sigma_x_spin = QDoubleSpinBox()
         self.blob_sigma_x_spin.setRange(0.01, 5.0)
         self.blob_sigma_x_spin.setDecimals(4)
         self.blob_sigma_x_spin.setValue(BLOB_SIGMA_X)
-        params_layout.addWidget(self.blob_sigma_x_spin, 1, 1)
-        params_layout.addWidget(QLabel("Blob Sigma Y:"), 1, 2)
+        display_layout.addWidget(self.blob_sigma_x_spin, 1, 1)
+        display_layout.addWidget(QLabel("Blob Sigma Y:"), 1, 2)
         self.blob_sigma_y_spin = QDoubleSpinBox()
         self.blob_sigma_y_spin.setRange(0.01, 5.0)
         self.blob_sigma_y_spin.setDecimals(4)
         self.blob_sigma_y_spin.setValue(BLOB_SIGMA_Y)
-        params_layout.addWidget(self.blob_sigma_y_spin, 1, 3)
-        params_layout.addWidget(QLabel("Smooth Alpha:"), 2, 0)
+        display_layout.addWidget(self.blob_sigma_y_spin, 1, 3)
+        display_layout.addWidget(QLabel("Signal Smooth Alpha (sensor):"), 2, 0)
         self.smooth_alpha_spin = QDoubleSpinBox()
         self.smooth_alpha_spin.setRange(0.0, 1.0)
         self.smooth_alpha_spin.setDecimals(3)
         self.smooth_alpha_spin.setSingleStep(0.01)
         self.smooth_alpha_spin.setValue(SMOOTH_ALPHA)
-        params_layout.addWidget(self.smooth_alpha_spin, 2, 1)
+        display_layout.addWidget(self.smooth_alpha_spin, 2, 1)
+
+        params_layout.addLayout(display_layout)
+        params_layout.addWidget(signal_group)
+        params_layout.addWidget(pzr_group)
         params_group.setLayout(params_layout)
+
+        # Requested section order
+        main_layout.addWidget(calib_group)
+        main_layout.addWidget(self.per_sensor_calibration_group)
         main_layout.addWidget(params_group)
 
         self._connect_heatmap_settings_autosave()
@@ -584,7 +758,12 @@ class HeatmapPanelMixin:
 
     def get_heatmap_settings(self):
         channel_sensor_map = self.get_active_channel_sensor_map() if hasattr(self, "get_active_channel_sensor_map") else HEATMAP_CHANNEL_SENSOR_MAP
-        calibration = [spin.value() for spin in self.sensor_gain_spins]
+        calibration = list(SENSOR_CALIBRATION)
+        sensor_noise_floor = list(SENSOR_NOISE_FLOOR)
+        global_thresholds = [spin.value() for spin in self.global_threshold_spins]
+        global_release_thresholds = [spin.value() for spin in self.global_release_threshold_spins]
+        avg_global_threshold = float(np.mean(global_thresholds)) if global_thresholds else float(R_HEATMAP_DELTA_THRESHOLD)
+        avg_global_release = float(np.mean(global_release_thresholds)) if global_release_thresholds else float(R_HEATMAP_DELTA_RELEASE_THRESHOLD)
         
         # Build channel-to-baseline mapping from plot_baselines if available
         channel_to_baseline = {}
@@ -599,9 +778,39 @@ class HeatmapPanelMixin:
                         channel = spec_key[-2] if len(spec_key) >= 3 and isinstance(spec_key[-1], int) and spec_key[0] == 'sensor' else spec_key[-1]
                         channel_to_baseline[channel] = self.plot_baselines[spec_key]
         
+        # Build per-sensor calibration dict from dynamic spinboxes
+        sensor_calibration_dict = {}
+        if hasattr(self, 'sensor_calibration_spins') and isinstance(self.sensor_calibration_spins, dict):
+            for sensor_id, spinboxes in self.sensor_calibration_spins.items():
+                threshold_values = []
+                for spin in spinboxes.get('threshold_spins', []):
+                    try:
+                        threshold_values.append(self._get_numeric_input_value(spin, 0.0))
+                    except (RuntimeError, AttributeError, TypeError):
+                        # Widget may have been deleted
+                        threshold_values.append(0.0)
+                
+                gain_values = []
+                for spin in spinboxes.get('gain_spins', []):
+                    try:
+                        gain_values.append(self._get_numeric_input_value(spin, 1.0))
+                    except (RuntimeError, AttributeError, TypeError):
+                        # Widget may have been deleted
+                        gain_values.append(1.0)
+                
+                sensor_calibration_dict[sensor_id] = {
+                    'thresholds': threshold_values,
+                    'gains': gain_values
+                }
+        
+        # Get general threshold based on mode
+        general_threshold = avg_global_threshold
+        
         return {
             "sensor_calibration": calibration,
-            "sensor_noise_floor": [spin.value() for spin in self.sensor_noise_spins],
+            "sensor_noise_floor": sensor_noise_floor,
+            "global_channel_thresholds": global_thresholds,
+            "global_channel_release_thresholds": global_release_thresholds,
             "sensor_size": self.sensor_size_spin.value(),
             "intensity_scale": self.intensity_scale_spin.value(),
             "blob_sigma_x": self.blob_sigma_x_spin.value(),
@@ -610,36 +819,43 @@ class HeatmapPanelMixin:
             "rms_window_ms": self.rms_window_spin.value(),
             "dc_removal_mode": "bias" if self.dc_removal_combo.currentIndex() == 0 else "highpass",
             "hpf_cutoff_hz": self.hpf_cutoff_spin.value(),
-            "magnitude_threshold": self.magnitude_threshold_spin.value(),
+            "general_threshold": general_threshold,
             "channel_sensor_map": channel_sensor_map,
             "channel_to_baseline": channel_to_baseline,
             "confidence_intensity_ref": CONFIDENCE_INTENSITY_REF,
             "sigma_spread_factor": SIGMA_SPREAD_FACTOR,
-            "delta_threshold": self.r555_delta_threshold_spin.value(),
-            "delta_release_threshold": self.r555_delta_release_spin.value(),
+            "delta_threshold": avg_global_threshold,
+            "delta_release_threshold": avg_global_release,
             "cop_smooth_alpha": self.r555_cop_smooth_alpha_spin.value(),
             "intensity_min": self.r555_intensity_min_spin.value(),
             "intensity_max": self.r555_intensity_max_spin.value(),
             "axis_adapt_strength": self.r555_axis_adapt_spin.value(),
             "map_smooth_alpha": self.r555_map_smooth_alpha_spin.value(),
+            "sensor_calibration_dict": sensor_calibration_dict,
         }
 
     def update_heatmap_ui_for_mode(self):
-        is_pzr_mode = self._get_heatmap_mode_key() == "pzr"
+        mode_key = self._get_heatmap_mode_key()
+        is_pzr_mode = mode_key == "pzr"
         if hasattr(self, "heatmap_signal_group"):
             self.heatmap_signal_group.setVisible(not is_pzr_mode)
         if hasattr(self, "heatmap_pzr_group"):
             self.heatmap_pzr_group.setVisible(is_pzr_mode)
-        if hasattr(self, "sensor_noise_row_layout"):
-            for idx in range(self.sensor_noise_row_layout.count()):
-                widget = self.sensor_noise_row_layout.itemAt(idx).widget()
-                if widget is not None:
-                    widget.setVisible(not is_pzr_mode)
-        mode_key = self._get_heatmap_mode_key()
-        if getattr(self, "_last_heatmap_mode_key", None) != mode_key:
+
+        current_sensor_ids = tuple(self._get_visible_sensor_ids())
+        mode_changed = getattr(self, "_last_heatmap_mode_key", None) != mode_key
+        sensors_changed = getattr(self, "_last_visible_heatmap_sensor_ids", None) != current_sensor_ids
+
+        if hasattr(self, "per_sensor_calibration_group") and (mode_changed or sensors_changed):
+            self._build_per_sensor_calibration_ui()
             self._last_heatmap_mode_key = mode_key
+            self._last_visible_heatmap_sensor_ids = current_sensor_ids
+
+        if mode_changed:
             self.load_last_heatmap_settings()
-        self._refresh_heatmap_background_overlay(force=True)
+
+        if mode_changed or sensors_changed:
+            self._refresh_heatmap_background_overlay(force=True)
 
     def update_heatmap_display(self, package_results, shear_results=None):
         import math

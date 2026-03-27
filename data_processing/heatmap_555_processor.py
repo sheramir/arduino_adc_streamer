@@ -157,7 +157,27 @@ class Heatmap555ProcessorMixin:
         th_release = float(settings.get('delta_release_threshold', th if th > 0 else R_HEATMAP_DELTA_RELEASE_THRESHOLD))
         threshold = max(0.0, th)
         release_threshold = max(0.0, th_release)
+        
+        # Get per-sensor thresholds and gains from sensor_calibration_dict (indexed by sensor_id)
+        sensor_calibration_dict = settings.get('sensor_calibration_dict', {})
+        per_sensor_thresholds = np.zeros(len(sensor_order), dtype=np.float64)
+        per_sensor_gains = np.ones(len(sensor_order), dtype=np.float64)
+        
+        for idx, sensor_id in enumerate(sensor_order):
+            if sensor_id in sensor_calibration_dict:
+                calib_data = sensor_calibration_dict[sensor_id]
+                if 'thresholds' in calib_data and isinstance(calib_data['thresholds'], (list, np.ndarray)):
+                    # Sum the thresholds for this sensor (or use first element if only one)
+                    thresholds = np.array(calib_data['thresholds'], dtype=np.float64)
+                    per_sensor_thresholds[idx] = np.sum(thresholds) if len(thresholds) > 0 else 0.0
+                if 'gains' in calib_data and isinstance(calib_data['gains'], (list, np.ndarray)):
+                    # Multiply the gains for this sensor
+                    gains = np.array(calib_data['gains'], dtype=np.float64)
+                    per_sensor_gains[idx] = np.prod(gains) if len(gains) > 0 else 1.0
+        
         coord_x = settings.get('sensor_pos_x', list(R_HEATMAP_SENSOR_POS_X))
+        coord_y = settings.get('sensor_pos_y', list(R_HEATMAP_SENSOR_POS_Y))
+
         coord_y = settings.get('sensor_pos_y', list(R_HEATMAP_SENSOR_POS_Y))
         coord_map = {
             label: (float(x), float(y))
@@ -216,8 +236,13 @@ class Heatmap555ProcessorMixin:
                 state['last_deltas'] = relative_percent
 
                 magnitudes = np.abs(relative_percent)
-                effective_threshold = np.where(magnitudes > threshold, threshold, release_threshold)
+                # Apply per-sensor total thresholds (general + individual per-sensor)
+                thresholds = threshold + per_sensor_thresholds
+                release_thresholds = release_threshold + per_sensor_thresholds * 0.5  # Release threshold is proportionally adjusted
+                effective_threshold = np.where(magnitudes > thresholds, thresholds, release_thresholds)
                 weights_now = np.maximum(magnitudes - effective_threshold, 0.0)
+                # Apply per-sensor gains
+                weights_now = weights_now * per_sensor_gains
                 batch_magnitudes.append(weights_now)
 
                 state['prev_values'] = current_values

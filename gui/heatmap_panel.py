@@ -229,9 +229,12 @@ class HeatmapPanelMixin:
     def enable_heatmap_settings_autosave(self):
         self._heatmap_autosave_enabled = True
 
+    def _get_visualization_mode_suffix(self) -> str:
+        return "PZR" if self._get_heatmap_mode_key() == "pzr" else "PZT"
+
     def _get_last_heatmap_settings_path(self):
-        mode_key = self._get_heatmap_mode_key()
-        return Path.home() / ".adc_streamer" / "heatmap" / f"last_used_heatmap_settings_{mode_key}.json"
+        mode_suffix = self._get_visualization_mode_suffix()
+        return Path.home() / ".adc_streamer" / "heatmap" / f"last_used_heatmap_settings_{mode_suffix}.json"
 
     def _serialize_heatmap_settings(self):
         mode_key = self._get_heatmap_mode_key()
@@ -370,7 +373,7 @@ class HeatmapPanelMixin:
     def on_save_heatmap_settings_clicked(self):
         default_dir = self._get_last_heatmap_settings_path().parent
         default_dir.mkdir(parents=True, exist_ok=True)
-        default_name = f"heatmap_settings_{self._get_heatmap_mode_key()}.json"
+        default_name = f"heatmap_settings_{self._get_visualization_mode_suffix()}.json"
         file_path, _ = QFileDialog.getSaveFileName(self, "Save Heatmap Settings", str(default_dir / default_name), "JSON Files (*.json);;All Files (*)")
         if file_path:
             self.save_heatmap_settings_to_path(file_path, log_message=True)
@@ -575,32 +578,48 @@ class HeatmapPanelMixin:
         self.load_heatmap_settings_btn = QPushButton("Load Settings...")
         self.load_heatmap_settings_btn.clicked.connect(self.on_load_heatmap_settings_clicked)
         actions.addWidget(self.load_heatmap_settings_btn)
+        self.zero_heatmap_signals_btn = QPushButton("Zero Signals")
+        self.zero_heatmap_signals_btn.setToolTip("Recalculate the PZR baseline from the current live signals")
+        self.zero_heatmap_signals_btn.clicked.connect(self.zero_plot_baselines)
+        actions.addWidget(self.zero_heatmap_signals_btn)
         actions.addStretch()
         main_layout.addLayout(actions)
 
         signal_group = QGroupBox("Signal Processing")
         signal_layout = QGridLayout()
+        signal_group.setMinimumHeight(96)
+        signal_layout.setHorizontalSpacing(12)
+        signal_layout.setVerticalSpacing(8)
+        signal_layout.setContentsMargins(9, 9, 9, 9)
+        signal_layout.setRowMinimumHeight(0, 30)
+        signal_layout.setRowMinimumHeight(1, 30)
+        signal_layout.setColumnStretch(1, 1)
+        signal_layout.setColumnStretch(3, 1)
         signal_layout.addWidget(QLabel("RMS Window (ms):"), 0, 0)
         self.rms_window_spin = QSpinBox()
         self.rms_window_spin.setRange(2, 5000)
         self.rms_window_spin.setValue(RMS_WINDOW_MS)
+        self.rms_window_spin.setMinimumHeight(28)
         signal_layout.addWidget(self.rms_window_spin, 0, 1)
         signal_layout.addWidget(QLabel("DC Removal:"), 0, 2)
         self.dc_removal_combo = QComboBox()
         self.dc_removal_combo.addItems(["Bias (2s)", "High-pass"])
         self.dc_removal_combo.setCurrentIndex(0 if HEATMAP_DC_REMOVAL_MODE == "bias" else 1)
+        self.dc_removal_combo.setMinimumHeight(28)
         signal_layout.addWidget(self.dc_removal_combo, 0, 3)
         signal_layout.addWidget(QLabel("HPF Cutoff (Hz):"), 1, 0)
         self.hpf_cutoff_spin = QDoubleSpinBox()
         self.hpf_cutoff_spin.setRange(0.01, 50.0)
         self.hpf_cutoff_spin.setDecimals(3)
         self.hpf_cutoff_spin.setValue(HPF_CUTOFF_HZ)
+        self.hpf_cutoff_spin.setMinimumHeight(28)
         signal_layout.addWidget(self.hpf_cutoff_spin, 1, 1)
         signal_layout.addWidget(QLabel("Threshold:"), 1, 2)
         self.magnitude_threshold_spin = QDoubleSpinBox()
         self.magnitude_threshold_spin.setRange(0.0, 1e6)
         self.magnitude_threshold_spin.setDecimals(4)
         self.magnitude_threshold_spin.setValue(HEATMAP_THRESHOLD)
+        self.magnitude_threshold_spin.setMinimumHeight(28)
         signal_layout.addWidget(self.magnitude_threshold_spin, 1, 3)
         self.dc_removal_combo.currentIndexChanged.connect(self._on_dc_mode_changed)
         self._on_dc_mode_changed(self.dc_removal_combo.currentIndex())
@@ -757,6 +776,13 @@ class HeatmapPanelMixin:
         self.hpf_cutoff_spin.setEnabled(index == 1)
 
     def get_heatmap_settings(self):
+        if self._get_heatmap_mode_key() == "pzr" and not getattr(self, 'plot_baselines', {}):
+            if hasattr(self, 'capture_current_plot_baselines'):
+                self.capture_current_plot_baselines(
+                    log_message=False,
+                    min_elapsed_sec=getattr(self, 'PZR_AUTO_BASELINE_DELAY_SEC', 1.5),
+                )
+
         channel_sensor_map = self.get_active_channel_sensor_map() if hasattr(self, "get_active_channel_sensor_map") else HEATMAP_CHANNEL_SENSOR_MAP
         calibration = list(SENSOR_CALIBRATION)
         sensor_noise_floor = list(SENSOR_NOISE_FLOOR)
@@ -841,6 +867,8 @@ class HeatmapPanelMixin:
             self.heatmap_signal_group.setVisible(not is_pzr_mode)
         if hasattr(self, "heatmap_pzr_group"):
             self.heatmap_pzr_group.setVisible(is_pzr_mode)
+        if hasattr(self, "zero_heatmap_signals_btn"):
+            self.zero_heatmap_signals_btn.setVisible(is_pzr_mode)
 
         current_sensor_ids = tuple(self._get_visible_sensor_ids())
         mode_changed = getattr(self, "_last_heatmap_mode_key", None) != mode_key
@@ -853,6 +881,8 @@ class HeatmapPanelMixin:
 
         if mode_changed:
             self.load_last_heatmap_settings()
+            if hasattr(self, "load_last_shear_settings"):
+                self.load_last_shear_settings()
 
         if mode_changed or sensors_changed:
             self._refresh_heatmap_background_overlay(force=True)

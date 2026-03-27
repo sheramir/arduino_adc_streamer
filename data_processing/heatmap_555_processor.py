@@ -177,6 +177,7 @@ class Heatmap555ProcessorMixin:
             return None
 
         sensor_calibration_dict = settings.get('sensor_calibration_dict', {})
+        channel_to_baseline = settings.get('channel_to_baseline', {})
         global_thresholds = self._build_r555_channel_value_array(
             sensor_order,
             settings.get('global_channel_thresholds', []),
@@ -216,6 +217,16 @@ class Heatmap555ProcessorMixin:
             state = self._get_r555_package_state(package_index, len(sensor_order))
             package_sensor_id = self._get_package_sensor_id(package_index)
 
+            configured_baselines = np.full(len(sensor_order), np.nan, dtype=np.float64)
+            for channel in package_channels:
+                label = channel_to_sensor.get(channel)
+                if label not in sensor_index:
+                    continue
+                baseline_value = channel_to_baseline.get(channel, channel_to_baseline.get(str(channel)))
+                if baseline_value is None:
+                    continue
+                configured_baselines[sensor_index[label]] = float(baseline_value)
+
             per_sensor_thresholds = np.zeros(len(sensor_order), dtype=np.float64)
             per_sensor_gains = np.ones(len(sensor_order), dtype=np.float64)
             if package_sensor_id in sensor_calibration_dict:
@@ -241,9 +252,13 @@ class Heatmap555ProcessorMixin:
                             first_values[sensor_index[label]] = float(package_matrix[0, col_idx])
                     state['prev_values'] = first_values
                     state['baseline_values'] = np.array(first_values, copy=True)
+                    configured_mask = ~np.isnan(configured_baselines)
+                    state['baseline_values'][configured_mask] = configured_baselines[configured_mask]
 
             if state['baseline_values'] is None or state['baseline_values'].shape[0] != len(sensor_order):
                 state['baseline_values'] = np.array(state['prev_values'], copy=True)
+                configured_mask = ~np.isnan(configured_baselines)
+                state['baseline_values'][configured_mask] = configured_baselines[configured_mask]
 
             batch_magnitudes = []
             for row_idx in range(package_matrix.shape[0]):

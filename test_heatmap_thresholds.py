@@ -161,6 +161,42 @@ class HeatmapThresholdTests(unittest.TestCase):
         self.assertLess(cop_x, 0.0)
         self.assertLess(cop_y, 0.0)
 
+    def test_555_uses_channel_baselines_for_heatmap_calculation(self):
+        processor = Dummy555Processor()
+        processor.raw_data_buffer[0, :] = np.array([112.0, 119.0, 132.0, 139.0, 156.0], dtype=np.float32)
+        processor.raw_data_buffer[1, :] = np.array([112.0, 119.0, 132.0, 139.0, 156.0], dtype=np.float32)
+        processor.sweep_count = 2
+        processor.buffer_write_index = 2
+        processor.reset_555_heatmap_state()
+        settings = {
+            "channel_sensor_map": ["T", "B", "R", "L", "C"],
+            "global_channel_thresholds": [0.0, 0.0, 0.0, 0.0, 0.0],
+            "global_channel_release_thresholds": [0.0, 0.0, 0.0, 0.0, 0.0],
+            "channel_to_baseline": {1: 112.0, 2: 119.0, 3: 132.0, 4: 139.0, 5: 156.0},
+            "sensor_calibration_dict": {
+                "PZR2": {
+                    "thresholds": [0.0, 0.0, 0.0, 0.0, 0.0],
+                    "gains": [1.0, 1.0, 1.0, 1.0, 1.0],
+                }
+            },
+            "sensor_calibration": [1.0, 1.0, 1.0, 1.0, 1.0],
+            "cop_smooth_alpha": 1.0,
+            "map_smooth_alpha": 1.0,
+            "intensity_scale": 1.0,
+            "intensity_min": 0.0,
+            "intensity_max": 1.0,
+            "blob_sigma_x": 1.0,
+            "blob_sigma_y": 1.0,
+            "axis_adapt_strength": 0.0,
+        }
+
+        result = processor.process_555_displacement_heatmap(settings)
+
+        self.assertEqual(len(result), 1)
+        _, _, _, intensity, _, display_values = result[0]
+        self.assertEqual(display_values, [0.0, 0.0, 0.0, 0.0, 0.0])
+        self.assertEqual(intensity, 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()

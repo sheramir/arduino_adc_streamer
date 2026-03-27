@@ -41,15 +41,108 @@ from data_processing.force_processor import ForceProcessorMixin
 
 class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcessorMixin, ForceProcessorMixin):
     """Main mixin class for data processing, visualization, and capture control."""
+
+    PZR_ZERO_BASELINE_WINDOW_SEC = 0.5
+    PZR_AUTO_BASELINE_DELAY_SEC = 1.5
     
     # ========================================================================
     # Plotting and Visualization
     # ========================================================================
+
+    def _get_ordered_active_buffer_snapshot(self):
+        active_data_buffer = self.get_active_data_buffer()
+        if active_data_buffer is None or self.samples_per_sweep <= 0:
+            return None
+
+        with self.buffer_lock:
+            current_sweep_count = self.sweep_count
+            current_write_index = self.buffer_write_index
+
+        actual_sweeps = min(current_sweep_count, self.MAX_SWEEPS_BUFFER)
+        if actual_sweeps <= 0:
+            return None
+
+        if actual_sweeps < self.MAX_SWEEPS_BUFFER:
+            data_array = active_data_buffer[:actual_sweeps, :].copy()
+            timestamps_array = self.sweep_timestamps_buffer[:actual_sweeps].copy()
+        else:
+            write_pos = current_write_index % self.MAX_SWEEPS_BUFFER
+            data_array = np.concatenate([
+                active_data_buffer[write_pos:, :],
+                active_data_buffer[:write_pos, :],
+            ])
+            timestamps_array = np.concatenate([
+                self.sweep_timestamps_buffer[write_pos:],
+                self.sweep_timestamps_buffer[:write_pos],
+            ])
+
+        avg_sample_time_sec = 0.0
+        if hasattr(self, 'arduino_sample_times') and self.arduino_sample_times:
+            avg_sample_time_sec = (sum(self.arduino_sample_times) / len(self.arduino_sample_times)) / 1e6
+
+        return data_array, timestamps_array, avg_sample_time_sec
+
+    def capture_current_plot_baselines(self, window_sec=None, log_message=True, min_elapsed_sec=0.0):
+        snapshot = self._get_ordered_active_buffer_snapshot()
+        if snapshot is None:
+            if log_message:
+                self.log_status("No data available to zero signals")
+            return False
+
+        if not hasattr(self, 'get_display_channel_specs'):
+            if log_message:
+                self.log_status("Display configuration unavailable for baseline capture")
+            return False
+
+        data_array, timestamps_array, avg_sample_time_sec = snapshot
+        display_specs = self.get_display_channel_specs()
+        if not display_specs or len(timestamps_array) == 0:
+            if log_message:
+                self.log_status("No visible channels available to zero signals")
+            return False
+
+        latest_time = float(timestamps_array[-1])
+        required_elapsed = max(0.0, float(min_elapsed_sec))
+        if latest_time < required_elapsed:
+            return False
+
+        baseline_window_sec = max(0.05, float(window_sec or self.PZR_ZERO_BASELINE_WINDOW_SEC))
+        self.plot_baselines = {}
+
+        for spec in display_specs:
+            sample_indices = spec.get('sample_indices', [])
+            if not sample_indices:
+                continue
+
+            sample_index_array = np.asarray(sample_indices, dtype=np.int32)
+            channel_data = data_array[:, sample_index_array].reshape(-1)
+            time_offsets = sample_index_array.astype(np.float64) * avg_sample_time_sec
+            channel_times = (
+                timestamps_array.reshape(-1, 1) + time_offsets.reshape(1, -1)
+            ).reshape(-1)
+
+            if channel_data.size == 0:
+                self.plot_baselines[spec['key']] = 0.0
+                continue
+
+            recent_mask = channel_times >= (latest_time - baseline_window_sec)
+            baseline_samples = channel_data[recent_mask] if np.any(recent_mask) else channel_data
+            self.plot_baselines[spec['key']] = float(np.mean(baseline_samples)) if baseline_samples.size else 0.0
+
+        if getattr(self, 'subtract_baseline_check', None) is not None and not self.subtract_baseline_check.isChecked():
+            self.subtract_baseline_check.setChecked(True)
+
+        if hasattr(self, 'reset_555_heatmap_state'):
+            self.reset_555_heatmap_state()
+
+        if log_message:
+            self.log_status(f"Zeroed signals using last {baseline_window_sec:.2f}s baseline window")
+        return True
     
     def zero_plot_baselines(self):
         """Zero out the plot baselines using current data."""
-        self.plot_baselines = {}
-        self.trigger_plot_update()
+        if self.capture_current_plot_baselines():
+            self.trigger_plot_update()
 
     def update_plot(self):
         """Update the plot with current data - optimized for fast updates and max 10K samples."""
@@ -254,20 +347,10 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
                         self.plot_baselines = {}
                     
                     if spec['key'] not in self.plot_baselines:
-                        # Capture baseline dynamically if not zeroed explicitly
-                        # Only take baseline after 1.5 seconds of measurement
-                        if len(channel_times) > 0 and channel_times[-1] >= 1.5:
-                            # Find samples roughly after 1.5 seconds
-                            valid_indices = np.where(channel_times >= 1.5)[0]
-                            if len(valid_indices) > 0:
-                                start_idx = valid_indices[0]
-                                end_idx = min(start_idx + 500, len(channel_data))
-                                n_samples_actual = end_idx - start_idx
-                                
-                                if n_samples_actual > 0:
-                                    self.plot_baselines[spec['key']] = np.mean(channel_data[start_idx:end_idx])
-                                else:
-                                    self.plot_baselines[spec['key']] = 0.0
+                        self.capture_current_plot_baselines(
+                            log_message=False,
+                            min_elapsed_sec=self.PZR_AUTO_BASELINE_DELAY_SEC,
+                        )
                     
                     if spec['key'] in self.plot_baselines:
                         channel_data = channel_data - self.plot_baselines[spec['key']]

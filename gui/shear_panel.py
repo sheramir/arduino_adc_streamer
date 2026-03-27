@@ -48,6 +48,12 @@ class ShearPanelMixin:
     SHEAR_VIEW_EXTENT = 1.25
     SHEAR_SENSOR_RADIUS = 0.72
 
+    def _get_shear_mode_suffix(self) -> str:
+        if hasattr(self, "_get_visualization_mode_suffix"):
+            return self._get_visualization_mode_suffix()
+        is_pzr_mode = bool(hasattr(self, "is_555_analyzer_mode") and self.is_555_analyzer_mode())
+        return "PZR" if is_pzr_mode else "PZT"
+
     def _get_channel_group_title(self, package_index):
         if hasattr(self, 'is_array_sensor_selection_mode') and self.is_array_sensor_selection_mode():
             selected = list(self.config.get('selected_array_sensors', [])) if hasattr(self, 'config') else []
@@ -70,7 +76,8 @@ class ShearPanelMixin:
         self._shear_autosave_enabled = True
 
     def _get_last_shear_settings_path(self):
-        return Path.home() / ".adc_streamer" / "shear" / "last_used_shear_settings.json"
+        mode_suffix = self._get_shear_mode_suffix()
+        return Path.home() / ".adc_streamer" / "shear" / f"last_used_shear_settings_{mode_suffix}.json"
 
     def _serialize_shear_settings(self):
         return {"version": 1, "shear_settings": self.get_shear_settings()}
@@ -142,7 +149,8 @@ class ShearPanelMixin:
     def on_save_shear_settings_clicked(self):
         default_dir = self._get_last_shear_settings_path().parent
         default_dir.mkdir(parents=True, exist_ok=True)
-        file_path, _ = QFileDialog.getSaveFileName(self, "Save Shear Settings", str(default_dir / "shear_settings.json"), "JSON Files (*.json);;All Files (*)")
+        default_name = f"shear_settings_{self._get_shear_mode_suffix()}.json"
+        file_path, _ = QFileDialog.getSaveFileName(self, "Save Shear Settings", str(default_dir / default_name), "JSON Files (*.json);;All Files (*)")
         if file_path:
             self.save_shear_settings_to_path(file_path, log_message=True)
 

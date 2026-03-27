@@ -208,9 +208,14 @@ class Heatmap555ProcessorMixin:
                     current_values[sensor_index[label]] = float(package_matrix[row_idx, col_idx])
 
                 deltas = current_values - state['baseline_values']
-                state['last_deltas'] = deltas
 
-                magnitudes = np.abs(deltas)
+                # Normalize channel response to relative change (%), so channels
+                # with different absolute ranges contribute comparably.
+                baseline_abs = np.maximum(np.abs(state['baseline_values']), 1e-9)
+                relative_percent = (100.0 * deltas) / baseline_abs
+                state['last_deltas'] = relative_percent
+
+                magnitudes = np.abs(relative_percent)
                 effective_threshold = np.where(magnitudes > threshold, threshold, release_threshold)
                 weights_now = np.maximum(magnitudes - effective_threshold, 0.0)
                 batch_magnitudes.append(weights_now)

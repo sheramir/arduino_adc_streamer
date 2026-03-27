@@ -18,6 +18,19 @@ from config_constants import (
 class PiezoHeatmapProcessorMixin:
     """Piezoelectric (5-sensor) heatmap processing pipeline."""
 
+    @staticmethod
+    def _threshold_label_order():
+        return ["T", "B", "R", "L", "C"]
+
+    def _build_piezo_channel_value_array(self, values, default, size):
+        result = [float(default)] * size
+        if not isinstance(values, (list, tuple, np.ndarray)):
+            return result
+
+        for idx in range(min(size, len(self._threshold_label_order()), len(values))):
+            result[idx] = float(values[idx])
+        return result
+
     def calculate_cop_and_intensity(self, sensor_values, settings, package_index=0):
         """Calculate center of pressure and intensity from sensor values."""
         weights = np.maximum(np.array(sensor_values, dtype=np.float32), 0.0)
@@ -266,16 +279,8 @@ class PiezoHeatmapProcessorMixin:
             
             if sensor_id in sensor_calibration_dict:
                 calib_data = sensor_calibration_dict[sensor_id]
-                if 'gains' in calib_data and isinstance(calib_data['gains'], (list, np.ndarray)):
-                    gains = calib_data['gains']
-                    # Map 5-element gain array to per-channel gains
-                    for idx in range(min(len(sensor_values), len(gains))):
-                        per_sensor_gains[idx] = float(gains[idx])
-                if 'thresholds' in calib_data and isinstance(calib_data['thresholds'], (list, np.ndarray)):
-                    thresholds = calib_data['thresholds']
-                    # Map 5-element threshold array to per-channel thresholds
-                    for idx in range(min(len(sensor_values), len(thresholds))):
-                        per_sensor_thresholds[idx] = float(thresholds[idx])
+                per_sensor_gains = self._build_piezo_channel_value_array(calib_data.get('gains', []), 1.0, len(sensor_values))
+                per_sensor_thresholds = self._build_piezo_channel_value_array(calib_data.get('thresholds', []), 0.0, len(sensor_values))
             
             calibrated = []
             for value, noise, gain, per_gain, per_thresh in zip(sensor_values, noise_floor, calibration, per_sensor_gains, per_sensor_thresholds):
@@ -284,17 +289,16 @@ class PiezoHeatmapProcessorMixin:
                 calibrated_val = adjusted * gain * per_gain
                 calibrated.append(calibrated_val)
 
-            # Apply general threshold + per-sensor thresholds
-            general_threshold = settings.get('general_threshold', settings.get('magnitude_threshold', 0.0))
-            total_thresholds = [general_threshold + per_thresh for per_thresh in per_sensor_thresholds]
-            
-            # Apply per-sensor thresholds before smoothing
+            global_thresholds = self._build_piezo_channel_value_array(
+                settings.get('global_channel_thresholds', []),
+                settings.get('general_threshold', settings.get('magnitude_threshold', 0.0)),
+                len(sensor_values),
+            )
+            total_thresholds = [global_thresh + per_thresh for global_thresh, per_thresh in zip(global_thresholds, per_sensor_thresholds)]
+
             thresholded = []
             for val, thresh in zip(calibrated, total_thresholds):
-                if thresh > 0.0:
-                    thresholded.append(max(0.0, val - thresh))
-                else:
-                    thresholded.append(val)
+                thresholded.append(val if val >= thresh else 0.0)
             
             smoothed = processor.smooth_and_threshold(
                 thresholded,

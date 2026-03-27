@@ -21,6 +21,29 @@ from config_constants import (
 class Heatmap555ProcessorMixin:
     """555 resistance mode (4-sensor) displacement heatmap pipeline."""
 
+    @staticmethod
+    def _threshold_label_order():
+        return ["T", "B", "R", "L", "C"]
+
+    def _get_package_sensor_id(self, package_index):
+        if hasattr(self, 'is_array_sensor_selection_mode') and self.is_array_sensor_selection_mode():
+            selected = list(self.config.get('selected_array_sensors', [])) if hasattr(self, 'config') else []
+            if package_index < len(selected):
+                return str(selected[package_index])
+        return f"Sensor{package_index + 1}"
+
+    def _build_r555_channel_value_array(self, label_order, values, default):
+        result = np.full(len(label_order), float(default), dtype=np.float64)
+        if not isinstance(values, (list, tuple, np.ndarray)):
+            return result
+
+        for idx, label in enumerate(self._threshold_label_order()):
+            if idx >= len(values):
+                continue
+            if label in label_order:
+                result[label_order.index(label)] = float(values[idx])
+        return result
+
     def reset_555_heatmap_state(self):
         self.r555_package_states = {}
         self.r555_last_processed_sweep_count = 0
@@ -143,7 +166,7 @@ class Heatmap555ProcessorMixin:
             return None
 
         channel_sensor_map = settings.get('channel_sensor_map', R_HEATMAP_CHANNEL_SENSOR_MAP)
-        sensor_order = settings.get('sensor_order', list(channel_sensor_map))
+        sensor_order = self._threshold_label_order()
 
         required_channels = max(1, int(R_HEATMAP_REQUIRED_CHANNELS))
         if (
@@ -153,31 +176,19 @@ class Heatmap555ProcessorMixin:
         ):
             return None
 
-        th = float(settings.get('delta_threshold', R_HEATMAP_DELTA_THRESHOLD))
-        th_release = float(settings.get('delta_release_threshold', th if th > 0 else R_HEATMAP_DELTA_RELEASE_THRESHOLD))
-        threshold = max(0.0, th)
-        release_threshold = max(0.0, th_release)
-        
-        # Get per-sensor thresholds and gains from sensor_calibration_dict (indexed by sensor_id)
         sensor_calibration_dict = settings.get('sensor_calibration_dict', {})
-        per_sensor_thresholds = np.zeros(len(sensor_order), dtype=np.float64)
-        per_sensor_gains = np.ones(len(sensor_order), dtype=np.float64)
-        
-        for idx, sensor_id in enumerate(sensor_order):
-            if sensor_id in sensor_calibration_dict:
-                calib_data = sensor_calibration_dict[sensor_id]
-                if 'thresholds' in calib_data and isinstance(calib_data['thresholds'], (list, np.ndarray)):
-                    # Sum the thresholds for this sensor (or use first element if only one)
-                    thresholds = np.array(calib_data['thresholds'], dtype=np.float64)
-                    per_sensor_thresholds[idx] = np.sum(thresholds) if len(thresholds) > 0 else 0.0
-                if 'gains' in calib_data and isinstance(calib_data['gains'], (list, np.ndarray)):
-                    # Multiply the gains for this sensor
-                    gains = np.array(calib_data['gains'], dtype=np.float64)
-                    per_sensor_gains[idx] = np.prod(gains) if len(gains) > 0 else 1.0
+        global_thresholds = self._build_r555_channel_value_array(
+            sensor_order,
+            settings.get('global_channel_thresholds', []),
+            max(0.0, float(settings.get('delta_threshold', R_HEATMAP_DELTA_THRESHOLD))),
+        )
+        global_release_thresholds = self._build_r555_channel_value_array(
+            sensor_order,
+            settings.get('global_channel_release_thresholds', []),
+            max(0.0, float(settings.get('delta_release_threshold', R_HEATMAP_DELTA_RELEASE_THRESHOLD))),
+        )
         
         coord_x = settings.get('sensor_pos_x', list(R_HEATMAP_SENSOR_POS_X))
-        coord_y = settings.get('sensor_pos_y', list(R_HEATMAP_SENSOR_POS_Y))
-
         coord_y = settings.get('sensor_pos_y', list(R_HEATMAP_SENSOR_POS_Y))
         coord_map = {
             label: (float(x), float(y))
@@ -203,6 +214,22 @@ class Heatmap555ProcessorMixin:
             }
             sensor_index = {label: idx for idx, label in enumerate(sensor_order)}
             state = self._get_r555_package_state(package_index, len(sensor_order))
+            package_sensor_id = self._get_package_sensor_id(package_index)
+
+            per_sensor_thresholds = np.zeros(len(sensor_order), dtype=np.float64)
+            per_sensor_gains = np.ones(len(sensor_order), dtype=np.float64)
+            if package_sensor_id in sensor_calibration_dict:
+                calib_data = sensor_calibration_dict[package_sensor_id]
+                per_sensor_thresholds = self._build_r555_channel_value_array(
+                    sensor_order,
+                    calib_data.get('thresholds', []),
+                    0.0,
+                )
+                per_sensor_gains = self._build_r555_channel_value_array(
+                    sensor_order,
+                    calib_data.get('gains', []),
+                    1.0,
+                )
 
             if state['prev_values'] is None or state['prev_values'].shape[0] != len(sensor_order):
                 state['prev_values'] = np.zeros(len(sensor_order), dtype=np.float64)
@@ -236,12 +263,10 @@ class Heatmap555ProcessorMixin:
                 state['last_deltas'] = relative_percent
 
                 magnitudes = np.abs(relative_percent)
-                # Apply per-sensor total thresholds (general + individual per-sensor)
-                thresholds = threshold + per_sensor_thresholds
-                release_thresholds = release_threshold + per_sensor_thresholds * 0.5  # Release threshold is proportionally adjusted
-                effective_threshold = np.where(magnitudes > thresholds, thresholds, release_thresholds)
-                weights_now = np.maximum(magnitudes - effective_threshold, 0.0)
-                # Apply per-sensor gains
+                thresholds = global_thresholds + per_sensor_thresholds
+                release_thresholds = global_release_thresholds + per_sensor_thresholds
+                effective_thresholds = np.maximum(thresholds, release_thresholds)
+                weights_now = np.where(magnitudes >= effective_thresholds, magnitudes, 0.0)
                 weights_now = weights_now * per_sensor_gains
                 batch_magnitudes.append(weights_now)
 

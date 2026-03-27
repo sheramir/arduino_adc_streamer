@@ -26,20 +26,46 @@ class ConfigurationMixin:
         """Return True when the connected MCU streams paired MUX data."""
         return (self.current_mcu or "").strip().lower() == "array_pzt1".lower()
 
+    def get_allowed_channel_max(self) -> int:
+        """Return max channel index for manual channel entry validation."""
+        return 15 if self.is_array_mcu_mode() else 9
+
+    def is_array_pzt_pzr_mode(self) -> bool:
+        """Return True when MCU supports runtime PZT/PZR mode switching."""
+        return (self.current_mcu or "").strip().lower().startswith("array_pzt_pzr")
+
+    def get_selected_array_operation_mode(self) -> str:
+        """Return selected operation mode for dual Array_PZT_PZR devices."""
+        if self.is_array_pzt_pzr_mode() and hasattr(self, 'array_mode_combo'):
+            selected = (self.array_mode_combo.currentText() or "PZT").strip().upper()
+            if selected in ("PZT", "PZR"):
+                return selected
+        return "PZR" if getattr(self, 'device_mode', 'adc') == '555' else "PZT"
+
     def update_array_acquisition_inputs_visibility(self):
         """Show PZT/PZR selectors only for Array* MCU modes."""
-        enabled = self.is_array_mcu_mode()
-        for attr_name in (
-            'pzt_sequence_label',
-            'pzt_sequence_input',
-            'pzr_sequence_label',
-            'pzr_sequence_input',
-        ):
-            widget = getattr(self, attr_name, None)
-            if widget is not None:
-                widget.setVisible(enabled)
+        is_array = self.is_array_mcu_mode()
+        is_dual_mode = self.is_array_pzt_pzr_mode()
+        selected_mode = self.get_selected_array_operation_mode() if is_dual_mode else ""
 
-        if not enabled:
+        if hasattr(self, 'array_mode_label'):
+            self.array_mode_label.setVisible(is_dual_mode)
+        if hasattr(self, 'array_mode_combo'):
+            self.array_mode_combo.setVisible(is_dual_mode)
+
+        show_pzt = is_array and (not is_dual_mode or selected_mode == "PZT")
+        show_pzr = is_array and (not is_dual_mode or selected_mode == "PZR")
+
+        if hasattr(self, 'pzt_sequence_label'):
+            self.pzt_sequence_label.setVisible(show_pzt)
+        if hasattr(self, 'pzt_sequence_input'):
+            self.pzt_sequence_input.setVisible(show_pzt)
+        if hasattr(self, 'pzr_sequence_label'):
+            self.pzr_sequence_label.setVisible(show_pzr)
+        if hasattr(self, 'pzr_sequence_input'):
+            self.pzr_sequence_input.setVisible(show_pzr)
+
+        if not is_array:
             if hasattr(self, 'pzt_sequence_input'):
                 self.pzt_sequence_input.blockSignals(True)
                 self.pzt_sequence_input.clear()
@@ -91,8 +117,9 @@ class ConfigurationMixin:
             except ValueError as exc:
                 raise ValueError("Invalid channel format in Channels Sequence") from exc
 
-            if any(channel < 0 or channel > 9 for channel in channels):
-                raise ValueError("Channels Sequence values must be in range 0-9")
+            channel_max = self.get_allowed_channel_max()
+            if any(channel < 0 or channel > channel_max for channel in channels):
+                raise ValueError(f"Channels Sequence values must be in range 0-{channel_max}")
             if not channels and require_non_empty:
                 raise ValueError("Please specify channels first")
             return channels, ",".join(str(c) for c in channels), "manual", []
@@ -105,12 +132,22 @@ class ConfigurationMixin:
         pzt_text = self.pzt_sequence_input.text().strip() if hasattr(self, 'pzt_sequence_input') else ""
         pzr_text = self.pzr_sequence_input.text().strip() if hasattr(self, 'pzr_sequence_input') else ""
 
-        pzt_sensors = self._parse_sensor_numbers(pzt_text, "PZT")
-        pzr_sensors = self._parse_sensor_numbers(pzr_text, "PZR")
-        requested_sensors = pzt_sensors + pzr_sensors
+        if self.is_array_pzt_pzr_mode():
+            selected_mode = self.get_selected_array_operation_mode()
+            if selected_mode == "PZR":
+                requested_sensors = self._parse_sensor_numbers(pzr_text, "PZR")
+            else:
+                requested_sensors = self._parse_sensor_numbers(pzt_text, "PZT")
+        else:
+            pzt_sensors = self._parse_sensor_numbers(pzt_text, "PZT")
+            pzr_sensors = self._parse_sensor_numbers(pzr_text, "PZR")
+            requested_sensors = pzt_sensors + pzr_sensors
 
         if not requested_sensors:
             if require_non_empty:
+                if self.is_array_pzt_pzr_mode():
+                    selected_mode = self.get_selected_array_operation_mode()
+                    raise ValueError(f"Specify Channels Sequence or {selected_mode} sensor selections")
                 raise ValueError("Specify Channels Sequence or PZT/PZR sensor selections")
             return [], "", "none", []
 
@@ -134,7 +171,7 @@ class ConfigurationMixin:
                     channel = int(value)
                 except (ValueError, TypeError) as exc:
                     raise ValueError(f"Invalid channel configured for {sensor_id}") from exc
-                if channel < 0 or channel > 9:
+                if channel < 0 or channel > 15:
                     raise ValueError(f"Out-of-range channel configured for {sensor_id}: {channel}")
                 if channel not in channels:
                     channels.append(channel)
@@ -170,52 +207,58 @@ class ConfigurationMixin:
                 unique_channels.append(channel)
 
         specs = []
-        if self.is_array_pzt1_mode():
-            selection_source = str(self.config.get('channel_selection_source', 'manual')).lower()
-            selected_array_sensors = self.config.get('selected_array_sensors', [])
+        selection_source = str(self.config.get('channel_selection_source', 'manual')).lower()
+        selected_array_sensors = self.config.get('selected_array_sensors', [])
 
-            if selection_source == 'array' and selected_array_sensors:
-                active_config = self.get_active_sensor_configuration() if hasattr(self, 'get_active_sensor_configuration') else {}
-                mux_mapping = active_config.get('mux_mapping', {}) if isinstance(active_config, dict) else {}
-                channel_sensor_map = self.get_active_channel_sensor_map() if hasattr(self, 'get_active_channel_sensor_map') else ["T", "R", "C", "L", "B"]
+        if self.is_array_mcu_mode() and selection_source == 'array' and selected_array_sensors:
+            active_config = self.get_active_sensor_configuration() if hasattr(self, 'get_active_sensor_configuration') else {}
+            mux_mapping = active_config.get('mux_mapping', {}) if isinstance(active_config, dict) else {}
+            channel_sensor_map = self.get_active_channel_sensor_map() if hasattr(self, 'get_active_channel_sensor_map') else ["T", "R", "C", "L", "B"]
 
-                color_slot = 0
-                for sensor_id in selected_array_sensors:
-                    sensor_mapping = mux_mapping.get(sensor_id, {}) if isinstance(mux_mapping, dict) else {}
-                    if not isinstance(sensor_mapping, dict):
+            color_slot = 0
+            for sensor_id in selected_array_sensors:
+                sensor_mapping = mux_mapping.get(sensor_id, {}) if isinstance(mux_mapping, dict) else {}
+                if not isinstance(sensor_mapping, dict):
+                    continue
+
+                mux_num = int(sensor_mapping.get('mux', 1))
+                sensor_channels = []
+                for value in sensor_mapping.get('channels', []):
+                    try:
+                        sensor_channels.append(int(value))
+                    except (ValueError, TypeError):
                         continue
+                sensor_channels = sorted(sensor_channels)
 
-                    mux_num = int(sensor_mapping.get('mux', 1))
-                    mux_index = max(0, min(1, mux_num - 1))
-                    sensor_channels = []
-                    for value in sensor_mapping.get('channels', []):
-                        try:
-                            sensor_channels.append(int(value))
-                        except (ValueError, TypeError):
+                for local_idx, channel in enumerate(sensor_channels):
+                    sample_indices = []
+                    for seq_idx, seq_channel in enumerate(channels):
+                        if seq_channel != channel:
                             continue
-                    sensor_channels = sorted(sensor_channels)
 
-                    for local_idx, channel in enumerate(sensor_channels):
-                        sample_indices = []
-                        for seq_idx, seq_channel in enumerate(channels):
-                            if seq_channel != channel:
-                                continue
+                        if self.is_array_pzt1_mode():
+                            mux_index = max(0, min(1, mux_num - 1))
                             base_idx = seq_idx * repeat_count * 2
                             for repeat_idx in range(repeat_count):
                                 sample_indices.append(base_idx + (repeat_idx * 2) + mux_index)
+                        else:
+                            base_idx = seq_idx * repeat_count
+                            sample_indices.extend(range(base_idx, base_idx + repeat_count))
 
-                        placement = str(channel_sensor_map[local_idx]) if local_idx < len(channel_sensor_map) else f"C{local_idx + 1}"
-                        specs.append({
-                            'key': ('sensor', sensor_id, placement, channel, mux_num),
-                            'label': f"{sensor_id}_{placement}",
-                            'sample_indices': sample_indices,
-                            'color_slot': color_slot,
-                        })
-                        color_slot += 1
+                    placement = str(channel_sensor_map[local_idx]) if local_idx < len(channel_sensor_map) else f"C{local_idx + 1}"
+                    key = ('sensor', sensor_id, placement, channel, mux_num) if self.is_array_pzt1_mode() else ('sensor', sensor_id, placement, channel)
+                    specs.append({
+                        'key': key,
+                        'label': f"{sensor_id}_{placement}",
+                        'sample_indices': sample_indices,
+                        'color_slot': color_slot,
+                    })
+                    color_slot += 1
 
-                if specs:
-                    return specs
+            if specs:
+                return specs
 
+        if self.is_array_pzt1_mode():
             for mux_index in range(2):
                 mux_number = mux_index + 1
                 for display_order, channel in enumerate(unique_channels):
@@ -332,6 +375,33 @@ class ConfigurationMixin:
         except ValueError:
             # Keep UI responsive while user is typing; hard validation occurs on Configure.
             pass
+
+    def on_array_operation_mode_changed(self, text: str):
+        """Handle operation mode selection for Array_PZT_PZR* MCUs."""
+        if not self.is_array_pzt_pzr_mode():
+            return
+
+        previous_mode = getattr(self, 'device_mode', 'adc')
+        if hasattr(self, 'save_last_heatmap_settings'):
+            self.save_last_heatmap_settings()
+
+        mode = (text or "PZT").strip().upper()
+        if mode not in ("PZT", "PZR"):
+            mode = "PZT"
+
+        self.config['array_operation_mode'] = mode
+        self.device_mode = '555' if mode == 'PZR' else 'adc'
+
+        if hasattr(self, 'update_gui_for_mcu'):
+            self.update_gui_for_mcu()
+
+        if hasattr(self, 'channels_input') and not self.channels_input.text().strip():
+            self.on_array_sensor_selection_changed("")
+
+        self.config_is_valid = False
+        self.update_start_button_state()
+        if previous_mode != self.device_mode:
+            self.log_status(f"Array operation mode selected: {mode}")
 
     def on_ground_pin_changed(self, value: int):
         """Handle ground pin change."""
@@ -587,6 +657,19 @@ class ConfigurationMixin:
         # Thread-safe check of serial port
         if not self.serial_port or not self.serial_port.is_open:
             return False
+
+        if self.is_array_pzt_pzr_mode():
+            selected_mode = self.get_selected_array_operation_mode()
+            self.config['array_operation_mode'] = selected_mode
+            self.device_mode = '555' if selected_mode == 'PZR' else 'adc'
+
+            success, received = self.send_command_and_wait_ack(f"mode {selected_mode}", selected_mode)
+            if not success:
+                self.log_status(f"Dual-mode command failed: mode {selected_mode}")
+                return False
+
+            self.log_status(f"Set Array operating mode: {received or selected_mode}")
+            time.sleep(INTER_COMMAND_DELAY)
 
         if getattr(self, 'device_mode', 'adc') == '555':
             return self._send_555_config_with_verification()

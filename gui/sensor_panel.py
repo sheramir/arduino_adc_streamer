@@ -256,7 +256,7 @@ class SensorPanelMixin:
         # ============================================================
         mux_config_group = QGroupBox("MUX Configuration")
         mux_config_layout = QVBoxLayout()
-        mux_config_layout.addWidget(QLabel("For each sensor, specify MUX and physical channels (0-9):"))
+        mux_config_layout.addWidget(QLabel("For each sensor, specify MUX and physical channels (0-15):"))
 
         self.array_mux_table = QTableWidget()
         self.array_mux_table.setColumnCount(3)
@@ -522,8 +522,8 @@ class SensorPanelMixin:
                     raise ValueError("At least one channel is required")
                 if len(channels) > ARRAY_CELL_CHANNELS_MAX:
                     raise ValueError(f"Maximum {ARRAY_CELL_CHANNELS_MAX} channels per sensor")
-                if any(channel < 0 or channel > 9 for channel in channels):
-                    raise ValueError("Channels must be in range 0-9")
+                if any(channel < 0 or channel > 15 for channel in channels):
+                    raise ValueError("Channels must be in range 0-15")
                 if len(set(channels)) != len(channels):
                     raise ValueError("Duplicate channels are not allowed")
 

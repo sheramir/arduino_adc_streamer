@@ -11,10 +11,11 @@ from config_constants import (
     HEATMAP_HEIGHT,
 )
 
+from data_processing.heatmap_555_processor import Heatmap555ProcessorMixin
 from data_processing.heatmap_piezo_processor import PiezoHeatmapProcessorMixin
 
 
-class HeatmapProcessorMixin(PiezoHeatmapProcessorMixin):
+class HeatmapProcessorMixin(PiezoHeatmapProcessorMixin, Heatmap555ProcessorMixin):
     """Coordinator mixin for processing sensor data into heatmap visualizations."""
     
     def __init__(self):

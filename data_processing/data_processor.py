@@ -893,6 +893,12 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
 
         # Acquisition settings
         self.channels_input.setEnabled(enabled)
+        if hasattr(self, 'array_mode_combo'):
+            self.array_mode_combo.setEnabled(enabled)
+        if hasattr(self, 'pzt_sequence_input'):
+            self.pzt_sequence_input.setEnabled(enabled)
+        if hasattr(self, 'pzr_sequence_input'):
+            self.pzr_sequence_input.setEnabled(enabled)
         self.ground_pin_spin.setEnabled(enabled)
         self.use_ground_check.setEnabled(enabled)
         self.repeat_spin.setEnabled(enabled)

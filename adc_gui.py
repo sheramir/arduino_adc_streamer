@@ -185,6 +185,7 @@ class ADCStreamerGUI(
             'channels': [],
             'channel_selection_source': 'none',
             'selected_array_sensors': [],
+            'array_operation_mode': 'PZT',
             'repeat': 1,
             'ground_pin': -1,
             'use_ground': False,
@@ -321,16 +322,6 @@ class ADCStreamerGUI(
     def init_ui(self):
         """Initialize the user interface using GUIComponentsMixin methods."""
         self.setWindowTitle("ADC Streamer - Modular Architecture")
-        screen = QGuiApplication.primaryScreen()
-        if screen is not None:
-            available = screen.availableGeometry()
-            target_width = min(WINDOW_WIDTH, max(1200, available.width() - 40))
-            target_height = min(WINDOW_HEIGHT, max(900, available.height() - 40))
-            self.resize(target_width, target_height)
-            self.move(available.x() + max(0, (available.width() - target_width) // 2),
-                      available.y() + max(0, (available.height() - target_height) // 2))
-        else:
-            self.setGeometry(100, 100, WINDOW_WIDTH, WINDOW_HEIGHT)
 
         # Main widget and layout
         from PyQt6.QtWidgets import QSplitter, QVBoxLayout
@@ -353,6 +344,25 @@ class ADCStreamerGUI(
         
         # Connect tab change signal to start/stop heatmap simulation
         self.visualization_tabs.currentChanged.connect(self.on_visualization_tab_changed)
+
+        screen = QGuiApplication.primaryScreen()
+        if screen is not None:
+            available = screen.availableGeometry()
+            horizontal_padding = 80
+            vertical_padding = 120
+            max_width = max(900, available.width() - horizontal_padding)
+            max_height = max(700, available.height() - vertical_padding)
+            preferred_width = max(WINDOW_WIDTH, self.minimumSizeHint().width())
+            preferred_height = max(WINDOW_HEIGHT, self.minimumSizeHint().height())
+            target_width = min(preferred_width, max_width)
+            target_height = min(preferred_height, max_height)
+            self.resize(target_width, target_height)
+            self.move(
+                available.x() + max(0, (available.width() - target_width) // 2),
+                available.y() + max(0, (available.height() - target_height) // 2),
+            )
+        else:
+            self.resize(WINDOW_WIDTH, WINDOW_HEIGHT)
 
     def _create_left_control_panel(self) -> QWidget:
         """Create left panel with all control sections."""
@@ -552,6 +562,8 @@ class ADCStreamerGUI(
             for processor in getattr(self, "heatmap_signal_processors", []):
                 processor.reset()
             self.reset_shear_processing_state()
+            if hasattr(self, 'reset_555_heatmap_state'):
+                self.reset_555_heatmap_state()
         self.last_heatmap_sweep_count = self.sweep_count
         self.last_shear_sweep_count = self.sweep_count
 
@@ -564,6 +576,14 @@ class ADCStreamerGUI(
             return
 
         settings = self.get_heatmap_settings()
+
+        if getattr(self, 'device_mode', 'adc') == '555':
+            pzr_results = self.process_555_displacement_heatmap(settings)
+            if pzr_results is None:
+                return
+            self.update_heatmap_display(pzr_results, shear_results=[])
+            return
+
         sensor_packages = self.compute_channel_intensities(settings)
         if sensor_packages is None:
             return
@@ -572,12 +592,12 @@ class ADCStreamerGUI(
             self.process_sensor_data_for_heatmap(sensor_values, settings, package_index=index)
             for index, sensor_values in enumerate(sensor_packages)
         ]
-        
+
         # Compute shear data for arrow visualization
         shear_settings = self.get_shear_settings()
         shear_processed = self.compute_shear_visualization(shear_settings)
         shear_results = shear_processed if shear_processed is not None else []
-        
+
         # Update display
         self.update_heatmap_display(package_results, shear_results=shear_results)
 

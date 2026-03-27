@@ -54,7 +54,19 @@ class MCUDetectorMixin:
     def update_gui_for_mcu(self):
         """Update GUI controls based on detected MCU type."""
         mcu_name = (self.current_mcu or "")
-        is_555 = "555" in mcu_name.lower()
+        lower_name = mcu_name.lower()
+        is_array_dual = lower_name.startswith("array_pzt_pzr")
+
+        if is_array_dual:
+            selected_mode = "PZT"
+            if hasattr(self, 'get_selected_array_operation_mode'):
+                selected_mode = self.get_selected_array_operation_mode()
+            is_555 = selected_mode == "PZR"
+            if hasattr(self, 'config') and isinstance(self.config, dict):
+                self.config['array_operation_mode'] = selected_mode
+        else:
+            is_555 = "555" in lower_name
+
         is_teensy = ("Teensy" in mcu_name)
 
         self.device_mode = '555' if is_555 else 'adc'
@@ -121,7 +133,10 @@ class MCUDetectorMixin:
             if hasattr(self, 'discharge_time_label'):
                 self.discharge_time_label.setVisible(True)
 
-            self.log_status("Device mode: 555 analyzer")
+            if is_array_dual:
+                self.log_status("Device mode: PZR")
+            else:
+                self.log_status("Device mode: 555 analyzer")
             return
 
         # ADC streamer mode
@@ -205,7 +220,10 @@ class MCUDetectorMixin:
             self.sample_rate_label.hide()
             self.sample_rate_spin.hide()
 
-        self.log_status("Device mode: ADC streamer")
+        if is_array_dual:
+            self.log_status("Device mode: PZT")
+        else:
+            self.log_status("Device mode: ADC streamer")
 
         if hasattr(self, 'update_heatmap_ui_for_mode'):
             self.update_heatmap_ui_for_mode()

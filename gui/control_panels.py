@@ -58,6 +58,17 @@ class ControlPanelsMixin:
         self.force_connect_btn.clicked.connect(self.toggle_force_connection)
         layout.addWidget(self.force_connect_btn, 3, 0, 1, 3)
 
+        # Array operation mode selector (shown only for Array_PZT_PZR* MCU)
+        self.array_mode_label = QLabel("Array Mode:")
+        layout.addWidget(self.array_mode_label, 4, 0)
+        self.array_mode_combo = QComboBox()
+        self.array_mode_combo.addItems(["PZT", "PZR"])
+        self.array_mode_combo.setCurrentText("PZT")
+        self.array_mode_combo.currentTextChanged.connect(self.on_array_operation_mode_changed)
+        layout.addWidget(self.array_mode_combo, 4, 1, 1, 2)
+        self.array_mode_label.hide()
+        self.array_mode_combo.hide()
+
         group.setLayout(layout)
         return group
 

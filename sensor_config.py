@@ -220,7 +220,7 @@ def normalize_mux_mapping(
             channels = [int(c) for c in channels_raw]
             if len(channels) < 1 or len(channels) > ARRAY_CELL_CHANNELS_MAX:
                 return None
-            if any(c < 0 or c > 9 for c in channels):
+            if any(c < 0 or c > 15 for c in channels):
                 return None
             if len(set(channels)) != len(channels):  # Check for duplicates
                 return None

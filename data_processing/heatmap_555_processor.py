@@ -9,9 +9,12 @@ import numpy as np
 from config_constants import (
     HEATMAP_WIDTH, HEATMAP_HEIGHT,
     INTENSITY_SCALE, COP_EPS, BLOB_SIGMA_X, BLOB_SIGMA_Y, SMOOTH_ALPHA,
-    R_HEATMAP_CHANNEL_SENSOR_MAP, R_HEATMAP_DELTA_THRESHOLD,
-    R_HEATMAP_DELTA_RELEASE_THRESHOLD, R_HEATMAP_INTENSITY_MIN, R_HEATMAP_INTENSITY_MAX,
+    R_HEATMAP_CHANNEL_SENSOR_MAP, R_HEATMAP_REQUIRED_CHANNELS,
+    R_HEATMAP_SENSOR_POS_X, R_HEATMAP_SENSOR_POS_Y,
+    R_HEATMAP_DELTA_THRESHOLD, R_HEATMAP_DELTA_RELEASE_THRESHOLD,
+    R_HEATMAP_INTENSITY_MIN, R_HEATMAP_INTENSITY_MAX,
     R_HEATMAP_AXIS_ADAPT_STRENGTH, R_HEATMAP_MAP_SMOOTH_ALPHA,
+    R_HEATMAP_COP_SMOOTH_ALPHA,
 )
 
 
@@ -19,19 +22,34 @@ class Heatmap555ProcessorMixin:
     """555 resistance mode (4-sensor) displacement heatmap pipeline."""
 
     def reset_555_heatmap_state(self):
-        self.r555_prev_values = None
-        self.r555_last_deltas = np.zeros(4, dtype=np.float64)
-        self.r555_accumulators = np.zeros(4, dtype=np.float64)
-        self.r555_last_sensor_values = np.zeros(4, dtype=np.float64)
-        self.r555_last_weights = np.zeros(4, dtype=np.float64)
-        self.r555_last_confidence = 0.0
-        self.r555_last_concentration = 0.0
-        self.r555_last_qi = 0.0
-        self.r555_smoothed_x = 0.0
-        self.r555_smoothed_y = 0.0
-        self.r555_smoothed_i = 0.0
-        self.r555_smoothed_heatmap = np.zeros((HEATMAP_HEIGHT, HEATMAP_WIDTH), dtype=np.float32)
+        self.r555_package_states = {}
         self.r555_last_processed_sweep_count = 0
+
+    def _get_r555_package_state(self, package_index, sensor_count):
+        if not hasattr(self, 'r555_package_states') or not isinstance(self.r555_package_states, dict):
+            self.r555_package_states = {}
+        if not hasattr(self, 'r555_last_processed_sweep_count'):
+            self.r555_last_processed_sweep_count = 0
+
+        state = self.r555_package_states.get(package_index)
+        if state is None or state['sensor_count'] != sensor_count:
+            state = {
+                'sensor_count': sensor_count,
+                'prev_values': None,
+                'baseline_values': None,
+                'last_deltas': np.zeros(sensor_count, dtype=np.float64),
+                'last_sensor_values': np.zeros(sensor_count, dtype=np.float64),
+                'last_weights': np.zeros(sensor_count, dtype=np.float64),
+                'last_confidence': 0.0,
+                'last_concentration': 0.0,
+                'last_qi': 0.0,
+                'smoothed_x': 0.0,
+                'smoothed_y': 0.0,
+                'smoothed_i': 0.0,
+                'smoothed_heatmap': np.zeros((HEATMAP_HEIGHT, HEATMAP_WIDTH), dtype=np.float32),
+            }
+            self.r555_package_states[package_index] = state
+        return state
 
     def _extract_new_sweeps_since(self, last_processed_sweep_count):
         if self.raw_data_buffer is None or self.samples_per_sweep <= 0:
@@ -125,132 +143,165 @@ class Heatmap555ProcessorMixin:
             return None
 
         channel_sensor_map = settings.get('channel_sensor_map', R_HEATMAP_CHANNEL_SENSOR_MAP)
-        sensor_order = settings.get('sensor_order', ['R', 'B', 'L', 'T'])
+        sensor_order = settings.get('sensor_order', list(channel_sensor_map))
 
-        if len(unique_channels) != len(channel_sensor_map):
+        required_channels = max(1, int(R_HEATMAP_REQUIRED_CHANNELS))
+        if (
+            len(unique_channels) < required_channels
+            or len(unique_channels) % required_channels != 0
+            or len(channel_sensor_map) != required_channels
+        ):
             return None
 
-        coord_x = settings.get('sensor_pos_x', [1.0, 0.0, -1.0, 0.0])
-        coord_y = settings.get('sensor_pos_y', [0.0, -1.0, 0.0, 1.0])
+        th = float(settings.get('delta_threshold', R_HEATMAP_DELTA_THRESHOLD))
+        th_release = float(settings.get('delta_release_threshold', th if th > 0 else R_HEATMAP_DELTA_RELEASE_THRESHOLD))
+        threshold = max(0.0, th)
+        release_threshold = max(0.0, th_release)
+        coord_x = settings.get('sensor_pos_x', list(R_HEATMAP_SENSOR_POS_X))
+        coord_y = settings.get('sensor_pos_y', list(R_HEATMAP_SENSOR_POS_Y))
         coord_map = {
             label: (float(x), float(y))
             for label, x, y in zip(sensor_order, coord_x, coord_y)
         }
-
-        channel_to_sensor = {}
-        for idx, channel in enumerate(unique_channels):
-            if idx < len(channel_sensor_map):
-                channel_to_sensor[channel] = channel_sensor_map[idx]
-
-        sensor_index = {label: idx for idx, label in enumerate(sensor_order)}
-
-        if self.r555_prev_values is None or self.r555_prev_values.shape[0] != len(sensor_order):
-            self.r555_prev_values = np.zeros(len(sensor_order), dtype=np.float64)
-            if channel_matrix.shape[0] > 0:
-                first_values = np.zeros(len(sensor_order), dtype=np.float64)
-                for col_idx, channel in enumerate(unique_channels):
-                    label = channel_to_sensor.get(channel)
-                    if label in sensor_index:
-                        first_values[sensor_index[label]] = float(channel_matrix[0, col_idx])
-                self.r555_prev_values = first_values
-
-        th = float(settings.get('delta_threshold', R_HEATMAP_DELTA_THRESHOLD))
-        th_release = float(settings.get('delta_release_threshold', th if th > 0 else R_HEATMAP_DELTA_RELEASE_THRESHOLD))
-
-        for row_idx in range(channel_matrix.shape[0]):
-            current_values = np.array(self.r555_prev_values, copy=True)
-            for col_idx, channel in enumerate(unique_channels):
-                label = channel_to_sensor.get(channel)
-                if label not in sensor_index:
-                    continue
-                current_values[sensor_index[label]] = float(channel_matrix[row_idx, col_idx])
-
-            deltas = current_values - self.r555_prev_values
-            self.r555_last_deltas = deltas
-
-            pos_mask = deltas > th
-            neg_mask = deltas < -th_release
-            self.r555_accumulators[pos_mask] += deltas[pos_mask]
-            self.r555_accumulators[neg_mask] += deltas[neg_mask]
-
-            self.r555_prev_values = current_values
-            self.r555_last_sensor_values = current_values
-
-        calibration = np.array(settings.get('sensor_calibration', [1.0, 1.0, 1.0, 1.0]), dtype=np.float64)
+        calibration = np.array(settings.get('sensor_calibration', [1.0] * len(sensor_order)), dtype=np.float64)
         if calibration.shape[0] != len(sensor_order):
             calibration = np.ones(len(sensor_order), dtype=np.float64)
 
-        weights = self.r555_accumulators * calibration
-        self.r555_last_weights = weights
-        intensity = float(np.sum(weights))
+        package_count = len(unique_channels) // required_channels
+        package_results = []
+        display_sensor_order = ['T', 'B', 'R', 'L', 'C']
 
-        x_num = 0.0
-        y_num = 0.0
-        for idx, label in enumerate(sensor_order):
-            pos = coord_map.get(label, (0.0, 0.0))
-            x_num += weights[idx] * pos[0]
-            y_num += weights[idx] * pos[1]
+        for package_index in range(package_count):
+            package_channels = unique_channels[
+                package_index * required_channels:(package_index + 1) * required_channels
+            ]
+            package_matrix = channel_matrix[:, package_index * required_channels:(package_index + 1) * required_channels]
+            channel_to_sensor = {
+                channel: channel_sensor_map[idx]
+                for idx, channel in enumerate(package_channels)
+                if idx < len(channel_sensor_map)
+            }
+            sensor_index = {label: idx for idx, label in enumerate(sensor_order)}
+            state = self._get_r555_package_state(package_index, len(sensor_order))
 
-        cop_x = x_num / (intensity + COP_EPS)
-        cop_y = y_num / (intensity + COP_EPS)
+            if state['prev_values'] is None or state['prev_values'].shape[0] != len(sensor_order):
+                state['prev_values'] = np.zeros(len(sensor_order), dtype=np.float64)
+                if package_matrix.shape[0] > 0:
+                    first_values = np.zeros(len(sensor_order), dtype=np.float64)
+                    for col_idx, channel in enumerate(package_channels):
+                        label = channel_to_sensor.get(channel)
+                        if label in sensor_index:
+                            first_values[sensor_index[label]] = float(package_matrix[0, col_idx])
+                    state['prev_values'] = first_values
+                    state['baseline_values'] = np.array(first_values, copy=True)
 
-        cop_alpha = float(settings.get('cop_smooth_alpha', SMOOTH_ALPHA))
-        self.r555_smoothed_x = (1.0 - cop_alpha) * self.r555_smoothed_x + cop_alpha * cop_x
-        self.r555_smoothed_y = (1.0 - cop_alpha) * self.r555_smoothed_y + cop_alpha * cop_y
-        self.r555_smoothed_i = (1.0 - cop_alpha) * self.r555_smoothed_i + cop_alpha * intensity
+            if state['baseline_values'] is None or state['baseline_values'].shape[0] != len(sensor_order):
+                state['baseline_values'] = np.array(state['prev_values'], copy=True)
 
-        i_min = float(settings.get('intensity_min', R_HEATMAP_INTENSITY_MIN))
-        i_max = float(settings.get('intensity_max', R_HEATMAP_INTENSITY_MAX))
-        if i_max <= i_min:
-            q_i = 1.0 if self.r555_smoothed_i >= i_min else 0.0
-        else:
-            q_i = (self.r555_smoothed_i - i_min) / (i_max - i_min)
-        q_i = float(np.clip(q_i, 0.0, 1.0))
+            batch_magnitudes = []
+            for row_idx in range(package_matrix.shape[0]):
+                current_values = np.array(state['prev_values'], copy=True)
+                for col_idx, channel in enumerate(package_channels):
+                    label = channel_to_sensor.get(channel)
+                    if label not in sensor_index:
+                        continue
+                    current_values[sensor_index[label]] = float(package_matrix[row_idx, col_idx])
 
-        concentration = float(np.max(weights) / (intensity + COP_EPS)) if intensity > 0 else 0.0
-        concentration = float(np.clip(concentration, 0.0, 1.0))
-        confidence = float(np.clip(q_i * concentration, 0.0, 1.0))
-        self.r555_last_qi = q_i
-        self.r555_last_concentration = concentration
-        self.r555_last_confidence = confidence
+                deltas = current_values - state['baseline_values']
+                state['last_deltas'] = deltas
 
-        sigma_x = max(float(settings.get('blob_sigma_x', BLOB_SIGMA_X)), 1e-6)
-        sigma_y = max(float(settings.get('blob_sigma_y', BLOB_SIGMA_Y)), 1e-6)
+                magnitudes = np.abs(deltas)
+                effective_threshold = np.where(magnitudes > threshold, threshold, release_threshold)
+                weights_now = np.maximum(magnitudes - effective_threshold, 0.0)
+                batch_magnitudes.append(weights_now)
 
-        label_to_weight = {label: float(weights[idx]) for idx, label in enumerate(sensor_order)}
-        left_weight = label_to_weight.get('L', 0.0)
-        right_weight = label_to_weight.get('R', 0.0)
-        top_weight = label_to_weight.get('T', 0.0)
-        bottom_weight = label_to_weight.get('B', 0.0)
-        lr = (left_weight + right_weight) / (intensity + COP_EPS) if intensity > 0 else 0.0
-        tb = (top_weight + bottom_weight) / (intensity + COP_EPS) if intensity > 0 else 0.0
+                state['prev_values'] = current_values
+                state['last_sensor_values'] = current_values
 
-        axis_k = max(0.0, float(settings.get('axis_adapt_strength', R_HEATMAP_AXIS_ADAPT_STRENGTH)))
-        if lr > tb:
-            sigma_x *= (1.0 + axis_k * min(1.0, lr - tb))
-        elif tb > lr:
-            sigma_y *= (1.0 + axis_k * min(1.0, tb - lr))
+            if not batch_magnitudes:
+                continue
 
-        dx = self.heatmap_x_grid - self.r555_smoothed_x
-        dy = self.heatmap_y_grid - self.r555_smoothed_y
-        gaussian = np.exp(-(dx**2 / (2 * sigma_x**2) + dy**2 / (2 * sigma_y**2)))
+            weights = np.mean(np.vstack(batch_magnitudes), axis=0) * calibration
+            state['last_weights'] = weights
+            intensity = float(np.sum(weights))
 
-        amplitude = self.r555_smoothed_i * float(settings.get('intensity_scale', INTENSITY_SCALE)) * confidence
-        heatmap_now = gaussian * amplitude
+            x_num = 0.0
+            y_num = 0.0
+            for idx, label in enumerate(sensor_order):
+                pos = coord_map.get(label, (0.0, 0.0))
+                x_num += weights[idx] * pos[0]
+                y_num += weights[idx] * pos[1]
 
-        map_alpha = float(settings.get('map_smooth_alpha', R_HEATMAP_MAP_SMOOTH_ALPHA))
-        map_alpha = float(np.clip(map_alpha, 0.0, 1.0))
-        self.r555_smoothed_heatmap = (
-            (1.0 - map_alpha) * self.r555_smoothed_heatmap + map_alpha * heatmap_now
-        ).astype(np.float32)
+            cop_x = x_num / (intensity + COP_EPS)
+            cop_y = y_num / (intensity + COP_EPS)
 
-        np.clip(self.r555_smoothed_heatmap, 0, 1, out=self.r555_smoothed_heatmap)
+            cop_alpha = float(settings.get('cop_smooth_alpha', R_HEATMAP_COP_SMOOTH_ALPHA))
+            state['smoothed_x'] = (1.0 - cop_alpha) * state['smoothed_x'] + cop_alpha * cop_x
+            state['smoothed_y'] = (1.0 - cop_alpha) * state['smoothed_y'] + cop_alpha * cop_y
+            state['smoothed_i'] = (1.0 - cop_alpha) * state['smoothed_i'] + cop_alpha * intensity
 
-        return (
-            self.r555_smoothed_heatmap,
-            self.r555_smoothed_x,
-            self.r555_smoothed_y,
-            self.r555_smoothed_i,
-            confidence,
-            self.r555_last_weights.tolist(),
-        )
+            i_min = float(settings.get('intensity_min', R_HEATMAP_INTENSITY_MIN))
+            i_max = float(settings.get('intensity_max', R_HEATMAP_INTENSITY_MAX))
+            if i_max <= i_min:
+                q_i = 1.0 if state['smoothed_i'] >= i_min else 0.0
+            else:
+                q_i = (state['smoothed_i'] - i_min) / (i_max - i_min)
+            q_i = float(np.clip(q_i, 0.0, 1.0))
+
+            concentration = float(np.max(weights) / (intensity + COP_EPS)) if intensity > 0 else 0.0
+            concentration = float(np.clip(concentration, 0.0, 1.0))
+            confidence = float(np.clip(q_i * concentration, 0.0, 1.0))
+            state['last_qi'] = q_i
+            state['last_concentration'] = concentration
+            state['last_confidence'] = confidence
+
+            sigma_x = max(float(settings.get('blob_sigma_x', BLOB_SIGMA_X)), 1e-6)
+            sigma_y = max(float(settings.get('blob_sigma_y', BLOB_SIGMA_Y)), 1e-6)
+
+            label_to_weight = {label: float(weights[idx]) for idx, label in enumerate(sensor_order)}
+            left_weight = label_to_weight.get('L', 0.0)
+            right_weight = label_to_weight.get('R', 0.0)
+            top_weight = label_to_weight.get('T', 0.0)
+            bottom_weight = label_to_weight.get('B', 0.0)
+            lr = (left_weight + right_weight) / (intensity + COP_EPS) if intensity > 0 else 0.0
+            tb = (top_weight + bottom_weight) / (intensity + COP_EPS) if intensity > 0 else 0.0
+
+            axis_k = max(0.0, float(settings.get('axis_adapt_strength', R_HEATMAP_AXIS_ADAPT_STRENGTH)))
+            if lr > tb:
+                sigma_x *= (1.0 + axis_k * min(1.0, lr - tb))
+            elif tb > lr:
+                sigma_y *= (1.0 + axis_k * min(1.0, tb - lr))
+
+            dx = self.heatmap_x_grid - state['smoothed_x']
+            dy = self.heatmap_y_grid - state['smoothed_y']
+            gaussian = np.exp(-(dx**2 / (2 * sigma_x**2) + dy**2 / (2 * sigma_y**2)))
+
+            amplitude = state['smoothed_i'] * float(settings.get('intensity_scale', INTENSITY_SCALE)) * confidence
+            heatmap_now = gaussian * amplitude
+
+            map_alpha = float(settings.get('map_smooth_alpha', R_HEATMAP_MAP_SMOOTH_ALPHA))
+            map_alpha = float(np.clip(map_alpha, 0.0, 1.0))
+            state['smoothed_heatmap'] = (
+                (1.0 - map_alpha) * state['smoothed_heatmap'] + map_alpha * heatmap_now
+            ).astype(np.float32)
+            np.clip(state['smoothed_heatmap'], 0, 1, out=state['smoothed_heatmap'])
+
+            display_values = []
+            for label in display_sensor_order:
+                if label in sensor_index:
+                    display_values.append(float(weights[sensor_index[label]]))
+                else:
+                    display_values.append(0.0)
+
+            package_results.append(
+                (
+                    state['smoothed_heatmap'],
+                    state['smoothed_x'],
+                    state['smoothed_y'],
+                    state['smoothed_i'],
+                    confidence,
+                    display_values,
+                )
+            )
+
+        return package_results or None

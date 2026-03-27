@@ -215,11 +215,11 @@ class MCUDetectorMixin:
             self.gain_label.show()
             self.gain_combo.show()
             
-            # Reset OSR to original settings
+            # Reset OSR options; in array PZT mode default to 4x for better SNR.
             self.osr_label.setText("OSR (Oversampling):")
             self.osr_combo.clear()
             self.osr_combo.addItems(["2", "4", "8"])
-            self.osr_combo.setCurrentText("2")
+            self.osr_combo.setCurrentText("4" if is_array_mcu else "2")
             self.osr_combo.setToolTip("Oversampling ratio: higher = better SNR, lower sample rate")
             
             # Hide Teensy-specific controls

@@ -56,6 +56,7 @@ class MCUDetectorMixin:
         mcu_name = (self.current_mcu or "")
         lower_name = mcu_name.lower()
         is_array_dual = lower_name.startswith("array_pzt_pzr")
+        is_array_mcu = lower_name.startswith("array")
 
         if is_array_dual:
             selected_mode = "PZT"
@@ -147,6 +148,10 @@ class MCUDetectorMixin:
         if hasattr(self, 'use_ground_check'):
             self.use_ground_check.show()
 
+        # OSR/Averaging applies to ADC/PZT modes and must be restored after 555 mode.
+        self.osr_label.show()
+        self.osr_combo.show()
+
         if hasattr(self, 'rb_label'):
             self.rb_label.hide()
             self.rb_spin.hide()
@@ -200,8 +205,13 @@ class MCUDetectorMixin:
             
         else:
             # Non-Teensy (e.g., MG24): Show reference and gain, hide Teensy controls
-            self.vref_label.show()
-            self.vref_combo.show()
+            # Array MCU sketches use fixed 3.3V reference, so hide Vref control.
+            if is_array_mcu:
+                self.vref_label.hide()
+                self.vref_combo.hide()
+            else:
+                self.vref_label.show()
+                self.vref_combo.show()
             self.gain_label.show()
             self.gain_combo.show()
             

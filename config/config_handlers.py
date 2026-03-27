@@ -678,9 +678,10 @@ class ConfigurationMixin:
         
         # Determine if this is a Teensy MCU
         is_teensy = self.current_mcu and "Teensy" in self.current_mcu
+        is_array_mcu = self.is_array_mcu_mode()
         
-        # Send voltage reference (skip for Teensy - only supports 3.3V)
-        if not is_teensy:
+        # Send voltage reference (skip for Teensy/Array - fixed 3.3V behavior)
+        if not is_teensy and not is_array_mcu:
             vref_text = self.vref_combo.currentText()
             vref_map = {
                 "1.2V (Internal)": "1.2",
@@ -693,6 +694,9 @@ class ConfigurationMixin:
             else:
                 all_success = False
             time.sleep(INTER_COMMAND_DELAY)
+        elif is_array_mcu:
+            self.config['reference'] = 'vdd'
+            self.arduino_status['reference'] = 'vdd'
         
         # Send OSR (oversampling ratio) / Averaging
         osr_value = self.osr_combo.currentText()

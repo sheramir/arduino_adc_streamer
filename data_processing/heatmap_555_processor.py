@@ -278,11 +278,11 @@ class Heatmap555ProcessorMixin:
                 state['last_deltas'] = relative_percent
 
                 magnitudes = np.abs(relative_percent)
+                magnitudes = magnitudes * per_sensor_gains
                 thresholds = global_thresholds + per_sensor_thresholds
                 release_thresholds = global_release_thresholds + per_sensor_thresholds
                 effective_thresholds = np.maximum(thresholds, release_thresholds)
                 weights_now = np.where(magnitudes >= effective_thresholds, magnitudes, 0.0)
-                weights_now = weights_now * per_sensor_gains
                 batch_magnitudes.append(weights_now)
 
                 state['prev_values'] = current_values

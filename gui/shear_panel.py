@@ -418,7 +418,7 @@ class ShearPanelMixin:
         row.addWidget(QLabel("Gain [C,R,B,L,T]:"))
         for label, value in zip(["C", "R", "B", "L", "T"], SHEAR_CHANNEL_GAINS):
             spin = QDoubleSpinBox()
-            spin.setRange(0.0, 1000.0)
+            spin.setRange(-1000.0, 1000.0)
             spin.setDecimals(4)
             spin.setValue(value)
             spin.setPrefix(f"{label}: ")

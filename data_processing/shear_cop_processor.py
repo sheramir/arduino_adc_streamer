@@ -70,10 +70,16 @@ def integrate_signed_signal(samples: np.ndarray, sample_rate_hz: float) -> float
 
 
 def apply_signed_calibration(value: float, baseline: float, gain: float, deadband: float) -> float:
-    """Apply signed deadband/noise-floor and gain while preserving sign."""
+    """Apply signed deadband/noise-floor and gain while preserving sign.
+    
+    Gain can be negative to flip channel polarity (e.g., to correct inverted sensors).
+    """
     net_deadband = max(float(baseline), float(deadband), 0.0)
     magnitude = max(0.0, abs(float(value)) - net_deadband)
-    return math.copysign(magnitude * max(float(gain), 0.0), float(value)) if magnitude > 0.0 else 0.0
+    if magnitude <= 0.0:
+        return 0.0
+    gain_val = float(gain)
+    return math.copysign(magnitude * abs(gain_val), float(value) * gain_val) if magnitude > 0.0 else 0.0
 
 
 def extract_shear_pair(positive_sensor_value: float, negative_sensor_value: float) -> Tuple[float, float, float]:

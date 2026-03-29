@@ -33,6 +33,15 @@ from config_constants import (
 class HeatmapPanelMixin:
     HEATMAP_VIEW_EXTENT = 1.25  # Scaling factor for arrow visualization
 
+    def _is_display_mirror_enabled(self) -> bool:
+        checkbox = getattr(self, "display_mirror_check", None)
+        return bool(checkbox is not None and checkbox.isChecked())
+
+    def _on_display_mirror_toggled(self, _checked=False):
+        self._update_display_plot_view()
+        if hasattr(self, "trigger_plot_update"):
+            self.trigger_plot_update()
+
     def _get_heatmap_mode_key(self) -> str:
         is_pzr_mode = bool(hasattr(self, "is_555_analyzer_mode") and self.is_555_analyzer_mode())
         return "pzr" if is_pzr_mode else "pzt"
@@ -563,12 +572,17 @@ class HeatmapPanelMixin:
                 max_row = max(max_row, row)
                 max_col = max(max_col, col)
 
+            if positions and self._is_display_mirror_enabled():
+                positions = [(row, max_col - col) for row, col in positions]
+
             if positions:
                 return positions, max_row + 1, max_col + 1
 
         cols = min(2, visible_count)
         rows = int(np.ceil(visible_count / max(cols, 1)))
         positions = [(index // cols, index % cols) for index in range(visible_count)]
+        if self._is_display_mirror_enabled() and cols > 0:
+            positions = [(row, (cols - 1) - col) for row, col in positions]
         return positions, max(rows, 1), max(cols, 1)
 
     def _update_display_plot_view(self):
@@ -613,6 +627,15 @@ class HeatmapPanelMixin:
     def create_display_tab(self):
         display_widget = QWidget()
         main_layout = QVBoxLayout()
+
+        controls_layout = QHBoxLayout()
+        self.display_mirror_check = QCheckBox("Mirror")
+        self.display_mirror_check.setToolTip("Mirror Display tab layout horizontally (left/right swapped)")
+        self.display_mirror_check.setChecked(False)
+        self.display_mirror_check.toggled.connect(self._on_display_mirror_toggled)
+        controls_layout.addWidget(self.display_mirror_check)
+        controls_layout.addStretch()
+        main_layout.addLayout(controls_layout)
 
         display_group = QGroupBox("Display")
         group_layout = QVBoxLayout()

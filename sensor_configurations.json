@@ -1,0 +1,158 @@
+{
+  "version": 1,
+  "selected_name": "Array_V2",
+  "deleted_names": [
+    "ARRAY_v2"
+  ],
+  "configurations": [
+    {
+      "name": "PLUS",
+      "channel_sensor_map": [
+        "R",
+        "B",
+        "C",
+        "L",
+        "T"
+      ],
+      "type": "channel_layout"
+    },
+    {
+      "name": "OCTO",
+      "channel_sensor_map": [
+        "R",
+        "C",
+        "B",
+        "L",
+        "T"
+      ],
+      "type": "channel_layout"
+    },
+    {
+      "name": "ARRAY_v1_R",
+      "channel_sensor_map": [
+        "C",
+        "R",
+        "B",
+        "L",
+        "T"
+      ],
+      "type": "channel_layout"
+    },
+    {
+      "name": "ARRAY_v1",
+      "channel_sensor_map": [
+        "T",
+        "R",
+        "C",
+        "L",
+        "B"
+      ],
+      "type": "channel_layout"
+    },
+    {
+      "name": "Array_V2",
+      "channel_sensor_map": [
+        "B",
+        "L",
+        "C",
+        "R",
+        "T"
+      ],
+      "type": "array_layout",
+      "array_layout": {
+        "cells": [
+          [
+            null,
+            "PZT7",
+            null
+          ],
+          [
+            "PZT1",
+            "PZR6",
+            "PZT5"
+          ],
+          [
+            "PZR2",
+            "PZT3",
+            "PZR4"
+          ]
+        ]
+      },
+      "mux_mapping": {
+        "PZR2": {
+          "mux": 2,
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ]
+        },
+        "PZR4": {
+          "mux": 2,
+          "channels": [
+            5,
+            6,
+            7,
+            8,
+            9
+          ]
+        },
+        "PZR6": {
+          "mux": 1,
+          "channels": [
+            10,
+            11,
+            12,
+            13,
+            14
+          ]
+        },
+        "PZT1": {
+          "mux": 1,
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ]
+        },
+        "PZT3": {
+          "mux": 1,
+          "channels": [
+            5,
+            6,
+            7,
+            8,
+            9
+          ]
+        },
+        "PZT5": {
+          "mux": 2,
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ]
+        },
+        "PZT7": {
+          "mux": 2,
+          "channels": [
+            5,
+            6,
+            7,
+            8,
+            9
+          ]
+        }
+      },
+      "channel_layout": {
+        "channels_per_sensor": 5
+      }
+    }
+  ]
+}

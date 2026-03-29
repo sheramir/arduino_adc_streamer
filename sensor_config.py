@@ -75,6 +75,15 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parent
 
 
+def _default_bundled_sensor_configs_path() -> Path:
+    """Prefer the canonical repo config file, with backward-compatible fallback."""
+    repo_root = _repo_root()
+    preferred = repo_root / "sensor_configurations.json"
+    if preferred.exists():
+        return preferred
+    return repo_root / "sensors.json"
+
+
 def _read_sensor_configs_file(file_path: Path) -> List[Dict[str, object]]:
     if not file_path.exists():
         return []
@@ -373,7 +382,7 @@ def normalize_combined_sensor_config(config: Dict[str, object]) -> Dict[str, obj
 class SensorConfigStore:
     def __init__(self, file_path: Path | None = None, bundled_file_path: Path | None = None):
         self.file_path = file_path or (Path.home() / ".adc_streamer" / "sensors" / "sensor_configurations.json")
-        self.bundled_file_path = bundled_file_path or (_repo_root() / "sensors.json")
+        self.bundled_file_path = bundled_file_path or _default_bundled_sensor_configs_path()
 
     def load(self) -> Tuple[List[Dict[str, object]], str]:
         default_config_normalized = normalize_combined_sensor_config(default_sensor_configuration())

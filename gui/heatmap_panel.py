@@ -703,7 +703,7 @@ class HeatmapPanelMixin:
                     item["arrow_line"].setPen(pg.mkPen((235, 80, 60), width=3.0))
                     item["arrow_line"].setData([center_x, center_x + arrow_end_x], [center_y, center_y + arrow_end_y])
                     item["arrow_head"].setPos(center_x + arrow_end_x, center_y + arrow_end_y)
-                    item["arrow_head"].setStyle(angle=self._arrow_item_angle_from_vector(arrow_end_x, -arrow_end_y), headLen=head_len)
+                    item["arrow_head"].setStyle(angle=self._arrow_item_angle_from_vector(arrow_end_x, arrow_end_y), headLen=head_len)
                     item["arrow_line"].setVisible(True)
                     item["arrow_head"].setVisible(True)
                 else:

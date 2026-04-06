@@ -48,7 +48,8 @@ class ForceProcessorMixin:
             
             # Update info label
             if len(self.force_data) % 10 == 0:  # Update every 10 samples
-                total_samples = sum(len(sweep) for sweep in self.raw_data) if self.raw_data else 0
+                samples_per_sweep = max(0, int(getattr(self, 'samples_per_sweep', 0) or 0))
+                total_samples = int(self.sweep_count) * samples_per_sweep
                 self.plot_info_label.setText(
                     f"ADC - Sweeps: {self.sweep_count} | Samples: {total_samples}  |  Force: {len(self.force_data)} samples"
                 )

@@ -502,8 +502,8 @@ class ADCStreamerGUI(
         channels = self.config.get('channels', [])
         num_channels = len(channels)
 
-        if hasattr(self, 'is_array_sensor_selection_mode') and self.is_array_sensor_selection_mode():
-            sensor_groups = self.get_array_selected_sensor_groups() if hasattr(self, 'get_array_selected_sensor_groups') else []
+        if self.is_array_sensor_selection_mode():
+            sensor_groups = self.get_array_selected_sensor_groups()
             valid_channel_count = (
                 len(sensor_groups) > 0
                 and len(sensor_groups) <= MAX_SENSOR_PACKAGES
@@ -548,8 +548,7 @@ class ADCStreamerGUI(
             for processor in getattr(self, "heatmap_signal_processors", []):
                 processor.reset()
             self.reset_shear_processing_state()
-            if hasattr(self, 'reset_555_heatmap_state'):
-                self.reset_555_heatmap_state()
+            self.reset_555_heatmap_state()
         self.last_heatmap_sweep_count = self.sweep_count
         self.last_shear_sweep_count = self.sweep_count
 

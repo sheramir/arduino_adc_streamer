@@ -48,7 +48,7 @@ class ShearProcessorMixin:
         if not channels or repeat_count <= 0:
             return None
 
-        use_array_sensor_groups = hasattr(self, 'is_array_sensor_selection_mode') and self.is_array_sensor_selection_mode()
+        use_array_sensor_groups = self.is_array_sensor_selection_mode()
         array_sensor_groups = self.get_array_selected_sensor_groups() if use_array_sensor_groups else []
 
         standard_package_channels = []

@@ -111,7 +111,7 @@ class HeatmapPanelMixin:
         )
 
     def _get_channel_group_title(self, package_index):
-        if hasattr(self, 'is_array_sensor_selection_mode') and self.is_array_sensor_selection_mode():
+        if self.is_array_sensor_selection_mode():
             selected = list(self.config.get('selected_array_sensors', [])) if hasattr(self, 'config') else []
             if package_index < len(selected):
                 return str(selected[package_index])
@@ -130,7 +130,7 @@ class HeatmapPanelMixin:
 
     def _get_sensor_id_for_package(self, package_index: int) -> str:
         """Get the sensor ID for a given heatmap package index."""
-        if hasattr(self, 'is_array_sensor_selection_mode') and self.is_array_sensor_selection_mode():
+        if self.is_array_sensor_selection_mode():
             selected = list(self.config.get('selected_array_sensors', [])) if hasattr(self, 'config') else []
             if package_index < len(selected):
                 return str(selected[package_index])
@@ -139,7 +139,7 @@ class HeatmapPanelMixin:
 
     def _get_visible_sensor_ids(self) -> list[str]:
         """Get list of visible sensor IDs based on current heatmap display."""
-        if hasattr(self, 'is_array_sensor_selection_mode') and self.is_array_sensor_selection_mode():
+        if self.is_array_sensor_selection_mode():
             return list(self.config.get('selected_array_sensors', [])) if hasattr(self, 'config') else []
         # Non-array: determine count from active heatmap cards
         count = getattr(self, 'active_sensor_package_count', 1)

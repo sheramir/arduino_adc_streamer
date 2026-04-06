@@ -26,7 +26,7 @@ class Heatmap555ProcessorMixin:
         return ["T", "B", "R", "L", "C"]
 
     def _get_package_sensor_id(self, package_index):
-        if hasattr(self, 'is_array_sensor_selection_mode') and self.is_array_sensor_selection_mode():
+        if self.is_array_sensor_selection_mode():
             selected = list(self.config.get('selected_array_sensors', [])) if hasattr(self, 'config') else []
             if package_index < len(selected):
                 return str(selected[package_index])

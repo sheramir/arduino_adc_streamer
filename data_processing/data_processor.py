@@ -88,11 +88,6 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
                 self.log_status("No data available to zero signals")
             return False
 
-        if not hasattr(self, 'get_display_channel_specs'):
-            if log_message:
-                self.log_status("Display configuration unavailable for baseline capture")
-            return False
-
         data_array, timestamps_array, avg_sample_time_sec = snapshot
         display_specs = self.get_display_channel_specs()
         if not display_specs or len(timestamps_array) == 0:
@@ -131,8 +126,7 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
         if getattr(self, 'subtract_baseline_check', None) is not None and not self.subtract_baseline_check.isChecked():
             self.subtract_baseline_check.setChecked(True)
 
-        if hasattr(self, 'reset_555_heatmap_state'):
-            self.reset_555_heatmap_state()
+        self.reset_555_heatmap_state()
 
         if log_message:
             self.log_status(f"Zeroed signals using last {baseline_window_sec:.2f}s baseline window")

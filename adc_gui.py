@@ -43,7 +43,6 @@ from data_processing import (
     HeatmapProcessorMixin,
     ShearProcessorMixin,
     SpectrumProcessorMixin,
-    SimulatedSensorThread,
 )
 from file_operations import FileOperationsMixin
 
@@ -308,11 +307,6 @@ class ADCStreamerGUI(
         self.spectrum_timer = QTimer()
         self.spectrum_timer.timeout.connect(self.update_spectrum)
         self.spectrum_timer.setInterval(100)
-        
-        # Simulated sensor data source (for testing)
-        self.simulated_sensor_thread: Optional[SimulatedSensorThread] = None
-        self.use_simulated_data = False
-        self.latest_sensor_values = [0.0, 0.0, 0.0, 0.0, 0.0]
 
     def _log_startup_message(self):
         """Log startup message to status window."""
@@ -432,12 +426,7 @@ class ADCStreamerGUI(
             self.disconnect_force()
 
         self.shutdown_spectrum_worker()
-        
-        # Stop heatmap simulation thread
-        if self.simulated_sensor_thread is not None:
-            self.simulated_sensor_thread.stop()
-            self.simulated_sensor_thread.wait()
-        
+
         event.accept()
     
     # ========================================================================
@@ -529,15 +518,6 @@ class ADCStreamerGUI(
         """Stop spectrum updates."""
         if self.spectrum_timer.isActive():
             self.spectrum_timer.stop()
-    
-    def on_simulated_sensor_data(self, sensor_values):
-        """Handle new simulated sensor data (runs in main thread via signal).
-        
-        Args:
-            sensor_values: List of 5 sensor values
-        """
-        # Store latest sensor values for heatmap update
-        self.latest_sensor_values = sensor_values
     
     def update_heatmap(self):
         """Update heatmap display (called by QTimer at HEATMAP_FPS rate)."""

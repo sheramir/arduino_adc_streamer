@@ -11,7 +11,6 @@ Module structure:
 - heatmap_piezo_processor.py: Piezoelectric heatmap processing pipeline
 - heatmap_555_processor.py: 555 resistance displacement heatmap pipeline
 - heatmap_processor.py: Coordinator mixin composing both heatmap pipelines
-- simulated_source.py: Simulated sensor data source for testing
 - data_processor.py: Main mixin combining all functionality
 """
 
@@ -21,7 +20,6 @@ from data_processing.force_processor import ForceProcessorMixin
 from data_processing.heatmap_processor import HeatmapProcessorMixin
 from data_processing.shear_processor import ShearProcessorMixin
 from data_processing.spectrum_processor import SpectrumProcessorMixin
-from data_processing.simulated_source import SimulatedSensorThread
 from data_processing.data_processor import DataProcessorMixin
 
 __all__ = [
@@ -32,5 +30,4 @@ __all__ = [
     'HeatmapProcessorMixin',
     'ShearProcessorMixin',
     'SpectrumProcessorMixin',
-    'SimulatedSensorThread',
 ]

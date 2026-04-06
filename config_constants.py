@@ -56,6 +56,14 @@ CONFIG_CHECK_INTERVAL = 100
 # Plot update frequency during capture (update every N sweeps)
 PLOT_UPDATE_FREQUENCY = 10
 
+# Minimum wall-clock interval between live plot redraws (seconds) — controls FPS cap.
+# 0.2 = 5 FPS. Raise to 0.033 for 30 FPS (only beneficial if update_plot is fast enough).
+PLOT_UPDATE_INTERVAL_SEC = 0.2
+
+# Maximum total data points rendered across all channels in a single plot update.
+# Lower values improve render speed; higher values improve detail.
+MAX_TOTAL_POINTS_TO_DISPLAY = 12000
+
 # ============================================================================
 # Window and Layout Settings
 # ============================================================================

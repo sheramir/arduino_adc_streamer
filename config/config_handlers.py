@@ -1110,8 +1110,8 @@ class ConfigurationMixin:
         
         # Clear archive data from memory (go back to using buffer)
         with self.buffer_lock:
-            self.raw_data.clear()
-            self.sweep_timestamps.clear()
+            self.raw_data = []
+            self.sweep_timestamps = []
         
         # Re-enable button if not capturing
         if not self.is_capturing:

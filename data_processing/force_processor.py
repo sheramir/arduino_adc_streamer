@@ -46,11 +46,6 @@ class ForceProcessorMixin:
             timestamp = time.time() - self.force_start_time
             self.force_data.append((timestamp, x_calibrated, z_calibrated))
             
-            # Implement rolling window: keep only the most recent force samples
-            # This prevents memory overflow during long captures
-            if len(self.force_data) > MAX_FORCE_SAMPLES:
-                self.force_data = self.force_data[-MAX_FORCE_SAMPLES:]
-            
             # Update info label
             if len(self.force_data) % 10 == 0:  # Update every 10 samples
                 total_samples = sum(len(sweep) for sweep in self.raw_data) if self.raw_data else 0

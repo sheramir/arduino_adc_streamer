@@ -195,7 +195,7 @@ class FilterProcessorMixin:
             sos = self._design_channel_sos(self.filter_settings, channel_fs_hz)
             zi = None
             if sos is not None:
-                zi = sosfilt_zi(sos) * 0.0
+                zi = sosfilt_zi(sos).astype(np.float32) * 0.0
 
             plan[channel] = {
                 'indices': np.asarray(indices, dtype=np.int32),
@@ -229,7 +229,7 @@ class FilterProcessorMixin:
             if sos is None:
                 runtime['zi'] = None
             else:
-                runtime['zi'] = sosfilt_zi(sos) * 0.0
+                runtime['zi'] = sosfilt_zi(sos).astype(np.float32) * 0.0
 
     def apply_filter_settings(self, settings: dict, reprocess_existing: bool = True):
         self.filter_settings = settings
@@ -277,7 +277,7 @@ class FilterProcessorMixin:
         if not self._filter_channel_runtime:
             return block_data.astype(np.float32, copy=True)
 
-        filtered = block_data.astype(np.float64, copy=True)
+        filtered = block_data.astype(np.float32, copy=False)
 
         for runtime in self._filter_channel_runtime.values():
             indices = runtime['indices']
@@ -288,13 +288,13 @@ class FilterProcessorMixin:
             stream = filtered[:, indices].reshape(-1)
             zi = runtime['zi']
             if zi is None:
-                zi = sosfilt_zi(sos) * 0.0
+                zi = sosfilt_zi(sos).astype(np.float32) * 0.0
             y, zf = sosfilt(sos, stream, zi=zi)
             # Keep channel-specific IIR state so filtering is continuous across blocks.
             runtime['zi'] = zf
             filtered[:, indices] = y.reshape(filtered.shape[0], len(indices))
 
-        return filtered.astype(np.float32, copy=False)
+        return filtered
 
     def reprocess_filtered_buffer(self):
         if self.raw_data_buffer is None or self.samples_per_sweep <= 0:

@@ -14,7 +14,6 @@ This module combines:
 
 import time
 import csv
-import json
 from datetime import datetime
 from typing import List
 from pathlib import Path
@@ -30,9 +29,11 @@ from config_constants import (
     ANALYZER555_DEFAULT_CF_FARADS, ANALYZER555_DEFAULT_RB_OHMS,
     ANALYZER555_DEFAULT_RK_OHMS,
     X_FORCE_SENSOR_TO_NEWTON, Z_FORCE_SENSOR_TO_NEWTON, CACHE_SUBDIR_NAME,
+    MAX_TOTAL_POINTS_TO_DISPLAY,
 )
 
 # Import sub-module mixins
+from data_processing.archive_writer import ArchiveWriterThread
 from serial_communication.serial_parser import SerialParserMixin
 from data_processing.binary_processor import BinaryProcessorMixin
 from data_processing.filter_processor import FilterProcessorMixin
@@ -76,9 +77,7 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
                 self.sweep_timestamps_buffer[:write_pos],
             ])
 
-        avg_sample_time_sec = 0.0
-        if hasattr(self, 'arduino_sample_times') and self.arduino_sample_times:
-            avg_sample_time_sec = (sum(self.arduino_sample_times) / len(self.arduino_sample_times)) / 1e6
+        avg_sample_time_sec = getattr(self, '_cached_avg_sample_time_sec', 0.0)
 
         return data_array, timestamps_array, avg_sample_time_sec
 
@@ -184,7 +183,6 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
             channels = self.config['channels']
             repeat_count = self.config['repeat']
             samples_per_sweep = self.get_effective_samples_per_sweep(channels, repeat_count)
-            MAX_TOTAL_POINTS_TO_DISPLAY = 12000
             
             # Determine which data to plot - use numpy buffer directly with thread safety!
             if active_data_buffer is None:
@@ -206,20 +204,27 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
                 return
             
             if self.is_full_view:
-                # Full view: use legacy raw_data list loaded from archive
-                if not self.raw_data or not self.sweep_timestamps:
+                # Full view: uses numpy arrays set by full_graph_view (read from
+                # in-memory circular buffer, so always complete even with background
+                # archive writer).
+                raw_ok = (
+                    self.raw_data is not None
+                    and hasattr(self.raw_data, '__len__')
+                    and len(self.raw_data) > 0
+                )
+                ts_ok = (
+                    self.sweep_timestamps is not None
+                    and hasattr(self.sweep_timestamps, '__len__')
+                    and len(self.sweep_timestamps) > 0
+                )
+                if not raw_ok or not ts_ok:
                     self.is_updating_plot = False
                     return
-                
-                # Convert list data to numpy for plotting
+
                 try:
-                    # All sweeps have same length
-                    samples_per_sweep = len(self.raw_data[0])
-                    num_sweeps = len(self.raw_data)
-                    
-                    # Create numpy array from list data
-                    data_array = np.array(self.raw_data, dtype=np.float32)  # shape: (num_sweeps, samples_per_sweep)
-                    timestamps_array = np.array(self.sweep_timestamps, dtype=np.float64)
+                    # np.asarray avoids a copy when raw_data is already a 2-D float32 ndarray.
+                    data_array = np.asarray(self.raw_data, dtype=np.float32)
+                    timestamps_array = np.asarray(self.sweep_timestamps, dtype=np.float64)
                 except Exception as e:
                     self.log_status(f"Error converting archive data: {e}")
                     self.is_updating_plot = False
@@ -308,10 +313,7 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
             max_samples_per_series = max(500, MAX_TOTAL_POINTS_TO_DISPLAY // visible_series_count)
             
             # Calculate average sample time for intra-sweep timing
-            if hasattr(self, 'arduino_sample_times') and self.arduino_sample_times:
-                avg_sample_time_sec = (sum(self.arduino_sample_times) / len(self.arduino_sample_times)) / 1e6
-            else:
-                avg_sample_time_sec = 0
+            avg_sample_time_sec = getattr(self, '_cached_avg_sample_time_sec', 0.0)
 
             # Data is ALREADY numpy array from buffer - no conversion needed!
             # Extract and plot data for each channel
@@ -703,8 +705,8 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
 
         # Clear previous data - thread safe
         with self.buffer_lock:
-            self.raw_data.clear()
-            self.sweep_timestamps.clear()
+            self.raw_data = []
+            self.sweep_timestamps = []
             self.sweep_count = 0
             self.buffer_write_index = 0
             # Zero out buffers to prevent old data from showing
@@ -777,30 +779,26 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
         timing_path = cache_dir / timing_name
 
         try:
-            # Open for write (overwrite any existing file with same name) and store handle
-            self._archive_file = open(archive_path, 'w', encoding='utf-8')
+            archive_metadata = {
+                'metadata': {
+                    'channels': self.config.get('channels', []),
+                    'repeat': self.config.get('repeat', 1),
+                    'ground_pin': self.config.get('ground_pin'),
+                    'use_ground': self.config.get('use_ground'),
+                    'osr': self.config.get('osr'),
+                    'gain': self.config.get('gain'),
+                    'reference': self.config.get('reference'),
+                    'notes': self.notes_input.toPlainText() if hasattr(self, 'notes_input') else None,
+                    'start_time': datetime.now().isoformat()
+                }
+            }
+            self._archive_writer = ArchiveWriterThread(str(archive_path), archive_metadata)
+            self._archive_writer.start()
             self._archive_path = str(archive_path)
             self._archive_write_count = 0
-            # Write a metadata header line for later reference
-            try:
-                metadata = {
-                    'metadata': {
-                        'channels': self.config.get('channels', []),
-                        'repeat': self.config.get('repeat', 1),
-                        'ground_pin': self.config.get('ground_pin'),
-                        'use_ground': self.config.get('use_ground'),
-                        'osr': self.config.get('osr'),
-                        'gain': self.config.get('gain'),
-                        'reference': self.config.get('reference'),
-                        'notes': self.notes_input.toPlainText() if hasattr(self, 'notes_input') else None,
-                        'start_time': datetime.now().isoformat()
-                    }
-                }
-                self._archive_file.write(json.dumps(metadata) + '\n')
-            except Exception:
-                pass
             self.log_status(f"Archive opened: {self._archive_path}")
         except Exception as e:
+            self._archive_writer = None
             self.log_status(f"WARNING: Could not open archive file: {e}")
 
         try:
@@ -892,7 +890,6 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
             self.serial_thread.set_capturing(False)
         
         # Log final timing summary
-        time.sleep(0.1)  # Wait for Arduino to finish sending binary data
         if hasattr(self, 'arduino_sample_times') and self.arduino_sample_times:
             avg_sample_time = sum(self.arduino_sample_times) / len(self.arduino_sample_times)
             total_rate = 1000000.0 / avg_sample_time if avg_sample_time > 0 else 0
@@ -908,8 +905,10 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
         self.update_start_button_state()  # Restore start button to proper state
         self.set_controls_enabled(True)
 
-        # Final safety: discard any leftover bytes so the next capture starts clean
-        self.drain_serial_input(0.3)
+        # Brief final flush to clear any bytes that arrived in the last few ms.
+        # The 500ms drain in stop_capture already handled the bulk; this is just
+        # a short reset so the next capture starts with a clean serial buffer.
+        self.drain_serial_input(0.05)
         
         # Enable Full View button now that capture is finished (unless already in full view)
         if not self.is_full_view:
@@ -932,18 +931,14 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
             f"ADC - Sweeps: {self.sweep_count} | Samples: {total_samples}  |  Force: {force_samples} samples"
         )
 
-        # Close archive file if open
+        # Signal archive writer to finish in the background (non-blocking).
+        # The writer thread is daemon=True and will close the file on its own.
+        # We don't join here so the GUI stays responsive immediately after Stop.
         try:
-            if self._archive_file:
-                try:
-                    self._archive_file.flush()
-                except Exception:
-                    pass
-                try:
-                    self._archive_file.close()
-                except Exception:
-                    pass
-                self.log_status(f"Archive saved: {self._archive_path}")
+            if getattr(self, '_archive_writer', None):
+                self._archive_writer.stop_nowait()
+                self._archive_writer = None
+                self.log_status(f"Archive saving in background: {self._archive_path}")
         except Exception:
             pass
         # Close block timing file if open
@@ -1018,8 +1013,8 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
 
             # Clear all data structures with thread safety
             with self.buffer_lock:
-                self.raw_data.clear()
-                self.sweep_timestamps.clear()
+                self.raw_data = []
+                self.sweep_timestamps = []
                 self.sweep_count = 0
                 self.buffer_write_index = 0
                 # Reset buffer to zeros (optional, but cleaner)
@@ -1110,17 +1105,10 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
     def _close_capture_cache_handles(self):
         """Close open cache file handles, if any."""
         try:
-            if self._archive_file:
-                try:
-                    self._archive_file.flush()
-                except Exception:
-                    pass
-                try:
-                    self._archive_file.close()
-                except Exception:
-                    pass
+            if getattr(self, '_archive_writer', None):
+                self._archive_writer.stop()
         finally:
-            self._archive_file = None
+            self._archive_writer = None
 
         try:
             if self._block_timing_file:

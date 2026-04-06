@@ -5,19 +5,17 @@ Handles processing of binary ADC data blocks from Arduino.
 """
 
 import time
-import json
 import csv
-from typing import List
 
 import numpy as np
 
-from config_constants import MAX_TIMING_SAMPLES, PLOT_UPDATE_FREQUENCY, MAX_PLOT_SWEEPS
+from config_constants import MAX_TIMING_SAMPLES, MAX_PLOT_SWEEPS, PLOT_UPDATE_INTERVAL_SEC
 
 
 class BinaryProcessorMixin:
     """Mixin for binary ADC data processing."""
     
-    def process_binary_sweep(self, samples: List[int], avg_sample_time_us: int, block_start_us: int, block_end_us: int):
+    def process_binary_sweep(self, samples: np.ndarray, avg_sample_time_us: int, block_start_us: int, block_end_us: int):
         """Process incoming binary block data containing one or more sweeps.
         
         The Arduino now sends blocks of sweeps. Each block contains:
@@ -118,7 +116,9 @@ class BinaryProcessorMixin:
                         f"avg_dt_us={avg_sample_time_us}"
                     )
 
-                block_samples_array = np.array(samples[:total_samples], dtype=np.float32).reshape(sweeps_in_block, samples_per_sweep)
+                # Keep uint16 view for archive (preserves integer format); cast to float32 for processing.
+                block_u16 = samples[:total_samples].reshape(sweeps_in_block, samples_per_sweep)
+                block_samples_array = block_u16.astype(np.float32)
                 total_fs_hz = (1000000.0 / avg_sample_time_us) if avg_sample_time_us > 0 else 0.0
                 try:
                     filtered_block_array = self.filter_sweeps_block(block_samples_array, total_fs_hz)
@@ -161,68 +161,63 @@ class BinaryProcessorMixin:
                     except Exception:
                         pass
                 
-                # Process each complete sweep in the block
-                # Write directly to numpy buffer (circular buffer)
-                for sweep_idx in range(sweeps_in_block):
-                    start_idx = sweep_idx * samples_per_sweep
-                    end_idx = start_idx + samples_per_sweep
-                    sweep_samples = samples[start_idx:end_idx]
-                    filtered_sweep_samples = filtered_block_array[sweep_idx, :]
-                    
-                    # Calculate timestamp for this sweep based on MCU timing
-                    # Use wrap-safe 32-bit arithmetic because Arduino micros() overflows ~71 minutes
-                    sweep_time_offset_us = start_idx * avg_sample_time_us
-                    sweep_timestamp_us = (block_start_us + sweep_time_offset_us) & 0xFFFFFFFF
-                    
-                    # Initialize first sweep timestamp - check outside lock, init inside lock
-                    if not hasattr(self, 'first_sweep_timestamp_us'):
-                        with self.buffer_lock:
-                            if not hasattr(self, 'first_sweep_timestamp_us'):
-                                self.first_sweep_timestamp_us = sweep_timestamp_us & 0xFFFFFFFF
-                                self.log_status(f"First sweep timestamp initialized: {self.first_sweep_timestamp_us} µs (wrap-safe)")
-                    
-                    # Calculate relative timestamp (should always start near 0 for new capture)
-                    # Wrap-safe delta to avoid negative time when MCU micros() overflows
-                    delta_us = (sweep_timestamp_us - self.first_sweep_timestamp_us) & 0xFFFFFFFF
-                    sweep_timestamp_sec = delta_us / 1e6
-                    
-                    # Write directly to numpy buffer (circular buffer) with thread safety
+                # --- Vectorized timestamp computation for the whole block ---
+                # Mask block_start_us to uint32 range: pyqtSignal(object) passes
+                # Python ints without truncation, but guard anyway for safety.
+                block_start_us_u32 = int(block_start_us) & 0xFFFFFFFF
+
+                # Each sweep's first sample offset in the total sample stream.
+                sweep_first_sample_idx = np.arange(sweeps_in_block, dtype=np.uint64) * samples_per_sweep
+                sweep_time_offsets_us = sweep_first_sample_idx * int(avg_sample_time_us)
+                # Wrap-safe uint32: Arduino micros() overflows after ~71 minutes.
+                sweep_timestamps_us = (block_start_us_u32 + sweep_time_offsets_us) & 0xFFFFFFFF
+
+                # Initialize first-sweep timestamp reference once per capture.
+                if not hasattr(self, 'first_sweep_timestamp_us'):
                     with self.buffer_lock:
-                        write_pos = self.buffer_write_index % self.MAX_SWEEPS_BUFFER
-                        self.raw_data_buffer[write_pos, :] = sweep_samples
-                        self.processed_data_buffer[write_pos, :] = filtered_sweep_samples
-                        self.sweep_timestamps_buffer[write_pos] = sweep_timestamp_sec
-                        self.buffer_write_index += 1
-                        self.sweep_count += 1
+                        if not hasattr(self, 'first_sweep_timestamp_us'):
+                            self.first_sweep_timestamp_us = int(sweep_timestamps_us[0])
+                            self.log_status(
+                                f"First sweep timestamp initialized: {self.first_sweep_timestamp_us} µs (wrap-safe)"
+                            )
 
-                    # Also keep in list for archive writing (only if archive is active)
-                    if store_capture_data and self._archive_file:
-                        try:
-                            archive_entry = {
-                                'timestamp_s': float(sweep_timestamp_sec),
-                                'samples': list(sweep_samples)
-                            }
-                            self._archive_file.write(json.dumps(archive_entry) + '\n')
-                            self._archive_write_count += 1
-                            if self._archive_write_count % 1000 == 0:
-                                try:
-                                    self._archive_file.flush()
-                                except Exception:
-                                    pass
-                        except Exception:
-                            pass
+                delta_us = (sweep_timestamps_us - self.first_sweep_timestamp_us) & 0xFFFFFFFF
+                sweep_timestamps_sec = delta_us / 1_000_000.0
 
-                # Update plot periodically for performance, but render the first few
-                # sweeps immediately so slow/low-buffer devices still show activity.
-                should_refresh_plot = (
-                    store_capture_data and (
-                        self.sweep_count <= PLOT_UPDATE_FREQUENCY
-                        or self.sweep_count % PLOT_UPDATE_FREQUENCY == 0
-                    )
+                # --- Vectorized circular buffer write (single lock per block) ---
+                positions = (
+                    self.buffer_write_index + np.arange(sweeps_in_block)
+                ) % self.MAX_SWEEPS_BUFFER
+
+                with self.buffer_lock:
+                    self.raw_data_buffer[positions] = block_samples_array
+                    self.processed_data_buffer[positions] = filtered_block_array.astype(np.float32, copy=False)
+                    self.sweep_timestamps_buffer[positions] = sweep_timestamps_sec
+                    self.buffer_write_index += sweeps_in_block
+                    self.sweep_count += sweeps_in_block
+
+                # Cache avg sample time so update_plot avoids O(n) list sum on every frame.
+                self._cached_avg_sample_time_sec = (
+                    avg_sample_time_us / 1_000_000.0 if avg_sample_time_us > 0 else 0.0
                 )
-                if should_refresh_plot:
-                    self.update_plot()
-                    # Update info label based on current view mode - use buffer counts!
+
+                # --- Enqueue archive write (handled by background ArchiveWriterThread) ---
+                if store_capture_data and getattr(self, '_archive_writer', None):
+                    # Pass uint16 block so row.tolist() produces integers matching original format.
+                    self._archive_writer.enqueue(sweep_timestamps_sec, block_u16)
+
+                # Rate-limit plot updates to ~5 FPS using wall-clock time.
+                # The old sweep_count % N check broke when sweep_count jumps by
+                # sweeps_in_block (the remainder may never land on zero).
+                # Direct call is safe because process_binary_sweep runs on the
+                # GUI thread (queued Qt signal connection).
+                if store_capture_data:
+                    now = time.time()
+                    if now - getattr(self, '_last_plot_update_time', 0.0) >= PLOT_UPDATE_INTERVAL_SEC:
+                        self._last_plot_update_time = now
+                        self.update_plot()
+                        self.update_force_plot()
+                    # Always update the info label
                     actual_sweeps = min(self.sweep_count, self.MAX_SWEEPS_BUFFER)
                     total_samples = actual_sweeps * samples_per_sweep
                     force_samples = len(self.force_data)
@@ -236,7 +231,6 @@ class BinaryProcessorMixin:
                         self.plot_info_label.setText(
                             f"ADC - Sweeps: {self.sweep_count} (showing last {displayed_sweeps}) | Samples: {total_samples}  |  Force: {force_samples} samples"
                         )
-                    self.update_force_plot()
                 
                 # Track when this buffer finished being received
                 block_end_time = time.time()

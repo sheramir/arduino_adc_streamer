@@ -133,7 +133,8 @@ class ADCStreamerGUI(
 
     def _init_archive_state(self):
         """Initialize archive file state."""
-        self._archive_file = None
+        self._archive_writer = None
+        self._archive_file = None  # kept for backward compat; no longer used for writing
         self._archive_path: Optional[str] = None
         self._archive_write_count = 0
         self._block_timing_file = None
@@ -143,9 +144,11 @@ class ADCStreamerGUI(
 
     def _init_force_state(self):
         """Initialize force sensor state."""
+        import collections
         self.force_serial_port: Optional[serial.Serial] = None
         self.force_serial_thread: Optional[QThread] = None
-        self.force_data: List[tuple] = []
+        # Bounded deque: auto-drops oldest samples when full (no unbounded growth).
+        self.force_data = collections.deque(maxlen=MAX_FORCE_SAMPLES)
         self.force_start_time: Optional[float] = None
         self.force_calibration_offset = {'x': 0.0, 'z': 0.0}
         self.force_calibrating = False

@@ -8,8 +8,6 @@ import csv
 import json
 from pathlib import Path
 
-from PyQt6.QtWidgets import QApplication
-
 
 class ArchiveLoaderMixin:
     """Mixin class for archive loading operations."""
@@ -122,47 +120,65 @@ class ArchiveLoaderMixin:
             return None, None
     
     def full_graph_view(self):
-        """Show full data view by loading ALL data from archive file."""
+        """Show full data view by reading directly from in-memory circular buffer.
+
+        Reading from the buffer (rather than the archive file) guarantees that all
+        captured sweeps are available immediately after capture stops, regardless of
+        whether the background archive writer has finished flushing to disk.
+        """
+        import numpy as np
+
         if self.is_capturing:
             self.log_status("Cannot activate full view during capture")
             return
-        
-        if not self._archive_path:
-            self.log_status("No archive file available for full view")
+
+        active_buffer = self.get_active_data_buffer()
+        if active_buffer is None:
+            self.log_status("No data buffer available for full view")
             return
-        
-        # Load all data from archive
-        self.log_status("Activating full view - loading from archive...")
-        QApplication.processEvents()  # Update UI
-        
-        all_sweeps, all_timestamps = self.load_archive_data()
-        if all_sweeps is None:
-            self.log_status("Failed to load archive data")
-            return
-        
-        # Temporarily store current data
-        backup_raw_data = self.raw_data
-        backup_timestamps = self.sweep_timestamps
-        
-        # Replace with full archive data
-        self.raw_data = all_sweeps
-        self.sweep_timestamps = all_timestamps
-        
-        # Mark that we're in full view mode
+
+        with self.buffer_lock:
+            current_sweep_count = self.sweep_count
+            write_pos = self.buffer_write_index  # already wrapped to [0, MAX_SWEEPS_BUFFER)
+            actual_sweeps = min(current_sweep_count, self.MAX_SWEEPS_BUFFER)
+
+            if actual_sweeps == 0:
+                self.log_status("No captured data to display in full view")
+                return
+
+            # Re-order the circular buffer so index 0 is the oldest sweep.
+            if actual_sweeps < self.MAX_SWEEPS_BUFFER:
+                # Buffer has not wrapped: valid data lives in [0, actual_sweeps).
+                ordered_data = active_buffer[:actual_sweeps].copy()
+                ordered_timestamps = self.sweep_timestamps_buffer[:actual_sweeps].copy()
+            else:
+                # Buffer has wrapped: oldest starts at write_pos.
+                ordered_data = np.concatenate(
+                    [active_buffer[write_pos:], active_buffer[:write_pos]]
+                )
+                ordered_timestamps = np.concatenate(
+                    [self.sweep_timestamps_buffer[write_pos:],
+                     self.sweep_timestamps_buffer[:write_pos]]
+                )
+
+        # Store as numpy arrays; update_plot's full-view branch handles these via
+        # np.asarray (zero-copy when dtype already matches).
+        self.raw_data = ordered_data          # shape: (actual_sweeps, samples_per_sweep)
+        self.sweep_timestamps = ordered_timestamps  # shape: (actual_sweeps,)
+
         self.is_full_view = True
         self.full_view_btn.setEnabled(False)
-        
-        # Update plots
+
         self.update_plot()
         self.update_force_plot()
-        
+
         # Update info label
-        total_samples = sum(len(sweep) for sweep in self.raw_data)
+        total_samples = actual_sweeps * ordered_data.shape[1] if ordered_data.ndim == 2 else actual_sweeps
         force_samples = len(self.force_data)
-        time_range = self.sweep_timestamps[-1] - self.sweep_timestamps[0] if len(self.sweep_timestamps) > 1 else 0
-        
+        time_range = float(ordered_timestamps[-1] - ordered_timestamps[0]) if len(ordered_timestamps) > 1 else 0.0
+
         self.plot_info_label.setText(
-            f"ADC - Sweeps: {len(self.raw_data)} (FULL VIEW) | Samples: {total_samples} | Time: {time_range:.2f}s  |  Force: {force_samples} samples"
+            f"ADC - Sweeps: {actual_sweeps} (FULL VIEW) | Samples: {total_samples} | "
+            f"Time: {time_range:.2f}s  |  Force: {force_samples} samples"
         )
-        
-        self.log_status(f"Full view active: {len(self.raw_data)} sweeps, {time_range:.2f}s")
+        self.log_status(f"Full view active: {actual_sweeps} sweeps, {time_range:.2f}s")

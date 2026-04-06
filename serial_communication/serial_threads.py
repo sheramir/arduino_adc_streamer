@@ -4,13 +4,14 @@ Serial Reader Threads
 Background threads for reading serial data without blocking the GUI.
 """
 
+import numpy as np
 from PyQt6.QtCore import QThread, pyqtSignal
 
 
 class SerialReaderThread(QThread):
     """Background thread for reading serial data without blocking the GUI."""
     data_received = pyqtSignal(str)
-    binary_sweep_received = pyqtSignal(list, int, int, int)  # samples, avg_sample_time_us, block_start_us, block_end_us
+    binary_sweep_received = pyqtSignal(object, object, object, object)  # samples (np.ndarray uint16), avg_sample_time_us, block_start_us, block_end_us
     error_occurred = pyqtSignal(str)
 
     def __init__(self, serial_port):
@@ -47,103 +48,123 @@ class SerialReaderThread(QThread):
 
     def process_binary_data(self, buffer):
         """Process buffer for binary block packets and ASCII messages.
-        
+
         Binary blocks contain multiple sweeps:
         - Header: [0xAA][0x55][countL][countH] (4 bytes)
         - Payload: count samples as uint16_t little-endian
-        - Each block may contain multiple sweeps
-        
+        - Footer: avg_sample_time_us (uint16 LE) + block_start_us (uint32 LE) + block_end_us (uint32 LE)
+
+        Uses an integer offset to avoid creating new bytearray slices on every
+        packet — all consumed bytes are removed in a single ``del buffer[:n]``
+        at the end of the loop.
+
+        Samples are parsed with ``numpy.frombuffer`` (zero-copy, no Python loop)
+        and emitted as a ``numpy.ndarray`` of dtype ``uint16``.
+
         If not capturing, binary packets are discarded (but not logged as errors).
         """
-        while len(buffer) >= 2:
-            # Look for binary block packet first (0xAA 0x55 header) - most reliable
-            if len(buffer) >= 2 and buffer[0] == 0xAA and buffer[1] == 0x55:
-                if len(buffer) < 4:
+        buf_start = 0
+        buf_len = len(buffer)
+
+        while buf_start <= buf_len - 2:
+            b0 = buffer[buf_start]
+            b1 = buffer[buf_start + 1]
+
+            # ----------------------------------------------------------------
+            # Binary block packet (0xAA 0x55 header)
+            # ----------------------------------------------------------------
+            if b0 == 0xAA and b1 == 0x55:
+                if buf_len - buf_start < 4:
                     break  # Need more data for header
-                
-                sample_count = buffer[2] | (buffer[3] << 8)
+
+                sample_count = buffer[buf_start + 2] | (buffer[buf_start + 3] << 8)
                 expected = self.expected_samples_per_sweep
+
                 if sample_count <= 0:
-                    buffer = buffer[1:]
+                    buf_start += 1
                     continue
+
                 if expected and sample_count % expected != 0:
-                    # Likely a false header match inside payload or a desynced stream.
+                    # False header match or desynced stream.
                     if self.is_capturing and self._debug_binary_rejections < 10:
                         self._debug_binary_rejections += 1
                         self.error_occurred.emit(
                             f"Binary packet rejected: sample_count={sample_count}, expected_multiple={expected}"
                         )
-                    buffer = buffer[1:]
+                    buf_start += 1
                     continue
-                # New format: header(4) + samples(count*2) + avg_time(2) + block_start_us(4) + block_end_us(4)
+
+                # header(4) + samples(count*2) + avg_time(2) + block_start_us(4) + block_end_us(4)
                 packet_size = 4 + (sample_count * 2) + 2 + 8
 
-                if len(buffer) < packet_size:
-                    break  # Need more data for complete block
-                
-                # Only process and emit if capturing
+                if buf_len - buf_start < packet_size:
+                    break  # Need more data for complete packet
+
                 if self.is_capturing:
                     if self._debug_binary_packets_seen < 10:
                         self._debug_binary_packets_seen += 1
                         self.error_occurred.emit(
                             f"Binary packet accepted: sample_count={sample_count}, expected_multiple={expected}, packet_size={packet_size}"
                         )
-                    # Extract all samples in block (little-endian uint16)
-                    samples = []
-                    for i in range(sample_count):
-                        idx = 4 + (i * 2)
-                        sample = buffer[idx] | (buffer[idx + 1] << 8)
-                        samples.append(sample)
-                    
-                    # Extract average sampling time (us) from last 2 bytes (little-endian uint16)
-                    avg_time_idx = 4 + (sample_count * 2)
-                    avg_sample_time_us = buffer[avg_time_idx] | (buffer[avg_time_idx + 1] << 8)
 
-                    # Extract block start/end micros (little-endian uint32)
-                    ts_idx = avg_time_idx + 2
-                    block_start_us = (
-                        buffer[ts_idx]
-                        | (buffer[ts_idx + 1] << 8)
-                        | (buffer[ts_idx + 2] << 16)
-                        | (buffer[ts_idx + 3] << 24)
-                    )
-                    block_end_us = (
-                        buffer[ts_idx + 4]
-                        | (buffer[ts_idx + 5] << 8)
-                        | (buffer[ts_idx + 6] << 16)
-                        | (buffer[ts_idx + 7] << 24)
+                    # --- Parse samples with frombuffer (no Python loop) ---
+                    payload_start = buf_start + 4
+                    payload_end = payload_start + sample_count * 2
+                    # .copy() so the array owns its data before buffer is trimmed below
+                    samples = np.frombuffer(
+                        memoryview(buffer)[payload_start:payload_end], dtype='<u2'
+                    ).copy()
+
+                    # avg_sample_time_us: uint16 LE, 2 bytes after payload
+                    avg_time_offset = payload_end
+                    avg_sample_time_us = int.from_bytes(
+                        buffer[avg_time_offset:avg_time_offset + 2], 'little'
                     )
 
-                    # Emit block with average sampling time and MCU timestamps
-                    self.binary_sweep_received.emit(samples, avg_sample_time_us, block_start_us, block_end_us)
-                
-                # Remove processed packet from buffer (whether capturing or not)
-                buffer = buffer[packet_size:]
+                    # block_start_us / block_end_us: uint32 LE, 4 bytes each
+                    # Use int.from_bytes (copies bytes immediately) instead of
+                    # np.frombuffer so no memoryview holds a live export on the
+                    # bytearray at the point of the del buffer[:n] trim below.
+                    ts_offset = avg_time_offset + 2
+                    block_start_us = int.from_bytes(
+                        buffer[ts_offset:ts_offset + 4], 'little'
+                    )
+                    block_end_us = int.from_bytes(
+                        buffer[ts_offset + 4:ts_offset + 8], 'little'
+                    )
+
+                    self.binary_sweep_received.emit(
+                        samples, avg_sample_time_us, block_start_us, block_end_us
+                    )
+
+                buf_start += packet_size
                 continue
-            
-            # Look for ASCII messages (lines starting with #)
-            if buffer[0] == ord('#'):
-                # Find newline
+
+            # ----------------------------------------------------------------
+            # ASCII message (lines starting with '#')
+            # ----------------------------------------------------------------
+            if b0 == ord('#'):
                 try:
-                    newline_idx = buffer.index(ord('\n'))
-                    line = buffer[:newline_idx].decode('utf-8', errors='strict').strip()
-                    # Only emit if it's valid printable ASCII (not corrupted binary)
+                    newline_idx = buffer.index(ord('\n'), buf_start)
+                    line = bytes(buffer[buf_start:newline_idx]).decode('utf-8', errors='strict').strip()
                     if line and line.isprintable():
                         self.data_received.emit(line)
-                    buffer = buffer[newline_idx + 1:]
+                    buf_start = newline_idx + 1
                     continue
                 except (ValueError, UnicodeDecodeError):
-                    # Not valid UTF-8 or no newline - this might be binary data disguised as #
-                    buffer = buffer[1:]  # Skip this byte
+                    buf_start += 1
                     continue
                 except Exception:
-                    # Other error - skip byte
-                    buffer = buffer[1:]
+                    buf_start += 1
                     continue
-            
-            # Unknown byte - skip it to resync
-            buffer = buffer[1:]
-        
+
+            # Unknown byte — skip to resync
+            buf_start += 1
+
+        # Trim all consumed bytes from the buffer in a single operation.
+        if buf_start > 0:
+            del buffer[:buf_start]
+
         return buffer
 
     def set_capturing(self, capturing, expected_samples_per_sweep=None):

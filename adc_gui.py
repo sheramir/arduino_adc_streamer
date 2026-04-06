@@ -134,7 +134,6 @@ class ADCStreamerGUI(
     def _init_archive_state(self):
         """Initialize archive file state."""
         self._archive_writer = None
-        self._archive_file = None  # kept for backward compat; no longer used for writing
         self._archive_path: Optional[str] = None
         self._archive_write_count = 0
         self._block_timing_file = None

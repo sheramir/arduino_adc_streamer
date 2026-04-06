@@ -4,7 +4,6 @@ Control Panels Mixin
 GUI components for serial connection, ADC configuration, acquisition settings, and run control.
 """
 
-import os
 from PyQt6.QtWidgets import (
     QGroupBox, QGridLayout, QLabel, QPushButton, QLineEdit, 
     QComboBox, QCheckBox, QSpinBox, QDoubleSpinBox

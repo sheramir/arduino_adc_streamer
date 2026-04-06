@@ -230,7 +230,7 @@ class DisplayPanelsMixin:
 
         self.full_view_btn = QPushButton("Full View")
         self.full_view_btn.clicked.connect(self.full_graph_view)
-        self.full_view_btn.setToolTip("Show all data from 0 to last sample (only available after capture finishes)")
+        self.full_view_btn.setToolTip("Show the complete capture from Start to Stop, loading cache data when needed")
         self.full_view_btn.setMaximumWidth(100)
         self.full_view_btn.setEnabled(False)  # Disabled by default (enabled after capture)
         display_settings_layout.addWidget(self.full_view_btn, 1, 3)

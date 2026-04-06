@@ -11,6 +11,29 @@ from pathlib import Path
 
 class ArchiveLoaderMixin:
     """Mixin class for archive loading operations."""
+
+    def _capture_exceeds_memory_buffer(self) -> bool:
+        """Return True when the capture has overflowed the in-memory ring buffer."""
+        try:
+            with self.buffer_lock:
+                return int(self.sweep_count) > int(self.MAX_SWEEPS_BUFFER)
+        except Exception:
+            return False
+
+    def _finalize_archive_if_active(self) -> None:
+        """Block until the background archive writer has fully drained and closed."""
+        writer = getattr(self, '_archive_writer', None)
+        if writer is None:
+            return
+
+        try:
+            if writer.is_alive():
+                self.log_status("Waiting for archive save to finish before loading full view...")
+            writer.stop()
+        except Exception as e:
+            self.log_status(f"WARNING: Failed to finalize archive writer cleanly: {e}")
+        finally:
+            self._archive_writer = None
     
     def load_archive_data(self):
         """Load all sweep data from archive file for full view.
@@ -120,17 +143,44 @@ class ArchiveLoaderMixin:
             return None, None
     
     def full_graph_view(self):
-        """Show full data view by reading directly from in-memory circular buffer.
+        """Show the complete Start->Stop capture window in full view.
 
-        Reading from the buffer (rather than the archive file) guarantees that all
-        captured sweeps are available immediately after capture stops, regardless of
-        whether the background archive writer has finished flushing to disk.
+        Short captures are loaded directly from the in-memory circular buffer for
+        responsiveness. When the capture exceeds the ring-buffer capacity, full
+        view falls back to the persisted archive so older sweeps that have already
+        rolled out of memory are still included.
         """
         import numpy as np
 
         if self.is_capturing:
             self.log_status("Cannot activate full view during capture")
             return
+
+        if self._capture_exceeds_memory_buffer():
+            self._finalize_archive_if_active()
+            sweeps, timestamps = self.load_archive_data()
+            if not sweeps or not timestamps:
+                self.log_status("WARNING: Full archive unavailable; falling back to buffered data only")
+            else:
+                self.raw_data = np.asarray(sweeps, dtype=np.float32)
+                self.sweep_timestamps = np.asarray(timestamps, dtype=np.float64)
+                actual_sweeps = len(self.raw_data)
+                self.is_full_view = True
+                self.full_view_btn.setEnabled(False)
+
+                self.update_plot()
+                self.update_force_plot()
+
+                total_samples = actual_sweeps * self.raw_data.shape[1] if self.raw_data.ndim == 2 else actual_sweeps
+                force_samples = len(self.force_data)
+                time_range = float(self.sweep_timestamps[-1] - self.sweep_timestamps[0]) if len(self.sweep_timestamps) > 1 else 0.0
+
+                self.plot_info_label.setText(
+                    f"ADC - Sweeps: {actual_sweeps} (FULL VIEW) | Samples: {total_samples} | "
+                    f"Time: {time_range:.2f}s  |  Force: {force_samples} samples"
+                )
+                self.log_status(f"Full view active from archive: {actual_sweeps} sweeps, {time_range:.2f}s")
+                return
 
         active_buffer = self.get_active_data_buffer()
         if active_buffer is None:

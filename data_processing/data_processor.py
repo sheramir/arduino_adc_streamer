@@ -937,7 +937,6 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
         try:
             if getattr(self, '_archive_writer', None):
                 self._archive_writer.stop_nowait()
-                self._archive_writer = None
                 self.log_status(f"Archive saving in background: {self._archive_path}")
         except Exception:
             pass

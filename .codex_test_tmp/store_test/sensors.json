@@ -1,1 +1,0 @@
-{"configurations": [{"name": "PLUS", "channel_sensor_map": ["R", "B", "C", "L", "T"]}, {"name": "ARRAY_v1", "channel_sensor_map": ["T", "L", "B", "R", "C"]}]}

@@ -1,258 +1,62 @@
 # Arduino ADC Streamer
 
-High-speed ADC data acquisition system for Arduino-based boards with real-time visualization and analysis. This repository includes a comprehensive Python GUI application and Arduino firmware for streaming analog sensor data at high sample rates with advanced features like ground subtraction, repeat averaging, and force sensor integration.
+Desktop GUI and firmware workspace for high-speed sensor acquisition, plotting, force sensing, heatmap visualization, and export.
 
-## 🚀 Quick Start
+## Quick Start
 
-1. **Upload Arduino Sketch**:
-   - Navigate to `Arduino_Sketches/MG24/ADC_Streamer_binary_scan/`
-   - Open `ADC_Streamer_binary_scan.ino` in Arduino IDE
-   - Upload to your XIAO MG24 board (or compatible)
-
-2. **Install Python Dependencies**:
+1. Upload the recommended firmware from `Arduino_Sketches/MG24/ADC_Streamer_binary_scan/`.
+2. Install Python dependencies:
    ```bash
    pip install -r requirements.txt
    ```
-
-3. **Run the GUI**:
+3. Run the GUI:
    ```bash
    python adc_gui.py
-   # Or with uv:
+   # or
    uv run adc_gui.py
-   
-   # To test the modular architecture (demo):
-   python adc_gui_refactored_demo.py
    ```
 
-## 📁 Repository Contents
+## Repository Layout
 
-### Main Application Files
-- **`adc_gui.py`**: Main GUI entry point
-- **`config_constants.py`**: Centralized configuration constants
-- **`buffer_utils.py`**: Buffer optimization and validation utilities
-- **`requirements.txt`**: Python package dependencies
+### Application
+- `adc_gui.py` - main GUI entry point
+- `config/` - board detection, configuration, and buffer helpers
+- `serial_communication/` - ADC and force serial communication
+- `data_processing/` - capture, plotting, filtering, heatmap, shear, and spectrum logic
+- `gui/` - panel construction and GUI widgets
+- `file_operations/` - export and archive loading
 
-### Modular Code Structure
-- **`serial_communication/`**: Serial port handling and data acquisition threads
-- **`gui/`**: GUI component creation (planned)
-- **`data_processing/`**: Data processing and analysis (planned)
-- **`config/`**: Configuration management (planned)
-- **`file_operations/`**: Data export functionality (planned)
+### Firmware
+- `Arduino_Sketches/` - MG24, Teensy, and SPI sketch variants
 
-See **[README_REFACTORING.md](README_REFACTORING.md)** for detailed architecture documentation.
-
-### Arduino Sketches
-- **`Arduino_Sketches/MG24/ADC_Streamer_binary_scan/`**: **Current sketch** - Binary streaming with buffered blocks (recommended)
-- **`Arduino_Sketches/MG24/ADC_Streamer_binary/`**: Binary streaming (legacy)
-- **`Arduino_Sketches/MG24/ADC_Streamer_binary_buffer/`**: Binary with buffer (legacy)
-- **`Arduino_Sketches/MG24/ADC_Streamer XIAO MG24/`**: ASCII streaming (legacy)
+### Tests
+- `tests/` - current automated test modules
 
 ### Documentation
-- **`GUI_README.md`**: Comprehensive GUI user guide
-- **`README_REFACTORING.md`**: Code architecture and modularization guide
-- **`BUFFER_OPTIMIZATION.md`**: Buffer size optimization guide
-- **`IADC_UPDATE_CHANGES.md`**: IADC firmware update notes
+- `docs/user/ARRAY_CONFIGURATION_GUIDE.md` - configuring array sensor layouts
+- `docs/user/HEATMAP_README.md` - current heatmap behavior and usage
+- `docs/architecture/HEATMAP_IMPLEMENTATION.md` - implementation notes
+- `docs/history/` - historical refactor and phase-completion notes
 
-## ✨ Features
+## Main Features
 
-### Hardware Support
-- 🔌 **XIAO MG24**: 12-bit IADC with oversampling (OSR 2×, 4×, 8×)
-- 🧪 **Teensy 4.0 + Teensy555_streamer**: 555 timing analyzer streaming resistance-like channel values
-- 📊 **Multi-channel scanning**: Up to 18 analog input pins
-- ⚡ **High-speed acquisition**: Up to 76 kHz per channel (OSR 2×)
-- 🔄 **Ground subtraction**: Automatic background subtraction with dedicated ground pin
-- 🎯 **Analog gain**: 1×, 2×, 3×, 4× amplification
+- Real-time ADC plotting with configurable windowing
+- Full-view loading from archive cache when captures exceed RAM
+- Live force overlay synchronized against ADC capture timing
+- Heatmap views for grouped 5-channel sensors and array sensor layouts
+- Shear / center-of-pressure view for MG-24 piezo layouts
+- Shared filtering pipeline for time series and spectrum views
+- CSV export, plot export, and cached archive capture
 
-### Data Acquisition
-- 🔁 **Repeat averaging**: 1-16 measurements per channel per sweep (hardware limit)
-- 📦 **Buffered streaming**: Configurable block size (up to 32,000 samples)
-- ⏱️ **Timing measurement**: Per-sample and block-gap timing from Arduino
-- 🕐 **Timed runs**: Fixed-duration captures with automatic stop
+## Configuration Files
 
-### Visualization & Analysis
-- 📈 **Real-time plotting**: Fast pyqtgraph-based visualization with scrolling window
-- 🧭 **Shear / CoP tab**: Live MG-24 shear vector extraction with a Gaussian CoP blob, arrow overlay, and confidence score
-- 🎨 **Channel selection**: Individual channel display control
-- 📊 **Display modes**: View all repeats or averaged data
-- 🔍 **Zoom/pan**: Interactive plot navigation
-- 📏 **Dual Y-axes**: ADC values or voltage conversion
-- 💪 **Force sensor support**: Dual-axis force measurement overlay (115200 baud CSV)
-- 🎛️ **Real-time filtering**: User-configurable Notch/LP/HP/BP filtering with shared processing for time-series + spectrum
+These bundled config files intentionally remain at the repository root because the app loads them from there:
 
-### Filtering (Time Series + Spectrum)
-- Filter controls are in the **Spectrum** tab under **Filtering**.
-- One master toggle controls filtering ON/OFF.
-- Supports up to 3 notch filters (default: 60 Hz + 120 Hz enabled), each with enable/frequency/Q.
-- Supports one main filter at a time: **Low-pass**, **High-pass**, or **Band-pass**.
-- Notch filters can be combined with one main filter.
-- The pipeline is shared:
-   - `raw samples -> optional filter engine -> processed samples`
-   - time-series uses processed samples when filtering is ON
-   - spectrum/FFT uses the same processed samples when filtering is ON
-- Uses stable IIR SOS filtering (SciPy) with per-channel state continuity across blocks.
+- `sensor_configurations.json`
+- `sensors.json`
+- `plus_heatmap_config.json`
 
-### Data Management
-- 💾 **CSV export**: Timestamped data with full metadata
-- 🖼️ **Plot export**: Save visualization as PNG images
-- 📝 **Notes**: Add experimental notes to saved files
-- 🎯 **Range selection**: Export specific sweep ranges
+## Notes
 
-## 🔧 Requirements
-
-### Software
-- **Python**: 3.8+ (tested with 3.11)
-- **Packages**: PyQt6, pyserial, pyqtgraph, numpy
-- **Arduino IDE**: 1.8+ or Arduino CLI
-
-### Hardware
-- **Primary**: Seeed XIAO MG24 (12-bit IADC, 76 kHz max)
-- **Force Sensor** (optional): Serial CSV output (X, Z axes)
-
-## 📖 Configuration
-
-### ADC Settings
-- **Voltage Reference**: 1.2V (internal) or 3.3V (VDD)
-- **Oversampling (OSR)**: 2, 4, or 8 (higher = better SNR, lower sample rate)
-- **Analog Gain**: 1×, 2×, 3×, 4× (applied before ADC)
-
-### MCU-Aware Device Modes
-- The GUI detects MCU type automatically on connect.
-- If MCU name contains **`555`** (e.g. `Teensy555`), the app switches to **555 analyzer mode**.
-- Otherwise, it stays in **ADC streamer mode**.
-
-#### 555 Analyzer Mode
-- ADC-specific controls are hidden/disabled (ground pin, averaging/OSR, conversion speed, sampling speed).
-- 555 parameter controls are shown:
-   - **Cf** (with pF/nF/uF unit selector, converted to farads before send)
-   - **Rk** (ohms)
-   - **Rb** (ohms)
-   - **Rx max** (ohms)
-- Time-series plotting is interpreted as **resistance-like values** and labeled in ohms.
-- Time-series tab shows computed timing readouts:
-   - $T_{charge}=\ln(2)\,C_f\,(R_x + R_k + R_b)$
-   - $T_{discharge}=\ln(2)\,C_f\,R_b$
-
-### Acquisition Settings
-- **Channel Sequence**: Comma-separated list (e.g., `0,1,2,3` or `0,1,1,2,3` for oversampling channel 1)
-- **Repeat Count**: 1-16 measurements per channel per sweep
-- **Ground Pin**: 0-18 (optional, for background subtraction)
-- **Buffer Size**: Sweeps per block sent to PC (validated against 32K sample limit)
-
-### Buffer Optimization
-The GUI automatically validates buffer size against hardware limits:
-- **Formula**: `buffer_size × channels × repeat_count ≤ 32,000 samples`
-- See `BUFFER_OPTIMIZATION.md` for tuning guidelines
-
-### Shear / CoP Tab
-- The **Shear** tab is an additive live view for the existing 5-channel MG-24 piezo layout using `HEATMAP_CHANNEL_SENSOR_MAP = ["C", "R", "B", "L", "T"]`.
-- It performs per-channel baseline centering, light smoothing, signed moving-window integration, deadbanding, and sign-preserving gain calibration.
-- Shear is extracted only from the opposite-sign pairs:
-  - `R/L` for `x_shear`
-  - `T/B` for `y_shear`
-- Residual channel values are shifted non-negative if needed and then reused for CoP estimation with the center sensor included.
-- The tab shows a 2D Gaussian blob at `(X_CoP, Y_CoP)`, a shear arrow, and live numeric readouts for magnitude, angle, confidence, `X_CoP`, and `Y_CoP`.
-- The feature is intended for the MG-24 5-channel piezo path and is not enabled for 555 analyzer mode.
-
-#### Shear Parameters
-New defaults were added in [config_constants.py](/c:/Code/arduino_adc_streamer/config_constants.py):
-- `SHEAR_INTEGRATION_WINDOW_MS`
-- `SHEAR_BASELINE_ALPHA`
-- `SHEAR_CONDITIONING_ALPHA`
-- `SHEAR_DEADBAND_THRESHOLD`
-- `SHEAR_CHANNEL_GAINS`
-- `SHEAR_CHANNEL_BASELINES`
-- `SHEAR_GAUSSIAN_SIGMA_X`
-- `SHEAR_GAUSSIAN_SIGMA_Y`
-- `SHEAR_INTENSITY_SCALE`
-- `SHEAR_ARROW_SCALE`
-- `SHEAR_CONFIDENCE_SIGNAL_REF`
-
-#### Shear Algorithm Flow
-1. Extract the latest per-sensor sample window from the existing circular buffer without changing serial parsing.
-2. Remove tracked baseline/DC, optionally smooth, and integrate the signed signal over the configured window.
-3. Apply signed deadband + per-channel calibration: `signed_mag_i = sign(I_i) * max(0, abs(I_i) - b_i) * g_i`.
-4. Extract shear from opposite-sign `R/L` and `T/B` pairs by canceling the shared magnitude.
-5. Use the residual values to estimate CoP and draw a Gaussian blob.
-6. Score confidence from signal strength, directional dominance, and short-term temporal stability.
-
-## 📊 Arduino Protocol
-
-### Configuration Commands
-```
-ref <value>        - Set voltage reference: "1.2" or "vdd"
-osr <value>        - Set oversampling: 2, 4, or 8
-gain <value>       - Set analog gain: 1, 2, 3, or 4
-channels <list>    - Set channel sequence: "0,1,2,3"
-repeat <count>     - Set repeat count: 1-16
-ground <pin|false> - Set ground pin (0-18) or disable ("false")
-buffer <size>      - Set sweeps per block
-```
-
-### 555 Analyzer Commands
-When in 555 mode, configuration sends only this subset:
-```
-channels <list>
-repeat <count>
-buffer <size>
-rb <value>
-rk <value>
-cf <farads>
-rxmax <value>
-```
-ADC-only commands such as `ref`, `osr`, `gain`, and `ground` are not sent in 555 mode.
-
-### Run Commands
-```
-run           - Start continuous capture
-run <ms>      - Timed capture (milliseconds)
-stop          - Stop capture
-status        - Print current configuration
-```
-
-### Data Format
-- **Binary blocks**: Header `[0xAA][0x55][countL][countH]` + samples (uint16 LE) + timing (uint16 LE)
-- **ASCII messages**: Lines starting with `#` for status/errors
-
-## 🎯 Typical Workflow
-
-1. **Connect** Arduino via serial port
-2. **Configure** ADC settings (reference, OSR, gain)
-3. **Set channels** and acquisition parameters
-4. **Press Configure** to send settings to Arduino
-5. **Press Start** to begin capture and real-time plotting
-6. **Press Stop** when complete
-7. **Save data** as CSV with notes and metadata
-
-## 📚 Documentation
-
-- **[README_REFACTORING.md](README_REFACTORING.md)**: Code architecture and modularization guide
-- **[GUI_README.md](GUI_README.md)**: Complete user guide with screenshots
-- **[BUFFER_OPTIMIZATION.md](BUFFER_OPTIMIZATION.md)**: Performance tuning guide
-- **[IADC_UPDATE_CHANGES.md](IADC_UPDATE_CHANGES.md)**: Firmware change notes
-
-## 🐛 Troubleshooting
-
-### Common Issues
-- **No data received**: Check "Use Ground Sample" is unchecked unless using ground pin
-- **Buffer size error**: Reduce buffer size or repeat count
-- **Configuration fails**: Reset Arduino and reconnect
-- **Intermittent crashes**: Fixed in latest version (Qt thread safety)
-
-### Qt Geometry Warning
-The warning about window geometry can be safely ignored - it's a cosmetic issue with Qt adjusting window size to fit your display.
-
-## 🤝 Contributing
-
-Contributions welcome! Areas for improvement:
-- Additional Arduino board support
-- Advanced signal processing features
-- Export format options
-- Calibration tools
-
-## 📄 License
-
-[Add your license here]
-
----
-
-**Note**: This project has evolved significantly from ASCII to optimized binary streaming with buffering. The current recommended firmware is `ADC_Streamer_binary_scan` which provides the best performance and reliability.
+- Historical docs were moved under `docs/history/` to keep the root focused on the runnable app and active project files.
+- The root-level `tests/` directory now contains the real automated tests; old one-off diagnostic scripts were removed.

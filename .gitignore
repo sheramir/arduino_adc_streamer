@@ -32,6 +32,7 @@ ENV/
 *.swp
 *.swo
 *~
+.codex_test_tmp/
 
 # OS
 .DS_Store

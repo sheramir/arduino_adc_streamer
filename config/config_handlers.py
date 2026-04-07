@@ -228,6 +228,58 @@ class ConfigurationMixin:
 
         return groups
 
+    def get_sensor_package_groups(self, required_channels: int, channels=None):
+        """Return normalized sensor-package groups for array and standard layouts."""
+        if channels is None:
+            channels = self.config.get('channels', [])
+        channels = list(channels or [])
+
+        try:
+            required_channels = max(1, int(required_channels))
+        except (TypeError, ValueError):
+            return []
+
+        if not channels:
+            return []
+
+        if self.is_array_sensor_selection_mode():
+            sensor_groups = self.get_array_selected_sensor_groups()
+            if not sensor_groups:
+                return []
+            if any(len(group.get('channels', [])) != required_channels for group in sensor_groups):
+                return []
+
+            normalized_groups = []
+            for group in sensor_groups:
+                normalized_groups.append({
+                    'sensor_id': group.get('sensor_id'),
+                    'mux': int(group.get('mux', 1)),
+                    'channels': list(group.get('channels', [])),
+                    'positions': list(group.get('positions', [])),
+                })
+            return normalized_groups
+
+        unique_channels = []
+        for channel in channels:
+            if channel not in unique_channels:
+                unique_channels.append(channel)
+
+        if len(unique_channels) < required_channels or len(unique_channels) % required_channels != 0:
+            return []
+
+        package_groups = []
+        for package_index in range(len(unique_channels) // required_channels):
+            start = package_index * required_channels
+            end = (package_index + 1) * required_channels
+            package_groups.append({
+                'sensor_id': None,
+                'mux': 1,
+                'channels': unique_channels[start:end],
+                'positions': [],
+            })
+
+        return package_groups
+
     def get_channels_for_arduino_command(self):
         """Return channel list to send to firmware.
 

@@ -178,32 +178,11 @@ class PiezoHeatmapProcessorMixin:
         if not channels or repeat_count <= 0:
             return None
 
-        use_array_sensor_groups = self.is_array_sensor_selection_mode()
-        array_sensor_groups = self.get_array_selected_sensor_groups() if use_array_sensor_groups else []
+        sensor_package_groups = self.get_sensor_package_groups(HEATMAP_REQUIRED_CHANNELS, channels=channels)
+        if not sensor_package_groups:
+            return None
 
-        standard_package_channels = []
-        if use_array_sensor_groups and array_sensor_groups:
-            if any(len(group.get('channels', [])) != HEATMAP_REQUIRED_CHANNELS for group in array_sensor_groups):
-                return None
-            package_count = len(array_sensor_groups)
-        else:
-            unique_channels = []
-            for ch in channels:
-                if ch not in unique_channels:
-                    unique_channels.append(ch)
-
-            if (
-                len(unique_channels) < HEATMAP_REQUIRED_CHANNELS
-                or len(unique_channels) % HEATMAP_REQUIRED_CHANNELS != 0
-            ):
-                return None
-
-            package_count = len(unique_channels) // HEATMAP_REQUIRED_CHANNELS
-            for package_index in range(package_count):
-                start = package_index * HEATMAP_REQUIRED_CHANNELS
-                end = (package_index + 1) * HEATMAP_REQUIRED_CHANNELS
-                standard_package_channels.append(unique_channels[start:end])
-            array_sensor_groups = []
+        package_count = len(sensor_package_groups)
 
         sample_rate_hz = 1000000.0 / avg_sample_time_us
         per_channel_rate_hz = sample_rate_hz / max(len(channels), 1)
@@ -213,14 +192,9 @@ class PiezoHeatmapProcessorMixin:
         sensor_labels = ['T', 'B', 'R', 'L', 'C']
         package_sensor_values = []
 
-        for package_index in range(package_count):
-            if array_sensor_groups:
-                group = array_sensor_groups[package_index]
-                package_channels = list(group.get('channels', []))
-                package_positions = list(group.get('positions', []))
-            else:
-                package_channels = list(standard_package_channels[package_index])
-                package_positions = []
+        for package_index, group in enumerate(sensor_package_groups):
+            package_channels = list(group.get('channels', []))
+            package_positions = list(group.get('positions', []))
 
             channel_samples = []
             for local_idx, channel in enumerate(package_channels):
@@ -266,11 +240,8 @@ class PiezoHeatmapProcessorMixin:
             noise_floor = settings.get('sensor_noise_floor', [0.0] * len(sensor_values))
             calibration = settings.get('sensor_calibration', [1.0] * len(sensor_values))
             
-            # Determine sensor_id for this package
-            if use_array_sensor_groups and package_index < len(array_sensor_groups):
-                sensor_id = array_sensor_groups[package_index].get('sensor_id', '')
-            else:
-                sensor_id = f"Sensor{package_index + 1}"
+            # Determine sensor_id for this package from the normalized package group.
+            sensor_id = str(group.get('sensor_id') or f"Sensor{package_index + 1}")
             
             # Get per-sensor gains and thresholds from sensor_calibration_dict
             sensor_calibration_dict = settings.get('sensor_calibration_dict', {})

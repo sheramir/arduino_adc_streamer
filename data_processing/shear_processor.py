@@ -48,45 +48,17 @@ class ShearProcessorMixin:
         if not channels or repeat_count <= 0:
             return None
 
-        use_array_sensor_groups = self.is_array_sensor_selection_mode()
-        array_sensor_groups = self.get_array_selected_sensor_groups() if use_array_sensor_groups else []
-
-        standard_package_channels = []
-        if use_array_sensor_groups and array_sensor_groups:
-            if any(len(group.get('channels', [])) != HEATMAP_REQUIRED_CHANNELS for group in array_sensor_groups):
-                return None
-            package_count = len(array_sensor_groups)
-        else:
-            unique_channels = []
-            for channel in channels:
-                if channel not in unique_channels:
-                    unique_channels.append(channel)
-
-            if (
-                len(unique_channels) < HEATMAP_REQUIRED_CHANNELS
-                or len(unique_channels) % HEATMAP_REQUIRED_CHANNELS != 0
-            ):
-                return None
-
-            package_count = len(unique_channels) // HEATMAP_REQUIRED_CHANNELS
-            for package_index in range(package_count):
-                start = package_index * HEATMAP_REQUIRED_CHANNELS
-                end = (package_index + 1) * HEATMAP_REQUIRED_CHANNELS
-                standard_package_channels.append(unique_channels[start:end])
-            array_sensor_groups = []
+        sensor_package_groups = self.get_sensor_package_groups(HEATMAP_REQUIRED_CHANNELS, channels=channels)
+        if not sensor_package_groups:
+            return None
 
         channel_sensor_map = list(settings.get("channel_sensor_map", HEATMAP_CHANNEL_SENSOR_MAP))
         package_sensor_streams = []
 
-        for package_index in range(package_count):
+        for group in sensor_package_groups:
             sensor_streams = {name: np.array([], dtype=np.float64) for name in SHEAR_SENSOR_ORDER}
-            if array_sensor_groups:
-                group = array_sensor_groups[package_index]
-                package_channels = list(group.get('channels', []))
-                package_positions = list(group.get('positions', []))
-            else:
-                package_channels = list(standard_package_channels[package_index])
-                package_positions = []
+            package_channels = list(group.get('channels', []))
+            package_positions = list(group.get('positions', []))
 
             for channel_index, channel in enumerate(package_channels):
                 if package_positions:

@@ -132,6 +132,7 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
                 self.processed_data_buffer.fill(0)
             if zero_buffers and self.sweep_timestamps_buffer is not None:
                 self.sweep_timestamps_buffer.fill(0)
+        self.plot_baselines = {}
 
     def _reset_force_capture_state(self):
         """Reset force samples for a new capture lifecycle."""
@@ -390,9 +391,6 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
             channel_data = (channel_data / max_adc_value) * vref
 
         if getattr(self, 'subtract_baseline_check', None) and self.subtract_baseline_check.isChecked():
-            if not hasattr(self, 'plot_baselines'):
-                self.plot_baselines = {}
-
             if spec['key'] not in self.plot_baselines:
                 self.capture_current_plot_baselines(
                     log_message=False,

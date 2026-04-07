@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-ADC Streamer GUI - Production Modular Version
-==============================================
-Fully refactored modular architecture using mixin classes.
+ADC Streamer GUI
+================
+Main application window composed from focused mixins.
 
 All functionality extracted into focused modules:
 - serial_communication/: ADC & Force serial I/O
@@ -33,18 +33,30 @@ import serial
 # Import configuration constants
 from config_constants import *
 
-# Import refactored modules
+# Import mixin modules
 from serial_communication import ADCSerialMixin, ForceSerialMixin
 from serial_communication.serial_threads import SerialReaderThread
 from config import MCUDetectorMixin, ConfigurationMixin
-from gui import GUIComponentsMixin
+from gui import (
+    ControlPanelsMixin,
+    DisplayPanelsMixin,
+    FilePanelsMixin,
+    HeatmapPanelMixin,
+    SensorPanelMixin,
+    ShearPanelMixin as ShearPanelUIMixin,
+    SpectrumPanelMixin,
+)
 from data_processing import (
     DataProcessorMixin,
     HeatmapProcessorMixin,
     ShearProcessorMixin,
     SpectrumProcessorMixin,
 )
-from file_operations import FileOperationsMixin
+from file_operations import (
+    ArchiveLoaderMixin,
+    DataExporterMixin,
+    PlotExporterMixin,
+)
 
 
 class ADCStreamerGUI(
@@ -52,26 +64,25 @@ class ADCStreamerGUI(
     ADCSerialMixin,         # ✅ Serial communication
     ForceSerialMixin,       # ✅ Force sensor communication
     MCUDetectorMixin,       # ✅ MCU detection
-    GUIComponentsMixin,     # ✅ GUI component creation (includes HeatmapPanelMixin)
+    ControlPanelsMixin,     # ✅ Control panel UI
+    DisplayPanelsMixin,     # ✅ Display panel UI
+    FilePanelsMixin,        # ✅ File panel UI
+    HeatmapPanelMixin,      # ✅ Heatmap panel UI
+    SensorPanelMixin,       # ✅ Sensor panel UI
+    ShearPanelUIMixin,      # ✅ Shear panel UI
+    SpectrumPanelMixin,     # ✅ Spectrum panel UI
     ConfigurationMixin,     # ✅ Configuration management
     DataProcessorMixin,     # ✅ Data processing
     HeatmapProcessorMixin,  # ✅ Heatmap CoP calculation
     ShearProcessorMixin,    # ✅ Shear / CoP calculation
     SpectrumProcessorMixin, # ✅ Spectrum processing
-    FileOperationsMixin     # ✅ File operations
+    DataExporterMixin,      # ✅ Data export
+    PlotExporterMixin,      # ✅ Plot export
+    ArchiveLoaderMixin      # ✅ Archive loading
 ):
     """
-    Production ADC Streamer GUI using fully modular architecture.
-    
-    Completed extractions:
-    - ✅ Serial communication (~600 lines)
-    - ✅ MCU detection (~100 lines)
-    - ✅ GUI components (~470 lines)
-    - ✅ Configuration management (~500 lines)
-    - ✅ Data processing (~1200 lines)
-    - ✅ File operations (~300 lines)
-    
-    🎉 REFACTORING COMPLETE: 88% extracted (3,070 lines) into 6 focused modules! 🎉
+    Main application window that coordinates serial I/O, plotting, sensor views,
+    configuration, and export features across focused mixins.
     """
     
     def __init__(self):
@@ -261,7 +272,7 @@ class ADCStreamerGUI(
         self.log_status("=" * 70)
 
     def init_ui(self):
-        """Initialize the user interface using GUIComponentsMixin methods."""
+        """Initialize the user interface using the leaf GUI mixins."""
         self.setWindowTitle("ADC Streamer - Modular Architecture")
 
         # Main widget and layout
@@ -331,7 +342,7 @@ class ADCStreamerGUI(
         layout = QVBoxLayout(panel)
         layout.setSpacing(10)
 
-        # Add all control sections from GUIComponentsMixin
+        # Add all control sections from the leaf GUI mixins
         layout.addWidget(self.create_serial_section())
         layout.addWidget(self.create_adc_config_section())
         layout.addWidget(self.create_acquisition_section())

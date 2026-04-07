@@ -7,7 +7,7 @@ GUI components for file management and status display.
 import os
 from PyQt6.QtWidgets import (
     QGroupBox, QVBoxLayout, QGridLayout, QLabel, QPushButton, 
-    QLineEdit, QTextEdit, QCheckBox, QSpinBox
+    QLineEdit, QTextEdit, QCheckBox, QSpinBox, QFileDialog
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
@@ -20,6 +20,16 @@ from config_constants import (
 
 class FilePanelsMixin:
     """Mixin class for file management and status GUI components."""
+
+    def browse_directory(self):
+        """Browse for an output directory from the file-management panel."""
+        directory = QFileDialog.getExistingDirectory(
+            self,
+            "Select Output Directory",
+            self.dir_input.text()
+        )
+        if directory:
+            self.dir_input.setText(directory)
     
     def create_file_management_section(self) -> QGroupBox:
         """Create file management section."""

@@ -130,8 +130,8 @@ class DataExporterMixin:
 
                 # Precompute capture duration for approximate timestamp mapping
                 capture_duration = None
-                if self.capture_start_time and self.capture_end_time:
-                    capture_duration = self.capture_end_time - self.capture_start_time
+                if self.timing_state.capture_start_time and self.timing_state.capture_end_time:
+                    capture_duration = self.timing_state.capture_end_time - self.timing_state.capture_start_time
 
                 # Approximate row timestamp in seconds from capture start (fallback only)
                 def get_row_timestamp(saved_idx):
@@ -243,8 +243,8 @@ class DataExporterMixin:
 
             # Prepare metadata dictionary
             capture_duration_s = None
-            if self.capture_start_time and self.capture_end_time:
-                capture_duration_s = self.capture_end_time - self.capture_start_time
+            if self.timing_state.capture_start_time and self.timing_state.capture_end_time:
+                capture_duration_s = self.timing_state.capture_end_time - self.timing_state.capture_start_time
             
             metadata = {
                 "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
@@ -268,11 +268,11 @@ class DataExporterMixin:
                 },
                 "block_timing_csv": self._block_timing_path,
                 "timing": {
-                    "per_channel_rate_hz": self.timing_data.get('per_channel_rate_hz'),
-                    "total_rate_hz": self.timing_data.get('total_rate_hz'),
-                    "arduino_sample_time_us": self.timing_data.get('arduino_sample_time_us'),
-                    "arduino_sample_rate_hz": self.timing_data.get('arduino_sample_rate_hz'),
-                    "buffer_gap_time_ms": self.timing_data.get('buffer_gap_time_ms')
+                    "per_channel_rate_hz": self.timing_state.timing_data.get('per_channel_rate_hz'),
+                    "total_rate_hz": self.timing_state.timing_data.get('total_rate_hz'),
+                    "arduino_sample_time_us": self.timing_state.timing_data.get('arduino_sample_time_us'),
+                    "arduino_sample_rate_hz": self.timing_state.timing_data.get('arduino_sample_rate_hz'),
+                    "buffer_gap_time_ms": self.timing_state.timing_data.get('buffer_gap_time_ms')
                 },
                 "force_data": {
                     "available": len(self.force_data) > 0,

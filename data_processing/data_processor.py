@@ -14,6 +14,7 @@ This module combines:
 
 import time
 import csv
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
@@ -38,6 +39,52 @@ from data_processing.filter_processor import FilterProcessorMixin
 from data_processing.force_processor import ForceProcessorMixin
 
 
+@dataclass
+class TimingState:
+    """Central store for timing metrics and recent timing history."""
+
+    timing_data: dict
+    capture_start_time: float | None = None
+    capture_end_time: float | None = None
+    last_buffer_time: float | None = None
+    last_buffer_end_time: float | None = None
+    mcu_last_block_end_us: int | None = None
+    buffer_receipt_times: list = field(default_factory=list)
+    buffer_gap_times: list = field(default_factory=list)
+    arduino_sample_times: list = field(default_factory=list)
+    block_sample_counts: list = field(default_factory=list)
+    block_sweeps_counts: list = field(default_factory=list)
+    block_samples_per_sweep: list = field(default_factory=list)
+    mcu_block_start_us: list = field(default_factory=list)
+    mcu_block_end_us: list = field(default_factory=list)
+    mcu_block_gap_us: list = field(default_factory=list)
+
+    def reset(self, empty_timing_data):
+        """Clear scalar fields and keep dict/list identities stable."""
+        self.timing_data.clear()
+        self.timing_data.update(empty_timing_data)
+        self.capture_start_time = None
+        self.capture_end_time = None
+        self.last_buffer_time = None
+        self.last_buffer_end_time = None
+        self.mcu_last_block_end_us = None
+        self.buffer_receipt_times.clear()
+        self.buffer_gap_times.clear()
+        self.arduino_sample_times.clear()
+        self.block_sample_counts.clear()
+        self.block_sweeps_counts.clear()
+        self.block_samples_per_sweep.clear()
+        self.mcu_block_start_us.clear()
+        self.mcu_block_end_us.clear()
+        self.mcu_block_gap_us.clear()
+
+    def trim_recent(self, attr_name, max_items):
+        """Keep only the newest items in a history list without replacing the list object."""
+        history = getattr(self, attr_name)
+        if len(history) > max_items:
+            del history[:-max_items]
+
+
 class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcessorMixin, ForceProcessorMixin):
     """Main mixin class for data processing, visualization, and capture control."""
 
@@ -56,6 +103,18 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
             'mcu_block_end_us': None,
             'mcu_block_gap_us': None,
         }
+
+    def _create_timing_state(self):
+        return TimingState(timing_data=self._build_empty_timing_data())
+
+    def _ensure_timing_state(self):
+        if getattr(self, '_timing_state', None) is None:
+            self._timing_state = self._create_timing_state()
+        return self._timing_state
+
+    @property
+    def timing_state(self):
+        return self._ensure_timing_state()
 
     def _reset_capture_buffer_state(self, *, reset_samples_per_sweep=False, zero_buffers=False):
         """Reset rolling capture buffers and cached full-view arrays."""
@@ -88,28 +147,7 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
         elif log_timestamp_clear:
             self.log_status("first_sweep_timestamp_us already cleared")
 
-        self.timing_data = self._build_empty_timing_data()
-        self.capture_start_time = None
-        self.capture_end_time = None
-        self.last_buffer_time = None
-        self.last_buffer_end_time = None
-        self.mcu_last_block_end_us = None
-
-        for attr_name in (
-            'buffer_receipt_times',
-            'buffer_gap_times',
-            'arduino_sample_times',
-            'block_sample_counts',
-            'block_sweeps_counts',
-            'block_samples_per_sweep',
-            'mcu_block_start_us',
-            'mcu_block_end_us',
-            'mcu_block_gap_us',
-        ):
-            if hasattr(self, attr_name):
-                getattr(self, attr_name).clear()
-            else:
-                setattr(self, attr_name, [])
+        self.timing_state.reset(self._build_empty_timing_data())
 
         if reset_labels:
             self.per_channel_rate_label.setText("- Hz")
@@ -693,11 +731,12 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
     def update_timing_display(self):
         """Update timing display based on Arduino measurements and buffer gap timing."""
         try:
+            timing = self.timing_state
+            timing_data = timing.timing_data
             # Use only the most recent timing value from Arduino
             arduino_avg_sample_time_us = 0
-            if hasattr(self, 'arduino_sample_times') and self.arduino_sample_times:
-                # Use only the last received value
-                arduino_avg_sample_time_us = self.arduino_sample_times[-1]
+            if timing.arduino_sample_times:
+                arduino_avg_sample_time_us = timing.arduino_sample_times[-1]
             
             # Calculate sampling rate from Arduino's measurement
             arduino_sample_rate_hz = 0
@@ -716,24 +755,24 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
             
             # Calculate gap between blocks (prefer MCU timing if available)
             buffer_gap_time_ms = 0
-            if hasattr(self, 'mcu_block_gap_us') and self.mcu_block_gap_us:
-                buffer_gap_time_ms = self.mcu_block_gap_us[-1] / 1000.0
-            elif hasattr(self, 'buffer_gap_times') and self.buffer_gap_times:
+            if timing.mcu_block_gap_us:
+                buffer_gap_time_ms = timing.mcu_block_gap_us[-1] / 1000.0
+            elif timing.buffer_gap_times:
                 # Average all host gap times to smooth out fluctuations
-                buffer_gap_time_ms = sum(self.buffer_gap_times) / len(self.buffer_gap_times)
+                buffer_gap_time_ms = sum(timing.buffer_gap_times) / len(timing.buffer_gap_times)
             
             # Store timing data
-            self.timing_data['arduino_sample_time_us'] = arduino_avg_sample_time_us
-            self.timing_data['arduino_sample_rate_hz'] = arduino_sample_rate_hz
-            self.timing_data['per_channel_rate_hz'] = arduino_per_channel_rate_hz
-            self.timing_data['total_rate_hz'] = arduino_sample_rate_hz
-            self.timing_data['buffer_gap_time_ms'] = buffer_gap_time_ms
+            timing_data['arduino_sample_time_us'] = arduino_avg_sample_time_us
+            timing_data['arduino_sample_rate_hz'] = arduino_sample_rate_hz
+            timing_data['per_channel_rate_hz'] = arduino_per_channel_rate_hz
+            timing_data['total_rate_hz'] = arduino_sample_rate_hz
+            timing_data['buffer_gap_time_ms'] = buffer_gap_time_ms
             # Store latest MCU timing values (if available)
-            if hasattr(self, 'mcu_block_start_us') and self.mcu_block_start_us:
-                self.timing_data['mcu_block_start_us'] = self.mcu_block_start_us[-1]
-                self.timing_data['mcu_block_end_us'] = self.mcu_block_end_us[-1]
-                if self.mcu_block_gap_us:
-                    self.timing_data['mcu_block_gap_us'] = self.mcu_block_gap_us[-1]
+            if timing.mcu_block_start_us:
+                timing_data['mcu_block_start_us'] = timing.mcu_block_start_us[-1]
+                timing_data['mcu_block_end_us'] = timing.mcu_block_end_us[-1]
+                if timing.mcu_block_gap_us:
+                    timing_data['mcu_block_gap_us'] = timing.mcu_block_gap_us[-1]
             
             # Update timing labels with Arduino data
             if arduino_avg_sample_time_us > 0:
@@ -748,11 +787,11 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
             # Display block gap time (always show if we have data)
             if buffer_gap_time_ms > 0:
                 self.block_gap_label.setText(f"{buffer_gap_time_ms:.2f} ms")
-            elif hasattr(self, 'mcu_block_gap_us') and len(self.mcu_block_gap_us) > 0:
-                self.block_gap_label.setText(f"{(self.mcu_block_gap_us[-1] / 1000.0):.2f} ms")
-            elif hasattr(self, 'buffer_gap_times') and len(self.buffer_gap_times) > 0:
+            elif timing.mcu_block_gap_us:
+                self.block_gap_label.setText(f"{(timing.mcu_block_gap_us[-1] / 1000.0):.2f} ms")
+            elif timing.buffer_gap_times:
                 # Show even if current value is 0, as long as we have history
-                avg_gap = sum(self.buffer_gap_times) / len(self.buffer_gap_times)
+                avg_gap = sum(timing.buffer_gap_times) / len(timing.buffer_gap_times)
                 self.block_gap_label.setText(f"{avg_gap:.2f} ms")
             else:
                 self.block_gap_label.setText("- ms")
@@ -914,8 +953,9 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
 
     def on_capture_finished(self):
         """Handle capture finished (either stopped or timed out)."""
+        timing = self.timing_state
         # Record end time
-        self.capture_end_time = time.time()
+        timing.capture_end_time = time.time()
         
         self.is_capturing = False
         
@@ -928,14 +968,14 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
             self.serial_thread.set_capturing(False)
         
         # Log final timing summary
-        if hasattr(self, 'arduino_sample_times') and self.arduino_sample_times:
-            avg_sample_time = sum(self.arduino_sample_times) / len(self.arduino_sample_times)
+        if timing.arduino_sample_times:
+            avg_sample_time = sum(timing.arduino_sample_times) / len(timing.arduino_sample_times)
             total_rate = 1000000.0 / avg_sample_time if avg_sample_time > 0 else 0
             self.log_status(f"Capture complete - Sample interval: {avg_sample_time:.2f} µs, Total rate: {total_rate:.2f} Hz")
         
-        if hasattr(self, 'buffer_gap_times') and self.buffer_gap_times:
-            avg_gap = sum(self.buffer_gap_times) / len(self.buffer_gap_times)
-            self.log_status(f"Average block gap: {avg_gap:.2f} ms ({len(self.buffer_gap_times)} blocks)")
+        if timing.buffer_gap_times:
+            avg_gap = sum(timing.buffer_gap_times) / len(timing.buffer_gap_times)
+            self.log_status(f"Average block gap: {avg_gap:.2f} ms ({len(timing.buffer_gap_times)} blocks)")
         
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)

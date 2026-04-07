@@ -31,6 +31,7 @@ class BinaryProcessorMixin:
         """
         if self.is_capturing:
             try:
+                timing = self.timing_state
                 if not hasattr(self, '_debug_capture_blocks_seen'):
                     self._debug_capture_blocks_seen = 0
                 store_capture_data = True
@@ -41,38 +42,34 @@ class BinaryProcessorMixin:
                 block_start_time = time.time()
                 
                 # Keep only last 1000 buffer receipt times to prevent unbounded growth
-                self.buffer_receipt_times.append(block_start_time)
-                if len(self.buffer_receipt_times) > MAX_TIMING_SAMPLES:
-                    self.buffer_receipt_times = self.buffer_receipt_times[-MAX_TIMING_SAMPLES:]
+                timing.buffer_receipt_times.append(block_start_time)
+                timing.trim_recent('buffer_receipt_times', MAX_TIMING_SAMPLES)
                 
                 # Track first sweep time for rate calculation - thread safe
                 with self.buffer_lock:
                     is_first_sweep = (self.sweep_count == 0)
                 
                 if is_first_sweep:
-                    self.capture_start_time = block_start_time
-                    self.force_start_time = self.capture_start_time  # Sync force timing
-                    self.last_buffer_time = block_start_time
+                    timing.capture_start_time = block_start_time
+                    self.force_start_time = timing.capture_start_time  # Sync force timing
+                    timing.last_buffer_time = block_start_time
                 
                 # Store the average sampling time from Arduino (keep only last 1000)
-                self.arduino_sample_times.append(avg_sample_time_us)
-                if len(self.arduino_sample_times) > MAX_TIMING_SAMPLES:
-                    self.arduino_sample_times = self.arduino_sample_times[-MAX_TIMING_SAMPLES:]
+                timing.arduino_sample_times.append(avg_sample_time_us)
+                timing.trim_recent('arduino_sample_times', MAX_TIMING_SAMPLES)
 
                 # Store MCU block timestamps (keep only last 1000)
-                self.mcu_block_start_us.append(block_start_us)
-                self.mcu_block_end_us.append(block_end_us)
-                if len(self.mcu_block_start_us) > MAX_TIMING_SAMPLES:
-                    self.mcu_block_start_us = self.mcu_block_start_us[-MAX_TIMING_SAMPLES:]
-                    self.mcu_block_end_us = self.mcu_block_end_us[-MAX_TIMING_SAMPLES:]
+                timing.mcu_block_start_us.append(block_start_us)
+                timing.mcu_block_end_us.append(block_end_us)
+                timing.trim_recent('mcu_block_start_us', MAX_TIMING_SAMPLES)
+                timing.trim_recent('mcu_block_end_us', MAX_TIMING_SAMPLES)
 
                 # MCU gap between blocks (wrap-safe unsigned math)
-                if self.mcu_last_block_end_us is not None:
-                    gap_us = (block_start_us - self.mcu_last_block_end_us) & 0xFFFFFFFF
-                    self.mcu_block_gap_us.append(gap_us)
-                    if len(self.mcu_block_gap_us) > MAX_TIMING_SAMPLES:
-                        self.mcu_block_gap_us = self.mcu_block_gap_us[-MAX_TIMING_SAMPLES:]
-                self.mcu_last_block_end_us = block_end_us
+                if timing.mcu_last_block_end_us is not None:
+                    gap_us = (block_start_us - timing.mcu_last_block_end_us) & 0xFFFFFFFF
+                    timing.mcu_block_gap_us.append(gap_us)
+                    timing.trim_recent('mcu_block_gap_us', MAX_TIMING_SAMPLES)
+                timing.mcu_last_block_end_us = block_end_us
                 
                 # Calculate samples per sweep from configuration
                 channel_count = len(self.config.get('channels', [])) * self.get_effective_channel_multiplier()
@@ -128,20 +125,19 @@ class BinaryProcessorMixin:
                     filtered_block_array = block_samples_array
 
                 # Track block sizing for timing export (keep only recent)
-                self.block_sample_counts.append(total_samples)
-                self.block_sweeps_counts.append(sweeps_in_block)
-                self.block_samples_per_sweep.append(samples_per_sweep)
-                if len(self.block_sample_counts) > MAX_TIMING_SAMPLES:
-                    self.block_sample_counts = self.block_sample_counts[-MAX_TIMING_SAMPLES:]
-                    self.block_sweeps_counts = self.block_sweeps_counts[-MAX_TIMING_SAMPLES:]
-                    self.block_samples_per_sweep = self.block_samples_per_sweep[-MAX_TIMING_SAMPLES:]
+                timing.block_sample_counts.append(total_samples)
+                timing.block_sweeps_counts.append(sweeps_in_block)
+                timing.block_samples_per_sweep.append(samples_per_sweep)
+                timing.trim_recent('block_sample_counts', MAX_TIMING_SAMPLES)
+                timing.trim_recent('block_sweeps_counts', MAX_TIMING_SAMPLES)
+                timing.trim_recent('block_samples_per_sweep', MAX_TIMING_SAMPLES)
 
                 # Stream block timing to sidecar (if open)
                 if store_capture_data and self._block_timing_file:
                     try:
                         gap_us = ""
-                        if self.mcu_block_gap_us:
-                            gap_us = self.mcu_block_gap_us[-1]
+                        if timing.mcu_block_gap_us:
+                            gap_us = timing.mcu_block_gap_us[-1]
                         tw = csv.writer(self._block_timing_file)
                         self._block_timing_write_count += 1
                         if self._block_timing_write_count % 100 == 0:
@@ -150,10 +146,10 @@ class BinaryProcessorMixin:
                             except Exception:
                                 pass
                         tw.writerow([
-                            self.block_sample_counts[-1],
-                            self.block_samples_per_sweep[-1],
-                            self.block_sweeps_counts[-1],
-                            self.arduino_sample_times[-1],
+                            timing.block_sample_counts[-1],
+                            timing.block_samples_per_sweep[-1],
+                            timing.block_sweeps_counts[-1],
+                            timing.arduino_sample_times[-1],
                             block_start_us,
                             block_end_us,
                             gap_us
@@ -238,14 +234,13 @@ class BinaryProcessorMixin:
                 # Calculate gap time between blocks:
                 # Time from when last block finished receiving to when this block started receiving
                 # This measures the transmission gap + Arduino processing time between blocks
-                if self.last_buffer_end_time is not None:
-                    gap_time_ms = (block_start_time - self.last_buffer_end_time) * 1000.0
-                    self.buffer_gap_times.append(gap_time_ms)
+                if timing.last_buffer_end_time is not None:
+                    gap_time_ms = (block_start_time - timing.last_buffer_end_time) * 1000.0
+                    timing.buffer_gap_times.append(gap_time_ms)
                     # Keep only recent gap times to prevent unbounded growth
-                    if len(self.buffer_gap_times) > MAX_TIMING_SAMPLES:
-                        self.buffer_gap_times = self.buffer_gap_times[-MAX_TIMING_SAMPLES:]
+                    timing.trim_recent('buffer_gap_times', MAX_TIMING_SAMPLES)
                 
-                self.last_buffer_end_time = block_end_time
+                timing.last_buffer_end_time = block_end_time
                 
                 # Update timing display after each block
                 self.update_timing_display()

@@ -628,8 +628,8 @@ class ConfigurationMixin:
         self.configure_btn.setEnabled(False)
         
         # Clear timing data from previous runs
-        self.arduino_sample_times = []
-        self.buffer_gap_times = []
+        self.timing_state.arduino_sample_times.clear()
+        self.timing_state.buffer_gap_times.clear()
         
         # Reset completion status and start checking
         self.config_completion_status = None

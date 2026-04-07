@@ -126,8 +126,8 @@ class PiezoHeatmapProcessorMixin:
             return None
 
         avg_sample_time_us = 0.0
-        if hasattr(self, 'arduino_sample_times') and self.arduino_sample_times:
-            avg_sample_time_us = float(self.arduino_sample_times[-1])
+        if self.timing_state.arduino_sample_times:
+            avg_sample_time_us = float(self.timing_state.arduino_sample_times[-1])
 
         if avg_sample_time_us <= 0:
             return None

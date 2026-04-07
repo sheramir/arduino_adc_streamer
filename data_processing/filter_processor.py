@@ -77,12 +77,14 @@ class FilterProcessorMixin:
         return self.raw_data_buffer
 
     def _get_filter_total_sample_rate_hz(self) -> float:
-        if hasattr(self, 'arduino_sample_times') and self.arduino_sample_times:
-            latest_us = float(self.arduino_sample_times[-1])
+        timing = self.timing_state
+
+        if timing.arduino_sample_times:
+            latest_us = float(timing.arduino_sample_times[-1])
             if latest_us > 0:
                 return 1_000_000.0 / latest_us
 
-        rate = float(self.timing_data.get('arduino_sample_rate_hz') or 0.0)
+        rate = float(timing.timing_data.get('arduino_sample_rate_hz') or 0.0)
         if rate > 0:
             return rate
 

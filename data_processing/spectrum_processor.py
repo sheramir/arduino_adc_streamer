@@ -314,8 +314,10 @@ class SpectrumProcessorMixin:
         return data_array, sweep_timestamps
 
     def _get_total_sample_rate_hz(self):
-        if hasattr(self, 'arduino_sample_times') and self.arduino_sample_times:
-            latest_us = float(self.arduino_sample_times[-1])
+        timing = self.timing_state
+
+        if timing.arduino_sample_times:
+            latest_us = float(timing.arduino_sample_times[-1])
             if latest_us > 0:
                 return 1_000_000.0 / latest_us
 
@@ -351,7 +353,7 @@ class SpectrumProcessorMixin:
                     if avg_sweep_dt > 0:
                         return float(self.samples_per_sweep) / avg_sweep_dt
 
-        rate = float(self.timing_data.get('arduino_sample_rate_hz') or 0.0)
+        rate = float(timing.timing_data.get('arduino_sample_rate_hz') or 0.0)
         if rate > 0:
             return rate
 

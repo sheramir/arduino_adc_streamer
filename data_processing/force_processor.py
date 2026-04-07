@@ -52,7 +52,8 @@ class ForceProcessorMixin:
                 self.plot_info_label.setText(
                     f"ADC - Sweeps: {self.sweep_count} | Samples: {total_samples}  |  Force: {len(self.force_data)} samples"
                 )
-            # Schedule a debounced force plot update (avoid updating GUI for every sample)
+            # Schedule the force-only debounce path so the force plot can stay fresh
+            # even when no ADC buffer update has arrived yet.
             try:
                 if not self.force_plot_timer.isActive():
                     self.force_plot_timer.start(self.force_plot_debounce_ms)

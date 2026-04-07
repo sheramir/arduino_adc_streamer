@@ -243,11 +243,16 @@ class ADCStreamerGUI(
         """Initialize Qt timers."""
         self.plot_update_timer = QTimer()
         self.plot_update_timer.setSingleShot(True)
+        # Shared debounce for ADC-driven refreshes. When ADC buffers land we redraw
+        # both the ADC traces and the force traces together so the views stay aligned.
         self.plot_update_timer.timeout.connect(self.update_plot)
         self.plot_update_timer.timeout.connect(self.update_force_plot)
 
         self.force_plot_timer = QTimer()
         self.force_plot_timer.setSingleShot(True)
+        # Separate debounce for force-only arrivals. Force samples can arrive between
+        # ADC buffer updates, so this timer refreshes just the force plot without
+        # waiting for the next ADC-driven redraw.
         self.force_plot_timer.timeout.connect(self.update_force_plot)
         
         self.config_check_timer = QTimer()

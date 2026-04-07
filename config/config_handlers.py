@@ -311,6 +311,48 @@ class ConfigurationMixin:
             repeat_count = self.config.get('repeat', 1)
         return len(channels) * max(1, int(repeat_count)) * self.get_effective_channel_multiplier()
 
+    @staticmethod
+    def _get_unique_channels_in_order(channels):
+        unique_channels = []
+        for channel in channels:
+            if channel not in unique_channels:
+                unique_channels.append(channel)
+        return unique_channels
+
+    def _get_grouped_manual_channel_labels(self, channels):
+        """Return manual channel labels with sensor placement names when layout is unambiguous."""
+        unique_channels = self._get_unique_channels_in_order(channels)
+        if len(unique_channels) != len(channels):
+            return {}
+
+        channel_sensor_map = self.get_active_channel_sensor_map() if hasattr(self, 'get_active_channel_sensor_map') else ["T", "R", "C", "L", "B"]
+        channel_sensor_map = [str(label) for label in channel_sensor_map if str(label)]
+        required_channels = len(channel_sensor_map)
+        if required_channels <= 0:
+            return {}
+
+        use_leading_ground = (
+            unique_channels
+            and unique_channels[0] == 0
+            and len(unique_channels) > required_channels
+            and (len(unique_channels) - 1) % required_channels == 0
+        )
+
+        start_index = 1 if use_leading_ground else 0
+        grouped_channels = unique_channels[start_index:]
+        if not grouped_channels or len(grouped_channels) % required_channels != 0:
+            return {}
+
+        labels = {}
+        if use_leading_ground:
+            labels[0] = "Ch0"
+
+        for display_index, channel in enumerate(grouped_channels):
+            placement = channel_sensor_map[display_index % required_channels]
+            labels[channel] = f"Ch{channel}-{placement}"
+
+        return labels
+
     def get_display_channel_specs(self, channels=None, repeat_count=None):
         """Build display-channel metadata for plotting and channel selectors."""
         if channels is None:
@@ -319,10 +361,7 @@ class ConfigurationMixin:
             repeat_count = self.config.get('repeat', 1)
         repeat_count = max(1, int(repeat_count))
 
-        unique_channels = []
-        for channel in channels:
-            if channel not in unique_channels:
-                unique_channels.append(channel)
+        unique_channels = self._get_unique_channels_in_order(channels)
 
         specs = []
         selection_source = str(self.config.get('channel_selection_source', 'manual')).lower()
@@ -385,6 +424,8 @@ class ConfigurationMixin:
                     })
             return specs
 
+        grouped_manual_labels = self._get_grouped_manual_channel_labels(channels)
+
         for display_order, channel in enumerate(unique_channels):
             sample_indices = []
             for seq_idx, seq_channel in enumerate(channels):
@@ -395,7 +436,7 @@ class ConfigurationMixin:
 
             specs.append({
                 'key': ('adc', channel),
-                'label': f"Ch {channel}",
+                'label': grouped_manual_labels.get(channel, f"Ch {channel}"),
                 'sample_indices': sample_indices,
                 'color_slot': display_order,
             })

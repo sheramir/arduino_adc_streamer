@@ -143,7 +143,7 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
         """Reset capture timing fields, histories, and optional UI labels."""
         if hasattr(self, 'first_sweep_timestamp_us'):
             if log_timestamp_clear:
-                self.log_status(f"Clearing first_sweep_timestamp_us (was {self.first_sweep_timestamp_us} Âµs)")
+                self.log_status(f"Clearing first_sweep_timestamp_us (was {self.first_sweep_timestamp_us} µs)")
             delattr(self, 'first_sweep_timestamp_us')
         elif log_timestamp_clear:
             self.log_status("first_sweep_timestamp_us already cleared")
@@ -153,7 +153,7 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
         if reset_labels:
             self.per_channel_rate_label.setText("- Hz")
             self.total_rate_label.setText("- Hz")
-            self.between_samples_label.setText("- Âµs")
+            self.between_samples_label.setText("- µs")
             self.block_gap_label.setText("- ms")
 
     def _reset_signal_processing_state(self, *, reset_shear=False):

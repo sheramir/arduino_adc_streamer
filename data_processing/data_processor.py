@@ -267,6 +267,231 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
         if self.capture_current_plot_baselines():
             self.trigger_plot_update()
 
+    def _hide_all_adc_curves(self):
+        """Hide every ADC curve currently attached to the plot."""
+        for curve in self._adc_curves.values():
+            curve.setVisible(False)
+
+    def _get_selected_plot_channels(self):
+        """Return the set of currently selected channel keys."""
+        return {
+            channel_key
+            for channel_key, checkbox in self.channel_checkboxes.items()
+            if checkbox.isChecked()
+        }
+
+    def _extract_recent_buffer_window(self, active_data_buffer, actual_sweeps, current_write_index, window_sweeps):
+        """Copy the requested trailing window from the circular sweep buffers."""
+        window_sweeps = min(window_sweeps, actual_sweeps)
+        if window_sweeps <= 0:
+            return None
+
+        if actual_sweeps < self.MAX_SWEEPS_BUFFER:
+            start_idx = max(0, actual_sweeps - window_sweeps)
+            return (
+                active_data_buffer[start_idx:actual_sweeps, :].copy(),
+                self.sweep_timestamps_buffer[start_idx:actual_sweeps].copy(),
+            )
+
+        write_pos = current_write_index % self.MAX_SWEEPS_BUFFER
+        if window_sweeps >= self.MAX_SWEEPS_BUFFER:
+            return (
+                np.concatenate([
+                    active_data_buffer[write_pos:, :],
+                    active_data_buffer[:write_pos, :],
+                ]),
+                np.concatenate([
+                    self.sweep_timestamps_buffer[write_pos:],
+                    self.sweep_timestamps_buffer[:write_pos],
+                ]),
+            )
+
+        start_pos = (write_pos - window_sweeps) % self.MAX_SWEEPS_BUFFER
+        if start_pos < write_pos:
+            return (
+                active_data_buffer[start_pos:write_pos, :].copy(),
+                self.sweep_timestamps_buffer[start_pos:write_pos].copy(),
+            )
+
+        return (
+            np.concatenate([
+                active_data_buffer[start_pos:, :],
+                active_data_buffer[:write_pos, :],
+            ]),
+            np.concatenate([
+                self.sweep_timestamps_buffer[start_pos:],
+                self.sweep_timestamps_buffer[:write_pos],
+            ]),
+        )
+
+    def _get_plot_data_snapshot(self, active_data_buffer):
+        """Return the data/timestamp arrays that should be shown in the ADC plot."""
+        if self.is_full_view:
+            raw_ok = (
+                self.raw_data is not None
+                and hasattr(self.raw_data, '__len__')
+                and len(self.raw_data) > 0
+            )
+            ts_ok = (
+                self.sweep_timestamps is not None
+                and hasattr(self.sweep_timestamps, '__len__')
+                and len(self.sweep_timestamps) > 0
+            )
+            if not raw_ok or not ts_ok:
+                return None
+
+            try:
+                return (
+                    np.asarray(self.raw_data, dtype=np.float32),
+                    np.asarray(self.sweep_timestamps, dtype=np.float64),
+                )
+            except Exception as e:
+                self.log_status(f"Error converting archive data: {e}")
+                return None
+
+        if active_data_buffer is None or self.sweep_timestamps_buffer is None:
+            return None
+
+        with self.buffer_lock:
+            current_sweep_count = self.sweep_count
+            current_write_index = self.buffer_write_index
+
+        actual_sweeps = min(current_sweep_count, self.MAX_SWEEPS_BUFFER)
+        if actual_sweeps == 0:
+            return None
+
+        window_sweeps = min(self.window_size_spin.value(), MAX_PLOT_SWEEPS, actual_sweeps)
+        return self._extract_recent_buffer_window(
+            active_data_buffer,
+            actual_sweeps,
+            current_write_index,
+            window_sweeps,
+        )
+
+    def _prepare_channel_plot_series(self, spec, data_array, timestamps_array, avg_sample_time_sec, max_samples_per_series):
+        """Build flattened channel samples/timestamps for plotting without changing behavior."""
+        sample_indices = spec['sample_indices']
+        if not sample_indices:
+            return None
+
+        sample_index_array = np.asarray(sample_indices, dtype=np.int32)
+        channel_data = data_array[:, sample_index_array].reshape(-1)
+
+        time_offsets = sample_index_array.astype(np.float64) * avg_sample_time_sec
+        channel_times = (
+            timestamps_array.reshape(-1, 1) + time_offsets.reshape(1, -1)
+        ).reshape(-1)
+
+        latest_value = float(channel_data[-1]) if len(channel_data) > 0 else None
+
+        if getattr(self, 'device_mode', 'adc') != '555' and self.yaxis_units_combo.currentText() == "Voltage":
+            vref = self.get_vref_voltage()
+            max_adc_value = (2 ** IADC_RESOLUTION_BITS) - 1
+            channel_data = (channel_data / max_adc_value) * vref
+
+        if getattr(self, 'subtract_baseline_check', None) and self.subtract_baseline_check.isChecked():
+            if not hasattr(self, 'plot_baselines'):
+                self.plot_baselines = {}
+
+            if spec['key'] not in self.plot_baselines:
+                self.capture_current_plot_baselines(
+                    log_message=False,
+                    min_elapsed_sec=self.PZR_AUTO_BASELINE_DELAY_SEC,
+                )
+
+            if spec['key'] in self.plot_baselines:
+                channel_data = channel_data - self.plot_baselines[spec['key']]
+
+        if len(channel_data) > max_samples_per_series:
+            downsample_factor = max(1, len(channel_data) // max_samples_per_series)
+            channel_data = channel_data[::downsample_factor]
+            channel_times = channel_times[::downsample_factor]
+
+        return channel_data, channel_times, latest_value
+
+    def _get_or_create_adc_curve(self, curve_key, name, pen):
+        """Fetch an existing ADC curve or create it on first use."""
+        curve = self._adc_curves.get(curve_key)
+        if curve is None:
+            curve = self.plot_widget.plot([], pen=pen, name=name)
+            self._adc_curves[curve_key] = curve
+        return curve
+
+    def _set_adc_curve_data(self, curve_key, name, pen, x_data, y_data):
+        """Apply visibility, style, and samples to a single ADC curve."""
+        curve = self._get_or_create_adc_curve(curve_key, name, pen)
+        curve.setVisible(True)
+        curve.setPen(pen)
+        curve.setData(x=x_data, y=y_data)
+
+    def _update_plot_axis_labels(self):
+        """Update plot axes labels for the active visualization mode."""
+        if getattr(self, 'device_mode', 'adc') == '555':
+            self.plot_widget.setLabel('left', 'Resistance', units='Ω')
+        elif self.yaxis_units_combo.currentText() == "Voltage":
+            self.plot_widget.setLabel('left', 'Voltage', units='V')
+        else:
+            self.plot_widget.setLabel('left', 'ADC Value', units='counts')
+
+        self.plot_widget.setLabel('bottom', 'Time', units='s')
+
+    def _plot_repeat_series(self, spec, color, channel_data, channel_times, repeat_count, desired_curve_keys):
+        """Render each repeat as its own curve without changing existing styling."""
+        try:
+            num_samples = len(channel_data) // repeat_count
+            if num_samples <= 0:
+                return False
+
+            channel_data_2d = channel_data[:num_samples * repeat_count].reshape(-1, repeat_count)
+            channel_times_2d = channel_times[:num_samples * repeat_count].reshape(-1, repeat_count)
+
+            for repeat_idx in range(repeat_count):
+                repeat_data = channel_data_2d[:, repeat_idx]
+                repeat_times = channel_times_2d[:, repeat_idx]
+
+                if repeat_idx == 0:
+                    pen = pg.mkPen(color=color, width=2)
+                else:
+                    lighter_color = tuple(int(c * 0.7) for c in color)
+                    pen = pg.mkPen(color=lighter_color, width=1.5, style=Qt.PenStyle.DashLine)
+
+                name = f"{spec['label']}.{repeat_idx}"
+                curve_key = ("repeat", spec['key'], repeat_idx)
+                desired_curve_keys.add(curve_key)
+                self._set_adc_curve_data(curve_key, name, pen, repeat_times, repeat_data)
+
+            return True
+        except Exception as e:
+            self.log_status(f"ERROR: Failed to reshape repeat data - {e}")
+            return False
+
+    def _plot_single_or_average_series(self, spec, color, channel_data, channel_times, repeat_count, desired_curve_keys):
+        """Render either the averaged repeat series or the default single curve."""
+        if self.show_average_radio.isChecked() and repeat_count > 1:
+            try:
+                num_samples = len(channel_data) // repeat_count
+                if num_samples <= 0:
+                    return False
+
+                channel_data_2d = channel_data[:num_samples * repeat_count].reshape(-1, repeat_count)
+                channel_times_2d = channel_times[:num_samples * repeat_count].reshape(-1, repeat_count)
+                channel_data = np.mean(channel_data_2d, axis=1)
+                channel_times = channel_times_2d[:, 0]
+                name = f"{spec['label']} (avg)"
+                pen = pg.mkPen(color=color, width=3, style=Qt.PenStyle.DashLine)
+                curve_key = ("avg", spec['key'], 0)
+            except Exception as e:
+                self.log_status(f"ERROR: Failed to average repeat data - {e}")
+                return False
+        else:
+            name = spec['label']
+            pen = pg.mkPen(color=color, width=2)
+            curve_key = ("single", spec['key'], 0)
+
+        desired_curve_keys.add(curve_key)
+        self._set_adc_curve_data(curve_key, name, pen, channel_times, channel_data)
+        return True
+
     def update_plot(self):
         """Update the plot with current data - optimized for fast updates and max 10K samples."""
         # Prevent concurrent updates
@@ -278,157 +503,26 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
         try:
             active_data_buffer = self.get_active_data_buffer()
 
-            if not self.is_capturing and active_data_buffer is None:
-                # No data in buffer
-                for curve in self._adc_curves.values():
-                    curve.setVisible(False)
-                self.is_updating_plot = False
-                return
-            
             if not self.config['channels']:
-                for curve in self._adc_curves.values():
-                    curve.setVisible(False)
-                self.is_updating_plot = False
+                self._hide_all_adc_curves()
                 return
 
             display_specs = self.get_display_channel_specs()
 
-            # Get selected channels from checkboxes
-            selected_channels = {
-                channel_key for channel_key, checkbox in self.channel_checkboxes.items() if checkbox.isChecked()
-            }
+            selected_channels = self._get_selected_plot_channels()
             if not selected_channels:
-                for curve in self._adc_curves.values():
-                    curve.setVisible(False)
-                self.is_updating_plot = False
+                self._hide_all_adc_curves()
                 return
 
-            # Configuration
-            channels = self.config['channels']
             repeat_count = self.config['repeat']
-            samples_per_sweep = self.get_effective_samples_per_sweep(channels, repeat_count)
-            
-            # Determine which data to plot - use numpy buffer directly with thread safety!
-            if active_data_buffer is None:
-                self.is_updating_plot = False
+            plot_snapshot = self._get_plot_data_snapshot(active_data_buffer)
+            if plot_snapshot is None:
+                self._hide_all_adc_curves()
                 return
-            
-            # Get snapshot of buffer state with lock
-            with self.buffer_lock:
-                current_sweep_count = self.sweep_count
-                current_write_index = self.buffer_write_index
-            
-            # Calculate actual number of sweeps in buffer
-            actual_sweeps = min(current_sweep_count, self.MAX_SWEEPS_BUFFER)
-            
-            if actual_sweeps == 0:
-                for curve in self._adc_curves.values():
-                    curve.setVisible(False)
-                self.is_updating_plot = False
-                return
-            
-            if self.is_full_view:
-                # Full view: uses numpy arrays set by full_graph_view (read from
-                # in-memory circular buffer, so always complete even with background
-                # archive writer).
-                raw_ok = (
-                    self.raw_data is not None
-                    and hasattr(self.raw_data, '__len__')
-                    and len(self.raw_data) > 0
-                )
-                ts_ok = (
-                    self.sweep_timestamps is not None
-                    and hasattr(self.sweep_timestamps, '__len__')
-                    and len(self.sweep_timestamps) > 0
-                )
-                if not raw_ok or not ts_ok:
-                    self.is_updating_plot = False
-                    return
 
-                try:
-                    # np.asarray avoids a copy when raw_data is already a 2-D float32 ndarray.
-                    data_array = np.asarray(self.raw_data, dtype=np.float32)
-                    timestamps_array = np.asarray(self.sweep_timestamps, dtype=np.float64)
-                except Exception as e:
-                    self.log_status(f"Error converting archive data: {e}")
-                    self.is_updating_plot = False
-                    return
-            elif self.is_capturing:
-                # During capture: show last window_size sweeps
-                window_size = self.window_size_spin.value()
-                window_size = min(window_size, MAX_PLOT_SWEEPS, actual_sweeps)
-                
-                # Use circular buffer logic
-                if actual_sweeps < self.MAX_SWEEPS_BUFFER:
-                    # Buffer not yet full - data is contiguous from start
-                    start_idx = max(0, actual_sweeps - window_size)
-                    end_idx = actual_sweeps
-                    data_array = active_data_buffer[start_idx:end_idx, :].copy()
-                    timestamps_array = self.sweep_timestamps_buffer[start_idx:end_idx].copy()
-                else:
-                    # Buffer is full - need to handle circular wrap
-                    # write_index points to next write position (oldest data will be overwritten there)
-                    # So oldest data is at write_pos, newest is at write_pos-1
-                    write_pos = current_write_index % self.MAX_SWEEPS_BUFFER
-                    
-                    if window_size >= self.MAX_SWEEPS_BUFFER:
-                        # Show entire buffer - reorder to show oldest first
-                        data_array = np.concatenate([
-                            active_data_buffer[write_pos:, :],
-                            active_data_buffer[:write_pos, :]
-                        ])
-                        timestamps_array = np.concatenate([
-                            self.sweep_timestamps_buffer[write_pos:],
-                            self.sweep_timestamps_buffer[:write_pos]
-                        ])
-                    else:
-                        # Show last window_size from circular buffer
-                        # Newest is at write_pos-1, so we want [write_pos-window_size : write_pos]
-                        start_pos = (write_pos - window_size) % self.MAX_SWEEPS_BUFFER
-                        if start_pos < write_pos:
-                            data_array = active_data_buffer[start_pos:write_pos, :].copy()
-                            timestamps_array = self.sweep_timestamps_buffer[start_pos:write_pos].copy()
-                        else:
-                            # Wrap around
-                            data_array = np.concatenate([
-                                active_data_buffer[start_pos:, :],
-                                active_data_buffer[:write_pos, :]
-                            ])
-                            timestamps_array = np.concatenate([
-                                self.sweep_timestamps_buffer[start_pos:],
-                                self.sweep_timestamps_buffer[:write_pos]
-                            ])
-            else:
-                # After capture: show same window as during capture for consistency
-                # Use the window_size setting so user sees what they were looking at
-                window_size = self.window_size_spin.value()
-                max_sweeps = min(window_size, MAX_PLOT_SWEEPS, actual_sweeps)
-                
-                # Extract from circular buffer
-                if actual_sweeps < self.MAX_SWEEPS_BUFFER:
-                    # Buffer not yet full
-                    start_idx = max(0, actual_sweeps - max_sweeps)
-                    data_array = active_data_buffer[start_idx:actual_sweeps, :].copy()
-                    timestamps_array = self.sweep_timestamps_buffer[start_idx:actual_sweeps].copy()
-                else:
-                    # Buffer is full
-                    write_pos = current_write_index % self.MAX_SWEEPS_BUFFER
-                    start_pos = (write_pos - max_sweeps) % self.MAX_SWEEPS_BUFFER
-                    if start_pos < write_pos:
-                        data_array = active_data_buffer[start_pos:write_pos, :].copy()
-                        timestamps_array = self.sweep_timestamps_buffer[start_pos:write_pos].copy()
-                    else:
-                        data_array = np.concatenate([
-                            active_data_buffer[start_pos:, :],
-                            active_data_buffer[:write_pos, :]
-                        ])
-                        timestamps_array = np.concatenate([
-                            self.sweep_timestamps_buffer[start_pos:],
-                            self.sweep_timestamps_buffer[:write_pos]
-                        ])
-            
+            data_array, timestamps_array = plot_snapshot
             if len(data_array) == 0 or len(timestamps_array) == 0:
-                self.is_updating_plot = False
+                self._hide_all_adc_curves()
                 return
 
             desired_curve_keys = set()
@@ -446,117 +540,42 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
                     continue
 
                 color = PLOT_COLORS[spec['color_slot'] % len(PLOT_COLORS)]
-                sample_indices = spec['sample_indices']
-                if not sample_indices:
+                prepared_series = self._prepare_channel_plot_series(
+                    spec,
+                    data_array,
+                    timestamps_array,
+                    avg_sample_time_sec,
+                    max_samples_per_series,
+                )
+                if prepared_series is None:
                     continue
 
-                sample_index_array = np.asarray(sample_indices, dtype=np.int32)
-                channel_data = data_array[:, sample_index_array].reshape(-1)
+                channel_data, channel_times, latest_value = prepared_series
 
-                time_offsets = sample_index_array.astype(np.float64) * avg_sample_time_sec
-                channel_times = (
-                    timestamps_array.reshape(-1, 1) + time_offsets.reshape(1, -1)
-                ).reshape(-1)
-
-                if len(channel_data) > 0:
-                    latest_channel_values[spec['label']] = float(channel_data[-1])
-
-                # Convert to voltage if voltage units mode is enabled
-                if getattr(self, 'device_mode', 'adc') != '555' and self.yaxis_units_combo.currentText() == "Voltage":
-                    vref = self.get_vref_voltage()
-                    max_adc_value = (2 ** IADC_RESOLUTION_BITS) - 1  # 4095 for 12-bit
-                    channel_data = (channel_data / max_adc_value) * vref
-
-                # Apply baseline subtraction if enabled
-                if getattr(self, 'subtract_baseline_check', None) and self.subtract_baseline_check.isChecked():
-                    if not hasattr(self, 'plot_baselines'):
-                        self.plot_baselines = {}
-                    
-                    if spec['key'] not in self.plot_baselines:
-                        self.capture_current_plot_baselines(
-                            log_message=False,
-                            min_elapsed_sec=self.PZR_AUTO_BASELINE_DELAY_SEC,
-                        )
-                    
-                    if spec['key'] in self.plot_baselines:
-                        channel_data = channel_data - self.plot_baselines[spec['key']]
-
-                # Downsample if too many points for this channel
-                if len(channel_data) > max_samples_per_series:
-                    downsample_factor = max(1, len(channel_data) // max_samples_per_series)
-                    channel_data = channel_data[::downsample_factor]
-                    channel_times = channel_times[::downsample_factor]
+                if latest_value is not None:
+                    latest_channel_values[spec['label']] = latest_value
 
                 # Show based on visualization mode
                 if self.show_all_repeats_radio.isChecked() and repeat_count > 1:
-                    # Reshape to separate repeats
-                    try:
-                        num_samples = len(channel_data) // repeat_count
-                        if num_samples > 0:
-                            channel_data_2d = channel_data[:num_samples * repeat_count].reshape(-1, repeat_count)
-                            channel_times_2d = channel_times[:num_samples * repeat_count].reshape(-1, repeat_count)
-
-                            # Plot each repeat as a separate line
-                            for repeat_idx in range(repeat_count):
-                                repeat_data = channel_data_2d[:, repeat_idx]
-                                repeat_times = channel_times_2d[:, repeat_idx]
-
-                                # Use slightly different line styles for each repeat
-                                if repeat_idx == 0:
-                                    pen = pg.mkPen(color=color, width=2)
-                                else:
-                                    lighter_color = tuple(int(c * 0.7) for c in color)
-                                    pen = pg.mkPen(color=lighter_color, width=1.5, style=Qt.PenStyle.DashLine)
-                                
-                                name = f"{spec['label']}.{repeat_idx}"
-                                curve_key = ("repeat", spec['key'], repeat_idx)
-                                desired_curve_keys.add(curve_key)
-                                
-                                curve = self._adc_curves.get(curve_key)
-                                if curve is None:
-                                    curve = self.plot_widget.plot([], pen=pen, name=name)
-                                    self._adc_curves[curve_key] = curve
-                                
-                                curve.setVisible(True)
-                                curve.setPen(pen)
-                                curve.setData(x=repeat_times, y=repeat_data)
-                    except Exception as e:
-                        self.log_status(f"ERROR: Failed to reshape repeat data - {e}")
+                    if not self._plot_repeat_series(
+                        spec,
+                        color,
+                        channel_data,
+                        channel_times,
+                        repeat_count,
+                        desired_curve_keys,
+                    ):
                         continue
                 else:
-                    # Single line for all data (either single repeat or averaging mode)
-                    if self.show_average_radio.isChecked() and repeat_count > 1:
-                        # Compute average across repeats
-                        try:
-                            num_samples = len(channel_data) // repeat_count
-                            if num_samples > 0:
-                                channel_data_2d = channel_data[:num_samples * repeat_count].reshape(-1, repeat_count)
-                                channel_times_2d = channel_times[:num_samples * repeat_count].reshape(-1, repeat_count)
-                                channel_data = np.mean(channel_data_2d, axis=1)
-                                channel_times = channel_times_2d[:, 0]  # Use first repeat's times
-                                name = f"{spec['label']} (avg)"
-                                pen = pg.mkPen(color=color, width=3, style=Qt.PenStyle.DashLine)
-                                curve_key = ("avg", spec['key'], 0)
-                            else:
-                                continue
-                        except Exception as e:
-                            self.log_status(f"ERROR: Failed to average repeat data - {e}")
-                            continue
-                    else:
-                        # Single repeat or show all together
-                        name = spec['label']
-                        pen = pg.mkPen(color=color, width=2)
-                        curve_key = ("single", spec['key'], 0)
-                    
-                    desired_curve_keys.add(curve_key)
-                    curve = self._adc_curves.get(curve_key)
-                    if curve is None:
-                        curve = self.plot_widget.plot([], pen=pen, name=name)
-                        self._adc_curves[curve_key] = curve
-                    
-                    curve.setVisible(True)
-                    curve.setPen(pen)
-                    curve.setData(x=channel_times, y=channel_data)
+                    if not self._plot_single_or_average_series(
+                        spec,
+                        color,
+                        channel_data,
+                        channel_times,
+                        repeat_count,
+                        desired_curve_keys,
+                    ):
+                        continue
 
             # Hide curves that are not in use
             for key, curve in self._adc_curves.items():
@@ -564,14 +583,7 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
                     curve.setVisible(False)
 
             # Update axis labels
-            if getattr(self, 'device_mode', 'adc') == '555':
-                self.plot_widget.setLabel('left', 'Resistance', units='Ω')
-            elif self.yaxis_units_combo.currentText() == "Voltage":
-                self.plot_widget.setLabel('left', 'Voltage', units='V')
-            else:
-                self.plot_widget.setLabel('left', 'ADC Value', units='counts')
-            
-            self.plot_widget.setLabel('bottom', 'Time', units='s')
+            self._update_plot_axis_labels()
 
             # Apply Y-axis range
             self.apply_y_axis_range()

@@ -217,6 +217,8 @@ class ADCStreamerGUI(
         self._force_x_curve = None
         self._force_z_curve = None
         self.force_plot_debounce_ms = 100
+        self._serial_disconnect_in_progress = False
+        self._force_disconnect_in_progress = False
     
     def _init_heatmap_state(self):
         """Initialize heatmap processing state."""
@@ -366,7 +368,7 @@ class ADCStreamerGUI(
         if self.serial_port and self.serial_port.is_open:
             self.disconnect_serial()
         if self.force_serial_port and self.force_serial_port.is_open:
-            self.disconnect_force()
+            self.disconnect_force_serial()
 
         self.shutdown_spectrum_worker()
 

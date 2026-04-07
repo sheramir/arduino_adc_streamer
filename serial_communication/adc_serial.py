@@ -8,6 +8,7 @@ import time
 import serial
 import serial.tools.list_ports
 from PyQt6.QtWidgets import QMessageBox
+from PyQt6.QtCore import QTimer
 
 from config_constants import (
     BAUD_RATE, SERIAL_TIMEOUT, COMMAND_TERMINATOR, ARDUINO_RESET_DELAY,
@@ -73,7 +74,7 @@ class ADCSerialMixin:
             self.serial_thread = SerialReaderThread(self.serial_port)
             self.serial_thread.data_received.connect(self.process_serial_data)
             self.serial_thread.binary_sweep_received.connect(self.process_binary_sweep)
-            self.serial_thread.error_occurred.connect(self.log_status)
+            self.serial_thread.error_occurred.connect(self._handle_serial_reader_error)
             self.serial_thread.start()
 
             self.log_status(f"Connected to {port_name}")
@@ -94,54 +95,85 @@ class ADCSerialMixin:
             self.log_status(f"ERROR: Failed to connect - {e}")
             QMessageBox.critical(self, "Connection Error", f"Failed to connect:\n{e}")
 
-    def disconnect_serial(self):
+    def _handle_serial_reader_error(self, message: str):
+        """Handle serial-thread errors and transition to a clean disconnected state."""
+        self.log_status(message)
+
+        if not str(message).startswith("Serial read error:"):
+            return
+
+        if self._serial_disconnect_in_progress:
+            return
+        if not self.serial_port and not self.serial_thread:
+            return
+
+        self.log_status("Serial device connection lost - disconnecting")
+        QTimer.singleShot(0, lambda: self.disconnect_serial(cleanup_block=False))
+
+    def disconnect_serial(self, *, cleanup_block=False):
         """Disconnect from the serial port."""
-        if self.is_capturing:
-            self.stop_capture()
+        if self._serial_disconnect_in_progress:
+            return
 
-        if CLEAR_CACHE_ON_EXIT and hasattr(self, 'cleanup_capture_cache'):
-            self.cleanup_capture_cache()
+        self._serial_disconnect_in_progress = True
 
-        if self.serial_thread:
-            self.serial_thread.stop()
-            self.serial_thread.wait()
-            self.serial_thread = None
+        try:
+            thread = self.serial_thread
+            if self.is_capturing:
+                self.stop_capture()
 
-        if self.serial_port and self.serial_port.is_open:
-            self.serial_port.close()
+            if CLEAR_CACHE_ON_EXIT and hasattr(self, 'cleanup_capture_cache'):
+                self.cleanup_capture_cache(block=cleanup_block)
 
-        self.serial_port = None
-        
-        # Reset MCU detection
-        self.current_mcu = None
-        self.device_mode = 'adc'
-        self.mcu_label.setText("MCU: -")
-        self.update_gui_for_mcu()
-        
-        # Reset last sent config
-        self.last_sent_config = {
-            'channels': None,
-            'repeat': None,
-            'ground_pin': None,
-            'use_ground': None,
-            'osr': None,
-            'gain': None,
-            'reference': None
-        }
-        
-        # Reset config validity
-        self.config_is_valid = False
-        
-        self.log_status("Disconnected")
-        self.connect_btn.setText("Connect")
-        self.configure_btn.setEnabled(False)
-        self.start_btn.setEnabled(False)
-        self.stop_btn.setEnabled(False)
-        self.statusBar().showMessage("Disconnected")
+            if thread:
+                try:
+                    thread.stop()
+                    if not thread.wait(250):
+                        self.log_status("WARNING: Serial thread shutdown timed out; continuing disconnect")
+                except Exception as e:
+                    self.log_status(f"WARNING: Serial thread did not stop cleanly: {e}")
+                self.serial_thread = None
 
-        # Re-enable port selection
-        self.port_combo.setEnabled(True)
-        self.refresh_ports_btn.setEnabled(True)
+            if self.serial_port and self.serial_port.is_open:
+                try:
+                    self.serial_port.close()
+                except Exception as e:
+                    self.log_status(f"WARNING: Failed to close serial port cleanly: {e}")
+
+            self.serial_port = None
+            
+            # Reset MCU detection
+            self.current_mcu = None
+            self.device_mode = 'adc'
+            self.mcu_label.setText("MCU: -")
+            self.update_gui_for_mcu()
+            
+            # Reset last sent config
+            self.last_sent_config = {
+                'channels': None,
+                'repeat': None,
+                'ground_pin': None,
+                'use_ground': None,
+                'osr': None,
+                'gain': None,
+                'reference': None
+            }
+            
+            # Reset config validity
+            self.config_is_valid = False
+            
+            self.log_status("Disconnected")
+            self.connect_btn.setText("Connect")
+            self.configure_btn.setEnabled(False)
+            self.start_btn.setEnabled(False)
+            self.stop_btn.setEnabled(False)
+            self.statusBar().showMessage("Disconnected")
+
+            # Re-enable port selection
+            self.port_combo.setEnabled(True)
+            self.refresh_ports_btn.setEnabled(True)
+        finally:
+            self._serial_disconnect_in_progress = False
 
     def send_command(self, command: str):
         """Send a command to the Arduino."""

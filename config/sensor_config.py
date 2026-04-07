@@ -13,6 +13,16 @@ from config_constants import (
     DEFAULT_SENSOR_CONFIGURATION,
     DEFAULT_SENSOR_CONFIGURATION_NAME,
     SENSOR_LOCATION_CODES,
+    SENSOR_CONFIG_ARRAY_CELL_CHANNELS_MAX,
+    SENSOR_CONFIG_ARRAY_COLS,
+    SENSOR_CONFIG_ARRAY_ROWS,
+    SENSOR_CONFIG_CHANNEL_COUNT,
+    SENSOR_CONFIG_CHANNEL_MAX,
+    SENSOR_CONFIG_CHANNEL_MIN,
+    SENSOR_CONFIG_FILE_VERSION,
+    SENSOR_CONFIG_JSON_INDENT,
+    SENSOR_CONFIG_MUX_MAX,
+    SENSOR_CONFIG_MUX_MIN,
 )
 
 SENSOR_POSITION_ORDER = ["T", "R", "C", "L", "B"]
@@ -24,11 +34,11 @@ SENSOR_POSITION_LABELS = {
     "B": "Bottom",
 }
 
-# Array configuration constants
-ARRAY_ROWS = 3
-ARRAY_COLS = 3
-ARRAY_CELL_CHANNELS_MAX = 5
-
+# Backward-compatible aliases for modules that still import the historical
+# array-layout constants from config.sensor_config.
+ARRAY_ROWS = SENSOR_CONFIG_ARRAY_ROWS
+ARRAY_COLS = SENSOR_CONFIG_ARRAY_COLS
+ARRAY_CELL_CHANNELS_MAX = SENSOR_CONFIG_ARRAY_CELL_CHANNELS_MAX
 
 def default_sensor_configuration() -> Dict[str, object]:
     return {
@@ -40,14 +50,14 @@ def default_sensor_configuration() -> Dict[str, object]:
 
 def default_array_configuration() -> Dict[str, object]:
     return {
-        "array_layout": {"cells": [[None] * ARRAY_COLS for _ in range(ARRAY_ROWS)]},
+        "array_layout": {"cells": [[None] * SENSOR_CONFIG_ARRAY_COLS for _ in range(SENSOR_CONFIG_ARRAY_ROWS)]},
         "mux_mapping": {},
-        "channel_layout": {"channels_per_sensor": ARRAY_CELL_CHANNELS_MAX},
+        "channel_layout": {"channels_per_sensor": SENSOR_CONFIG_ARRAY_CELL_CHANNELS_MAX},
     }
 
 
 def normalize_channel_sensor_map(channel_sensor_map) -> List[str] | None:
-    if not isinstance(channel_sensor_map, list) or len(channel_sensor_map) != 5:
+    if not isinstance(channel_sensor_map, list) or len(channel_sensor_map) != SENSOR_CONFIG_CHANNEL_COUNT:
         return None
 
     normalized = [str(value).strip().upper() for value in channel_sensor_map]
@@ -134,10 +144,10 @@ def mapping_to_position_channels(channel_sensor_map: List[str]) -> Dict[str, int
 
 
 def position_channels_to_mapping(position_channels: Dict[str, int]) -> List[str]:
-    mapping = [None] * 5
+    mapping = [None] * SENSOR_CONFIG_CHANNEL_COUNT
     for sensor_label in SENSOR_POSITION_ORDER:
         channel_number = int(position_channels[sensor_label])
-        if channel_number < 1 or channel_number > 5:
+        if channel_number < 1 or channel_number > SENSOR_CONFIG_CHANNEL_COUNT:
             raise ValueError(f"Channel number out of range for {sensor_label}: {channel_number}")
         if mapping[channel_number - 1] is not None:
             raise ValueError(f"Duplicate channel assignment for channel {channel_number}")
@@ -203,12 +213,12 @@ def normalize_array_layout(array_layout: Dict[str, object]) -> Dict[str, object]
         return None
     
     cells_raw = array_layout.get("cells", [])
-    if not isinstance(cells_raw, list) or len(cells_raw) != ARRAY_ROWS:
+    if not isinstance(cells_raw, list) or len(cells_raw) != SENSOR_CONFIG_ARRAY_ROWS:
         return None
     
     cells_normalized = []
     for row_idx, row in enumerate(cells_raw):
-        if not isinstance(row, list) or len(row) != ARRAY_COLS:
+        if not isinstance(row, list) or len(row) != SENSOR_CONFIG_ARRAY_COLS:
             return None
         normalized_row = []
         for cell in row:
@@ -242,15 +252,15 @@ def normalize_mux_mapping(
             mux_num = int(mapping_data.get("mux", 0))
             channels_raw = mapping_data.get("channels", [])
             
-            if mux_num not in (1, 2):
+            if mux_num < SENSOR_CONFIG_MUX_MIN or mux_num > SENSOR_CONFIG_MUX_MAX:
                 return None
             if not isinstance(channels_raw, list):
                 return None
             
             channels = [int(c) for c in channels_raw]
-            if len(channels) < 1 or len(channels) > ARRAY_CELL_CHANNELS_MAX:
+            if len(channels) < 1 or len(channels) > SENSOR_CONFIG_ARRAY_CELL_CHANNELS_MAX:
                 return None
-            if any(c < 0 or c > 15 for c in channels):
+            if any(c < SENSOR_CONFIG_CHANNEL_MIN or c > SENSOR_CONFIG_CHANNEL_MAX for c in channels):
                 return None
             if len(set(channels)) != len(channels):  # Check for duplicates
                 return None
@@ -309,8 +319,8 @@ def normalize_array_config(config: Dict[str, object]) -> Dict[str, object] | Non
         return None
     
     try:
-        channels_per_sensor = int(channel_layout.get("channels_per_sensor", ARRAY_CELL_CHANNELS_MAX))
-        if channels_per_sensor < 1 or channels_per_sensor > ARRAY_CELL_CHANNELS_MAX:
+        channels_per_sensor = int(channel_layout.get("channels_per_sensor", SENSOR_CONFIG_ARRAY_CELL_CHANNELS_MAX))
+        if channels_per_sensor < 1 or channels_per_sensor > SENSOR_CONFIG_ARRAY_CELL_CHANNELS_MAX:
             return None
     except (ValueError, TypeError):
         return None
@@ -357,8 +367,8 @@ def normalize_optional_array_config(config: Dict[str, object]) -> Dict[str, obje
         return None
 
     try:
-        channels_per_sensor = int(channel_layout_raw.get("channels_per_sensor", ARRAY_CELL_CHANNELS_MAX))
-        if channels_per_sensor < 1 or channels_per_sensor > ARRAY_CELL_CHANNELS_MAX:
+        channels_per_sensor = int(channel_layout_raw.get("channels_per_sensor", SENSOR_CONFIG_ARRAY_CELL_CHANNELS_MAX))
+        if channels_per_sensor < 1 or channels_per_sensor > SENSOR_CONFIG_ARRAY_CELL_CHANNELS_MAX:
             return None
     except (ValueError, TypeError):
         return None
@@ -498,11 +508,11 @@ class SensorConfigStore:
         with self.file_path.open("w", encoding="utf-8") as handle:
             json.dump(
                 {
-                    "version": 1,
+                    "version": SENSOR_CONFIG_FILE_VERSION,
                     "selected_name": selected_name,
                     "deleted_names": deleted_names,
                     "configurations": normalized_local_configs,
                 },
                 handle,
-                indent=2,
+                indent=SENSOR_CONFIG_JSON_INDENT,
             )

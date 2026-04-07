@@ -41,12 +41,14 @@ from config_constants import (
     SHEAR_GAUSSIAN_SIGMA_Y,
     SHEAR_INTEGRATION_WINDOW_MS,
     SHEAR_INTENSITY_SCALE,
+    SHEAR_SENSOR_RADIUS,
+    SHEAR_VIEW_EXTENT,
 )
 
 
 class ShearPanelMixin:
-    SHEAR_VIEW_EXTENT = 1.25
-    SHEAR_SENSOR_RADIUS = 0.72
+    SHEAR_VIEW_EXTENT = SHEAR_VIEW_EXTENT
+    SHEAR_SENSOR_RADIUS = SHEAR_SENSOR_RADIUS
 
     def _get_shear_mode_suffix(self) -> str:
         if hasattr(self, "_get_visualization_mode_suffix"):

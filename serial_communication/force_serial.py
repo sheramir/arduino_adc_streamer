@@ -8,6 +8,12 @@ import serial
 from PyQt6.QtWidgets import QMessageBox
 from PyQt6.QtCore import QTimer
 
+from config_constants import (
+    FORCE_CALIBRATION_SAMPLES,
+    FORCE_SENSOR_BAUD_RATE,
+    FORCE_SENSOR_STARTUP_DELAY_SEC,
+    FORCE_THREAD_STOP_TIMEOUT_MS,
+)
 from serial_communication.serial_threads import ForceReaderThread
 
 
@@ -33,13 +39,13 @@ class ForceSerialMixin:
         try:
             self.force_serial_port = serial.Serial(
                 port=port_name,
-                baudrate=115200,  # Force sensor baud rate
+                baudrate=FORCE_SENSOR_BAUD_RATE,
                 timeout=1.0
             )
             
             # Clear any startup messages
             import time
-            time.sleep(0.5)
+            time.sleep(FORCE_SENSOR_STARTUP_DELAY_SEC)
             self.force_serial_port.reset_input_buffer()
 
             # Start force serial reader thread
@@ -48,8 +54,8 @@ class ForceSerialMixin:
             self.force_serial_thread.error_occurred.connect(self._handle_force_reader_error)
             self.force_serial_thread.start()
 
-            self.log_status(f"Connected to force sensor on {port_name} at 115200 baud")
-            self.log_status("Calibrating force sensors (collecting 10 samples)...")
+            self.log_status(f"Connected to force sensor on {port_name} at {FORCE_SENSOR_BAUD_RATE} baud")
+            self.log_status(f"Calibrating force sensors (collecting {FORCE_CALIBRATION_SAMPLES} samples)...")
             
             # Start calibration
             self.calibrate_force_sensors()
@@ -91,7 +97,7 @@ class ForceSerialMixin:
             if thread:
                 try:
                     thread.stop()
-                    if not thread.wait(250):
+                    if not thread.wait(FORCE_THREAD_STOP_TIMEOUT_MS):
                         self.log_status("WARNING: Force serial thread shutdown timed out; continuing disconnect")
                 except Exception as e:
                     self.log_status(f"WARNING: Force serial thread did not stop cleanly: {e}")

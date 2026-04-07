@@ -6,6 +6,8 @@ Handles force sensor data processing and calibration.
 
 import time
 
+from config_constants import FORCE_CALIBRATION_SAMPLES, FORCE_STATUS_UPDATE_INTERVAL_SAMPLES
+
 
 class ForceProcessorMixin:
     """Mixin for force sensor data processing."""
@@ -14,7 +16,7 @@ class ForceProcessorMixin:
         """Calibrate force sensors by collecting baseline samples without load."""
         self.force_calibrating = True
         self.calibration_samples = {'x': [], 'z': []}
-        # Calibration will be completed in process_force_data after 10 samples
+        # Calibration will be completed in process_force_data after enough samples.
 
     def process_force_data(self, x_force: float, z_force: float):
         """Process incoming force measurement data."""
@@ -23,7 +25,7 @@ class ForceProcessorMixin:
             self.calibration_samples['x'].append(x_force)
             self.calibration_samples['z'].append(z_force)
             
-            if len(self.calibration_samples['x']) >= 10:
+            if len(self.calibration_samples['x']) >= FORCE_CALIBRATION_SAMPLES:
                 # Calculate average offsets
                 self.force_calibration_offset['x'] = sum(self.calibration_samples['x']) / len(self.calibration_samples['x'])
                 self.force_calibration_offset['z'] = sum(self.calibration_samples['z']) / len(self.calibration_samples['z'])
@@ -46,7 +48,7 @@ class ForceProcessorMixin:
             self.force_data.append((timestamp, x_calibrated, z_calibrated))
             
             # Update info label
-            if len(self.force_data) % 10 == 0:  # Update every 10 samples
+            if len(self.force_data) % FORCE_STATUS_UPDATE_INTERVAL_SAMPLES == 0:
                 samples_per_sweep = max(0, int(getattr(self, 'samples_per_sweep', 0) or 0))
                 total_samples = int(self.sweep_count) * samples_per_sweep
                 self.plot_info_label.setText(

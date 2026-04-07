@@ -227,7 +227,7 @@ class ADCStreamerGUI(
         self._adc_curve_legend_added = {}
         self._force_x_curve = None
         self._force_z_curve = None
-        self.force_plot_debounce_ms = 100
+        self.force_plot_debounce_ms = FORCE_PLOT_DEBOUNCE_MS
         self._serial_disconnect_in_progress = False
         self._force_disconnect_in_progress = False
     
@@ -267,14 +267,14 @@ class ADCStreamerGUI(
         # Spectrum update timer
         self.spectrum_timer = QTimer()
         self.spectrum_timer.timeout.connect(self.update_spectrum)
-        self.spectrum_timer.setInterval(100)
+        self.spectrum_timer.setInterval(SPECTRUM_UPDATE_INTERVAL_MS)
 
     def _log_startup_message(self):
         """Log startup message to status window."""
-        self.log_status("=" * 70)
+        self.log_status("=" * STATUS_SEPARATOR_WIDTH)
         self.log_status("ADC STREAMER - Production Modular Version")
         self.log_status("✅ All modules loaded successfully")
-        self.log_status("=" * 70)
+        self.log_status("=" * STATUS_SEPARATOR_WIDTH)
 
     def init_ui(self):
         """Initialize the user interface using the leaf GUI mixins."""
@@ -298,8 +298,8 @@ class ADCStreamerGUI(
         # Create and add panels
         splitter.addWidget(self._create_left_control_panel())
         splitter.addWidget(self._create_right_visualization_panel())
-        splitter.setStretchFactor(0, 1)  # Controls get 1 part
-        splitter.setStretchFactor(1, 3)  # Plot gets 3 parts
+        splitter.setStretchFactor(0, CONTROL_PANEL_STRETCH)  # Controls get 1 part
+        splitter.setStretchFactor(1, VISUALIZATION_PANEL_STRETCH)  # Plot gets 3 parts
 
         # Status bar
         self.statusBar().showMessage("Disconnected")
@@ -318,8 +318,8 @@ class ADCStreamerGUI(
             return
 
         available = screen.availableGeometry()
-        max_width = max(900, available.width() - 16)
-        max_height = max(700, available.height() - 16)
+        max_width = max(WINDOW_MIN_FIT_WIDTH, available.width() - WINDOW_SCREEN_MARGIN_PX)
+        max_height = max(WINDOW_MIN_FIT_HEIGHT, available.height() - WINDOW_SCREEN_MARGIN_PX)
 
         if self.minimumSizeHint().width() > max_width or self.minimumSizeHint().height() > max_height:
             self.setMinimumSize(0, 0)
@@ -345,7 +345,7 @@ class ADCStreamerGUI(
         panel.setMinimumSize(0, 0)
         panel.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         layout = QVBoxLayout(panel)
-        layout.setSpacing(10)
+        layout.setSpacing(MAIN_PANEL_LAYOUT_SPACING)
 
         # Add all control sections from the leaf GUI mixins
         layout.addWidget(self.create_serial_section())

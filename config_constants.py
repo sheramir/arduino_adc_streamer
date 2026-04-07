@@ -50,8 +50,14 @@ ARDUINO_RESET_DELAY = 2.0
 # Debounce delay for plot updates to prevent excessive redraws (milliseconds)
 PLOT_UPDATE_DEBOUNCE = 200
 
+# Debounce delay for force-only plot refreshes (milliseconds)
+FORCE_PLOT_DEBOUNCE_MS = 100
+
 # Interval for checking configuration completion status (milliseconds)
 CONFIG_CHECK_INTERVAL = 100
+
+# Spectrum refresh cadence (milliseconds)
+SPECTRUM_UPDATE_INTERVAL_MS = 100
 
 # Plot update frequency during capture (update every N sweeps)
 PLOT_UPDATE_FREQUENCY = 10
@@ -71,6 +77,24 @@ MAX_TOTAL_POINTS_TO_DISPLAY = 12000
 # Main window dimensions
 WINDOW_WIDTH = 1200
 WINDOW_HEIGHT = 800
+
+# Minimum practical on-screen window size when clamping to the active monitor.
+# These keep the UI usable on smaller displays while still honoring screen bounds.
+WINDOW_MIN_FIT_WIDTH = 900
+WINDOW_MIN_FIT_HEIGHT = 700
+
+# Padding from the monitor edge when fitting the main window (pixels)
+WINDOW_SCREEN_MARGIN_PX = 16
+
+# Left/right splitter proportions for controls vs. visualization
+CONTROL_PANEL_STRETCH = 1
+VISUALIZATION_PANEL_STRETCH = 3
+
+# Standard vertical spacing used in the main stacked control panel layout (pixels)
+MAIN_PANEL_LAYOUT_SPACING = 10
+
+# Width of startup/status separator lines logged to the status pane (characters)
+STATUS_SEPARATOR_WIDTH = 70
 
 # Default scrolling window size (number of sweeps to display during capture)
 DEFAULT_WINDOW_SIZE = 10000
@@ -120,6 +144,9 @@ TIMED_RUN_MIN = 10
 TIMED_RUN_MAX = 3600000  # 1 hour
 TIMED_RUN_DEFAULT = 1000
 
+# Extra delay added after a timed run before finalizing UI state (milliseconds)
+TIMED_CAPTURE_FINISH_SLACK_MS = 500
+
 # Sweep range spinners
 SWEEP_RANGE_MIN = 0
 SWEEP_RANGE_MAX = 999999
@@ -154,6 +181,12 @@ CACHE_SUBDIR_NAME = "cache"
 # Automatically clear capture cache on ADC disconnect/exit
 CLEAR_CACHE_ON_EXIT = True
 
+# Retry cadence for deferred cache cleanup while the archive writer drains (milliseconds)
+CACHE_CLEANUP_RETRY_INTERVAL_MS = 100
+
+# Maximum deferred cleanup polls before giving up on automatic cache cleanup
+CACHE_CLEANUP_MAX_ATTEMPTS = 100
+
 # ============================================================================
 # 555 Analyzer Constants
 # ============================================================================
@@ -167,6 +200,16 @@ ANALYZER555_DEFAULT_RXMAX_OHMS = 65500.0
 # GUI defaults for Cf entry
 ANALYZER555_DEFAULT_CF_VALUE = 22.0
 ANALYZER555_DEFAULT_CF_UNIT = "nF"
+
+# 555-mode UI ranges
+ANALYZER555_RESISTANCE_MAX_OHMS = 1e9
+ANALYZER555_CF_MIN_VALUE = 0.0001
+ANALYZER555_CF_MAX_VALUE = 1e6
+ANALYZER555_RXMAX_MIN_OHMS = 1.0
+ANALYZER555_RXMAX_MAX_OHMS = 1e12
+
+# 555-mode serial buffer limit used by the current MCU firmware
+ANALYZER555_BUFFER_SIZE_MAX = 256
 
 # ============================================================================
 # Filtering Constants
@@ -209,6 +252,17 @@ MAX_SWEEPS_IN_MEMORY = 50000
 # Applies to: force_data
 # Higher values = more force data for analysis, but more memory usage
 MAX_FORCE_SAMPLES = 50000
+
+# Number of samples collected when zeroing the force sensor offset
+FORCE_CALIBRATION_SAMPLES = 10
+
+# Force status label refresh cadence (every N force samples)
+FORCE_STATUS_UPDATE_INTERVAL_SAMPLES = 10
+
+# Force sensor serial settings
+FORCE_SENSOR_BAUD_RATE = 115200
+FORCE_SENSOR_STARTUP_DELAY_SEC = 0.5
+FORCE_THREAD_STOP_TIMEOUT_MS = 250
 
 # Force sensor conversion factors (raw counts per Newton)
 # Newtons = calibrated_raw / FORCE_SENSOR_TO_NEWTON
@@ -306,6 +360,10 @@ HEATMAP_CHANNEL_SENSOR_MAP = list(DEFAULT_SENSOR_CONFIGURATION["channel_sensor_m
 HEATMAP_REQUIRED_CHANNELS = 5
 MAX_SENSOR_PACKAGES = 4
 
+# Auto-baseline behavior for PZR/heatmap plotting
+PZR_ZERO_BASELINE_WINDOW_SEC = 0.5
+PZR_AUTO_BASELINE_DELAY_SEC = 1.5
+
 # PZR sensor (555 analyzer mode) now uses 5 channels like PZT
 # Shares the same heatmap configuration as standard piezo sensors
 R_HEATMAP_CHANNEL_SENSOR_MAP = HEATMAP_CHANNEL_SENSOR_MAP
@@ -348,6 +406,10 @@ SHEAR_ARROW_THICKNESS_AMPLIFIER = 30.0
 # Confidence scoring reference magnitude
 SHEAR_CONFIDENCE_SIGNAL_REF = 0.02
 
+# Shear panel view geometry
+SHEAR_VIEW_EXTENT = 1.25
+SHEAR_SENSOR_RADIUS = 0.72
+
 # ============================================================================
 # Plot Colors
 # ============================================================================
@@ -368,3 +430,90 @@ PLOT_COLORS = [
     (46, 139, 87),    # Sea Green
     (30, 144, 255)    # Dodger Blue
 ]
+
+# ============================================================================
+# Sensor Configuration Library Constants
+# ============================================================================
+
+# Bundled sensor-library JSON format version
+SENSOR_CONFIG_FILE_VERSION = 1
+
+# Pretty-print indentation for persisted sensor configuration JSON files
+SENSOR_CONFIG_JSON_INDENT = 2
+
+# Fixed-size editable sensor mapping uses 5 logical positions: T, R, C, L, B
+SENSOR_CONFIG_CHANNEL_COUNT = 5
+
+# Default array editor dimensions in the sensor configuration UI
+SENSOR_CONFIG_ARRAY_ROWS = 3
+SENSOR_CONFIG_ARRAY_COLS = 3
+SENSOR_CONFIG_ARRAY_CELL_CHANNELS_MAX = 5
+
+# Supported MUX numbering and channel index range for bundled array configs
+SENSOR_CONFIG_MUX_MIN = 1
+SENSOR_CONFIG_MUX_MAX = 2
+SENSOR_CONFIG_CHANNEL_MIN = 0
+SENSOR_CONFIG_CHANNEL_MAX = 15
+
+# ============================================================================
+# Serial Reader / Protocol Constants
+# ============================================================================
+
+# Idle sleep between ADC serial polling iterations (milliseconds)
+SERIAL_READER_IDLE_MS = 2
+
+# Idle sleep between force serial polling iterations (milliseconds)
+FORCE_READER_IDLE_MS = 10
+
+# Maximum number of binary packet debug messages emitted per capture session
+SERIAL_READER_DEBUG_LOG_LIMIT = 10
+
+# Binary packet framing sizes
+SERIAL_PACKET_HEADER_BYTES = 4
+SERIAL_PACKET_AVG_SAMPLE_TIME_BYTES = 2
+SERIAL_PACKET_BLOCK_TIMESTAMP_BYTES = 8
+
+# ============================================================================
+# MCU Detection Constants
+# ============================================================================
+
+# Timeout while waiting for the MCU identification response (seconds)
+MCU_DETECTION_TIMEOUT_SEC = 2.0
+
+# Poll interval while waiting for the MCU identification response (seconds)
+MCU_DETECTION_POLL_INTERVAL_SEC = 0.01
+
+# Teensy sample-rate spinbox upper bound (Hz)
+TEENSY_SAMPLE_RATE_MAX_HZ = 1000000
+
+# ============================================================================
+# Capture Lifecycle Timing
+# ============================================================================
+
+# Short delay after arming the reader thread before issuing the run command (seconds)
+CAPTURE_THREAD_ARM_DELAY_SEC = 0.05
+
+# Stop-command acknowledgement timeout and retry policy
+STOP_CAPTURE_ACK_TIMEOUT_SEC = 0.2
+STOP_CAPTURE_ACK_RETRIES = 1
+
+# Serial drain timings used around capture stop/clear (seconds)
+STOP_CAPTURE_DRAIN_SEC = 0.15
+STOP_CAPTURE_FINAL_DRAIN_SEC = 0.02
+CLEAR_CAPTURE_DRAIN_SEC = 0.05
+
+# ============================================================================
+# Archive Writer Timing
+# ============================================================================
+
+# Queue poll timeout while the archive writer waits for new work (seconds)
+ARCHIVE_WRITER_QUEUE_TIMEOUT_SEC = 0.1
+
+# Flush the archive file every N written sweeps
+ARCHIVE_WRITER_FLUSH_SWEEP_INTERVAL = 1000
+
+# Brief sleep between archive queue items to give the GUI thread more GIL time (seconds)
+ARCHIVE_WRITER_GIL_YIELD_SEC = 0.002
+
+# Maximum wait when stopping the archive writer synchronously (seconds)
+ARCHIVE_WRITER_JOIN_TIMEOUT_SEC = 15.0

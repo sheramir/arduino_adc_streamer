@@ -7,6 +7,15 @@ Background threads for reading serial data without blocking the GUI.
 import numpy as np
 from PyQt6.QtCore import QThread, pyqtSignal
 
+from config_constants import (
+    FORCE_READER_IDLE_MS,
+    SERIAL_PACKET_AVG_SAMPLE_TIME_BYTES,
+    SERIAL_PACKET_BLOCK_TIMESTAMP_BYTES,
+    SERIAL_PACKET_HEADER_BYTES,
+    SERIAL_READER_DEBUG_LOG_LIMIT,
+    SERIAL_READER_IDLE_MS,
+)
+
 
 class SerialReaderThread(QThread):
     """Background thread for reading serial data without blocking the GUI."""
@@ -40,7 +49,7 @@ class SerialReaderThread(QThread):
                 else:
                     break
 
-                self.msleep(2)  # Keep reads responsive at higher channel counts
+                self.msleep(SERIAL_READER_IDLE_MS)  # Keep reads responsive at higher channel counts
 
             except Exception as e:
                 self.error_occurred.emit(f"Serial read error: {e}")
@@ -74,7 +83,7 @@ class SerialReaderThread(QThread):
             # Binary block packet (0xAA 0x55 header)
             # ----------------------------------------------------------------
             if b0 == 0xAA and b1 == 0x55:
-                if buf_len - buf_start < 4:
+                if buf_len - buf_start < SERIAL_PACKET_HEADER_BYTES:
                     break  # Need more data for header
 
                 sample_count = buffer[buf_start + 2] | (buffer[buf_start + 3] << 8)
@@ -86,7 +95,7 @@ class SerialReaderThread(QThread):
 
                 if expected and sample_count % expected != 0:
                     # False header match or desynced stream.
-                    if self.is_capturing and self._debug_binary_rejections < 10:
+                    if self.is_capturing and self._debug_binary_rejections < SERIAL_READER_DEBUG_LOG_LIMIT:
                         self._debug_binary_rejections += 1
                         self.error_occurred.emit(
                             f"Binary packet rejected: sample_count={sample_count}, expected_multiple={expected}"
@@ -95,20 +104,25 @@ class SerialReaderThread(QThread):
                     continue
 
                 # header(4) + samples(count*2) + avg_time(2) + block_start_us(4) + block_end_us(4)
-                packet_size = 4 + (sample_count * 2) + 2 + 8
+                packet_size = (
+                    SERIAL_PACKET_HEADER_BYTES
+                    + (sample_count * 2)
+                    + SERIAL_PACKET_AVG_SAMPLE_TIME_BYTES
+                    + SERIAL_PACKET_BLOCK_TIMESTAMP_BYTES
+                )
 
                 if buf_len - buf_start < packet_size:
                     break  # Need more data for complete packet
 
                 if self.is_capturing:
-                    if self._debug_binary_packets_seen < 10:
+                    if self._debug_binary_packets_seen < SERIAL_READER_DEBUG_LOG_LIMIT:
                         self._debug_binary_packets_seen += 1
                         self.error_occurred.emit(
                             f"Binary packet accepted: sample_count={sample_count}, expected_multiple={expected}, packet_size={packet_size}"
                         )
 
                     # --- Parse samples with frombuffer (no Python loop) ---
-                    payload_start = buf_start + 4
+                    payload_start = buf_start + SERIAL_PACKET_HEADER_BYTES
                     payload_end = payload_start + sample_count * 2
                     # .copy() so the array owns its data before buffer is trimmed below
                     samples = np.frombuffer(
@@ -118,14 +132,14 @@ class SerialReaderThread(QThread):
                     # avg_sample_time_us: uint16 LE, 2 bytes after payload
                     avg_time_offset = payload_end
                     avg_sample_time_us = int.from_bytes(
-                        buffer[avg_time_offset:avg_time_offset + 2], 'little'
+                        buffer[avg_time_offset:avg_time_offset + SERIAL_PACKET_AVG_SAMPLE_TIME_BYTES], 'little'
                     )
 
                     # block_start_us / block_end_us: uint32 LE, 4 bytes each
                     # Use int.from_bytes (copies bytes immediately) instead of
                     # np.frombuffer so no memoryview holds a live export on the
                     # bytearray at the point of the del buffer[:n] trim below.
-                    ts_offset = avg_time_offset + 2
+                    ts_offset = avg_time_offset + SERIAL_PACKET_AVG_SAMPLE_TIME_BYTES
                     block_start_us = int.from_bytes(
                         buffer[ts_offset:ts_offset + 4], 'little'
                     )
@@ -218,7 +232,7 @@ class ForceReaderThread(QThread):
                 else:
                     break
 
-                self.msleep(10)  # Small delay to prevent CPU spinning
+                self.msleep(FORCE_READER_IDLE_MS)  # Small delay to prevent CPU spinning
 
             except Exception as e:
                 self.error_occurred.emit(f"Force sensor read error: {e}")

@@ -11,12 +11,29 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 
 from config_constants import (
-    GROUND_PIN_MIN, GROUND_PIN_MAX, REPEAT_COUNT_MIN, REPEAT_COUNT_MAX, 
-    REPEAT_COUNT_DEFAULT, BUFFER_SIZE_MIN, BUFFER_SIZE_MAX, DEFAULT_BUFFER_SIZE,
-    TIMED_RUN_MIN, TIMED_RUN_MAX, TIMED_RUN_DEFAULT,
-    ANALYZER555_DEFAULT_RB_OHMS, ANALYZER555_DEFAULT_RK_OHMS,
-    ANALYZER555_DEFAULT_CF_VALUE, ANALYZER555_DEFAULT_CF_UNIT,
-    ANALYZER555_DEFAULT_RXMAX_OHMS
+    ANALYZER555_CF_MAX_VALUE,
+    ANALYZER555_CF_MIN_VALUE,
+    ANALYZER555_DEFAULT_CF_UNIT,
+    ANALYZER555_DEFAULT_CF_VALUE,
+    ANALYZER555_DEFAULT_RB_OHMS,
+    ANALYZER555_DEFAULT_RK_OHMS,
+    ANALYZER555_DEFAULT_RXMAX_OHMS,
+    ANALYZER555_RESISTANCE_MAX_OHMS,
+    ANALYZER555_RXMAX_MAX_OHMS,
+    ANALYZER555_RXMAX_MIN_OHMS,
+    BUFFER_SIZE_MAX,
+    BUFFER_SIZE_MIN,
+    DEFAULT_BUFFER_SIZE,
+    GROUND_PIN_DEFAULT,
+    GROUND_PIN_MAX,
+    GROUND_PIN_MIN,
+    REPEAT_COUNT_DEFAULT,
+    REPEAT_COUNT_MAX,
+    REPEAT_COUNT_MIN,
+    TEENSY_SAMPLE_RATE_MAX_HZ,
+    TIMED_RUN_MAX,
+    TIMED_RUN_MIN,
+    TIMED_RUN_DEFAULT,
 )
 
 
@@ -133,7 +150,7 @@ class ControlPanelsMixin:
         self.sample_rate_label = QLabel("Sampling Rate [Hz]:")
         layout.addWidget(self.sample_rate_label, 5, 0)
         self.sample_rate_spin = QSpinBox()
-        self.sample_rate_spin.setRange(0, 1000000)  # 0 to 1 MHz
+        self.sample_rate_spin.setRange(0, TEENSY_SAMPLE_RATE_MAX_HZ)
         self.sample_rate_spin.setValue(0)
         self.sample_rate_spin.setSpecialValueText("Free-run (max)")
         self.sample_rate_spin.setToolTip("Sampling rate in Hz, 0 = free-run at maximum speed (Teensy only)")
@@ -146,7 +163,7 @@ class ControlPanelsMixin:
         self.rb_label = QLabel("Rb [Ω]:")
         layout.addWidget(self.rb_label, 6, 0)
         self.rb_spin = QDoubleSpinBox()
-        self.rb_spin.setRange(0.0, 1e9)
+        self.rb_spin.setRange(0.0, ANALYZER555_RESISTANCE_MAX_OHMS)
         self.rb_spin.setDecimals(2)
         self.rb_spin.setValue(ANALYZER555_DEFAULT_RB_OHMS)
         self.rb_spin.valueChanged.connect(self.on_rb_changed)
@@ -158,7 +175,7 @@ class ControlPanelsMixin:
         self.rk_label = QLabel("Rk [Ω]:")
         layout.addWidget(self.rk_label, 7, 0)
         self.rk_spin = QDoubleSpinBox()
-        self.rk_spin.setRange(0.0, 1e9)
+        self.rk_spin.setRange(0.0, ANALYZER555_RESISTANCE_MAX_OHMS)
         self.rk_spin.setDecimals(2)
         self.rk_spin.setValue(ANALYZER555_DEFAULT_RK_OHMS)
         self.rk_spin.valueChanged.connect(self.on_rk_changed)
@@ -170,7 +187,7 @@ class ControlPanelsMixin:
         self.cf_label = QLabel("Cf:")
         layout.addWidget(self.cf_label, 8, 0)
         self.cf_value_spin = QDoubleSpinBox()
-        self.cf_value_spin.setRange(0.0001, 1e6)
+        self.cf_value_spin.setRange(ANALYZER555_CF_MIN_VALUE, ANALYZER555_CF_MAX_VALUE)
         self.cf_value_spin.setDecimals(6)
         self.cf_value_spin.setValue(ANALYZER555_DEFAULT_CF_VALUE)
         self.cf_value_spin.valueChanged.connect(self.on_cf_changed)
@@ -187,7 +204,7 @@ class ControlPanelsMixin:
         self.rxmax_label = QLabel("Rx max [Ω]:")
         layout.addWidget(self.rxmax_label, 9, 0)
         self.rxmax_spin = QDoubleSpinBox()
-        self.rxmax_spin.setRange(1.0, 1e12)
+        self.rxmax_spin.setRange(ANALYZER555_RXMAX_MIN_OHMS, ANALYZER555_RXMAX_MAX_OHMS)
         self.rxmax_spin.setDecimals(2)
         self.rxmax_spin.setValue(ANALYZER555_DEFAULT_RXMAX_OHMS)
         self.rxmax_spin.valueChanged.connect(self.on_rxmax_changed)
@@ -251,7 +268,7 @@ class ControlPanelsMixin:
         layout.addWidget(self.ground_pin_label, 3, 0)
         self.ground_pin_spin = QSpinBox()
         self.ground_pin_spin.setRange(GROUND_PIN_MIN, GROUND_PIN_MAX)
-        self.ground_pin_spin.setValue(0)  # Default to pin 0
+        self.ground_pin_spin.setValue(GROUND_PIN_DEFAULT)
         self.ground_pin_spin.valueChanged.connect(self.on_ground_pin_changed)
         layout.addWidget(self.ground_pin_spin, 3, 1)
 

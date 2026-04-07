@@ -5,7 +5,13 @@ Detects MCU type and adapts GUI controls accordingly.
 """
 
 import time
-from config_constants import COMMAND_TERMINATOR, BUFFER_SIZE_MAX
+from config_constants import (
+    ANALYZER555_BUFFER_SIZE_MAX,
+    BUFFER_SIZE_MAX,
+    COMMAND_TERMINATOR,
+    MCU_DETECTION_POLL_INTERVAL_SEC,
+    MCU_DETECTION_TIMEOUT_SEC,
+)
 
 
 class MCUDetectorMixin:
@@ -24,9 +30,9 @@ class MCUDetectorMixin:
             self.serial_port.write(f"mcu{COMMAND_TERMINATOR}".encode('utf-8'))
             self.serial_port.flush()
             
-            # Wait for response (timeout 2 seconds)
+            # Wait for response within the configured detection timeout.
             start_time = time.time()
-            while time.time() - start_time < 2.0:
+            while time.time() - start_time < MCU_DETECTION_TIMEOUT_SEC:
                 if self.serial_port.in_waiting > 0:
                     line = self.serial_port.readline().decode('utf-8', errors='ignore').strip()
                     
@@ -39,7 +45,7 @@ class MCUDetectorMixin:
                             self.log_status(f"Detected MCU: {mcu_name}")
                             return
                 
-                time.sleep(0.01)
+                time.sleep(MCU_DETECTION_POLL_INTERVAL_SEC)
             
             # Timeout or no response - use generic behavior
             self.current_mcu = None
@@ -125,9 +131,9 @@ class MCUDetectorMixin:
                 self.yaxis_units_combo.setEnabled(False)
 
             if hasattr(self, 'buffer_spin'):
-                self.buffer_spin.setRange(1, 256)
-                if self.buffer_spin.value() > 256:
-                    self.buffer_spin.setValue(256)
+                self.buffer_spin.setRange(1, ANALYZER555_BUFFER_SIZE_MAX)
+                if self.buffer_spin.value() > ANALYZER555_BUFFER_SIZE_MAX:
+                    self.buffer_spin.setValue(ANALYZER555_BUFFER_SIZE_MAX)
 
             if hasattr(self, 'charge_time_label'):
                 self.charge_time_label.setVisible(True)

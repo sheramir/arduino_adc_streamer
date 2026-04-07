@@ -37,7 +37,6 @@ from sensor_config import (
     get_sensors_from_array_layout,
     mapping_to_position_channels,
     normalize_combined_sensor_config,
-    normalize_array_config,
     normalize_array_cell,
     normalize_sensor_config,
     position_channels_to_mapping,

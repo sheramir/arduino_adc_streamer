@@ -15,7 +15,6 @@ This module combines:
 import time
 import csv
 from datetime import datetime
-from typing import List
 from pathlib import Path
 
 import numpy as np
@@ -24,8 +23,7 @@ from PyQt6.QtCore import Qt, QTimer
 import pyqtgraph as pg
 
 from config_constants import (
-    MAX_TIMING_SAMPLES, PLOT_UPDATE_FREQUENCY, PLOT_COLORS,
-    MAX_FORCE_SAMPLES, MAX_LOG_LINES, IADC_RESOLUTION_BITS, MAX_PLOT_SWEEPS,
+    PLOT_COLORS, MAX_LOG_LINES, IADC_RESOLUTION_BITS, MAX_PLOT_SWEEPS,
     ANALYZER555_DEFAULT_CF_FARADS, ANALYZER555_DEFAULT_RB_OHMS,
     ANALYZER555_DEFAULT_RK_OHMS,
     X_FORCE_SENSOR_TO_NEWTON, Z_FORCE_SENSOR_TO_NEWTON, CACHE_SUBDIR_NAME,
@@ -45,6 +43,100 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
 
     PZR_ZERO_BASELINE_WINDOW_SEC = 0.5
     PZR_AUTO_BASELINE_DELAY_SEC = 1.5
+
+    def _build_empty_timing_data(self):
+        return {
+            'per_channel_rate_hz': None,
+            'total_rate_hz': None,
+            'between_samples_us': None,
+            'arduino_sample_time_us': None,
+            'arduino_sample_rate_hz': None,
+            'buffer_gap_time_ms': None,
+            'mcu_block_start_us': None,
+            'mcu_block_end_us': None,
+            'mcu_block_gap_us': None,
+        }
+
+    def _reset_capture_buffer_state(self, *, reset_samples_per_sweep=False, zero_buffers=False):
+        """Reset rolling capture buffers and cached full-view arrays."""
+        with self.buffer_lock:
+            self.raw_data = []
+            self.sweep_timestamps = []
+            self.sweep_count = 0
+            self.buffer_write_index = 0
+            if reset_samples_per_sweep:
+                self.samples_per_sweep = 0
+
+            if zero_buffers and self.raw_data_buffer is not None:
+                self.raw_data_buffer.fill(0)
+            if zero_buffers and self.processed_data_buffer is not None:
+                self.processed_data_buffer.fill(0)
+            if zero_buffers and self.sweep_timestamps_buffer is not None:
+                self.sweep_timestamps_buffer.fill(0)
+
+    def _reset_force_capture_state(self):
+        """Reset force samples for a new capture lifecycle."""
+        self.force_data.clear()
+        self.force_start_time = None
+
+    def _reset_timing_measurements(self, *, log_timestamp_clear=False, reset_labels=False):
+        """Reset capture timing fields, histories, and optional UI labels."""
+        if hasattr(self, 'first_sweep_timestamp_us'):
+            if log_timestamp_clear:
+                self.log_status(f"Clearing first_sweep_timestamp_us (was {self.first_sweep_timestamp_us} Âµs)")
+            delattr(self, 'first_sweep_timestamp_us')
+        elif log_timestamp_clear:
+            self.log_status("first_sweep_timestamp_us already cleared")
+
+        self.timing_data = self._build_empty_timing_data()
+        self.capture_start_time = None
+        self.capture_end_time = None
+        self.last_buffer_time = None
+        self.last_buffer_end_time = None
+        self.mcu_last_block_end_us = None
+
+        for attr_name in (
+            'buffer_receipt_times',
+            'buffer_gap_times',
+            'arduino_sample_times',
+            'block_sample_counts',
+            'block_sweeps_counts',
+            'block_samples_per_sweep',
+            'mcu_block_start_us',
+            'mcu_block_end_us',
+            'mcu_block_gap_us',
+        ):
+            if hasattr(self, attr_name):
+                getattr(self, attr_name).clear()
+            else:
+                setattr(self, attr_name, [])
+
+        if reset_labels:
+            self.per_channel_rate_label.setText("- Hz")
+            self.total_rate_label.setText("- Hz")
+            self.between_samples_label.setText("- Âµs")
+            self.block_gap_label.setText("- ms")
+
+    def _reset_signal_processing_state(self, *, reset_shear=False):
+        """Reset filter pipeline state and optionally shear processing."""
+        self.filter_apply_pending = True
+        self.reset_filter_states()
+        if reset_shear:
+            self.reset_shear_processing_state()
+
+    def _reset_full_view_state(self, *, button_enabled=None, trigger_plot_update=False):
+        """Exit full view and clear the cached reordered arrays."""
+        self.is_full_view = False
+        with self.buffer_lock:
+            self.raw_data = []
+            self.sweep_timestamps = []
+
+        if button_enabled is None:
+            button_enabled = not self.is_capturing
+        self.full_view_btn.setEnabled(bool(button_enabled))
+
+        if trigger_plot_update:
+            self.trigger_plot_update()
     
     # ========================================================================
     # Plotting and Visualization
@@ -691,66 +783,18 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
 
         # If currently in full view, reset to normal view before starting new capture
         if self.is_full_view:
-            self.reset_graph_view()
+            self._reset_full_view_state(button_enabled=False, trigger_plot_update=False)
             self.log_status("Resetting from full view to normal view for new capture")
-        
-        # Disable Full View button during capture
-        self.full_view_btn.setEnabled(False)
+        else:
+            # Disable Full View button during capture
+            self.full_view_btn.setEnabled(False)
 
-        # Clear previous data - thread safe
-        with self.buffer_lock:
-            self.raw_data = []
-            self.sweep_timestamps = []
-            self.sweep_count = 0
-            self.buffer_write_index = 0
-            # Zero out buffers to prevent old data from showing
-            if self.raw_data_buffer is not None:
-                self.raw_data_buffer.fill(0)
-            if self.processed_data_buffer is not None:
-                self.processed_data_buffer.fill(0)
-            if self.sweep_timestamps_buffer is not None:
-                self.sweep_timestamps_buffer.fill(0)
-
-        self.filter_apply_pending = True
-        self.reset_filter_states()
-        
-        self.force_data.clear()
-        self.force_start_time = None
-        
-        # Reset timestamp reference to ensure time starts at 0
-        if hasattr(self, 'first_sweep_timestamp_us'):
-            delattr(self, 'first_sweep_timestamp_us')
+        self._reset_capture_buffer_state()
+        self._reset_signal_processing_state(reset_shear=False)
+        self._reset_force_capture_state()
 
         # Clear timing data for new measurement
-        self.timing_data = {
-            'per_channel_rate_hz': None,
-            'total_rate_hz': None,
-            'between_samples_us': None,
-            'arduino_sample_time_us': None,
-            'arduino_sample_rate_hz': None,
-            'buffer_gap_time_ms': None,
-            'mcu_block_start_us': None,
-            'mcu_block_end_us': None,
-            'mcu_block_gap_us': None
-        }
-        self.capture_start_time = None
-        self.capture_end_time = None
-        self.last_buffer_time = None
-        self.last_buffer_end_time = None
-        self.buffer_receipt_times.clear()
-        self.buffer_gap_times.clear()
-        self.arduino_sample_times.clear()
-        self.block_sample_counts.clear()
-        self.block_sweeps_counts.clear()
-        self.block_samples_per_sweep.clear()
-        self.mcu_block_start_us.clear()
-        self.mcu_block_end_us.clear()
-        self.mcu_block_gap_us.clear()
-        self.mcu_last_block_end_us = None
-        self.per_channel_rate_label.setText("- Hz")
-        self.total_rate_label.setText("- Hz")
-        self.between_samples_label.setText("- µs")
-        self.block_gap_label.setText("- ms")
+        self._reset_timing_measurements(reset_labels=True)
 
         # Disable plot interactions during capture (scrolling mode)
         self.plot_widget.setMouseEnabled(x=False, y=False)
@@ -850,8 +894,8 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
         success, _ = self.send_command_and_wait_ack(
             "stop",
             expected_value=None,
-            timeout=0.5,
-            max_retries=3
+            timeout=0.2,
+            max_retries=1
         )
 
         if not success:
@@ -864,7 +908,7 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
         self.is_capturing = False
 
         # Flush any residual binary bytes so the next run starts clean
-        self.drain_serial_input(0.5)
+        self.drain_serial_input(0.15)
 
         self.on_capture_finished()
 
@@ -902,7 +946,7 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
         # Brief final flush to clear any bytes that arrived in the last few ms.
         # The 500ms drain in stop_capture already handled the bulk; this is just
         # a short reset so the next capture starts with a clean serial buffer.
-        self.drain_serial_input(0.05)
+        self.drain_serial_input(0.02)
         
         # Enable Full View button now that capture is finished (unless already in full view)
         if not self.is_full_view:
@@ -1002,57 +1046,13 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
 
         if reply == QMessageBox.StandardButton.Yes:
             # Ensure any leftover bytes from a previous capture are discarded
-            self.drain_serial_input(0.3)
+            self.drain_serial_input(0.05)
 
-            # Clear all data structures with thread safety
-            with self.buffer_lock:
-                self.raw_data = []
-                self.sweep_timestamps = []
-                self.sweep_count = 0
-                self.buffer_write_index = 0
-                # Reset buffer to zeros (optional, but cleaner)
-                if self.raw_data_buffer is not None:
-                    self.raw_data_buffer.fill(0)
-                    if self.processed_data_buffer is not None:
-                        self.processed_data_buffer.fill(0)
-                    self.sweep_timestamps_buffer.fill(0)
-            
-            self.force_data.clear()
-            
-            # Reset ALL timestamp and timing references for next capture
-            if hasattr(self, 'first_sweep_timestamp_us'):
-                self.log_status(f"Clearing first_sweep_timestamp_us (was {self.first_sweep_timestamp_us} µs)")
-                delattr(self, 'first_sweep_timestamp_us')
-            else:
-                self.log_status("first_sweep_timestamp_us already cleared")
-            self.capture_start_time = None
-            self.capture_end_time = None
-            self.force_start_time = None
-            self.last_buffer_time = None
-            self.last_buffer_end_time = None
-            self.mcu_last_block_end_us = None
-            
-            # Clear all timing data lists
-            self.buffer_receipt_times.clear()
-            self.buffer_gap_times.clear()
-            self.arduino_sample_times.clear()
-            self.block_sample_counts.clear()
-            self.block_sweeps_counts.clear()
-            self.block_samples_per_sweep.clear()
-            self.mcu_block_start_us.clear()
-            self.mcu_block_end_us.clear()
-            self.mcu_block_gap_us.clear()
-            
-            # Reset samples_per_sweep to force buffer reinitialization
-            self.samples_per_sweep = 0
-            self.filter_apply_pending = True
-            self.reset_filter_states()
-            if hasattr(self, 'reset_shear_processing_state'):
-                self.reset_shear_processing_state()
-            
-            # Reset view mode flags
-            self.is_full_view = False
-            self.full_view_btn.setEnabled(False)
+            self._reset_capture_buffer_state(reset_samples_per_sweep=True)
+            self._reset_force_capture_state()
+            self._reset_timing_measurements(log_timestamp_clear=True, reset_labels=True)
+            self._reset_signal_processing_state(reset_shear=True)
+            self._reset_full_view_state(button_enabled=False, trigger_plot_update=False)
             
             # COMPLETELY DELETE all ADC curves (not just hide)
             for curve in self._adc_curves.values():
@@ -1089,17 +1089,59 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
             # Update info label
             self.plot_info_label.setText("ADC - Sweeps: 0 | Samples: 0  |  Force: 0 samples")
             self.log_status("Data cleared - plot reset to initial state")
-            self.cleanup_capture_cache()
+            self.cleanup_capture_cache(block=False)
     
     # ========================================================================
     # Helper Methods
     # ========================================================================
 
-    def _close_capture_cache_handles(self):
-        """Close open cache file handles, if any."""
+    def _delete_capture_cache_files(self, archive_path, block_timing_path, cache_dir_path):
+        """Delete cache files and remove the cache directory when empty."""
+        removed_files = 0
+        for cache_path in [archive_path, block_timing_path]:
+            if not cache_path:
+                continue
+            try:
+                path_obj = Path(cache_path)
+                if path_obj.exists() and path_obj.is_file():
+                    path_obj.unlink()
+                    removed_files += 1
+            except Exception as e:
+                self.log_status(f"WARNING: Failed to remove cache file {cache_path}: {e}")
+
+        if cache_dir_path:
+            try:
+                cache_dir = Path(cache_dir_path)
+                if cache_dir.exists() and cache_dir.is_dir() and not any(cache_dir.iterdir()):
+                    cache_dir.rmdir()
+            except Exception as e:
+                self.log_status(f"WARNING: Failed to remove cache directory {cache_dir_path}: {e}")
+
+        if removed_files > 0:
+            self.log_status(f"Cache cleaned: removed {removed_files} file(s)")
+
+    def _defer_capture_cache_cleanup(self, writer, archive_path, block_timing_path, cache_dir_path, attempts_left=100):
+        """Poll for writer shutdown, then remove cache files without blocking the UI."""
+        if writer is not None and writer.is_alive() and attempts_left > 0:
+            QTimer.singleShot(
+                100,
+                lambda: self._defer_capture_cache_cleanup(
+                    writer, archive_path, block_timing_path, cache_dir_path, attempts_left - 1
+                ),
+            )
+            return
+
+        self._delete_capture_cache_files(archive_path, block_timing_path, cache_dir_path)
+
+    def _close_capture_cache_handles(self, *, block=True):
+        """Close open cache file handles, optionally waiting for the archive writer."""
+        writer = getattr(self, '_archive_writer', None)
         try:
-            if getattr(self, '_archive_writer', None):
-                self._archive_writer.stop()
+            if writer is not None:
+                if block:
+                    writer.stop()
+                else:
+                    writer.stop_nowait()
         finally:
             self._archive_writer = None
 
@@ -1116,33 +1158,14 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
         finally:
             self._block_timing_file = None
 
-    def cleanup_capture_cache(self):
+        return writer
+
+    def cleanup_capture_cache(self, *, block=True):
         """Delete capture cache files and remove empty cache directory."""
-        self._close_capture_cache_handles()
-
-        removed_files = 0
-        for cache_path in [
-            getattr(self, '_archive_path', None),
-            getattr(self, '_block_timing_path', None),
-        ]:
-            if not cache_path:
-                continue
-            try:
-                path_obj = Path(cache_path)
-                if path_obj.exists() and path_obj.is_file():
-                    path_obj.unlink()
-                    removed_files += 1
-            except Exception as e:
-                self.log_status(f"WARNING: Failed to remove cache file {cache_path}: {e}")
-
+        archive_path = getattr(self, '_archive_path', None)
+        block_timing_path = getattr(self, '_block_timing_path', None)
         cache_dir_path = getattr(self, '_cache_dir_path', None)
-        if cache_dir_path:
-            try:
-                cache_dir = Path(cache_dir_path)
-                if cache_dir.exists() and cache_dir.is_dir() and not any(cache_dir.iterdir()):
-                    cache_dir.rmdir()
-            except Exception as e:
-                self.log_status(f"WARNING: Failed to remove cache directory {cache_dir_path}: {e}")
+        writer = self._close_capture_cache_handles(block=block)
 
         self._archive_path = None
         self._block_timing_path = None
@@ -1150,8 +1173,11 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
         self._archive_write_count = 0
         self._block_timing_write_count = 0
 
-        if removed_files > 0:
-            self.log_status(f"Cache cleaned: removed {removed_files} file(s)")
+        if not block and writer is not None and writer.is_alive():
+            self._defer_capture_cache_cleanup(writer, archive_path, block_timing_path, cache_dir_path)
+            return
+
+        self._delete_capture_cache_files(archive_path, block_timing_path, cache_dir_path)
     
     def get_vref_voltage(self) -> float:
         """Get the numeric voltage reference value."""

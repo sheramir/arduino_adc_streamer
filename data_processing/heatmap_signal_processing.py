@@ -6,7 +6,7 @@ Per-channel signal conditioning for heatmap magnitude calculation.
 
 from __future__ import annotations
 
-from typing import Iterable, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 

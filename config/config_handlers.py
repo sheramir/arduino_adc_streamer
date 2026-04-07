@@ -1105,17 +1105,4 @@ class ConfigurationMixin:
 
     def reset_graph_view(self):
         """Reset the plot view from full view back to normal windowed view."""
-        # Clear full view mode and restore normal buffer-based data
-        self.is_full_view = False
-        
-        # Clear archive data from memory (go back to using buffer)
-        with self.buffer_lock:
-            self.raw_data = []
-            self.sweep_timestamps = []
-        
-        # Re-enable button if not capturing
-        if not self.is_capturing:
-            self.full_view_btn.setEnabled(True)
-        
-        # Force plot update to show windowed data from buffer
-        self.trigger_plot_update()
+        self._reset_full_view_state(trigger_plot_update=True)

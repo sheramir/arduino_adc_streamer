@@ -12,6 +12,26 @@ from pathlib import Path
 class ArchiveLoaderMixin:
     """Mixin class for archive loading operations."""
 
+    def _apply_full_view_time_range(self, timestamps) -> None:
+        """Update plot X ranges so full view actually shows the full capture span."""
+        if timestamps is None or len(timestamps) == 0:
+            return
+
+        min_time = float(timestamps[0])
+        max_time = float(timestamps[-1])
+        if max_time <= min_time:
+            max_time = min_time + 1e-6
+
+        try:
+            self.plot_widget.setXRange(min_time, max_time, padding=0.02)
+        except Exception:
+            pass
+
+        try:
+            self.force_viewbox.setXRange(min_time, max_time, padding=0.02)
+        except Exception:
+            pass
+
     def _capture_exceeds_memory_buffer(self) -> bool:
         """Return True when the capture has overflowed the in-memory ring buffer."""
         try:
@@ -169,6 +189,7 @@ class ArchiveLoaderMixin:
                 self.full_view_btn.setEnabled(False)
 
                 self.update_plot()
+                self._apply_full_view_time_range(self.sweep_timestamps)
                 self.update_force_plot()
 
                 total_samples = actual_sweeps * self.raw_data.shape[1] if self.raw_data.ndim == 2 else actual_sweeps
@@ -220,6 +241,7 @@ class ArchiveLoaderMixin:
         self.full_view_btn.setEnabled(False)
 
         self.update_plot()
+        self._apply_full_view_time_range(ordered_timestamps)
         self.update_force_plot()
 
         # Update info label

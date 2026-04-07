@@ -10,7 +10,6 @@ This module combines:
 - Directory selection (defined here)
 """
 
-from pathlib import Path
 from PyQt6.QtWidgets import QFileDialog
 
 from file_operations.data_exporter import DataExporterMixin

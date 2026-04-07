@@ -5,7 +5,6 @@ Handles force sensor data processing and calibration.
 """
 
 import time
-from config_constants import MAX_FORCE_SAMPLES
 
 
 class ForceProcessorMixin:

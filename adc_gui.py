@@ -23,7 +23,7 @@ os.environ['QT_LOGGING_RULES'] = 'qt.qpa.*=false'
 
 import sys
 import threading
-from typing import List, Optional, Dict
+from typing import Optional, Dict
 
 from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget, QCheckBox
 from PyQt6.QtCore import QThread, QTimer, Qt
@@ -117,15 +117,10 @@ class ADCStreamerGUI(
         self.raw_data_buffer = None
         self.processed_data_buffer = None
         self.sweep_timestamps_buffer = None
-        self.sweep_count = 0
-        self.buffer_write_index = 0
         self.samples_per_sweep = 0
         self.buffer_lock = threading.Lock()
         self._init_filter_state()
-        
-        # Legacy list storage for archive
-        self.raw_data: List[List[int]] = []
-        self.sweep_timestamps: List[float] = []
+        self._reset_capture_buffer_state()
         
         self.is_capturing = False
         self.is_full_view = False
@@ -153,30 +148,7 @@ class ADCStreamerGUI(
 
     def _init_timing_state(self):
         """Initialize timing measurement state."""
-        self.timing_data = {
-            'arduino_sample_time_us': None,
-            'arduino_sample_rate_hz': None,
-            'buffer_gap_time_ms': None,
-            'mcu_block_start_us': None,
-            'mcu_block_end_us': None,
-            'mcu_block_gap_us': None
-        }
-        self.capture_start_time = None
-        self.capture_end_time = None
-        
-        # Buffer timing tracking
-        self.last_buffer_time = None
-        self.last_buffer_end_time = None
-        self.buffer_receipt_times = []
-        self.buffer_gap_times = []
-        self.arduino_sample_times = []
-        self.block_sample_counts = []
-        self.block_sweeps_counts = []
-        self.block_samples_per_sweep = []
-        self.mcu_block_start_us = []
-        self.mcu_block_end_us = []
-        self.mcu_block_gap_us = []
-        self.mcu_last_block_end_us = None
+        self._reset_timing_measurements(reset_labels=False)
 
     def _init_config_state(self):
         """Initialize configuration state."""

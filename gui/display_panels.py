@@ -10,7 +10,6 @@ from PyQt6.QtWidgets import (
     QPushButton, QComboBox, QCheckBox, QSpinBox, QWidget, QScrollArea, QTabWidget
 )
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont
 import pyqtgraph as pg
 import types
 

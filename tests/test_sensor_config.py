@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from sensor_config import (
+from config.sensor_config import (
     SensorConfigStore,
     mapping_to_position_channels,
     position_channels_to_mapping,
@@ -38,7 +38,7 @@ def test_position_channels_to_mapping_rejects_duplicates():
 
 
 def test_store_loads_bundled_and_local_configs(tmp_path: Path):
-    bundled_file = tmp_path / "sensors.json"
+    bundled_file = tmp_path / "sensor_configurations.json"
     bundled_file.write_text(json.dumps({
         "configurations": [
             {"name": "PLUS", "channel_sensor_map": ["R", "B", "C", "L", "T"]},

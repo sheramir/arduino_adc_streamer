@@ -1,9 +1,7 @@
 {
   "version": 1,
-  "selected_name": "Array_V2",
-  "deleted_names": [
-    "ARRAY_v2"
-  ],
+  "selected_name": "Single_PZT_New",
+  "deleted_names": [],
   "configurations": [
     {
       "name": "PLUS",
@@ -52,11 +50,11 @@
     {
       "name": "Array_V2",
       "channel_sensor_map": [
-        "B",
-        "L",
-        "C",
+        "T",
         "R",
-        "T"
+        "C",
+        "B",
+        "L"
       ],
       "type": "array_layout",
       "array_layout": {
@@ -153,6 +151,17 @@
       "channel_layout": {
         "channels_per_sensor": 5
       }
+    },
+    {
+      "name": "Single_PZT_New",
+      "channel_sensor_map": [
+        "L",
+        "B",
+        "C",
+        "R",
+        "T"
+      ],
+      "type": "channel_layout"
     }
   ]
 }

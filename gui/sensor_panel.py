@@ -25,7 +25,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from sensor_config import (
+from config.sensor_config import (
     ARRAY_CELL_CHANNELS_MAX,
     ARRAY_COLS,
     ARRAY_ROWS,

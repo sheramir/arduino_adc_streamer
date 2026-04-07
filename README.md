@@ -38,6 +38,9 @@ Desktop GUI and firmware workspace for high-speed sensor acquisition, plotting, 
 - `docs/architecture/HEATMAP_IMPLEMENTATION.md` - implementation notes
 - `docs/history/` - historical refactor and phase-completion notes
 
+### Bundled Sensor Library
+- `sensors_library/` - bundled starter sensor configurations shipped with the repo
+
 ## Main Features
 
 - Real-time ADC plotting with configurable windowing
@@ -50,10 +53,9 @@ Desktop GUI and firmware workspace for high-speed sensor acquisition, plotting, 
 
 ## Configuration Files
 
-These bundled config files intentionally remain at the repository root because the app loads them from there:
+The bundled starter sensor library now lives under `sensors_library/` so a fresh clone starts with usable defaults:
 
-- `sensor_configurations.json`
-- `sensors.json`
+- `sensors_library/sensor_configurations.json`
 - `plus_heatmap_config.json`
 
 ## Notes

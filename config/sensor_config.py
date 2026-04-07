@@ -71,17 +71,38 @@ def normalize_sensor_config(config: Dict[str, object]) -> Dict[str, object] | No
     }
 
 
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parent
+def _project_root() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
+def _bundled_sensor_library_dir() -> Path:
+    preferred = _project_root() / "sensors_library"
+    if preferred.exists():
+        return preferred
+    return _project_root()
 
 
 def _default_bundled_sensor_configs_path() -> Path:
-    """Prefer the canonical repo config file, with backward-compatible fallback."""
-    repo_root = _repo_root()
-    preferred = repo_root / "sensor_configurations.json"
+    """Prefer the bundled sensor library, with backward-compatible root fallback."""
+    library_dir = _bundled_sensor_library_dir()
+    preferred = library_dir / "sensor_configurations.json"
     if preferred.exists():
         return preferred
-    return repo_root / "sensors.json"
+
+    legacy = library_dir / "sensors.json"
+    if legacy.exists():
+        return legacy
+
+    project_root = _project_root()
+    legacy_root_preferred = project_root / "sensor_configurations.json"
+    if legacy_root_preferred.exists():
+        return legacy_root_preferred
+
+    legacy_root_fallback = project_root / "sensors.json"
+    if legacy_root_fallback.exists():
+        return legacy_root_fallback
+
+    return preferred
 
 
 def _read_sensor_configs_file(file_path: Path) -> List[Dict[str, object]]:

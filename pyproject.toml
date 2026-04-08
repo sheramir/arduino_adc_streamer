@@ -12,6 +12,11 @@ dependencies = [
   "scipy>=1.9.0",
 ]
 
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+]
+
 [project.scripts]
 adc-streamer = "adc_gui:main"
 

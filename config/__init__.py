@@ -9,6 +9,7 @@ from .config_handlers import ConfigurationMixin
 from .sensor_config import SensorConfigStore
 from .adc_configuration_service import ADCConfigurationService
 from .adc_configuration_runner import ADCConfigurationRunner
+from .mcu_profile import MCUProfile, resolve_mcu_profile
 
 __all__ = [
     'MCUDetectorMixin',
@@ -16,4 +17,6 @@ __all__ = [
     'SensorConfigStore',
     'ADCConfigurationService',
     'ADCConfigurationRunner',
+    'MCUProfile',
+    'resolve_mcu_profile',
 ]

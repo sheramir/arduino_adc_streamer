@@ -8,6 +8,7 @@ from PyQt6.QtCore import Qt
 
 from config.adc_configuration_service import ADCConfigurationRequest
 from config.channel_utils import unique_channels_in_order
+from config.mcu_profile import resolve_mcu_profile
 from config_constants import (
     MAX_SAMPLES_BUFFER, MAX_PLOT_COLUMNS,
     ANALYZER555_DEFAULT_CF_UNIT, ANALYZER555_DEFAULT_CF_VALUE
@@ -20,11 +21,11 @@ class ConfigurationMixin:
 
     def is_array_mcu_mode(self) -> bool:
         """Return True for any Array* MCU identifier."""
-        return (self.current_mcu or "").strip().lower().startswith("array")
+        return resolve_mcu_profile(self.current_mcu).is_array_mcu
 
     def is_array_pzt1_mode(self) -> bool:
         """Return True when the connected MCU streams paired MUX data."""
-        return (self.current_mcu or "").strip().lower() == "array_pzt1".lower()
+        return resolve_mcu_profile(self.current_mcu).is_array_pzt1
 
     def get_allowed_channel_max(self) -> int:
         """Return max channel index for manual channel entry validation."""
@@ -32,7 +33,7 @@ class ConfigurationMixin:
 
     def is_array_pzt_pzr_mode(self) -> bool:
         """Return True when MCU supports runtime PZT/PZR mode switching."""
-        return (self.current_mcu or "").strip().lower().startswith("array_pzt_pzr")
+        return resolve_mcu_profile(self.current_mcu).is_array_dual
 
     def get_selected_array_operation_mode(self) -> str:
         """Return selected operation mode for dual Array_PZT_PZR devices."""

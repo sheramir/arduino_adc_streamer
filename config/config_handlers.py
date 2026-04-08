@@ -4,8 +4,6 @@ Configuration Management Mixin
 Handles all configuration event handlers and Arduino configuration workflow.
 """
 
-import time
-import threading
 from PyQt6.QtCore import Qt
 
 from config.adc_configuration_service import ADCConfigurationRequest
@@ -800,59 +798,32 @@ class ConfigurationMixin:
         # Clear timing data from previous runs
         self.timing_state.arduino_sample_times.clear()
         self.timing_state.buffer_gap_times.clear()
-        
-        # Reset completion status and start checking
-        self.config_completion_status = None
-        self.config_completion_result = None
+
         self.config_check_timer.start()
 
-        # Run configuration in a separate thread to avoid blocking UI
-        def config_worker():
-            request = self._build_adc_configuration_request()
-            result = None
-            try:
-                # Check serial port is still valid
-                if not self.serial_port or not self.serial_port.is_open:
-                    return
-                    
-                # Flush buffers before configuration
-                self.serial_port.reset_input_buffer()
-                self.serial_port.reset_output_buffer()
-                time.sleep(0.05)
-                
-                max_attempts = 3
-                for attempt in range(max_attempts):
-                    result = self.adc_configuration_service.send_config_with_verification(request)
-                    if result.success:
-                        break
-                    
-                    time.sleep(0.05)  # Brief delay between retries
-                    
-            except Exception as e:
-                self.log_status(f"Configuration error: {e}")
-            finally:
-                # Set completion status for main thread to handle
-                self.config_completion_result = result
-                self.config_completion_status = bool(result and result.success)
-        
-        # Start configuration in background thread
-        threading.Thread(target=config_worker, daemon=True).start()
+        request = self._build_adc_configuration_request()
+        started = self.adc_configuration_runner.start(self.serial_port, request, max_attempts=3)
+        if not started:
+            self.config_check_timer.stop()
+            self.log_status("Configuration already in progress")
+            self.configure_btn.setEnabled(True)
     
     def check_config_completion(self):
         """Check if configuration has completed (called by timer)."""
-        if self.config_completion_status is not None:
-            self.config_check_timer.stop()
-            if self.config_completion_result is not None:
-                self._apply_configuration_result(self.config_completion_result)
-            
-            if self.config_completion_status:
-                self.on_configuration_success()
-            else:
-                self.on_configuration_failed()
-            
-            # Reset status
-            self.config_completion_status = None
-            self.config_completion_result = None
+        outcome = self.adc_configuration_runner.take_outcome()
+        if outcome is None:
+            return
+
+        self.config_check_timer.stop()
+        if outcome.error_message:
+            self.log_status(outcome.error_message)
+        if outcome.result is not None:
+            self._apply_configuration_result(outcome.result)
+
+        if outcome.success:
+            self.on_configuration_success()
+        else:
+            self.on_configuration_failed()
     
     def on_configuration_success(self):
         """Handle successful configuration."""

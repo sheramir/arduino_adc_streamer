@@ -37,6 +37,7 @@ from config_constants import *
 from serial_communication import ADCSerialMixin, ForceSerialMixin
 from serial_communication.serial_threads import SerialReaderThread
 from config import MCUDetectorMixin, ConfigurationMixin
+from config.channel_utils import unique_channels_in_order
 from gui import (
     ControlPanelsMixin,
     DisplayPanelsMixin,
@@ -501,10 +502,7 @@ class ADCStreamerGUI(
             )
             sensor_package_count = len(sensor_groups) if valid_channel_count else 1
         else:
-            unique_channels = []
-            for ch in channels:
-                if ch not in unique_channels:
-                    unique_channels.append(ch)
+            unique_channels = unique_channels_in_order(channels)
             num_channels = len(unique_channels)
             valid_channel_count = (
                 num_channels >= HEATMAP_REQUIRED_CHANNELS

@@ -8,6 +8,7 @@ import time
 import threading
 from PyQt6.QtCore import Qt
 
+from config.channel_utils import unique_channels_in_order
 from config_constants import (
     INTER_COMMAND_DELAY, MAX_SAMPLES_BUFFER, MAX_PLOT_COLUMNS,
     ANALYZER555_DEFAULT_CF_UNIT, ANALYZER555_DEFAULT_CF_VALUE
@@ -259,10 +260,7 @@ class ConfigurationMixin:
                 })
             return normalized_groups
 
-        unique_channels = []
-        for channel in channels:
-            if channel not in unique_channels:
-                unique_channels.append(channel)
+        unique_channels = unique_channels_in_order(channels)
 
         if len(unique_channels) < required_channels or len(unique_channels) % required_channels != 0:
             return []
@@ -292,14 +290,7 @@ class ConfigurationMixin:
             return []
 
         if self.is_array_sensor_selection_mode():
-            unique_channels = []
-            seen = set()
-            for channel in channels:
-                if channel in seen:
-                    continue
-                seen.add(channel)
-                unique_channels.append(channel)
-            return unique_channels
+            return unique_channels_in_order(channels)
 
         return channels
 
@@ -313,11 +304,7 @@ class ConfigurationMixin:
 
     @staticmethod
     def _get_unique_channels_in_order(channels):
-        unique_channels = []
-        for channel in channels:
-            if channel not in unique_channels:
-                unique_channels.append(channel)
-        return unique_channels
+        return unique_channels_in_order(channels)
 
     def _get_grouped_manual_channel_labels(self, channels):
         """Return manual channel labels with sensor placement names when layout is unambiguous."""

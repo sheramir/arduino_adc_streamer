@@ -614,16 +614,7 @@ class SensorPanelMixin:
             self.sensor_name_edit.setText(self.active_sensor_config_name)
             return
 
-        config = self.get_active_sensor_configuration()
-        updated_config = {
-            "name": new_name,
-            "type": str(config.get("type", "channel_layout")),
-            "channel_sensor_map": list(config.get("channel_sensor_map", ["T", "R", "C", "L", "B"])),
-            "array_layout": dict(config.get("array_layout", default_array_configuration()["array_layout"])),
-            "mux_mapping": dict(config.get("mux_mapping", {})),
-            "channel_layout": dict(config.get("channel_layout", {"channels_per_sensor": ARRAY_CELL_CHANNELS_MAX})),
-            "is_bundled": False,
-        }
+        updated_config = self._build_sensor_config_update(name=new_name)
         self._replace_active_sensor_config(updated_config)
         self.sensor_status_label.setText("")
         self._refresh_sensor_tab_ui()
@@ -636,17 +627,46 @@ class SensorPanelMixin:
             for sensor_label in SENSOR_POSITION_ORDER
         }
 
-    def _save_sensor_mapping_from_editor(self):
-        config = self.get_active_sensor_configuration()
-        updated_config = {
-            "name": self.active_sensor_config_name,
-            "type": str(config.get("type", "channel_layout")),
-            "channel_sensor_map": position_channels_to_mapping(self._current_position_channels()),
-            "array_layout": dict(config.get("array_layout", default_array_configuration()["array_layout"])),
-            "mux_mapping": dict(config.get("mux_mapping", {})),
-            "channel_layout": dict(config.get("channel_layout", {"channels_per_sensor": ARRAY_CELL_CHANNELS_MAX})),
-            "is_bundled": False,
+    def _build_sensor_config_update(
+        self,
+        *,
+        name=None,
+        config_type=None,
+        channel_sensor_map=None,
+        array_layout=None,
+        mux_mapping=None,
+        channel_layout=None,
+        is_bundled=False,
+    ):
+        """Build a persisted sensor config while preserving unspecified fields."""
+        current_config = self.get_active_sensor_configuration()
+        default_array_config = default_array_configuration()
+        return {
+            "name": str(name if name is not None else self.active_sensor_config_name),
+            "type": str(config_type if config_type is not None else current_config.get("type", "channel_layout")),
+            "channel_sensor_map": list(
+                channel_sensor_map
+                if channel_sensor_map is not None
+                else current_config.get("channel_sensor_map", ["T", "R", "C", "L", "B"])
+            ),
+            "array_layout": dict(
+                array_layout
+                if array_layout is not None
+                else current_config.get("array_layout", default_array_config["array_layout"])
+            ),
+            "mux_mapping": dict(mux_mapping if mux_mapping is not None else current_config.get("mux_mapping", {})),
+            "channel_layout": dict(
+                channel_layout
+                if channel_layout is not None
+                else current_config.get("channel_layout", {"channels_per_sensor": ARRAY_CELL_CHANNELS_MAX})
+            ),
+            "is_bundled": bool(is_bundled),
         }
+
+    def _save_sensor_mapping_from_editor(self):
+        updated_config = self._build_sensor_config_update(
+            channel_sensor_map=position_channels_to_mapping(self._current_position_channels())
+        )
         self._replace_active_sensor_config(updated_config)
         self.sensor_status_label.setText("")
         self._update_sensor_mapping_preview()
@@ -686,13 +706,15 @@ class SensorPanelMixin:
             suffix += 1
             new_name = f"{base_name} {suffix}"
 
-        new_config = {
-            "name": new_name,
-            "type": str(self.sensor_type_combo.currentData() or "channel_layout"),
-            "channel_sensor_map": list(self.get_active_channel_sensor_map() or ["T", "R", "C", "L", "B"]),
-            **default_array_configuration(),
-            "is_bundled": False,
-        }
+        default_config = default_array_configuration()
+        new_config = self._build_sensor_config_update(
+            name=new_name,
+            config_type=str(self.sensor_type_combo.currentData() or "channel_layout"),
+            channel_sensor_map=list(self.get_active_channel_sensor_map() or ["T", "R", "C", "L", "B"]),
+            array_layout=default_config["array_layout"],
+            mux_mapping=default_config["mux_mapping"],
+            channel_layout=default_config["channel_layout"],
+        )
         
         self.sensor_configurations.append(new_config)
         self.active_sensor_config_name = new_name
@@ -765,30 +787,21 @@ class SensorPanelMixin:
 
     def _save_channel_layout_from_editor(self):
         """Save channel layout configuration from editor."""
-        config = self.get_active_sensor_configuration()
-        updated_config = {
-            "name": self.active_sensor_config_name,
-            "type": str(config.get("type", "channel_layout")),
-            "channel_sensor_map": position_channels_to_mapping(self._current_position_channels()),
-            "array_layout": dict(config.get("array_layout", default_array_configuration()["array_layout"])),
-            "mux_mapping": dict(config.get("mux_mapping", {})),
-            "channel_layout": dict(config.get("channel_layout", {"channels_per_sensor": ARRAY_CELL_CHANNELS_MAX})),
-            "is_bundled": False,
-        }
+        updated_config = self._build_sensor_config_update(
+            channel_sensor_map=position_channels_to_mapping(self._current_position_channels())
+        )
         self._replace_active_sensor_config(updated_config)
         self._update_sensor_mapping_preview()
 
     def _save_full_sensor_config_from_editor(self):
         """Save channel mapping and optional array attachment together."""
         cells, mux_mapping, channels_per_sensor = self._collect_array_layout_editor_data()
-        updated_config = {
-            "name": self.active_sensor_config_name,
-            "channel_sensor_map": position_channels_to_mapping(self._current_position_channels()),
-            "array_layout": {"cells": cells},
-            "mux_mapping": mux_mapping,
-            "channel_layout": {"channels_per_sensor": channels_per_sensor},
-            "is_bundled": False,
-        }
+        updated_config = self._build_sensor_config_update(
+            channel_sensor_map=position_channels_to_mapping(self._current_position_channels()),
+            array_layout={"cells": cells},
+            mux_mapping=mux_mapping,
+            channel_layout={"channels_per_sensor": channels_per_sensor},
+        )
 
         normalized = normalize_combined_sensor_config(updated_config)
         if not normalized:

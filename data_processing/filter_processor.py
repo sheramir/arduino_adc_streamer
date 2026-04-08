@@ -10,6 +10,7 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 
+from config.channel_utils import unique_channels_in_order
 from config_constants import (
     FILTER_DEFAULT_ENABLED,
     FILTER_DEFAULT_MAIN_TYPE,
@@ -173,10 +174,7 @@ class FilterProcessorMixin:
         return np.vstack(sos_parts)
 
     def _build_channel_plan(self, total_fs_hz: float, channels: List[int], repeat_count: int):
-        unique_channels = []
-        for channel in channels:
-            if channel not in unique_channels:
-                unique_channels.append(channel)
+        unique_channels = unique_channels_in_order(channels)
 
         sequence_len = max(1, len(channels))
         counts = {channel: channels.count(channel) for channel in unique_channels}

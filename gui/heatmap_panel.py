@@ -25,6 +25,7 @@ from config_constants import (
     SHEAR_ARROW_HEAD_LENGTH_AMPLIFIER, SHEAR_ARROW_HEAD_LENGTH_BASE_PX,
 )
 from file_operations.settings_persistence import load_settings_payload, save_settings_payload
+from config.channel_utils import unique_channels_in_order
 
 
 class HeatmapPanelMixin:
@@ -114,10 +115,7 @@ class HeatmapPanelMixin:
                 return str(selected[package_index])
 
         channels = self.config.get("channels", []) if hasattr(self, "config") else []
-        unique_channels = []
-        for channel in channels:
-            if channel not in unique_channels:
-                unique_channels.append(channel)
+        unique_channels = unique_channels_in_order(channels)
         start = package_index * 5
         end = start + 5
         group_channels = unique_channels[start:end]

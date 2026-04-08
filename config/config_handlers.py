@@ -16,6 +16,7 @@ from config.config_view_state import (
     build_start_ready_state,
     build_start_unavailable_state,
 )
+from config.config_snapshot import build_adc_configuration_snapshot
 from config.mcu_profile import resolve_mcu_profile
 from config_constants import (
     MAX_SAMPLES_BUFFER, MAX_PLOT_COLUMNS,
@@ -625,73 +626,60 @@ class ConfigurationMixin:
 
     def _build_adc_configuration_request(self) -> ADCConfigurationRequest:
         """Build a plain-data snapshot for the ADC configuration service."""
-        reference = self.config.get('reference', 'vdd')
-        if hasattr(self, 'vref_combo') and not self.is_array_mcu_mode() and not (self.current_mcu and "Teensy" in self.current_mcu):
-            vref_map = {
-                "1.2V (Internal)": "1.2",
-                "3.3V (VDD)": "vdd",
-            }
-            reference = vref_map.get(self.vref_combo.currentText(), reference)
+        snapshot = build_adc_configuration_snapshot(
+            current_reference=str(self.config.get('reference', 'vdd')),
+            vref_label=self.vref_combo.currentText() if hasattr(self, 'vref_combo') else None,
+            use_vref_control=bool(hasattr(self, 'vref_combo') and not self.is_array_mcu_mode() and not (self.current_mcu and "Teensy" in self.current_mcu)),
+            current_osr=int(self.config.get('osr', 2)),
+            osr_label=self.osr_combo.currentText().strip() if hasattr(self, 'osr_combo') and self.osr_combo.currentText().strip() else None,
+            current_gain=int(self.config.get('gain', 1)),
+            gain_label=self.gain_combo.currentText() if hasattr(self, 'gain_combo') else None,
+            current_repeat=int(self.config.get('repeat', 1)),
+            repeat_value=int(self.repeat_spin.value()) if hasattr(self, 'repeat_spin') else None,
+            current_use_ground=bool(self.config.get('use_ground', False)),
+            use_ground_checked=bool(self.use_ground_check.isChecked()) if hasattr(self, 'use_ground_check') else None,
+            current_ground_pin=int(self.config.get('ground_pin', -1)),
+            ground_pin_value=int(self.ground_pin_spin.value()) if hasattr(self, 'ground_pin_spin') else None,
+            current_conv_speed=str(self.config.get('conv_speed', 'med')),
+            conv_speed_label=self.conv_speed_combo.currentText() if hasattr(self, 'conv_speed_combo') else None,
+            current_samp_speed=str(self.config.get('samp_speed', 'med')),
+            samp_speed_label=self.samp_speed_combo.currentText() if hasattr(self, 'samp_speed_combo') else None,
+            current_sample_rate=int(self.config.get('sample_rate', 0)),
+            sample_rate_value=int(self.sample_rate_spin.value()) if hasattr(self, 'sample_rate_spin') else None,
+            current_array_operation_mode=str(self.config.get('array_operation_mode', 'PZT')),
+            array_operation_mode=self.get_selected_array_operation_mode() if self.is_array_pzt_pzr_mode() else None,
+            current_rb_ohms=float(self.config.get('rb_ohms', 0.0)),
+            rb_value=float(self.rb_spin.value()) if hasattr(self, 'rb_spin') else None,
+            current_rk_ohms=float(self.config.get('rk_ohms', 0.0)),
+            rk_value=float(self.rk_spin.value()) if hasattr(self, 'rk_spin') else None,
+            cf_farads=self._get_cf_farads_from_controls(),
+            current_rxmax_ohms=float(self.config.get('rxmax_ohms', 0.0)),
+            rxmax_value=float(self.rxmax_spin.value()) if hasattr(self, 'rxmax_spin') else None,
+        )
 
-        osr_value = int(self.config.get('osr', 2))
-        if hasattr(self, 'osr_combo') and self.osr_combo.currentText().strip():
-            osr_value = int(self.osr_combo.currentText())
-
-        gain_value = int(self.config.get('gain', 1))
-        if hasattr(self, 'gain_combo'):
-            gain_value = int(self.gain_combo.currentText().replace('×', ''))
-
-        repeat_value = int(self.config.get('repeat', 1))
-        if hasattr(self, 'repeat_spin'):
-            repeat_value = int(self.repeat_spin.value())
-
+        self.config.update(snapshot.as_config_updates())
         buffer_size = int(self.buffer_spin.value()) if hasattr(self, 'buffer_spin') else 128
-        use_ground = bool(self.use_ground_check.isChecked()) if hasattr(self, 'use_ground_check') else bool(self.config.get('use_ground', False))
-        ground_pin = int(self.ground_pin_spin.value()) if hasattr(self, 'ground_pin_spin') else int(self.config.get('ground_pin', -1))
-        conv_speed = self.conv_speed_combo.currentText() if hasattr(self, 'conv_speed_combo') else str(self.config.get('conv_speed', 'med'))
-        samp_speed = self.samp_speed_combo.currentText() if hasattr(self, 'samp_speed_combo') else str(self.config.get('samp_speed', 'med'))
-        sample_rate = int(self.sample_rate_spin.value()) if hasattr(self, 'sample_rate_spin') else int(self.config.get('sample_rate', 0))
-        array_operation_mode = self.get_selected_array_operation_mode() if self.is_array_pzt_pzr_mode() else str(self.config.get('array_operation_mode', 'PZT'))
-        rb_ohms = float(self.rb_spin.value()) if hasattr(self, 'rb_spin') else float(self.config.get('rb_ohms', 0.0))
-        rk_ohms = float(self.rk_spin.value()) if hasattr(self, 'rk_spin') else float(self.config.get('rk_ohms', 0.0))
-        cf_farads = self._get_cf_farads_from_controls()
-        rxmax_ohms = float(self.rxmax_spin.value()) if hasattr(self, 'rxmax_spin') else float(self.config.get('rxmax_ohms', 0.0))
-
-        self.config['reference'] = reference
-        self.config['osr'] = osr_value
-        self.config['gain'] = gain_value
-        self.config['repeat'] = repeat_value
-        self.config['use_ground'] = use_ground
-        self.config['ground_pin'] = ground_pin
-        self.config['conv_speed'] = conv_speed
-        self.config['samp_speed'] = samp_speed
-        self.config['sample_rate'] = sample_rate
-        self.config['array_operation_mode'] = array_operation_mode
-        self.config['rb_ohms'] = rb_ohms
-        self.config['rk_ohms'] = rk_ohms
-        self.config['cf_farads'] = cf_farads
-        self.config['rxmax_ohms'] = rxmax_ohms
 
         return ADCConfigurationRequest(
             current_mcu=self.current_mcu,
             device_mode=str(getattr(self, 'device_mode', 'adc')),
             channels=list(self.config.get('channels', [])),
             channels_to_send=self.get_channels_for_arduino_command(),
-            repeat=repeat_value,
-            use_ground=use_ground,
-            ground_pin=ground_pin,
+            repeat=snapshot.repeat,
+            use_ground=snapshot.use_ground,
+            ground_pin=snapshot.ground_pin,
             buffer_size=buffer_size,
-            reference=reference,
-            osr=osr_value,
-            gain=gain_value,
-            conv_speed=conv_speed,
-            samp_speed=samp_speed,
-            sample_rate=sample_rate,
-            rb_ohms=rb_ohms,
-            rk_ohms=rk_ohms,
-            cf_farads=cf_farads,
-            rxmax_ohms=rxmax_ohms,
-            array_operation_mode=array_operation_mode,
+            reference=snapshot.reference,
+            osr=snapshot.osr,
+            gain=snapshot.gain,
+            conv_speed=snapshot.conv_speed,
+            samp_speed=snapshot.samp_speed,
+            sample_rate=snapshot.sample_rate,
+            rb_ohms=snapshot.rb_ohms,
+            rk_ohms=snapshot.rk_ohms,
+            cf_farads=snapshot.cf_farads,
+            rxmax_ohms=snapshot.rxmax_ohms,
+            array_operation_mode=snapshot.array_operation_mode,
             is_array_mcu=self.is_array_mcu_mode(),
             is_array_pzt_pzr_mode=self.is_array_pzt_pzr_mode(),
             is_array_sensor_selection_mode=self.is_array_sensor_selection_mode(),

@@ -214,8 +214,7 @@ class BinaryProcessorMixin:
                         self.update_plot()
                         self.update_force_plot()
                     # Always update the info label
-                    actual_sweeps = min(self.sweep_count, self.MAX_SWEEPS_BUFFER)
-                    total_samples = actual_sweeps * samples_per_sweep
+                    total_samples = int(self.sweep_count) * samples_per_sweep
                     force_samples = len(self.force_data)
                     if self.is_full_view:
                         self.plot_info_label.setText(
@@ -223,6 +222,7 @@ class BinaryProcessorMixin:
                         )
                     else:
                         window_size = self.window_size_spin.value()
+                        actual_sweeps = min(self.sweep_count, self.MAX_SWEEPS_BUFFER)
                         displayed_sweeps = min(actual_sweeps, window_size, MAX_PLOT_SWEEPS)
                         self.plot_info_label.setText(
                             f"ADC - Sweeps: {self.sweep_count} (showing last {displayed_sweeps}) | Samples: {total_samples}  |  Force: {force_samples} samples"

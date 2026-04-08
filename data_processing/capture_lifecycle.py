@@ -249,8 +249,7 @@ class CaptureLifecycleMixin:
         self.update_plot()
 
         with self.buffer_lock:
-            actual_sweeps = min(self.sweep_count, self.MAX_SWEEPS_BUFFER)
-            total_samples = actual_sweeps * self.samples_per_sweep if self.samples_per_sweep > 0 else 0
+            total_samples = int(self.sweep_count) * self.samples_per_sweep if self.samples_per_sweep > 0 else 0
         force_samples = len(self.force_data)
         self.plot_info_label.setText(
             f"ADC - Sweeps: {self.sweep_count} | Samples: {total_samples}  |  Force: {force_samples} samples"

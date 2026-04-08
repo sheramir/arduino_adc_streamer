@@ -16,6 +16,7 @@ Module structure:
 
 from data_processing.binary_processor import BinaryProcessorMixin
 from data_processing.adc_plotting import ADCPlottingMixin
+from data_processing.capture_cache import CaptureCacheMixin
 from data_processing.capture_lifecycle import CaptureLifecycleMixin
 from data_processing.filter_processor import FilterProcessorMixin
 from data_processing.force_processor import ForceProcessorMixin
@@ -28,6 +29,7 @@ from data_processing.data_processor import DataProcessorMixin
 __all__ = [
     'DataProcessorMixin',
     'ADCPlottingMixin',
+    'CaptureCacheMixin',
     'CaptureLifecycleMixin',
     'BinaryProcessorMixin',
     'FilterProcessorMixin',

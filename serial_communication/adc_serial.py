@@ -8,7 +8,7 @@ import time
 import serial
 import serial.tools.list_ports
 from PyQt6.QtWidgets import QMessageBox
-from PyQt6.QtCore import QTimer
+from PyQt6.QtCore import QCoreApplication, QTimer
 
 from config_constants import (
     BAUD_RATE, SERIAL_TIMEOUT, COMMAND_TERMINATOR, ARDUINO_RESET_DELAY,
@@ -20,6 +20,64 @@ from serial_communication.serial_threads import SerialReaderThread
 
 class ADCSerialMixin:
     """Mixin class for ADC serial communication methods."""
+
+    def _clear_adc_line_waiters(self):
+        self._adc_line_waiters = []
+
+    def _handle_adc_text_line(self, line: str) -> bool:
+        """Route ADC text lines to any pending waiters.
+
+        Returns True when a waiter consumes the line and it should not continue
+        through the normal status parser/log path.
+        """
+        waiters = list(getattr(self, "_adc_line_waiters", []))
+        if not waiters:
+            return False
+
+        consumed = False
+        remaining = []
+        for waiter in waiters:
+            matcher = waiter.get("matcher")
+            if matcher is not None and matcher(line):
+                waiter["matched_line"] = line
+                if waiter.get("consume", False):
+                    consumed = True
+                continue
+            remaining.append(waiter)
+
+        self._adc_line_waiters = remaining
+        return consumed
+
+    def _wait_for_adc_line(self, matcher, timeout: float, *, consume: bool = False, send_action=None):
+        """Wait for a routed ADC text line while keeping the Qt event loop alive."""
+        waiter = {
+            "matcher": matcher,
+            "consume": consume,
+            "matched_line": None,
+        }
+        self._adc_line_waiters.append(waiter)
+        deadline = time.time() + timeout
+
+        try:
+            if send_action is not None:
+                send_action()
+            while time.time() < deadline:
+                if waiter["matched_line"] is not None:
+                    return waiter["matched_line"]
+                QCoreApplication.processEvents()
+                time.sleep(0.01)
+            return None
+        finally:
+            if waiter in self._adc_line_waiters:
+                self._adc_line_waiters.remove(waiter)
+
+    @staticmethod
+    def _parse_ack_line(line: str):
+        if line.startswith('#OK'):
+            return True, line[3:].strip() if len(line) > 3 else None
+        if line.startswith('#NOT_OK'):
+            return False, line[7:].strip() if len(line) > 7 else None
+        return None
     
     def update_port_list(self):
         """Update the list of available serial ports."""
@@ -67,15 +125,17 @@ class ADCSerialMixin:
             self.serial_port.reset_output_buffer()
             time.sleep(0.1)
 
-            # Detect MCU type
-            self.detect_mcu()
-
             # Start serial reader thread
+            self._clear_adc_line_waiters()
             self.serial_thread = SerialReaderThread(self.serial_port)
             self.serial_thread.data_received.connect(self.process_serial_data)
             self.serial_thread.binary_sweep_received.connect(self.process_binary_sweep)
             self.serial_thread.error_occurred.connect(self._handle_serial_reader_error)
             self.serial_thread.start()
+
+            # Detect MCU type after the reader thread is active so only one ADC
+            # consumer reads lines from the port.
+            self.detect_mcu()
 
             self.log_status(f"Connected to {port_name}")
             self.connect_btn.setText("Disconnect")
@@ -141,6 +201,7 @@ class ADCSerialMixin:
                     self.log_status(f"WARNING: Failed to close serial port cleanly: {e}")
 
             self.serial_port = None
+            self._clear_adc_line_waiters()
             
             # Reset MCU detection
             self.current_mcu = None
@@ -187,31 +248,20 @@ class ADCSerialMixin:
             self.log_status("ERROR: Not connected to serial port")
 
     def drain_serial_input(self, duration: float = 0.3):
-        """Drain pending serial bytes to avoid stale binary data."""
+        """Drop pending ADC bytes without competing with the reader thread."""
         if not self.serial_port or not self.serial_port.is_open:
             return
 
-        end_time = time.time() + duration
-        drained = 0
-
         try:
-            while time.time() < end_time:
-                waiting = self.serial_port.in_waiting
-                if waiting > 0:
-                    drained += len(self.serial_port.read(waiting))
-                else:
-                    time.sleep(0.01)
-
+            time.sleep(max(0.0, duration))
+            if self.serial_thread:
+                self.serial_thread.clear_buffer()
             try:
                 self.serial_port.reset_input_buffer()
             except Exception:
                 pass
         except Exception as e:
             self.log_status(f"WARNING: Failed to drain serial input: {e}")
-            return
-
-        if drained > 0:
-            self.log_status(f"Drained {drained} bytes from serial input after stop")
 
     def send_command_and_wait_ack(self, command: str, expected_value: str = None, 
                                    timeout: float = CONFIG_COMMAND_TIMEOUT, 
@@ -232,48 +282,36 @@ class ADCSerialMixin:
                     self.serial_port.reset_input_buffer()
                     self.serial_port.reset_output_buffer()
                 
-                # Send the command
-                self.serial_port.write(f"{command}{COMMAND_TERMINATOR}".encode('utf-8'))
-                self.serial_port.flush()
-                
-                # Wait for #OK or #NOT_OK with echoed value
-                start_time = time.time()
-                
-                while time.time() - start_time < timeout:
-                    try:
-                        line = self.serial_port.readline().decode('utf-8', errors='ignore').strip()
-                        
-                        if not line or not line.isprintable():
-                            continue
-                        
-                        # Parse #OK response
-                        if line.startswith('#OK'):
-                            received_value = line[3:].strip() if len(line) > 3 else None
-                            
-                            # Verify expected value if provided
-                            if expected_value is not None and received_value != expected_value:
-                                if attempt < max_retries - 1:
-                                    break  # Retry
-                                else:
-                                    return (False, received_value)
-                            
-                            return (True, received_value)
-                        
-                        # Parse #NOT_OK response
-                        elif line.startswith('#NOT_OK'):
-                            received_value = line[7:].strip() if len(line) > 7 else None
-                            if attempt < max_retries - 1:
-                                break  # Retry
-                            else:
-                                return (False, received_value)
-                            
-                    except Exception:
+                line = self._wait_for_adc_line(
+                    lambda text: text.startswith('#OK') or text.startswith('#NOT_OK'),
+                    timeout,
+                    consume=True,
+                    send_action=lambda: (
+                        self.serial_port.write(f"{command}{COMMAND_TERMINATOR}".encode('utf-8')),
+                        self.serial_port.flush(),
+                    ),
+                )
+
+                if line is None:
+                    if attempt >= max_retries - 1:
+                        return (False, None)
+                    continue
+
+                parsed = self._parse_ack_line(line)
+                if parsed is None:
+                    if attempt >= max_retries - 1:
+                        return (False, None)
+                    continue
+
+                success, received_value = parsed
+                if expected_value is not None and received_value != expected_value:
+                    if attempt < max_retries - 1:
                         continue
+                    return (False, received_value)
+
+                return (success, received_value)
                 
                 # Timeout - retry silently
-                if attempt >= max_retries - 1:
-                    return (False, None)
-                    
             except Exception as e:
                 if attempt >= max_retries - 1:
                     return (False, None)

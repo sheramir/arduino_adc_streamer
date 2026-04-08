@@ -10,6 +10,9 @@ class SerialParserMixin:
     
     def process_serial_data(self, line: str):
         """Process incoming ASCII serial data (status messages, errors, etc.)."""
+        if hasattr(self, "_handle_adc_text_line") and self._handle_adc_text_line(line):
+            return
+
         if line.startswith('#'):
             # Log all status messages
             self.log_status(line)

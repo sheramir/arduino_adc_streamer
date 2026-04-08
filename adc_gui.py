@@ -37,6 +37,7 @@ from config_constants import *
 from serial_communication import ADCSerialMixin, ForceSerialMixin
 from serial_communication.serial_threads import SerialReaderThread
 from config import MCUDetectorMixin, ConfigurationMixin
+from config.adc_configuration_service import ADCConfigurationService
 from config.channel_utils import unique_channels_in_order
 from gui import (
     ControlPanelsMixin,
@@ -122,6 +123,7 @@ class ADCStreamerGUI(
         self.serial_thread: Optional[SerialReaderThread] = None
         self.current_mcu: Optional[str] = None
         self.config_completion_status: Optional[bool] = None
+        self.config_completion_result = None
         self.adc_session = None
 
     def _init_data_buffers(self):
@@ -166,6 +168,7 @@ class ADCStreamerGUI(
     def _init_config_state(self):
         """Initialize configuration state."""
         self.device_mode = 'adc'
+        self.adc_configuration_service = ADCConfigurationService(self.send_command_and_wait_ack)
 
         self.config = {
             'channels': [],

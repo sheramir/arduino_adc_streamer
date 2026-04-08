@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import math
-import json
 from pathlib import Path
 
 import numpy as np
@@ -44,6 +43,7 @@ from config_constants import (
     SHEAR_SENSOR_RADIUS,
     SHEAR_VIEW_EXTENT,
 )
+from file_operations.settings_persistence import load_settings_payload, save_settings_payload
 
 
 class ShearPanelMixin:
@@ -113,18 +113,16 @@ class ShearPanelMixin:
         return changed
 
     def save_shear_settings_to_path(self, file_path, log_message=True):
-        path = Path(file_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("w", encoding="utf-8") as handle:
-            json.dump(self._serialize_shear_settings(), handle, indent=2)
-        if log_message:
-            self.log_status(f"Saved shear settings: {path}")
+        path = save_settings_payload(
+            file_path,
+            self._serialize_shear_settings(),
+            log_callback=self.log_status if log_message else None,
+            success_message="Saved shear settings: {path}",
+        )
+        return path
 
     def load_shear_settings_from_path(self, file_path, log_message=True):
-        path = Path(file_path)
-        with path.open("r", encoding="utf-8") as handle:
-            payload = json.load(handle)
-        settings = payload.get("shear_settings", payload)
+        path, settings = load_settings_payload(file_path, payload_key="shear_settings")
         applied = self._apply_shear_settings(settings)
         if log_message:
             self.log_status(f"Loaded shear settings: {path}" if applied else f"Shear settings file loaded, no applicable fields: {path}")

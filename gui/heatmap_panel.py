@@ -7,7 +7,6 @@ from PyQt6.QtCore import Qt, QRectF
 from PyQt6.QtGui import QDoubleValidator
 import pyqtgraph as pg
 import numpy as np
-import json
 from pathlib import Path
 
 from gui.custom_widgets import NonScrollableSpinBox as QSpinBox, NonScrollableDoubleSpinBox as QDoubleSpinBox
@@ -25,6 +24,7 @@ from config_constants import (
     R_HEATMAP_COP_SMOOTH_ALPHA,
     SHEAR_ARROW_HEAD_LENGTH_AMPLIFIER, SHEAR_ARROW_HEAD_LENGTH_BASE_PX,
 )
+from file_operations.settings_persistence import load_settings_payload, save_settings_payload
 
 
 class HeatmapPanelMixin:
@@ -341,18 +341,16 @@ class HeatmapPanelMixin:
         return changed
 
     def save_heatmap_settings_to_path(self, file_path, log_message=True):
-        path = Path(file_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("w", encoding="utf-8") as handle:
-            json.dump(self._serialize_heatmap_settings(), handle, indent=2)
-        if log_message:
-            self.log_status(f"Saved heatmap settings: {path}")
+        path = save_settings_payload(
+            file_path,
+            self._serialize_heatmap_settings(),
+            log_callback=self.log_status if log_message else None,
+            success_message="Saved heatmap settings: {path}",
+        )
+        return path
 
     def load_heatmap_settings_from_path(self, file_path, log_message=True):
-        path = Path(file_path)
-        with path.open("r", encoding="utf-8") as handle:
-            payload = json.load(handle)
-        settings = payload.get("heatmap_settings", payload)
+        path, settings = load_settings_payload(file_path, payload_key="heatmap_settings")
         applied = self._apply_heatmap_settings(settings)
         if log_message:
             self.log_status(f"Loaded heatmap settings: {path}" if applied else f"Heatmap settings file loaded, no applicable fields: {path}")

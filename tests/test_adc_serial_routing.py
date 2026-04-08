@@ -3,6 +3,7 @@ import unittest
 from config.mcu_detector import MCUDetectorMixin
 from config_constants import COMMAND_TERMINATOR
 from serial_communication.adc_serial import ADCSerialMixin
+from serial_communication.adc_session import ADCSessionController
 
 
 class FakeLabel:
@@ -36,7 +37,11 @@ class FakeSerialPort:
 
 class DummyAdcRouting(ADCSerialMixin, MCUDetectorMixin):
     def __init__(self):
-        self._adc_line_waiters = []
+        self.adc_session = ADCSessionController(
+            self.process_serial_data,
+            self.process_binary_sweep,
+            self._handle_serial_reader_error,
+        )
         self.serial_port = None
         self.serial_thread = None
         self.current_mcu = None
@@ -44,6 +49,15 @@ class DummyAdcRouting(ADCSerialMixin, MCUDetectorMixin):
         self.logged = []
 
     def log_status(self, message: str):
+        self.logged.append(message)
+
+    def process_serial_data(self, line: str):
+        return None
+
+    def process_binary_sweep(self, *args):
+        return None
+
+    def _handle_serial_reader_error(self, message: str):
         self.logged.append(message)
 
 
@@ -60,7 +74,8 @@ class AdcSerialRoutingTests(unittest.TestCase):
             if payload.decode("utf-8") == f"gain 42{COMMAND_TERMINATOR}":
                 harness._handle_adc_text_line("#OK 42")
 
-        harness.serial_port = FakeSerialPort(on_write=on_write)
+        harness.adc_session.serial_port = FakeSerialPort(on_write=on_write)
+        harness.serial_port = harness.adc_session.serial_port
         success, value = harness.send_command_and_wait_ack(
             "gain 42",
             expected_value="42",
@@ -71,7 +86,7 @@ class AdcSerialRoutingTests(unittest.TestCase):
         self.assertTrue(success)
         self.assertEqual(value, "42")
         self.assertEqual(harness.serial_port.writes, [f"gain 42{COMMAND_TERMINATOR}".encode("utf-8")])
-        self.assertEqual(harness._adc_line_waiters, [])
+        self.assertEqual(harness.adc_session._adc_line_waiters, [])
 
     def test_detect_mcu_uses_routed_adc_lines(self):
         harness = DummyAdcRouting()
@@ -80,7 +95,8 @@ class AdcSerialRoutingTests(unittest.TestCase):
             if payload.decode("utf-8") == f"mcu{COMMAND_TERMINATOR}":
                 harness._handle_adc_text_line("# Teensy4.1")
 
-        harness.serial_port = FakeSerialPort(on_write=on_write)
+        harness.adc_session.serial_port = FakeSerialPort(on_write=on_write)
+        harness.serial_port = harness.adc_session.serial_port
         harness.detect_mcu()
 
         self.assertEqual(harness.current_mcu, "Teensy4.1")

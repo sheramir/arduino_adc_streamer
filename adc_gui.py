@@ -122,7 +122,7 @@ class ADCStreamerGUI(
         self.serial_thread: Optional[SerialReaderThread] = None
         self.current_mcu: Optional[str] = None
         self.config_completion_status: Optional[bool] = None
-        self._adc_line_waiters = []
+        self.adc_session = None
 
     def _init_data_buffers(self):
         """Initialize data storage buffers."""

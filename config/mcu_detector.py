@@ -4,12 +4,9 @@ MCU Detection Mixin
 Detects MCU type and adapts GUI controls accordingly.
 """
 
-import time
 from config_constants import (
     ANALYZER555_BUFFER_SIZE_MAX,
     BUFFER_SIZE_MAX,
-    COMMAND_TERMINATOR,
-    MCU_DETECTION_POLL_INTERVAL_SEC,
     MCU_DETECTION_TIMEOUT_SEC,
 )
 
@@ -22,28 +19,13 @@ class MCUDetectorMixin:
     
     def detect_mcu(self):
         """Detect MCU type by sending 'mcu' and waiting on routed ADC text lines."""
-        if not self.serial_port or not self.serial_port.is_open:
+        session = getattr(self, "adc_session", None)
+        if session is None or not self.serial_port or not self.serial_port.is_open:
             return
         
         try:
-            line = None
-            if hasattr(self, "_wait_for_adc_line"):
-                line = self._wait_for_adc_line(
-                    self._is_mcu_response_line,
-                    MCU_DETECTION_TIMEOUT_SEC,
-                    consume=True,
-                    send_action=lambda: (
-                        self.serial_port.write(f"mcu{COMMAND_TERMINATOR}".encode('utf-8')),
-                        self.serial_port.flush(),
-                    ),
-                )
-            else:
-                start_time = time.time()
-                while time.time() - start_time < MCU_DETECTION_TIMEOUT_SEC:
-                    time.sleep(MCU_DETECTION_POLL_INTERVAL_SEC)
-
-            if line:
-                mcu_name = line[1:].strip()
+            mcu_name = session.detect_mcu(MCU_DETECTION_TIMEOUT_SEC)
+            if mcu_name:
                 self.current_mcu = mcu_name
                 self.mcu_label.setText(f"MCU: {mcu_name}")
                 self.log_status(f"Detected MCU: {mcu_name}")
@@ -58,17 +40,6 @@ class MCUDetectorMixin:
             self.log_status(f"MCU detection failed: {e}")
             self.current_mcu = None
             self.mcu_label.setText("MCU: Unknown")
-
-    @staticmethod
-    def _is_mcu_response_line(line: str) -> bool:
-        if not line.startswith('#'):
-            return False
-        if line.startswith('#OK') or line.startswith('#NOT_OK') or line.startswith('#   '):
-            return False
-        payload = line[1:].strip()
-        if not payload or ':' in payload:
-            return False
-        return True
 
     def update_gui_for_mcu(self):
         """Update GUI controls based on detected MCU type."""

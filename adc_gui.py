@@ -35,6 +35,10 @@ from config_constants import *
 
 # Import mixin modules
 from serial_communication import ADCSerialMixin, ForceSerialMixin
+from serial_communication.adc_connection_state import (
+    build_default_arduino_status,
+    build_default_last_sent_config,
+)
 from serial_communication.serial_threads import SerialReaderThread
 from config import MCUDetectorMixin, ConfigurationMixin
 from config.adc_configuration_service import ADCConfigurationService
@@ -190,32 +194,11 @@ class ADCStreamerGUI(
             'rxmax_ohms': ANALYZER555_DEFAULT_RXMAX_OHMS,
         }
         
-        self.last_sent_config = {
-            'channels': None,
-            'repeat': None,
-            'ground_pin': None,
-            'use_ground': None,
-            'osr': None,
-            'gain': None,
-            'reference': None
-        }
+        self.last_sent_config = build_default_last_sent_config()
         
         self.config_is_valid = False
         
-        self.arduino_status = {
-            'channels': None,
-            'repeat': None,
-            'ground_pin': None,
-            'use_ground': None,
-            'osr': None,
-            'gain': None,
-            'reference': None,
-            'buffer': None,
-            'rb': None,
-            'rk': None,
-            'cf': None,
-            'rxmax': None,
-        }
+        self.arduino_status = build_default_arduino_status()
 
     def _init_ui_state(self):
         """Initialize UI-related state."""

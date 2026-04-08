@@ -13,11 +13,27 @@ from config_constants import (
     CONFIG_COMMAND_TIMEOUT, CONFIG_RETRY_ATTEMPTS,
     CLEAR_CACHE_ON_EXIT,
 )
+from serial_communication.adc_connection_state import (
+    build_connected_view_state,
+    build_default_last_sent_config,
+    build_disconnected_view_state,
+)
 from serial_communication.adc_session import ADCSessionController
 
 
 class ADCSerialMixin:
     """Mixin class for ADC serial communication methods."""
+
+    def _apply_adc_connection_view_state(self, view_state):
+        self.connect_btn.setText(view_state.connect_button_text)
+        self.configure_btn.setEnabled(view_state.configure_enabled)
+        if view_state.configure_style is not None:
+            self.configure_btn.setStyleSheet(view_state.configure_style)
+        self.start_btn.setEnabled(view_state.start_enabled)
+        self.stop_btn.setEnabled(view_state.stop_enabled)
+        self.statusBar().showMessage(view_state.status_message)
+        self.port_combo.setEnabled(view_state.port_selection_enabled)
+        self.refresh_ports_btn.setEnabled(view_state.port_selection_enabled)
 
     def _clear_adc_line_waiters(self):
         if getattr(self, "adc_session", None) is not None:
@@ -87,15 +103,7 @@ class ADCSerialMixin:
             self.detect_mcu()
 
             self.log_status(f"Connected to {port_name}")
-            self.connect_btn.setText("Disconnect")
-            self.configure_btn.setEnabled(True)
-            self.configure_btn.setStyleSheet("QPushButton { background-color: #2196F3; color: white; font-weight: bold; }")
-            self.start_btn.setEnabled(False)
-            self.statusBar().showMessage("Connected - Please configure")
-
-            # Disable port selection during connection
-            self.port_combo.setEnabled(False)
-            self.refresh_ports_btn.setEnabled(False)
+            self._apply_adc_connection_view_state(build_connected_view_state())
             
             # Update GUI based on detected MCU
             self.update_gui_for_mcu()
@@ -153,29 +161,13 @@ class ADCSerialMixin:
             self.update_gui_for_mcu()
             
             # Reset last sent config
-            self.last_sent_config = {
-                'channels': None,
-                'repeat': None,
-                'ground_pin': None,
-                'use_ground': None,
-                'osr': None,
-                'gain': None,
-                'reference': None
-            }
+            self.last_sent_config = build_default_last_sent_config()
             
             # Reset config validity
             self.config_is_valid = False
             
             self.log_status("Disconnected")
-            self.connect_btn.setText("Connect")
-            self.configure_btn.setEnabled(False)
-            self.start_btn.setEnabled(False)
-            self.stop_btn.setEnabled(False)
-            self.statusBar().showMessage("Disconnected")
-
-            # Re-enable port selection
-            self.port_combo.setEnabled(True)
-            self.refresh_ports_btn.setEnabled(True)
+            self._apply_adc_connection_view_state(build_disconnected_view_state())
         finally:
             self._serial_disconnect_in_progress = False
 

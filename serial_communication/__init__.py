@@ -12,6 +12,11 @@ from .adc_connection_state import (
     build_default_last_sent_config,
     build_disconnected_view_state,
 )
+from .adc_connection_workflow import (
+    ADCConnectOutcome,
+    ADCConnectionWorkflow,
+    ADCDisconnectOutcome,
+)
 from .adc_session import ADCSessionController
 from .adc_serial import ADCSerialMixin
 from .force_serial import ForceSerialMixin
@@ -21,6 +26,9 @@ __all__ = [
     'SerialReaderThread',
     'ForceReaderThread',
     'ADCConnectionViewState',
+    'ADCConnectOutcome',
+    'ADCConnectionWorkflow',
+    'ADCDisconnectOutcome',
     'build_connected_view_state',
     'build_default_arduino_status',
     'build_default_last_sent_config',

@@ -9,10 +9,15 @@ import serial.tools.list_ports
 from PyQt6.QtWidgets import QMessageBox
 from PyQt6.QtCore import QTimer
 
-from config.mcu_state import build_disconnected_mcu_state
+from config.mcu_state import (
+    build_detected_mcu_state,
+    build_disconnected_mcu_state,
+    build_unknown_mcu_state,
+)
 from config_constants import (
     CONFIG_COMMAND_TIMEOUT, CONFIG_RETRY_ATTEMPTS,
     CLEAR_CACHE_ON_EXIT,
+    MCU_DETECTION_TIMEOUT_SEC,
 )
 from serial_communication.adc_connection_state import (
     build_connected_view_state,
@@ -96,12 +101,16 @@ class ADCSerialMixin:
             if getattr(self, "adc_session", None) is None:
                 self.adc_session = self._build_adc_session()
 
-            self.adc_session.connect(port_name)
+            outcome = self.adc_connection_workflow.connect(
+                self.adc_session,
+                port_name,
+                mcu_detection_timeout=MCU_DETECTION_TIMEOUT_SEC,
+            )
             self._sync_adc_transport_state()
-
-            # Detect MCU type after the reader thread is active so only one ADC
-            # consumer reads lines from the port.
-            self.detect_mcu()
+            if outcome.mcu_name:
+                self._apply_mcu_state(build_detected_mcu_state(outcome.mcu_name))
+            else:
+                self._apply_mcu_state(build_unknown_mcu_state())
 
             self.log_status(f"Connected to {port_name}")
             self._apply_adc_connection_view_state(build_connected_view_state())
@@ -149,9 +158,9 @@ class ADCSerialMixin:
             if CLEAR_CACHE_ON_EXIT and hasattr(self, 'cleanup_capture_cache'):
                 self.cleanup_capture_cache(block=cleanup_block)
 
-            if getattr(self, "adc_session", None) is not None:
-                for warning in self.adc_session.disconnect():
-                    self.log_status(f"WARNING: {warning}")
+            outcome = self.adc_connection_workflow.disconnect(getattr(self, "adc_session", None))
+            for warning in outcome.warnings:
+                self.log_status(f"WARNING: {warning}")
             self._sync_adc_transport_state()
             self._clear_adc_line_waiters()
             

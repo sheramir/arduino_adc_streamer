@@ -39,6 +39,7 @@ from serial_communication.adc_connection_state import (
     build_default_arduino_status,
     build_default_last_sent_config,
 )
+from serial_communication.adc_connection_workflow import ADCConnectionWorkflow
 from serial_communication.serial_threads import SerialReaderThread
 from config import MCUDetectorMixin, ConfigurationMixin
 from config.adc_configuration_service import ADCConfigurationService
@@ -128,6 +129,7 @@ class ADCStreamerGUI(
         self.serial_thread: Optional[SerialReaderThread] = None
         self.current_mcu: Optional[str] = None
         self.adc_session = None
+        self.adc_connection_workflow = ADCConnectionWorkflow()
 
     def _init_data_buffers(self):
         """Initialize data storage buffers."""

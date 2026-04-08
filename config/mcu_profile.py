@@ -45,7 +45,7 @@ def resolve_mcu_profile(mcu_name: str | None, *, selected_array_mode: str = "PZT
 
     is_array_dual = lower_name.startswith("array_pzt_pzr")
     is_array_mcu = lower_name.startswith("array")
-    is_array_pzt1 = lower_name == "array_pzt1"
+    is_array_pzt1 = lower_name == "array_pzt1" or (is_array_dual and normalized_array_mode == "PZT")
     is_teensy = "teensy" in lower_name
     is_555_mode = normalized_array_mode == "PZR" if is_array_dual else ("555" in lower_name)
     device_mode = "555" if is_555_mode else "adc"

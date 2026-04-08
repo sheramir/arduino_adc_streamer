@@ -47,7 +47,10 @@ class ConfigurationMixin:
 
     def is_array_pzt1_mode(self) -> bool:
         """Return True when the connected MCU streams paired MUX data."""
-        return resolve_mcu_profile(self.current_mcu).is_array_pzt1
+        return resolve_mcu_profile(
+            self.current_mcu,
+            selected_array_mode=self.get_selected_array_operation_mode(),
+        ).is_array_pzt1
 
     def get_allowed_channel_max(self) -> int:
         """Return max channel index for manual channel entry validation."""
@@ -322,7 +325,10 @@ class ConfigurationMixin:
             channels = self.config.get('channels', [])
         if repeat_count is None:
             repeat_count = self.config.get('repeat', 1)
-        return len(channels) * max(1, int(repeat_count)) * self.get_effective_channel_multiplier()
+        physical_channels = list(channels or [])
+        if self.is_array_pzt1_mode() and self.is_array_sensor_selection_mode():
+            physical_channels = self.get_channels_for_arduino_command()
+        return len(physical_channels) * max(1, int(repeat_count)) * self.get_effective_channel_multiplier()
 
     @staticmethod
     def _get_unique_channels_in_order(channels):
@@ -379,6 +385,7 @@ class ConfigurationMixin:
         if self.is_array_mcu_mode() and selection_source == 'array' and selected_array_sensors:
             sensor_groups = self.get_array_selected_sensor_groups()
             channel_sensor_map = self.get_active_channel_sensor_map() if hasattr(self, 'get_active_channel_sensor_map') else ["T", "R", "C", "L", "B"]
+            unique_channel_positions = {channel: index for index, channel in enumerate(unique_channels)}
 
             color_slot = 0
             for group in sensor_groups:
@@ -390,13 +397,15 @@ class ConfigurationMixin:
                 for local_idx, channel in enumerate(sensor_channels):
                     sample_indices = []
                     if local_idx < len(seq_positions):
-                        seq_idx = int(seq_positions[local_idx])
                         if self.is_array_pzt1_mode():
-                            mux_index = max(0, min(1, mux_num - 1))
-                            base_idx = seq_idx * repeat_count * 2
-                            for repeat_idx in range(repeat_count):
-                                sample_indices.append(base_idx + (repeat_idx * 2) + mux_index)
+                            unique_idx = unique_channel_positions.get(channel)
+                            if unique_idx is not None:
+                                mux_index = max(0, min(1, mux_num - 1))
+                                base_idx = unique_idx * repeat_count * 2
+                                for repeat_idx in range(repeat_count):
+                                    sample_indices.append(base_idx + (repeat_idx * 2) + mux_index)
                         else:
+                            seq_idx = int(seq_positions[local_idx])
                             base_idx = seq_idx * repeat_count
                             sample_indices.extend(range(base_idx, base_idx + repeat_count))
 

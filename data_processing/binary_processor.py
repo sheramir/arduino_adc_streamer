@@ -71,10 +71,10 @@ class BinaryProcessorMixin:
                     timing.trim_recent('mcu_block_gap_us', MAX_TIMING_SAMPLES)
                 timing.mcu_last_block_end_us = block_end_us
                 
-                # Calculate samples per sweep from configuration
-                channel_count = len(self.config.get('channels', [])) * self.get_effective_channel_multiplier()
-                repeat_count = self.config.get('repeat', 1)
-                samples_per_sweep = channel_count * repeat_count
+                # Calculate samples per sweep from the same physical-width rule
+                # used when capture starts, so parser expectations and buffer
+                # layout stay aligned for paired-MUX array modes.
+                samples_per_sweep = self.get_effective_samples_per_sweep()
                 
                 if samples_per_sweep == 0:
                     self.log_status("ERROR: Invalid configuration, samples_per_sweep is 0")

@@ -5,6 +5,7 @@ from config.adc_configuration_service import (
     ADCConfigurationRequest,
     ADCConfigurationService,
 )
+from serial_communication.adc_connection_state import ArduinoStatus
 
 
 def build_request(**overrides):
@@ -72,11 +73,12 @@ class ADCConfigurationServiceTests(unittest.TestCase):
         result = service.send_config_with_verification(build_request())
 
         self.assertTrue(result.success)
+        self.assertIsInstance(result.arduino_status, ArduinoStatus)
         self.assertEqual(
             [command for command, _ in commands],
             ["ref vdd", "osr 4", "gain 2", "channels 0,1,2", "repeat 3", "ground false", "buffer 32"],
         )
-        self.assertEqual(result.arduino_status["channels"], [0, 1, 2])
+        self.assertEqual(result.arduino_status.channels, [0, 1, 2])
         self.assertIn("Configuration matches: [0, 1, 2]", result.messages)
 
     def test_array_sensor_selection_accepts_unique_echo_verification(self):
@@ -103,7 +105,7 @@ class ADCConfigurationServiceTests(unittest.TestCase):
         result = service.send_config_with_verification(request)
 
         self.assertTrue(result.success)
-        self.assertEqual(result.arduino_status["channels"], [1, 2])
+        self.assertEqual(result.arduino_status.channels, [1, 2])
         self.assertIn("Configuration matches: [1, 2]", result.messages)
 
 

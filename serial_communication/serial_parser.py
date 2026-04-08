@@ -31,7 +31,7 @@ class SerialParserMixin:
             if line.startswith('#   ') and ',' in line and not ':' in line:
                 channels_str = line[4:].strip()
                 channels = [int(c.strip()) for c in channels_str.split(',')]
-                self.arduino_status['channels'] = channels
+                self.arduino_status.channels = channels
                 return
             
             # Parse other fields
@@ -41,15 +41,15 @@ class SerialParserMixin:
                 value = parts[1].strip()
                 
                 if 'repeatCount' in key:
-                    self.arduino_status['repeat'] = int(value)
+                    self.arduino_status.repeat = int(value)
                 elif 'groundPin' in key:
-                    self.arduino_status['ground_pin'] = int(value)
+                    self.arduino_status.ground_pin = int(value)
                 elif 'useGroundBeforeEach' in key:
-                    self.arduino_status['use_ground'] = (value.lower() == 'true')
+                    self.arduino_status.use_ground = (value.lower() == 'true')
                 elif 'osr' in key.lower():
-                    self.arduino_status['osr'] = int(value)
+                    self.arduino_status.osr = int(value)
                 elif 'gain' in key.lower():
-                    self.arduino_status['gain'] = int(value)
+                    self.arduino_status.gain = int(value)
                 elif 'adcReference' in key or 'reference' in key.lower():
                     # Map Arduino reference names back to our format
                     ref_map = {
@@ -58,7 +58,7 @@ class SerialParserMixin:
                         '1V2': '1.2',
                         '3V3': 'vdd'
                     }
-                    self.arduino_status['reference'] = ref_map.get(value, value.lower())
+                    self.arduino_status.reference = ref_map.get(value, value.lower())
         except Exception as e:
             # Silently ignore parse errors
             pass

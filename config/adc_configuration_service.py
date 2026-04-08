@@ -13,6 +13,7 @@ from typing import Callable
 from config.channel_utils import unique_channels_in_order
 from config.buffer_utils import validate_and_limit_sweeps_per_block
 from config_constants import INTER_COMMAND_DELAY
+from serial_communication.adc_connection_state import ArduinoStatus, build_default_arduino_status
 
 
 @dataclass(slots=True)
@@ -53,7 +54,7 @@ class ADCCommandResult:
 class ADCConfigurationResult:
     success: bool
     resolved_device_mode: str
-    arduino_status: dict
+    arduino_status: ArduinoStatus
     normalized_buffer_size: int
     messages: list[str] = field(default_factory=list)
 
@@ -80,20 +81,7 @@ class ADCConfigurationService:
 
     def send_config_with_verification(self, request: ADCConfigurationRequest) -> ADCConfigurationResult:
         messages: list[str] = []
-        arduino_status = {
-            "channels": None,
-            "repeat": None,
-            "ground_pin": None,
-            "use_ground": None,
-            "osr": None,
-            "gain": None,
-            "reference": None,
-            "buffer": None,
-            "rb": None,
-            "rk": None,
-            "cf": None,
-            "rxmax": None,
-        }
+        arduino_status = build_default_arduino_status()
 
         resolved_device_mode = request.device_mode
         if request.is_array_pzt_pzr_mode:
@@ -125,34 +113,34 @@ class ADCConfigurationService:
     def verify_configuration_state(
         self,
         request: ADCConfigurationRequest,
-        arduino_status: dict,
+        arduino_status: ArduinoStatus,
         *,
         resolved_device_mode: str | None = None,
     ) -> ADCCommandResult:
         mode = resolved_device_mode or request.device_mode
-        messages = self._verify_configuration(request, dict(arduino_status), mode)
+        messages = self._verify_configuration(request, arduino_status.copy(), mode)
         success = not any(message.startswith("MISMATCH:") or message == "No status data received yet" for message in messages)
         return ADCCommandResult(success, messages=messages)
 
-    def _send_adc_config(self, request: ADCConfigurationRequest, arduino_status: dict) -> tuple[bool, int]:
+    def _send_adc_config(self, request: ADCConfigurationRequest, arduino_status: ArduinoStatus) -> tuple[bool, int]:
         all_success = True
         is_teensy = bool(request.current_mcu and "Teensy" in request.current_mcu)
 
         if not is_teensy and not request.is_array_mcu:
             success, received = self._send_command_and_wait_ack(f"ref {request.reference}", request.reference)
             if success:
-                arduino_status["reference"] = received
+                arduino_status.reference = received
             else:
                 all_success = False
             time.sleep(INTER_COMMAND_DELAY)
         elif request.is_array_mcu:
-            arduino_status["reference"] = "vdd"
+            arduino_status.reference = "vdd"
 
         success, received = self._send_command_and_wait_ack(f"osr {request.osr}", str(request.osr))
         if success and received is not None:
-            arduino_status["osr"] = int(received)
+            arduino_status.osr = int(received)
         elif success:
-            arduino_status["osr"] = int(request.osr)
+            arduino_status.osr = int(request.osr)
         else:
             all_success = False
         time.sleep(INTER_COMMAND_DELAY)
@@ -160,9 +148,9 @@ class ADCConfigurationService:
         if not is_teensy:
             success, received = self._send_command_and_wait_ack(f"gain {request.gain}", str(request.gain))
             if success and received is not None:
-                arduino_status["gain"] = int(received)
+                arduino_status.gain = int(received)
             elif success:
-                arduino_status["gain"] = int(request.gain)
+                arduino_status.gain = int(request.gain)
             else:
                 all_success = False
             time.sleep(INTER_COMMAND_DELAY)
@@ -188,7 +176,7 @@ class ADCConfigurationService:
             success, received = self._send_command_and_wait_ack(f"channels {channels_text}", channels_text)
             if success:
                 echoed = received or channels_text
-                arduino_status["channels"] = [int(value.strip()) for value in echoed.split(",") if value.strip()]
+                arduino_status.channels = [int(value.strip()) for value in echoed.split(",") if value.strip()]
             else:
                 all_success = False
         time.sleep(0.05)
@@ -196,7 +184,7 @@ class ADCConfigurationService:
         repeat_text = str(request.repeat)
         success, received = self._send_command_and_wait_ack(f"repeat {repeat_text}", repeat_text)
         if success:
-            arduino_status["repeat"] = int(received) if received not in (None, "") else request.repeat
+            arduino_status.repeat = int(received) if received not in (None, "") else request.repeat
         else:
             all_success = False
         time.sleep(0.05)
@@ -205,14 +193,14 @@ class ADCConfigurationService:
             ground_pin_text = str(request.ground_pin)
             success, received = self._send_command_and_wait_ack(f"ground {ground_pin_text}", ground_pin_text)
             if success:
-                arduino_status["ground_pin"] = int(received) if received not in (None, "") else request.ground_pin
-                arduino_status["use_ground"] = True
+                arduino_status.ground_pin = int(received) if received not in (None, "") else request.ground_pin
+                arduino_status.use_ground = True
             else:
                 all_success = False
         else:
             success, received = self._send_command_and_wait_ack("ground false", "false")
             if success:
-                arduino_status["use_ground"] = False
+                arduino_status.use_ground = False
             else:
                 all_success = False
         time.sleep(0.05)
@@ -221,13 +209,13 @@ class ADCConfigurationService:
         buffer_text = str(normalized_buffer_size)
         success, received = self._send_command_and_wait_ack(f"buffer {buffer_text}", buffer_text)
         if success:
-            arduino_status["buffer"] = int(received) if received not in (None, "") else normalized_buffer_size
+            arduino_status.buffer = int(received) if received not in (None, "") else normalized_buffer_size
         else:
             all_success = False
 
         return all_success, normalized_buffer_size
 
-    def _send_555_config(self, request: ADCConfigurationRequest, arduino_status: dict, messages: list[str]) -> tuple[bool, int]:
+    def _send_555_config(self, request: ADCConfigurationRequest, arduino_status: ArduinoStatus, messages: list[str]) -> tuple[bool, int]:
         all_success = True
 
         channels_text = ",".join(str(channel) for channel in request.channels_to_send)
@@ -237,11 +225,11 @@ class ADCConfigurationService:
             if success:
                 if received:
                     try:
-                        arduino_status["channels"] = [int(value.strip()) for value in received.split(",") if value.strip()]
+                        arduino_status.channels = [int(value.strip()) for value in received.split(",") if value.strip()]
                     except Exception:
-                        arduino_status["channels"] = desired_channels
+                        arduino_status.channels = desired_channels
                 else:
-                    arduino_status["channels"] = desired_channels
+                    arduino_status.channels = desired_channels
             else:
                 messages.append(f"555 config command failed: channels {channels_text}")
                 all_success = False
@@ -251,9 +239,9 @@ class ADCConfigurationService:
         success, received = self._send_command_and_wait_ack(f"repeat {repeat_text}", None)
         if success:
             try:
-                arduino_status["repeat"] = int(received) if received not in (None, "") else request.repeat
+                arduino_status.repeat = int(received) if received not in (None, "") else request.repeat
             except Exception:
-                arduino_status["repeat"] = request.repeat
+                arduino_status.repeat = request.repeat
         else:
             messages.append(f"555 config command failed: repeat {repeat_text}")
             all_success = False
@@ -264,9 +252,9 @@ class ADCConfigurationService:
         success, received = self._send_command_and_wait_ack(f"buffer {buffer_text}", None)
         if success:
             try:
-                arduino_status["buffer"] = int(received) if received not in (None, "") else normalized_buffer_size
+                arduino_status.buffer = int(received) if received not in (None, "") else normalized_buffer_size
             except Exception:
-                arduino_status["buffer"] = normalized_buffer_size
+                arduino_status.buffer = normalized_buffer_size
         else:
             messages.append(f"555 config command failed: buffer {buffer_text}")
             all_success = False
@@ -287,21 +275,21 @@ class ADCConfigurationService:
 
         return all_success, normalized_buffer_size
 
-    def _verify_configuration(self, request: ADCConfigurationRequest, arduino_status: dict, resolved_device_mode: str) -> list[str]:
+    def _verify_configuration(self, request: ADCConfigurationRequest, arduino_status: ArduinoStatus, resolved_device_mode: str) -> list[str]:
         messages: list[str] = []
 
         if resolved_device_mode == "555":
             expected_channels = list(request.channels)
-            actual_channels = arduino_status.get("channels")
+            actual_channels = arduino_status.channels
             if actual_channels is None:
                 actual_channels = expected_channels
-                arduino_status["channels"] = actual_channels
+                arduino_status.channels = actual_channels
 
             if expected_channels != actual_channels:
                 messages.append(f"MISMATCH: Expected channels {expected_channels}, got {actual_channels}")
                 return messages
 
-            actual_repeat = arduino_status.get("repeat")
+            actual_repeat = arduino_status.repeat
             if actual_repeat is not None and actual_repeat != request.repeat:
                 messages.append(f"MISMATCH: Expected repeat {request.repeat}, got {actual_repeat}")
                 return messages
@@ -309,7 +297,7 @@ class ADCConfigurationService:
             messages.append(f"555 configuration matches: {actual_channels}")
             return messages
 
-        actual_channels = arduino_status.get("channels")
+        actual_channels = arduino_status.channels
         if actual_channels is None:
             messages.append("No status data received yet")
             return messages
@@ -326,7 +314,7 @@ class ADCConfigurationService:
                 messages.append(f"MISMATCH: Expected channels {expected_channels}, got {actual_channels}")
                 return messages
 
-        actual_repeat = arduino_status.get("repeat")
+        actual_repeat = arduino_status.repeat
         if actual_repeat is not None and actual_repeat != request.repeat:
             messages.append(f"MISMATCH: Expected repeat {request.repeat}, got {actual_repeat}")
             return messages

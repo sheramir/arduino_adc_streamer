@@ -712,7 +712,7 @@ class ConfigurationMixin:
     def _apply_configuration_result(self, result):
         """Apply service output back onto GUI-owned state."""
         self.device_mode = result.resolved_device_mode
-        self.arduino_status.update(result.arduino_status)
+        self.arduino_status.apply(result.arduino_status)
 
         normalized_buffer_size = int(result.normalized_buffer_size)
         current_buffer_size = int(self.buffer_spin.value()) if hasattr(self, 'buffer_spin') else normalized_buffer_size

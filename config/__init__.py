@@ -34,6 +34,7 @@ from .config_snapshot import (
     normalize_reference,
 )
 from .mcu_view_state import MCUViewState, build_mcu_view_state
+from .adc_config_state import ADCConfigurationState, build_default_adc_config_state
 
 __all__ = [
     'MCUDetectorMixin',
@@ -62,4 +63,6 @@ __all__ = [
     'normalize_reference',
     'MCUViewState',
     'build_mcu_view_state',
+    'ADCConfigurationState',
+    'build_default_adc_config_state',
 ]

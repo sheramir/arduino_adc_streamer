@@ -680,7 +680,7 @@ class ConfigurationMixin:
             rxmax_value=float(self.rxmax_spin.value()) if hasattr(self, 'rxmax_spin') else None,
         )
 
-        self.config.update(snapshot.as_config_updates())
+        snapshot.apply_to_config(self.config)
         buffer_size = int(self.buffer_spin.value()) if hasattr(self, 'buffer_spin') else 128
 
         return ADCConfigurationRequest(

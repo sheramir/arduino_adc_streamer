@@ -8,6 +8,7 @@ from .serial_threads import SerialReaderThread, ForceReaderThread
 from .adc_connection_state import (
     ADCConnectionViewState,
     ArduinoStatus,
+    LastSentConfig,
     build_connected_view_state,
     build_default_arduino_status,
     build_default_last_sent_config,
@@ -28,6 +29,7 @@ __all__ = [
     'ForceReaderThread',
     'ADCConnectionViewState',
     'ArduinoStatus',
+    'LastSentConfig',
     'ADCConnectOutcome',
     'ADCConnectionWorkflow',
     'ADCDisconnectOutcome',

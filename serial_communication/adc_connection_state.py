@@ -53,16 +53,22 @@ class ArduinoStatus:
         self.rxmax = other.rxmax
 
 
-def build_default_last_sent_config() -> dict:
-    return {
-        "channels": None,
-        "repeat": None,
-        "ground_pin": None,
-        "use_ground": None,
-        "osr": None,
-        "gain": None,
-        "reference": None,
-    }
+@dataclass(slots=True)
+class LastSentConfig:
+    channels: list[int] | None = None
+    repeat: int | None = None
+    ground_pin: int | None = None
+    use_ground: bool | None = None
+    osr: int | None = None
+    gain: int | None = None
+    reference: str | None = None
+
+    def copy(self) -> "LastSentConfig":
+        return replace(self)
+
+
+def build_default_last_sent_config() -> LastSentConfig:
+    return LastSentConfig()
 
 
 def build_default_arduino_status() -> ArduinoStatus:

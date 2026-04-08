@@ -42,6 +42,7 @@ from serial_communication.adc_connection_state import (
 from serial_communication.adc_connection_workflow import ADCConnectionWorkflow
 from serial_communication.serial_threads import SerialReaderThread
 from config import MCUDetectorMixin, ConfigurationMixin
+from config.adc_config_state import build_default_adc_config_state
 from config.adc_configuration_service import ADCConfigurationService
 from config.adc_configuration_runner import ADCConfigurationRunner
 from config.channel_utils import unique_channels_in_order
@@ -178,25 +179,7 @@ class ADCStreamerGUI(
         self.adc_configuration_service = ADCConfigurationService(self.send_command_and_wait_ack)
         self.adc_configuration_runner = ADCConfigurationRunner(self.adc_configuration_service)
 
-        self.config = {
-            'channels': [],
-            'channel_selection_source': 'none',
-            'selected_array_sensors': [],
-            'array_operation_mode': 'PZT',
-            'repeat': 1,
-            'ground_pin': -1,
-            'use_ground': False,
-            'osr': 2,
-            'gain': 1,
-            'reference': 'vdd',
-            'conv_speed': 'med',
-            'samp_speed': 'med',
-            'sample_rate': 0,
-            'rb_ohms': ANALYZER555_DEFAULT_RB_OHMS,
-            'rk_ohms': ANALYZER555_DEFAULT_RK_OHMS,
-            'cf_farads': ANALYZER555_DEFAULT_CF_FARADS,
-            'rxmax_ohms': ANALYZER555_DEFAULT_RXMAX_OHMS,
-        }
+        self.config = build_default_adc_config_state()
         
         self.last_sent_config = build_default_last_sent_config()
         

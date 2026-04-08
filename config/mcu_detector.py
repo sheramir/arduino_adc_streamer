@@ -118,7 +118,7 @@ class MCUDetectorMixin:
         view_state = build_mcu_view_state(profile)
         self.device_mode = profile.device_mode
 
-        if profile.is_array_dual and hasattr(self, 'config') and isinstance(self.config, dict):
+        if profile.is_array_dual and hasattr(self, 'config'):
             self.config['array_operation_mode'] = selected_mode
 
         if hasattr(self, 'update_heatmap_ui_for_mode'):

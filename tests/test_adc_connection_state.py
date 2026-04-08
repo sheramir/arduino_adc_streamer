@@ -2,6 +2,7 @@ import unittest
 
 from serial_communication.adc_connection_state import (
     ArduinoStatus,
+    LastSentConfig,
     build_connected_view_state,
     build_default_arduino_status,
     build_default_last_sent_config,
@@ -10,14 +11,17 @@ from serial_communication.adc_connection_state import (
 
 
 class ADCConnectionStateTests(unittest.TestCase):
-    def test_default_last_sent_config_has_expected_keys(self):
+    def test_default_last_sent_config_has_expected_fields(self):
         default_config = build_default_last_sent_config()
 
-        self.assertEqual(
-            set(default_config.keys()),
-            {"channels", "repeat", "ground_pin", "use_ground", "osr", "gain", "reference"},
-        )
-        self.assertTrue(all(value is None for value in default_config.values()))
+        self.assertIsInstance(default_config, LastSentConfig)
+        self.assertIsNone(default_config.channels)
+        self.assertIsNone(default_config.repeat)
+        self.assertIsNone(default_config.ground_pin)
+        self.assertIsNone(default_config.use_ground)
+        self.assertIsNone(default_config.osr)
+        self.assertIsNone(default_config.gain)
+        self.assertIsNone(default_config.reference)
 
     def test_default_arduino_status_has_expected_fields(self):
         status = build_default_arduino_status()

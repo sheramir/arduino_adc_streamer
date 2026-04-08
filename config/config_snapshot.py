@@ -7,6 +7,10 @@ Normalize widget-derived ADC config values into a plain snapshot.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from config.adc_config_state import ADCConfigurationState
 
 
 VREF_LABEL_TO_COMMAND = {
@@ -49,6 +53,9 @@ class ADCConfigurationSnapshot:
             "cf_farads": self.cf_farads,
             "rxmax_ohms": self.rxmax_ohms,
         }
+
+    def apply_to_config(self, config: "ADCConfigurationState") -> None:
+        config.update(self.as_config_updates())
 
 
 def normalize_reference(*, current_reference: str, vref_label: str | None, use_vref_control: bool) -> str:

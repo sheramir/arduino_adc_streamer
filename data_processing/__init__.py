@@ -19,6 +19,7 @@ from data_processing.adc_plotting import ADCPlottingMixin
 from data_processing.capture_lifecycle import CaptureLifecycleMixin
 from data_processing.filter_processor import FilterProcessorMixin
 from data_processing.force_processor import ForceProcessorMixin
+from data_processing.timing_display import TimingDisplayMixin
 from data_processing.heatmap_processor import HeatmapProcessorMixin
 from data_processing.shear_processor import ShearProcessorMixin
 from data_processing.spectrum_processor import SpectrumProcessorMixin
@@ -31,6 +32,7 @@ __all__ = [
     'BinaryProcessorMixin',
     'FilterProcessorMixin',
     'ForceProcessorMixin',
+    'TimingDisplayMixin',
     'HeatmapProcessorMixin',
     'ShearProcessorMixin',
     'SpectrumProcessorMixin',

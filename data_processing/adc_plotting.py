@@ -16,6 +16,9 @@ from config_constants import IADC_RESOLUTION_BITS, MAX_PLOT_SWEEPS, MAX_TOTAL_PO
 class ADCPlottingMixin:
     """ADC plot snapshotting and curve rendering helpers."""
 
+    PZR_ZERO_BASELINE_WINDOW_SEC = 0.5
+    PZR_AUTO_BASELINE_DELAY_SEC = 1.5
+
     def _get_ordered_active_buffer_snapshot(self):
         active_data_buffer = self.get_active_data_buffer()
         if active_data_buffer is None or self.samples_per_sweep <= 0:
@@ -254,6 +257,28 @@ class ADCPlottingMixin:
             self.plot_widget.setLabel('left', 'ADC Value', units='counts')
 
         self.plot_widget.setLabel('bottom', 'Time', units='s')
+
+
+    def apply_y_axis_range(self):
+        """Apply Y-axis range setting to the plot."""
+        if getattr(self, 'device_mode', 'adc') == '555':
+            self.plot_widget.enableAutoRange(axis='y')
+            return
+
+        range_text = self.yaxis_range_combo.currentText()
+        units_text = self.yaxis_units_combo.currentText()
+
+        if range_text == "Adaptive":
+            self.plot_widget.enableAutoRange(axis='y')
+        elif range_text == "Full-Scale":
+            if units_text == "Voltage":
+                vref = self.get_vref_voltage()
+                self.plot_widget.setYRange(0, vref, padding=0.02)
+            else:
+                max_adc_value = (2 ** IADC_RESOLUTION_BITS) - 1
+                self.plot_widget.setYRange(0, max_adc_value, padding=0.02)
+        else:
+            self.plot_widget.enableAutoRange(axis='y')
 
     def _plot_repeat_series(self, spec, color, channel_data, channel_times, repeat_count, desired_curve_keys):
         """Render each repeat as its own curve without changing existing styling."""

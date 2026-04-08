@@ -53,6 +53,7 @@ from gui import (
     SensorPanelMixin,
     ShearPanelMixin as ShearPanelUIMixin,
     SpectrumPanelMixin,
+    StatusLoggingMixin,
 )
 from data_processing import (
     DataProcessorMixin,
@@ -72,6 +73,7 @@ class ADCStreamerGUI(
     ADCSerialMixin,         # ✅ Serial communication
     ForceSerialMixin,       # ✅ Force sensor communication
     MCUDetectorMixin,       # ✅ MCU detection
+    StatusLoggingMixin,     # GUI status logging
     ControlPanelsMixin,     # ✅ Control panel UI
     DisplayPanelsMixin,     # ✅ Display panel UI
     FilePanelsMixin,        # ✅ File panel UI

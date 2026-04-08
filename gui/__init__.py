@@ -11,7 +11,7 @@ from gui.heatmap_panel import HeatmapPanelMixin
 from gui.sensor_panel import SensorPanelMixin
 from gui.shear_panel import ShearPanelMixin
 from gui.spectrum_panel import SpectrumPanelMixin
-from gui.gui_components import GUIComponentsMixin
+from gui.status_logging import StatusLoggingMixin
 
 __all__ = [
     'ControlPanelsMixin',
@@ -21,5 +21,5 @@ __all__ = [
     'SensorPanelMixin',
     'ShearPanelMixin',
     'SpectrumPanelMixin',
-    'GUIComponentsMixin',
+    'StatusLoggingMixin',
 ]

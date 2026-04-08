@@ -28,6 +28,20 @@ from config.buffer_utils import validate_and_limit_sweeps_per_block
 class ConfigurationMixin:
     """Mixin class for configuration management and event handlers."""
 
+    def get_vref_voltage(self) -> float:
+        """Get the numeric voltage reference value for the current configuration."""
+        vref_str = self.config['reference']
+
+        if vref_str == "1.2":
+            return 1.2
+        if vref_str == "3.3" or vref_str == "vdd":
+            return 3.3
+        if vref_str == "0.8vdd":
+            return 3.3 * 0.8
+        if vref_str == "ext":
+            return 1.25
+        return 3.3
+
     def _apply_configure_button_state(self, state):
         self.configure_btn.setEnabled(state.enabled)
         if state.style is not None:

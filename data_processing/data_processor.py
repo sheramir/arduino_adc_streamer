@@ -1,19 +1,18 @@
 """
 Data Processing Mixin
 =====================
-Main mixin combining data processing, plotting, timing, and capture control.
+Main mixin combining data processing, plotting, timing, and capture lifecycle.
 
 This module combines:
 - Serial parsing (SerialParserMixin)
 - Binary data processing (BinaryProcessorMixin)
 - Force data processing (ForceProcessorMixin)
+- Capture lifecycle (CaptureLifecycleMixin)
 - Plotting and visualization (defined here)
 - Timing calculations (defined here)
-- Capture control (defined here)
 """
 
 import time
-import csv
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -27,12 +26,12 @@ from config_constants import (
     PLOT_COLORS, MAX_LOG_LINES, IADC_RESOLUTION_BITS, MAX_PLOT_SWEEPS,
     ANALYZER555_DEFAULT_CF_FARADS, ANALYZER555_DEFAULT_RB_OHMS,
     ANALYZER555_DEFAULT_RK_OHMS,
-    X_FORCE_SENSOR_TO_NEWTON, Z_FORCE_SENSOR_TO_NEWTON, CACHE_SUBDIR_NAME,
+    X_FORCE_SENSOR_TO_NEWTON, Z_FORCE_SENSOR_TO_NEWTON,
     MAX_TOTAL_POINTS_TO_DISPLAY,
 )
 
 # Import sub-module mixins
-from data_processing.archive_writer import ArchiveWriterThread
+from data_processing.capture_lifecycle import CaptureLifecycleMixin
 from serial_communication.serial_parser import SerialParserMixin
 from data_processing.binary_processor import BinaryProcessorMixin
 from data_processing.filter_processor import FilterProcessorMixin
@@ -85,8 +84,8 @@ class TimingState:
             del history[:-max_items]
 
 
-class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcessorMixin, ForceProcessorMixin):
-    """Main mixin class for data processing, visualization, and capture control."""
+class DataProcessorMixin(CaptureLifecycleMixin, FilterProcessorMixin, SerialParserMixin, BinaryProcessorMixin, ForceProcessorMixin):
+    """Main mixin class for data processing, visualization, timing, and capture lifecycle."""
 
     PZR_ZERO_BASELINE_WINDOW_SEC = 0.5
     PZR_AUTO_BASELINE_DELAY_SEC = 1.5
@@ -115,71 +114,6 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
     @property
     def timing_state(self):
         return self._ensure_timing_state()
-
-    def _reset_capture_buffer_state(self, *, reset_samples_per_sweep=False, zero_buffers=False):
-        """Reset rolling capture buffers and cached full-view arrays."""
-        with self.buffer_lock:
-            self.raw_data = []
-            self.sweep_timestamps = []
-            self.sweep_count = 0
-            self.buffer_write_index = 0
-            if reset_samples_per_sweep:
-                self.samples_per_sweep = 0
-
-            if zero_buffers and self.raw_data_buffer is not None:
-                self.raw_data_buffer.fill(0)
-            if zero_buffers and self.processed_data_buffer is not None:
-                self.processed_data_buffer.fill(0)
-            if zero_buffers and self.sweep_timestamps_buffer is not None:
-                self.sweep_timestamps_buffer.fill(0)
-        self.plot_baselines = {}
-
-    def _reset_force_capture_state(self):
-        """Reset force samples for a new capture lifecycle."""
-        self.force_data.clear()
-        self.force_start_time = None
-
-    def _reset_timing_measurements(self, *, log_timestamp_clear=False, reset_labels=False):
-        """Reset capture timing fields, histories, and optional UI labels."""
-        if hasattr(self, 'first_sweep_timestamp_us'):
-            if log_timestamp_clear:
-                self.log_status(f"Clearing first_sweep_timestamp_us (was {self.first_sweep_timestamp_us} µs)")
-            delattr(self, 'first_sweep_timestamp_us')
-        elif log_timestamp_clear:
-            self.log_status("first_sweep_timestamp_us already cleared")
-
-        self.timing_state.reset(self._build_empty_timing_data())
-
-        if reset_labels:
-            self.per_channel_rate_label.setText("- Hz")
-            self.total_rate_label.setText("- Hz")
-            self.between_samples_label.setText("- µs")
-            self.block_gap_label.setText("- ms")
-
-    def _reset_signal_processing_state(self, *, reset_shear=False):
-        """Reset filter pipeline state and optionally shear processing."""
-        self.filter_apply_pending = True
-        self.reset_filter_states()
-        if reset_shear:
-            self.reset_shear_processing_state()
-
-    def _reset_full_view_state(self, *, button_enabled=None, trigger_plot_update=False):
-        """Exit full view and clear the cached reordered arrays."""
-        self.is_full_view = False
-        with self.buffer_lock:
-            self.raw_data = []
-            self.sweep_timestamps = []
-
-        if button_enabled is None:
-            button_enabled = not self.is_capturing
-        self.full_view_btn.setEnabled(bool(button_enabled))
-
-        if trigger_plot_update:
-            self.trigger_plot_update()
-    
-    # ========================================================================
-    # Plotting and Visualization
-    # ========================================================================
 
     def _get_ordered_active_buffer_snapshot(self):
         active_data_buffer = self.get_active_data_buffer()
@@ -813,274 +747,9 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
     # Capture Control
     # ========================================================================
     
-    def start_capture(self):
-        """Start data capture."""
-        if not self.config['channels']:
-            QMessageBox.warning(
-                self,
-                "Configuration Error",
-                "Please configure channels before starting capture."
-            )
-            return
 
-        self.plot_baselines = {}
-        # Configuration should already be done via Configure button
-        # No need to send it again here
 
-        # Lock configuration controls
-        self.set_controls_enabled(False)
 
-        # If currently in full view, reset to normal view before starting new capture
-        if self.is_full_view:
-            self._reset_full_view_state(button_enabled=False, trigger_plot_update=False)
-            self.log_status("Resetting from full view to normal view for new capture")
-        else:
-            # Disable Full View button during capture
-            self.full_view_btn.setEnabled(False)
-
-        self._reset_capture_buffer_state()
-        self._reset_signal_processing_state(reset_shear=False)
-        self._reset_force_capture_state()
-
-        # Clear timing data for new measurement
-        self._reset_timing_measurements(reset_labels=True)
-
-        # Disable plot interactions during capture (scrolling mode)
-        self.plot_widget.setMouseEnabled(x=False, y=False)
-        self.plot_widget.setMenuEnabled(False)
-
-        # Switch to binary capture mode BEFORE sending run command
-        # Open an archive file so we persist every sweep to disk. This ensures we
-        # never lose access to data even though the in-memory buffer is a rolling window.
-        save_dir = Path(self.dir_input.text()) if hasattr(self, 'dir_input') else Path.cwd()
-        save_dir.mkdir(parents=True, exist_ok=True)
-        cache_dir = save_dir / CACHE_SUBDIR_NAME
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        self._cache_dir_path = str(cache_dir)
-        base_name = self.filename_input.text().strip() if hasattr(self, 'filename_input') else 'adc_data'
-        # Use minute-resolution filenames (no seconds)
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M')
-        archive_name = f"{base_name}_{timestamp}.jsonl"
-        archive_path = cache_dir / archive_name
-        timing_name = f"{base_name}_{timestamp}_block_timing.csv"
-        timing_path = cache_dir / timing_name
-
-        try:
-            archive_metadata = {
-                'metadata': {
-                    'channels': self.config.get('channels', []),
-                    'repeat': self.config.get('repeat', 1),
-                    'ground_pin': self.config.get('ground_pin'),
-                    'use_ground': self.config.get('use_ground'),
-                    'osr': self.config.get('osr'),
-                    'gain': self.config.get('gain'),
-                    'reference': self.config.get('reference'),
-                    'notes': self.notes_input.toPlainText() if hasattr(self, 'notes_input') else None,
-                    'start_time': datetime.now().isoformat()
-                }
-            }
-            self._archive_writer = ArchiveWriterThread(str(archive_path), archive_metadata)
-            self._archive_writer.start()
-            self._archive_path = str(archive_path)
-            self._archive_write_count = 0
-            self.log_status(f"Archive opened: {self._archive_path}")
-        except Exception as e:
-            self._archive_writer = None
-            self.log_status(f"WARNING: Could not open archive file: {e}")
-
-        try:
-            # Open block timing sidecar and write header
-            self._block_timing_file = open(timing_path, 'w', encoding='utf-8', newline='')
-            self._block_timing_path = str(timing_path)
-            try:
-                tw = csv.writer(self._block_timing_file)
-                tw.writerow(["sample_count", "samples_per_sweep", "sweeps_in_block", "avg_dt_us", "block_start_us", "block_end_us", "mcu_gap_us"])
-                self._block_timing_file.flush()
-            except Exception:
-                pass
-            if self._block_timing_path:
-                self.log_status(f"Block timing opened: {self._block_timing_path}")
-        except Exception as e:
-            self._block_timing_file = None
-            self._block_timing_path = None
-            self.log_status(f"WARNING: Could not open block timing file: {e}")
-
-        self.is_capturing = True
-        if self.serial_thread:
-            expected_samples_per_sweep = self.get_effective_samples_per_sweep()
-            self.serial_thread.set_capturing(True, expected_samples_per_sweep=expected_samples_per_sweep)
-        
-        # Wait for thread to fully switch modes
-        time.sleep(0.05)
-
-        # Send run command - binary data will start flowing
-        if self.timed_run_check.isChecked():
-            duration_ms = self.timed_run_spin.value()
-            self.send_command(f"run {duration_ms}")
-            self.log_status(f"Starting timed capture for {duration_ms} ms")
-
-            # Set timer to re-enable controls after timed run
-            QTimer.singleShot(duration_ms + 500, self.on_capture_finished)
-        else:
-            self.send_command("run")
-            self.log_status("Starting continuous capture")
-
-        self.start_btn.setEnabled(False)
-        self.start_btn.setStyleSheet("QPushButton { background-color: #CCCCCC; color: #666666; font-weight: bold; }")
-        self.stop_btn.setEnabled(True)
-        self.stop_btn.setStyleSheet("QPushButton { background-color: #f44336; color: white; font-weight: bold; }")
-        self.statusBar().showMessage("Capturing - Scrolling Mode")
-
-    def stop_capture(self):
-        """Stop data capture."""
-        if not self.is_capturing:
-            self.log_status("Stop requested but capture already stopped")
-            return
-
-        self.log_status("Stopping capture")
-
-        # Ask MCU to stop and wait briefly for acknowledgement
-        success, _ = self.send_command_and_wait_ack(
-            "stop",
-            expected_value=None,
-            timeout=0.2,
-            max_retries=1
-        )
-
-        if not success:
-            self.log_status("WARNING: Stop command not acknowledged; halting locally")
-
-        # Immediately exit binary mode on the reader thread
-        if self.serial_thread:
-            self.serial_thread.set_capturing(False)
-
-        self.is_capturing = False
-
-        # Flush any residual binary bytes so the next run starts clean
-        self.drain_serial_input(0.15)
-
-        self.on_capture_finished()
-
-    def on_capture_finished(self):
-        """Handle capture finished (either stopped or timed out)."""
-        timing = self.timing_state
-        # Record end time
-        timing.capture_end_time = time.time()
-        
-        self.is_capturing = False
-        
-        # Stop force data collection by clearing force_start_time
-        # This prevents force data from continuing after ADC stops
-        self.force_start_time = None
-        
-        # Notify serial thread that we're not capturing (disables binary mode)
-        if self.serial_thread:
-            self.serial_thread.set_capturing(False)
-        
-        # Log final timing summary
-        if timing.arduino_sample_times:
-            avg_sample_time = sum(timing.arduino_sample_times) / len(timing.arduino_sample_times)
-            total_rate = 1000000.0 / avg_sample_time if avg_sample_time > 0 else 0
-            self.log_status(f"Capture complete - Sample interval: {avg_sample_time:.2f} µs, Total rate: {total_rate:.2f} Hz")
-        
-        if timing.buffer_gap_times:
-            avg_gap = sum(timing.buffer_gap_times) / len(timing.buffer_gap_times)
-            self.log_status(f"Average block gap: {avg_gap:.2f} ms ({len(timing.buffer_gap_times)} blocks)")
-        
-        self.start_btn.setEnabled(True)
-        self.stop_btn.setEnabled(False)
-        self.stop_btn.setStyleSheet("QPushButton { background-color: #CCCCCC; color: #666666; font-weight: bold; }")
-        self.update_start_button_state()  # Restore start button to proper state
-        self.set_controls_enabled(True)
-
-        # Brief final flush to clear any bytes that arrived in the last few ms.
-        # The 500ms drain in stop_capture already handled the bulk; this is just
-        # a short reset so the next capture starts with a clean serial buffer.
-        self.drain_serial_input(0.02)
-        
-        # Enable Full View button now that capture is finished (unless already in full view)
-        if not self.is_full_view:
-            self.full_view_btn.setEnabled(True)
-
-        # Enable plot interactions for static mode (zoom/scroll enabled)
-        self.plot_widget.setMouseEnabled(x=True, y=True)
-        self.plot_widget.setMenuEnabled(True)
-
-        self.statusBar().showMessage("Connected - Static Display Mode")
-
-        # Final plot update (shows all data)
-        self.update_plot()
-        # Calculate total samples correctly from buffer
-        with self.buffer_lock:
-            actual_sweeps = min(self.sweep_count, self.MAX_SWEEPS_BUFFER)
-            total_samples = actual_sweeps * self.samples_per_sweep if self.samples_per_sweep > 0 else 0
-        force_samples = len(self.force_data)
-        self.plot_info_label.setText(
-            f"ADC - Sweeps: {self.sweep_count} | Samples: {total_samples}  |  Force: {force_samples} samples"
-        )
-
-        # Signal archive writer to finish in the background (non-blocking).
-        # The writer thread is daemon=True and will close the file on its own.
-        # We don't join here so the GUI stays responsive immediately after Stop.
-        try:
-            if getattr(self, '_archive_writer', None):
-                snapshot = self._archive_writer.stop_nowait()
-                self.log_status(
-                    "Archive saving in background: "
-                    f"{self._archive_path} ({snapshot.get('written_sweeps', 0)} sweeps written so far)"
-                )
-        except Exception as exc:
-            self.log_status(f"WARNING: Failed to finalize archive save request: {exc}")
-        # Close block timing file if open
-        try:
-            if self._block_timing_file:
-                try:
-                    self._block_timing_file.flush()
-                except Exception:
-                    pass
-                try:
-                    self._block_timing_file.close()
-                except Exception:
-                    pass
-                self.log_status(f"Block timing saved: {self._block_timing_path}")
-        except Exception:
-            pass
-
-        self.log_status(f"Capture finished. Total sweeps: {self.sweep_count}, Total samples: {total_samples}, Force samples: {force_samples}")
-
-    def set_controls_enabled(self, enabled: bool):
-        """Enable or disable configuration controls."""
-        # Serial connection
-        self.port_combo.setEnabled(enabled and not self.serial_port)
-        self.refresh_ports_btn.setEnabled(enabled and not self.serial_port)
-
-        # ADC configuration
-        self.vref_combo.setEnabled(enabled)
-        self.osr_combo.setEnabled(enabled)
-        self.gain_combo.setEnabled(enabled)
-
-        # Acquisition settings
-        self.channels_input.setEnabled(enabled)
-        if hasattr(self, 'array_mode_combo'):
-            self.array_mode_combo.setEnabled(enabled)
-        if hasattr(self, 'pzt_sequence_input'):
-            self.pzt_sequence_input.setEnabled(enabled)
-        if hasattr(self, 'pzr_sequence_input'):
-            self.pzr_sequence_input.setEnabled(enabled)
-        self.ground_pin_spin.setEnabled(enabled)
-        self.use_ground_check.setEnabled(enabled)
-        self.repeat_spin.setEnabled(enabled)
-        self.buffer_spin.setEnabled(enabled)
-
-        # Run control
-        self.timed_run_check.setEnabled(enabled)
-        if enabled:
-            self.timed_run_spin.setEnabled(self.timed_run_check.isChecked())
-        else:
-            self.timed_run_spin.setEnabled(False)
-
-        # Visualization controls
-        self.window_size_spin.setEnabled(enabled)
 
     def clear_data(self):
         """Clear all captured data and completely reset plot to initial state."""

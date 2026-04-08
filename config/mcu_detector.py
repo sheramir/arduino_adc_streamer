@@ -5,6 +5,10 @@ Detects MCU type and adapts GUI controls accordingly.
 """
 
 from config.mcu_profile import resolve_mcu_profile
+from config.mcu_state import (
+    build_detected_mcu_state,
+    build_unknown_mcu_state,
+)
 from config_constants import MCU_DETECTION_TIMEOUT_SEC
 
 
@@ -13,6 +17,14 @@ class MCUDetectorMixin:
 
     def is_555_analyzer_mode(self) -> bool:
         return getattr(self, 'device_mode', 'adc') == '555'
+
+    def _apply_mcu_state(self, state):
+        self.current_mcu = state.current_mcu
+        self.mcu_label.setText(state.label_text)
+        if state.device_mode is not None:
+            self.device_mode = state.device_mode
+        if state.log_message:
+            self.log_status(state.log_message)
     
     def detect_mcu(self):
         """Detect MCU type by sending 'mcu' and waiting on routed ADC text lines."""
@@ -23,20 +35,15 @@ class MCUDetectorMixin:
         try:
             mcu_name = session.detect_mcu(MCU_DETECTION_TIMEOUT_SEC)
             if mcu_name:
-                self.current_mcu = mcu_name
-                self.mcu_label.setText(f"MCU: {mcu_name}")
-                self.log_status(f"Detected MCU: {mcu_name}")
+                self._apply_mcu_state(build_detected_mcu_state(mcu_name))
                 return
             
             # Timeout or no response - use generic behavior
-            self.current_mcu = None
-            self.mcu_label.setText("MCU: Unknown")
-            self.log_status("MCU detection timeout - using generic behavior")
+            self._apply_mcu_state(build_unknown_mcu_state())
             
         except Exception as e:
             self.log_status(f"MCU detection failed: {e}")
-            self.current_mcu = None
-            self.mcu_label.setText("MCU: Unknown")
+            self._apply_mcu_state(build_unknown_mcu_state())
 
     def update_gui_for_mcu(self):
         """Update GUI controls based on detected MCU type."""

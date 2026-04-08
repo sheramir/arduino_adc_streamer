@@ -9,6 +9,7 @@ import serial.tools.list_ports
 from PyQt6.QtWidgets import QMessageBox
 from PyQt6.QtCore import QTimer
 
+from config.mcu_state import build_disconnected_mcu_state
 from config_constants import (
     CONFIG_COMMAND_TIMEOUT, CONFIG_RETRY_ATTEMPTS,
     CLEAR_CACHE_ON_EXIT,
@@ -155,9 +156,7 @@ class ADCSerialMixin:
             self._clear_adc_line_waiters()
             
             # Reset MCU detection
-            self.current_mcu = None
-            self.device_mode = 'adc'
-            self.mcu_label.setText("MCU: -")
+            self._apply_mcu_state(build_disconnected_mcu_state())
             self.update_gui_for_mcu()
             
             # Reset last sent config

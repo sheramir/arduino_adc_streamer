@@ -1024,10 +1024,13 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
         # We don't join here so the GUI stays responsive immediately after Stop.
         try:
             if getattr(self, '_archive_writer', None):
-                self._archive_writer.stop_nowait()
-                self.log_status(f"Archive saving in background: {self._archive_path}")
-        except Exception:
-            pass
+                snapshot = self._archive_writer.stop_nowait()
+                self.log_status(
+                    "Archive saving in background: "
+                    f"{self._archive_path} ({snapshot.get('written_sweeps', 0)} sweeps written so far)"
+                )
+        except Exception as exc:
+            self.log_status(f"WARNING: Failed to finalize archive save request: {exc}")
         # Close block timing file if open
         try:
             if self._block_timing_file:
@@ -1181,6 +1184,12 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
             )
             return
 
+        if writer is not None and hasattr(writer, "get_status_snapshot"):
+            snapshot = writer.get_status_snapshot()
+            if snapshot.get("state") == "failed":
+                error_text = snapshot.get("last_error") or "unknown archive writer failure"
+                self.log_status(f"WARNING: Archive writer failed before cache cleanup: {error_text}")
+
         self._delete_capture_cache_files(archive_path, block_timing_path, cache_dir_path)
 
     def _close_capture_cache_handles(self, *, block=True):
@@ -1189,9 +1198,15 @@ class DataProcessorMixin(FilterProcessorMixin, SerialParserMixin, BinaryProcesso
         try:
             if writer is not None:
                 if block:
-                    writer.stop()
+                    final_snapshot = writer.stop()
+                    if final_snapshot.get("state") == "failed":
+                        error_text = final_snapshot.get("last_error") or "unknown archive writer failure"
+                        self.log_status(f"WARNING: Archive writer failed during close: {error_text}")
                 else:
-                    writer.stop_nowait()
+                    snapshot = writer.stop_nowait()
+                    if snapshot.get("state") == "failed":
+                        error_text = snapshot.get("last_error") or "unknown archive writer failure"
+                        self.log_status(f"WARNING: Archive writer failed before background close: {error_text}")
         finally:
             self._archive_writer = None
 

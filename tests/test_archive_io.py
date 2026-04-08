@@ -31,6 +31,7 @@ class DummyArchiveLoader(ArchiveLoaderMixin):
         self.sweep_timestamps = []
         self.buffer_lock = threading.Lock()
         self.log_messages = []
+        self._archive_writer = None
 
     def log_status(self, message: str):
         self.log_messages.append(message)
@@ -58,6 +59,21 @@ class ArchiveIoTests(unittest.TestCase):
             self.assertEqual(lines[0]["metadata"]["channels"], [1, 2])
             self.assertEqual(lines[1], {"timestamp_s": 0.0, "samples": [10, 20]})
             self.assertEqual(lines[2], {"timestamp_s": 0.25, "samples": [30, 40]})
+            self.assertEqual(writer.get_status_snapshot()["state"], ArchiveWriterThread.STATE_CLOSED)
+
+    def test_archive_writer_reports_open_failure(self):
+        with workspace_tempdir("archive_writer_failure") as tmpdir:
+            archive_path = tmpdir / "missing" / "capture.jsonl"
+            writer = ArchiveWriterThread(
+                str(archive_path),
+                {"metadata": {"channels": [1, 2], "repeat": 1}},
+            )
+
+            writer.start()
+            snapshot = writer.stop(timeout=1.0)
+
+            self.assertEqual(snapshot["state"], ArchiveWriterThread.STATE_FAILED)
+            self.assertIn("archive writer", snapshot["last_error"])
 
     def test_archive_loader_prefers_embedded_timestamps(self):
         with workspace_tempdir("archive_embedded") as tmpdir:
@@ -107,6 +123,7 @@ class ArchiveIoTests(unittest.TestCase):
 
             self.assertEqual(sweeps, [[11, 12], [21, 22]])
             self.assertEqual(timestamps, [0.0, 0.0002])
+            self.assertFalse(hasattr(loader, "first_sweep_timestamp_us"))
 
     def test_archive_loader_falls_back_to_indices_without_timing_data(self):
         with workspace_tempdir("archive_fallback") as tmpdir:
@@ -129,6 +146,22 @@ class ArchiveIoTests(unittest.TestCase):
 
             self.assertEqual(sweeps, [[11, 12], [21, 22], [31, 32]])
             self.assertEqual(timestamps, [0, 1, 2])
+
+    def test_finalize_archive_logs_writer_failure(self):
+        with workspace_tempdir("archive_finalize_failure") as tmpdir:
+            loader = DummyArchiveLoader(tmpdir / "capture.jsonl")
+            writer = ArchiveWriterThread(
+                str(tmpdir / "missing" / "capture.jsonl"),
+                {"metadata": {"channels": [1], "repeat": 1}},
+            )
+            loader._archive_writer = writer
+
+            writer.start()
+            writer.stop(timeout=1.0)
+            loader._finalize_archive_if_active()
+
+            self.assertIsNone(loader._archive_writer)
+            self.assertTrue(any("Archive writer failed" in msg for msg in loader.log_messages))
 
 
 if __name__ == "__main__":

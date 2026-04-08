@@ -8,6 +8,14 @@ from PyQt6.QtCore import Qt
 
 from config.adc_configuration_service import ADCConfigurationRequest
 from config.channel_utils import unique_channels_in_order
+from config.config_view_state import (
+    build_configuration_failed_state,
+    build_configuration_success_state,
+    build_configuring_state,
+    build_start_needs_config_state,
+    build_start_ready_state,
+    build_start_unavailable_state,
+)
 from config.mcu_profile import resolve_mcu_profile
 from config_constants import (
     MAX_SAMPLES_BUFFER, MAX_PLOT_COLUMNS,
@@ -18,6 +26,19 @@ from config.buffer_utils import validate_and_limit_sweeps_per_block
 
 class ConfigurationMixin:
     """Mixin class for configuration management and event handlers."""
+
+    def _apply_configure_button_state(self, state):
+        self.configure_btn.setEnabled(state.enabled)
+        if state.style is not None:
+            self.configure_btn.setStyleSheet(state.style)
+        if state.status_message:
+            self.statusBar().showMessage(state.status_message, state.status_timeout_ms)
+
+    def _apply_start_button_state(self, state):
+        self.start_btn.setEnabled(state.enabled)
+        if state.style is not None:
+            self.start_btn.setStyleSheet(state.style)
+        self.start_btn.setText(state.text)
 
     def is_array_mcu_mode(self) -> bool:
         """Return True for any Array* MCU identifier."""
@@ -794,7 +815,7 @@ class ConfigurationMixin:
             self.log_status(f"Using Array sensor selection -> channels: {effective_channels_text}")
         
         self.log_status("Configuring Arduino...")
-        self.configure_btn.setEnabled(False)
+        self._apply_configure_button_state(build_configuring_state())
         
         # Clear timing data from previous runs
         self.timing_state.arduino_sample_times.clear()
@@ -807,7 +828,7 @@ class ConfigurationMixin:
         if not started:
             self.config_check_timer.stop()
             self.log_status("Configuration already in progress")
-            self.configure_btn.setEnabled(True)
+            self._apply_configure_button_state(build_configuration_failed_state())
     
     def check_config_completion(self):
         """Check if configuration has completed (called by timer)."""
@@ -832,16 +853,12 @@ class ConfigurationMixin:
         self.log_status("✓ Configuration verified - Ready to start")
         self.log_status("Configuration complete - all parameters confirmed")
         self.update_start_button_state()
-        self.configure_btn.setEnabled(True)
-        self.configure_btn.setStyleSheet("QPushButton { background-color: #2196F3; color: white; font-weight: bold; }")
-        self.statusBar().showMessage("Configured - Ready to capture", 3000)
+        self._apply_configure_button_state(build_configuration_success_state())
     
     def on_configuration_failed(self):
         """Handle failed configuration."""
         self.log_status("ERROR: Configuration failed after retries")
-        self.configure_btn.setEnabled(True)
-        self.configure_btn.setStyleSheet("QPushButton { background-color: #FF9800; color: white; font-weight: bold; }")
-        self.statusBar().showMessage("Configuration failed - please retry", 5000)
+        self._apply_configure_button_state(build_configuration_failed_state())
     
     def verify_configuration(self) -> bool:
         """Verify that Arduino status matches expected configuration."""
@@ -859,15 +876,11 @@ class ConfigurationMixin:
         """Update Start button state based on configuration validity."""
         if self.serial_port and self.serial_port.is_open and not self.is_capturing:
             if self.config_is_valid:
-                self.start_btn.setEnabled(True)
-                self.start_btn.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; font-weight: bold; }")
-                self.start_btn.setText("Start ✓")
+                self._apply_start_button_state(build_start_ready_state())
             else:
-                self.start_btn.setEnabled(False)
-                self.start_btn.setStyleSheet("QPushButton { background-color: #CCCCCC; color: #666666; font-weight: bold; }")
-                self.start_btn.setText("Start (Configure First)")
+                self._apply_start_button_state(build_start_needs_config_state())
         else:
-            self.start_btn.setEnabled(False)
+            self._apply_start_button_state(build_start_unavailable_state())
 
     # ========================================================================
     # Channel Management

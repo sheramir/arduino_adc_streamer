@@ -6,6 +6,7 @@ ADC and force data processing, plotting, timing calculations, and heatmap genera
 Module structure:
 - serial_parser.py: Parse ASCII serial messages
 - binary_processor.py: Process binary ADC data blocks
+- adc_filter_engine.py: Plain ADC-only filter design and block-processing engine
 - filter_processor.py: Real-time IIR filter pipeline (raw -> processed)
 - force_processor.py: Process force sensor data
 - heatmap_piezo_processor.py: Piezoelectric heatmap processing pipeline

@@ -1,38 +1,20 @@
 """
 Filter Processor Mixin
 ======================
-Real-time friendly IIR filtering for time-series and spectrum paths.
+ADC filter state and app-facing integration helpers.
 """
 
 from __future__ import annotations
 
-from typing import Dict, List, Tuple
-
 import numpy as np
 
-from config.channel_utils import unique_channels_in_order
-from config_constants import (
-    FILTER_DEFAULT_ENABLED,
-    FILTER_DEFAULT_MAIN_TYPE,
-    FILTER_DEFAULT_ORDER,
-    FILTER_DEFAULT_LOW_CUTOFF_HZ,
-    FILTER_DEFAULT_HIGH_CUTOFF_HZ,
-    FILTER_NOTCH1_DEFAULT_ENABLED,
-    FILTER_NOTCH1_DEFAULT_FREQ_HZ,
-    FILTER_NOTCH1_DEFAULT_Q,
-    FILTER_NOTCH2_DEFAULT_ENABLED,
-    FILTER_NOTCH2_DEFAULT_FREQ_HZ,
-    FILTER_NOTCH2_DEFAULT_Q,
-    FILTER_NOTCH3_DEFAULT_ENABLED,
-    FILTER_NOTCH3_DEFAULT_FREQ_HZ,
-    FILTER_NOTCH3_DEFAULT_Q,
+from config_constants import FILTER_DEFAULT_ENABLED
+from data_processing.adc_filter_worker import ADCFilterWorkerThread
+from data_processing.adc_filter_engine import (
+    ADCFilterEngine,
+    SCIPY_FILTERS_AVAILABLE,
+    build_default_filter_settings,
 )
-
-try:
-    from scipy.signal import butter, iirnotch, sosfilt, sosfilt_zi, tf2sos
-    SCIPY_FILTERS_AVAILABLE = True
-except Exception:
-    SCIPY_FILTERS_AVAILABLE = False
 
 
 class FilterProcessorMixin:
@@ -49,6 +31,11 @@ class FilterProcessorMixin:
     def _init_filter_state(self):
         self.processed_data_buffer = None
 
+        self.adc_filter_engine = ADCFilterEngine()
+        self.adc_filter_worker = ADCFilterWorkerThread()
+        self.adc_filter_worker.result_ready.connect(self.on_adc_filter_worker_result)
+        self.adc_filter_worker.error_occurred.connect(self.on_adc_filter_worker_error)
+        self.adc_filter_worker.start()
         self.filter_settings = self.get_default_filter_settings()
         self.filtering_enabled = FILTER_DEFAULT_ENABLED
         self.filter_apply_pending = True
@@ -56,21 +43,10 @@ class FilterProcessorMixin:
 
         self._filter_total_fs_hz = 0.0
         self._filter_channels_signature = None
-        self._filter_channel_runtime: Dict[int, Dict] = {}
+        self._filter_channel_runtime = {}
 
     def get_default_filter_settings(self) -> dict:
-        return {
-            'enabled': FILTER_DEFAULT_ENABLED,
-            'main_type': FILTER_DEFAULT_MAIN_TYPE,
-            'order': FILTER_DEFAULT_ORDER,
-            'low_cutoff_hz': FILTER_DEFAULT_LOW_CUTOFF_HZ,
-            'high_cutoff_hz': FILTER_DEFAULT_HIGH_CUTOFF_HZ,
-            'notches': [
-                {'enabled': FILTER_NOTCH1_DEFAULT_ENABLED, 'freq_hz': FILTER_NOTCH1_DEFAULT_FREQ_HZ, 'q': FILTER_NOTCH1_DEFAULT_Q},
-                {'enabled': FILTER_NOTCH2_DEFAULT_ENABLED, 'freq_hz': FILTER_NOTCH2_DEFAULT_FREQ_HZ, 'q': FILTER_NOTCH2_DEFAULT_Q},
-                {'enabled': FILTER_NOTCH3_DEFAULT_ENABLED, 'freq_hz': FILTER_NOTCH3_DEFAULT_FREQ_HZ, 'q': FILTER_NOTCH3_DEFAULT_Q},
-            ],
-        }
+        return build_default_filter_settings()
 
     def is_adc_filter_supported_mode(self) -> bool:
         """Return True only for ADC acquisition modes that support filtering."""
@@ -103,117 +79,6 @@ class FilterProcessorMixin:
 
         return 0.0
 
-    def _validate_filter_settings(self, settings: dict, channel_fs_hz: float) -> Tuple[bool, str]:
-        if channel_fs_hz <= 0:
-            return False, 'Sample rate unavailable for filtering.'
-
-        nyquist = channel_fs_hz / 2.0
-        low = float(settings['low_cutoff_hz'])
-        high = float(settings['high_cutoff_hz'])
-
-        for notch in settings['notches']:
-            if not notch['enabled']:
-                continue
-            freq = float(notch['freq_hz'])
-            q = float(notch['q'])
-            if freq <= 0 or freq >= nyquist:
-                return False, f'Notch frequency {freq:.2f} must be between 0 and Nyquist ({nyquist:.2f} Hz).'
-            if q <= 0:
-                return False, 'Notch Q must be > 0.'
-
-        main_type = settings['main_type']
-        if main_type == 'lowpass':
-            if low <= 0 or low >= nyquist:
-                return False, f'Low-pass cutoff must be between 0 and Nyquist ({nyquist:.2f} Hz).'
-        elif main_type == 'highpass':
-            if high <= 0 or high >= nyquist:
-                return False, f'High-pass cutoff must be between 0 and Nyquist ({nyquist:.2f} Hz).'
-        elif main_type == 'bandpass':
-            if low <= 0 or high <= 0:
-                return False, 'Band-pass cutoffs must be > 0.'
-            if low >= high:
-                return False, 'Band-pass low cutoff must be less than high cutoff.'
-            if high >= nyquist:
-                return False, f'Band-pass high cutoff must be below Nyquist ({nyquist:.2f} Hz).'
-
-        return True, ''
-
-    def _design_channel_sos(self, settings: dict, channel_fs_hz: float):
-        # Coefficients are built as SOS cascades (notches + one optional main filter)
-        # for numerical stability in real-time IIR processing.
-        if not SCIPY_FILTERS_AVAILABLE:
-            raise RuntimeError('SciPy is required for filtering. Install scipy and restart.')
-
-        valid, error = self._validate_filter_settings(settings, channel_fs_hz)
-        if not valid:
-            raise ValueError(error)
-
-        sos_parts = []
-        nyquist = channel_fs_hz / 2.0
-
-        for notch in settings['notches']:
-            if not notch['enabled']:
-                continue
-            w0 = float(notch['freq_hz']) / nyquist
-            q = float(notch['q'])
-            b, a = iirnotch(w0, q)
-            sos_parts.append(tf2sos(b, a))
-
-        order = max(1, int(settings['order']))
-        main_type = settings['main_type']
-        low = float(settings['low_cutoff_hz'])
-        high = float(settings['high_cutoff_hz'])
-
-        if main_type == 'lowpass':
-            wn = low / nyquist
-            sos_parts.append(butter(order, wn, btype='lowpass', output='sos'))
-        elif main_type == 'highpass':
-            wn = high / nyquist
-            sos_parts.append(butter(order, wn, btype='highpass', output='sos'))
-        elif main_type == 'bandpass':
-            wn = [low / nyquist, high / nyquist]
-            sos_parts.append(butter(order, wn, btype='bandpass', output='sos'))
-
-        if not sos_parts:
-            return None
-
-        if len(sos_parts) == 1:
-            return sos_parts[0]
-        return np.vstack(sos_parts)
-
-    def _build_channel_plan(self, total_fs_hz: float, channels: List[int], repeat_count: int):
-        unique_channels = unique_channels_in_order(channels)
-
-        sequence_len = max(1, len(channels))
-        counts = {channel: channels.count(channel) for channel in unique_channels}
-
-        plan = {}
-        for channel in unique_channels:
-            indices = []
-            for seq_idx, seq_channel in enumerate(channels):
-                if seq_channel != channel:
-                    continue
-                base = seq_idx * repeat_count
-                indices.extend(range(base, base + repeat_count))
-
-            if not indices:
-                continue
-
-            channel_fs_hz = total_fs_hz * (counts[channel] / sequence_len)
-            sos = self._design_channel_sos(self.filter_settings, channel_fs_hz)
-            zi = None
-            if sos is not None:
-                zi = sosfilt_zi(sos).astype(np.float32) * 0.0
-
-            plan[channel] = {
-                'indices': np.asarray(indices, dtype=np.int32),
-                'fs_hz': float(channel_fs_hz),
-                'sos': sos,
-                'zi': zi,
-            }
-
-        return plan
-
     def _ensure_filter_runtime(self, total_fs_hz: float):
         channels = self.config.get('channels', [])
         repeat_count = max(1, int(self.config.get('repeat', 1)))
@@ -226,18 +91,18 @@ class FilterProcessorMixin:
         ):
             return
 
-        self._filter_channel_runtime = self._build_channel_plan(total_fs_hz, channels, repeat_count)
+        self._filter_channel_runtime = self.adc_filter_engine.build_runtime_plan(
+            self.filter_settings,
+            total_fs_hz,
+            channels,
+            repeat_count,
+        )
         self._filter_total_fs_hz = float(total_fs_hz)
         self._filter_channels_signature = signature
         self.filter_apply_pending = False
 
     def reset_filter_states(self):
-        for runtime in self._filter_channel_runtime.values():
-            sos = runtime.get('sos')
-            if sos is None:
-                runtime['zi'] = None
-            else:
-                runtime['zi'] = sosfilt_zi(sos).astype(np.float32) * 0.0
+        self.adc_filter_engine.reset_runtime_states(self._filter_channel_runtime)
 
     def apply_filter_settings(self, settings: dict, reprocess_existing: bool = True):
         self.filter_settings = settings
@@ -279,6 +144,86 @@ class FilterProcessorMixin:
             self.filter_last_error = str(exc)
             return False, self.filter_last_error
 
+    def _build_live_filter_signature(self, settings: dict, total_fs_hz: float, channels, repeat_count: int):
+        notches = tuple(
+            (
+                bool(notch.get('enabled', False)),
+                float(notch.get('freq_hz', 0.0)),
+                float(notch.get('q', 0.0)),
+            )
+            for notch in settings.get('notches', [])
+        )
+        return (
+            tuple(int(channel) for channel in channels),
+            int(repeat_count),
+            int(round(float(total_fs_hz) * 1000.0)),
+            bool(settings.get('enabled', False)),
+            str(settings.get('main_type', 'none')),
+            int(settings.get('order', 1)),
+            float(settings.get('low_cutoff_hz', 0.0)),
+            float(settings.get('high_cutoff_hz', 0.0)),
+            notches,
+        )
+
+    def enqueue_live_adc_filter(self, block_data: np.ndarray, total_fs_hz: float, write_base: int, sweeps_in_block: int):
+        if not self.should_filter_adc_data():
+            return
+
+        worker = getattr(self, 'adc_filter_worker', None)
+        if worker is None:
+            return
+
+        channels = list(self.config.get('channels', []))
+        repeat_count = max(1, int(self.config.get('repeat', 1)))
+        settings = {
+            **self.filter_settings,
+            'notches': [dict(notch) for notch in self.filter_settings.get('notches', [])],
+        }
+        payload = {
+            'settings': settings,
+            'total_fs_hz': float(total_fs_hz),
+            'channels': channels,
+            'repeat_count': repeat_count,
+            'signature': self._build_live_filter_signature(settings, total_fs_hz, channels, repeat_count),
+            'block_data': block_data.astype(np.float32, copy=True),
+            'write_base': int(write_base),
+            'sweeps_in_block': int(sweeps_in_block),
+        }
+        worker.submit(payload)
+
+    def on_adc_filter_worker_result(self, result):
+        if not self.should_filter_adc_data():
+            return
+        if self.processed_data_buffer is None:
+            return
+
+        write_base = int(result['write_base'])
+        sweeps_in_block = int(result['sweeps_in_block'])
+        filtered_block = result['filtered_block']
+
+        with self.buffer_lock:
+            if (self.buffer_write_index - write_base) > self.MAX_SWEEPS_BUFFER:
+                return
+            positions = (write_base + np.arange(sweeps_in_block)) % self.MAX_SWEEPS_BUFFER
+            self.processed_data_buffer[positions] = filtered_block.astype(np.float32, copy=False)
+
+        if hasattr(self, 'should_update_live_timeseries_display') and self.should_update_live_timeseries_display():
+            self.trigger_plot_update()
+        elif hasattr(self, 'get_current_visualization_tab_name') and self.get_current_visualization_tab_name() == 'Spectrum':
+            self.update_spectrum()
+
+    def on_adc_filter_worker_error(self, message: str):
+        self.filtering_enabled = False
+        self.filter_last_error = str(message)
+        if hasattr(self, 'log_status'):
+            self.log_status(f"WARNING: live ADC filtering disabled due to worker error: {message}")
+
+    def shutdown_filter_worker(self):
+        worker = getattr(self, 'adc_filter_worker', None)
+        if worker is not None:
+            worker.stop()
+            worker.wait(1500)
+
     def filter_sweeps_block(self, block_data: np.ndarray, total_fs_hz: float):
         if block_data is None:
             return None
@@ -291,24 +236,7 @@ class FilterProcessorMixin:
         if not self._filter_channel_runtime:
             return block_data.astype(np.float32, copy=True)
 
-        filtered = block_data.astype(np.float32, copy=False)
-
-        for runtime in self._filter_channel_runtime.values():
-            indices = runtime['indices']
-            sos = runtime['sos']
-            if sos is None:
-                continue
-
-            stream = filtered[:, indices].reshape(-1)
-            zi = runtime['zi']
-            if zi is None:
-                zi = sosfilt_zi(sos).astype(np.float32) * 0.0
-            y, zf = sosfilt(sos, stream, zi=zi)
-            # Keep channel-specific IIR state so filtering is continuous across blocks.
-            runtime['zi'] = zf
-            filtered[:, indices] = y.reshape(filtered.shape[0], len(indices))
-
-        return filtered
+        return self.adc_filter_engine.filter_block(self._filter_channel_runtime, block_data)
 
     def reprocess_filtered_buffer(self):
         if self.raw_data_buffer is None or self.samples_per_sweep <= 0:

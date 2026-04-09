@@ -361,6 +361,7 @@ class ADCStreamerGUI(
         if self.force_serial_port and self.force_serial_port.is_open:
             self.disconnect_force_serial()
 
+        self.shutdown_filter_worker()
         self.shutdown_spectrum_worker()
 
         event.accept()

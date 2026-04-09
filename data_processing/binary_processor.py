@@ -211,8 +211,9 @@ class BinaryProcessorMixin:
                     now = time.time()
                     if now - getattr(self, '_last_plot_update_time', 0.0) >= PLOT_UPDATE_INTERVAL_SEC:
                         self._last_plot_update_time = now
-                        self.update_plot()
-                        self.update_force_plot()
+                        if not hasattr(self, 'should_update_live_timeseries_display') or self.should_update_live_timeseries_display():
+                            self.update_plot()
+                            self.update_force_plot()
                     # Always update the info label
                     total_samples = int(self.sweep_count) * samples_per_sweep
                     force_samples = len(self.force_data)

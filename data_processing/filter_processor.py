@@ -72,8 +72,16 @@ class FilterProcessorMixin:
             ],
         }
 
+    def is_adc_filter_supported_mode(self) -> bool:
+        """Return True only for ADC acquisition modes that support filtering."""
+        return str(getattr(self, 'device_mode', 'adc')).lower() == 'adc'
+
+    def should_filter_adc_data(self) -> bool:
+        """Return True when ADC data should flow through the filter pipeline."""
+        return self.is_adc_filter_supported_mode() and bool(self.filtering_enabled)
+
     def get_active_data_buffer(self):
-        if self.filtering_enabled and self.processed_data_buffer is not None:
+        if self.should_filter_adc_data() and self.processed_data_buffer is not None:
             return self.processed_data_buffer
         return self.raw_data_buffer
 
@@ -235,6 +243,12 @@ class FilterProcessorMixin:
         self.filter_settings = settings
         self.filtering_enabled = bool(settings.get('enabled', False))
 
+        if self.filtering_enabled and not self.is_adc_filter_supported_mode():
+            self.filtering_enabled = False
+            self._filter_channel_runtime = {}
+            self.filter_last_error = 'Filtering is available only for ADC data, not 555/PZR mode.'
+            return False, self.filter_last_error
+
         if self.filtering_enabled and not SCIPY_FILTERS_AVAILABLE:
             self.filtering_enabled = False
             self.filter_last_error = 'SciPy is required for filtering. Install scipy and restart.'
@@ -269,7 +283,7 @@ class FilterProcessorMixin:
         if block_data is None:
             return None
 
-        if not self.filtering_enabled:
+        if not self.should_filter_adc_data():
             return block_data.astype(np.float32, copy=True)
 
         self._ensure_filter_runtime(total_fs_hz)
@@ -329,7 +343,7 @@ class FilterProcessorMixin:
             with self.buffer_lock:
                 self.processed_data_buffer = np.zeros_like(self.raw_data_buffer, dtype=np.float32)
 
-        if not self.filtering_enabled:
+        if not self.should_filter_adc_data():
             with self.buffer_lock:
                 self.processed_data_buffer[positions, :] = ordered_raw
             return

@@ -127,6 +127,9 @@ class MCUDetectorMixin:
         if hasattr(self, 'update_array_acquisition_inputs_visibility'):
             self.update_array_acquisition_inputs_visibility()
 
+        if hasattr(self, 'refresh_spectrum_filter_availability'):
+            self.refresh_spectrum_filter_availability(log_message=False)
+
         self._apply_mcu_view_state(view_state)
 
         if hasattr(self, 'update_heatmap_ui_for_mode'):

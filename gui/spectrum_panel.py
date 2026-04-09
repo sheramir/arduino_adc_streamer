@@ -580,6 +580,49 @@ class SpectrumPanelMixin:
         if hasattr(self, 'filter_high_cutoff_spin'):
             self.filter_high_cutoff_spin.setVisible(show_high)
 
+    def refresh_spectrum_filter_availability(self, log_message: bool = False):
+        supported = True
+        if hasattr(self, 'is_adc_filter_supported_mode'):
+            supported = bool(self.is_adc_filter_supported_mode())
+
+        controls = [
+            'filter_master_check',
+            'filter_main_type_combo',
+            'filter_order_spin',
+            'filter_low_cutoff_spin',
+            'filter_high_cutoff_spin',
+            'notch1_enable_check',
+            'notch1_freq_spin',
+            'notch1_q_spin',
+            'notch2_enable_check',
+            'notch2_freq_spin',
+            'notch2_q_spin',
+            'notch3_enable_check',
+            'notch3_freq_spin',
+            'notch3_q_spin',
+            'filter_apply_btn',
+            'filter_reset_btn',
+        ]
+
+        for attr_name in controls:
+            widget = getattr(self, attr_name, None)
+            if widget is not None and hasattr(widget, 'setEnabled'):
+                widget.setEnabled(supported)
+
+        if not supported:
+            check = getattr(self, 'filter_master_check', None)
+            if check is not None and hasattr(check, 'isChecked') and check.isChecked():
+                if hasattr(check, 'blockSignals'):
+                    old_block = check.blockSignals(True)
+                    check.setChecked(False)
+                    check.blockSignals(old_block)
+                else:
+                    check.setChecked(False)
+            self.filtering_enabled = False
+
+        if log_message and not supported and hasattr(self, 'log_status'):
+            self.log_status('Filtering is available only for ADC mode data')
+
     def get_filter_settings_from_ui(self) -> dict:
         return {
             'enabled': bool(self.filter_master_check.isChecked()),
@@ -629,6 +672,7 @@ class SpectrumPanelMixin:
         self.notch3_freq_spin.setValue(float(notches[2].get('freq_hz', FILTER_NOTCH3_DEFAULT_FREQ_HZ)))
         self.notch3_q_spin.setValue(float(notches[2].get('q', FILTER_NOTCH3_DEFAULT_Q)))
         self._update_filter_cutoff_ui()
+        self.refresh_spectrum_filter_availability()
 
     def on_apply_filter_clicked(self):
         settings = self.get_filter_settings_from_ui()

@@ -410,6 +410,10 @@ class ADCStreamerGUI(
             return bool(self.visualization_capture_data_enabled)
         return True
 
+    def should_update_live_timeseries_display(self) -> bool:
+        """Return True when live ADC/force plot redraws should run."""
+        return self.get_current_visualization_tab_name() == "Time Series"
+
     def set_visualization_capture_data_enabled(self, enabled: bool):
         """Enable or disable time-series capture while on heatmap/shear tabs."""
         enabled = bool(enabled)

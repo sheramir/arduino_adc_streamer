@@ -1,4 +1,5 @@
 import json
+import unittest
 from pathlib import Path
 
 from config.sensor_config import (
@@ -6,6 +7,7 @@ from config.sensor_config import (
     mapping_to_position_channels,
     position_channels_to_mapping,
 )
+from config.channel_utils import unique_channels_in_order
 
 
 def test_position_channel_round_trip():
@@ -59,3 +61,12 @@ def test_store_loads_bundled_and_local_configs(tmp_path: Path):
 
     assert selected_name == "Custom1"
     assert {config["name"] for config in configs} == {"PLUS", "ARRAY_v1", "Custom1"}
+
+
+def test_unique_channels_in_order_preserves_first_occurrence():
+    assert unique_channels_in_order([4, 2, 4, 1, 2, 3, 1]) == [4, 2, 1, 3]
+
+
+class ChannelUtilsTests(unittest.TestCase):
+    def test_unique_channels_in_order_preserves_first_occurrence_unittest(self):
+        self.assertEqual(unique_channels_in_order([4, 2, 4, 1, 2, 3, 1]), [4, 2, 1, 3])

@@ -35,8 +35,17 @@ from config_constants import *
 
 # Import mixin modules
 from serial_communication import ADCSerialMixin, ForceSerialMixin
+from serial_communication.adc_connection_state import (
+    build_default_arduino_status,
+    build_default_last_sent_config,
+)
+from serial_communication.adc_connection_workflow import ADCConnectionWorkflow
 from serial_communication.serial_threads import SerialReaderThread
 from config import MCUDetectorMixin, ConfigurationMixin
+from config.adc_config_state import build_default_adc_config_state
+from config.adc_configuration_service import ADCConfigurationService
+from config.adc_configuration_runner import ADCConfigurationRunner
+from config.channel_utils import unique_channels_in_order
 from gui import (
     ControlPanelsMixin,
     DisplayPanelsMixin,
@@ -45,6 +54,7 @@ from gui import (
     SensorPanelMixin,
     ShearPanelMixin as ShearPanelUIMixin,
     SpectrumPanelMixin,
+    StatusLoggingMixin,
 )
 from data_processing import (
     DataProcessorMixin,
@@ -64,6 +74,7 @@ class ADCStreamerGUI(
     ADCSerialMixin,         # ✅ Serial communication
     ForceSerialMixin,       # ✅ Force sensor communication
     MCUDetectorMixin,       # ✅ MCU detection
+    StatusLoggingMixin,     # GUI status logging
     ControlPanelsMixin,     # ✅ Control panel UI
     DisplayPanelsMixin,     # ✅ Display panel UI
     FilePanelsMixin,        # ✅ File panel UI
@@ -120,7 +131,8 @@ class ADCStreamerGUI(
         self.serial_port: Optional[serial.Serial] = None
         self.serial_thread: Optional[SerialReaderThread] = None
         self.current_mcu: Optional[str] = None
-        self.config_completion_status: Optional[bool] = None
+        self.adc_session = None
+        self.adc_connection_workflow = ADCConnectionWorkflow()
 
     def _init_data_buffers(self):
         """Initialize data storage buffers."""
@@ -164,53 +176,16 @@ class ADCStreamerGUI(
     def _init_config_state(self):
         """Initialize configuration state."""
         self.device_mode = 'adc'
+        self.adc_configuration_service = ADCConfigurationService(self.send_command_and_wait_ack)
+        self.adc_configuration_runner = ADCConfigurationRunner(self.adc_configuration_service)
 
-        self.config = {
-            'channels': [],
-            'channel_selection_source': 'none',
-            'selected_array_sensors': [],
-            'array_operation_mode': 'PZT',
-            'repeat': 1,
-            'ground_pin': -1,
-            'use_ground': False,
-            'osr': 2,
-            'gain': 1,
-            'reference': 'vdd',
-            'conv_speed': 'med',
-            'samp_speed': 'med',
-            'sample_rate': 0,
-            'rb_ohms': ANALYZER555_DEFAULT_RB_OHMS,
-            'rk_ohms': ANALYZER555_DEFAULT_RK_OHMS,
-            'cf_farads': ANALYZER555_DEFAULT_CF_FARADS,
-            'rxmax_ohms': ANALYZER555_DEFAULT_RXMAX_OHMS,
-        }
+        self.config = build_default_adc_config_state()
         
-        self.last_sent_config = {
-            'channels': None,
-            'repeat': None,
-            'ground_pin': None,
-            'use_ground': None,
-            'osr': None,
-            'gain': None,
-            'reference': None
-        }
+        self.last_sent_config = build_default_last_sent_config()
         
         self.config_is_valid = False
         
-        self.arduino_status = {
-            'channels': None,
-            'repeat': None,
-            'ground_pin': None,
-            'use_ground': None,
-            'osr': None,
-            'gain': None,
-            'reference': None,
-            'buffer': None,
-            'rb': None,
-            'rk': None,
-            'cf': None,
-            'rxmax': None,
-        }
+        self.arduino_status = build_default_arduino_status()
 
     def _init_ui_state(self):
         """Initialize UI-related state."""
@@ -501,10 +476,7 @@ class ADCStreamerGUI(
             )
             sensor_package_count = len(sensor_groups) if valid_channel_count else 1
         else:
-            unique_channels = []
-            for ch in channels:
-                if ch not in unique_channels:
-                    unique_channels.append(ch)
+            unique_channels = unique_channels_in_order(channels)
             num_channels = len(unique_channels)
             valid_channel_count = (
                 num_channels >= HEATMAP_REQUIRED_CHANNELS

@@ -31,12 +31,20 @@ class ArchiveWriterThread(threading.Thread):
       ``dtype`` should be ``uint16`` so that ``row.tolist()`` yields integer values
       matching the original binary protocol format.
 
-    GIL note: ``json.dumps()`` is pure-Python and holds the GIL.  After processing
+    GIL note: ``json.dumps()`` is pure-Python and holds the GIL. After processing
     each queue item the thread sleeps briefly (``_GIL_YIELD_SEC``) so the main/GUI
     thread gets consistent GIL time even when the queue is never empty.
     """
 
-    _GIL_YIELD_SEC = 0.002  # 2 ms sleep between queue items → yields GIL to GUI thread
+    STATE_OPENING = "opening"
+    STATE_OPEN = "open"
+    STATE_DRAINING = "draining"
+    STATE_CLOSED = "closed"
+    STATE_FAILED = "failed"
+
+    _GIL_YIELD_SEC = 0.002
+    _QUEUE_GET_TIMEOUT_SEC = 0.1
+    _DRAIN_IDLE_GRACE_SEC = 0.25
 
     def __init__(self, archive_path: str, metadata: dict):
         super().__init__(name="ArchiveWriter", daemon=True)
@@ -44,6 +52,47 @@ class ArchiveWriterThread(threading.Thread):
         self._metadata = metadata
         self.queue: queue.Queue = queue.Queue()
         self._stop_event = threading.Event()
+        self._closed_event = threading.Event()
+        self._state_lock = threading.Lock()
+        self._state = self.STATE_OPENING
+        self._last_error = None
+        self._enqueued_blocks = 0
+        self._written_blocks = 0
+        self._written_sweeps = 0
+        self._dropped_blocks = 0
+        self._last_enqueue_time = time.monotonic()
+
+    # ------------------------------------------------------------------
+    # Status helpers
+    # ------------------------------------------------------------------
+
+    def _transition_state(self, new_state: str, *, error: str | None = None) -> None:
+        with self._state_lock:
+            if self._state in {self.STATE_FAILED, self.STATE_CLOSED} and new_state != self._state:
+                if error:
+                    self._last_error = error
+                return
+            self._state = new_state
+            if error:
+                self._last_error = error
+            if new_state in {self.STATE_CLOSED, self.STATE_FAILED}:
+                self._closed_event.set()
+
+    def _record_failure(self, phase: str, exc: Exception) -> None:
+        self._stop_event.set()
+        self._transition_state(self.STATE_FAILED, error=f"{phase}: {exc}")
+
+    def get_status_snapshot(self) -> dict:
+        with self._state_lock:
+            return {
+                "state": self._state,
+                "last_error": self._last_error,
+                "enqueued_blocks": self._enqueued_blocks,
+                "written_blocks": self._written_blocks,
+                "written_sweeps": self._written_sweeps,
+                "dropped_blocks": self._dropped_blocks,
+                "is_alive": self.is_alive(),
+            }
 
     # ------------------------------------------------------------------
     # Thread body
@@ -51,93 +100,89 @@ class ArchiveWriterThread(threading.Thread):
 
     def run(self):
         try:
-            with open(self._archive_path, 'w', encoding='utf-8') as f:
-                # Write metadata header
-                f.write(json.dumps(self._metadata) + '\n')
+            with open(self._archive_path, "w", encoding="utf-8") as handle:
+                handle.write(json.dumps(self._metadata) + "\n")
+                self._transition_state(self.STATE_OPEN)
 
-                write_count = 0
                 while True:
+                    if self._stop_event.is_set():
+                        self._transition_state(self.STATE_DRAINING)
+                        if self.queue.empty():
+                            idle_time = time.monotonic() - self._last_enqueue_time
+                            if idle_time >= self._DRAIN_IDLE_GRACE_SEC:
+                                break
+
                     try:
-                        item = self.queue.get(timeout=0.1)
+                        item = self.queue.get(timeout=self._QUEUE_GET_TIMEOUT_SEC)
                     except queue.Empty:
-                        # If stop has been requested and queue is empty, exit.
-                        if self._stop_event.is_set():
-                            break
                         continue
 
                     if item is None:
-                        # Sentinel — drain is complete.
                         self.queue.task_done()
-                        break
+                        continue
 
                     sweep_timestamps, block_array = item
 
-                    # Build all lines for this block then do one write (fewer
-                    # system calls; GIL is released during the actual I/O).
                     lines = []
                     for ts, row in zip(sweep_timestamps, block_array):
                         lines.append(
-                            json.dumps({'timestamp_s': float(ts), 'samples': row.tolist()})
-                            + '\n'
+                            json.dumps({"timestamp_s": float(ts), "samples": row.tolist()})
+                            + "\n"
                         )
-                    f.write(''.join(lines))
-                    write_count += len(lines)
+                    handle.write("".join(lines))
+                    with self._state_lock:
+                        self._written_blocks += 1
+                        self._written_sweeps += len(lines)
+                        written_sweeps = self._written_sweeps
 
-                    # Periodic flush every ~1000 sweeps.
-                    if write_count % 1000 < len(lines):
-                        try:
-                            f.flush()
-                        except Exception:
-                            pass
+                    if written_sweeps % 1000 < len(lines):
+                        handle.flush()
 
                     self.queue.task_done()
-
-                    # Yield GIL so the GUI/main thread gets consistent CPU time.
-                    # Without this the tight json.dumps loop can starve Qt's event
-                    # loop (timers, paint events) even though it runs in a thread.
                     time.sleep(self._GIL_YIELD_SEC)
 
-                # Final flush before closing.
-                try:
-                    f.flush()
-                except Exception:
-                    pass
+                handle.flush()
 
-        except Exception:
-            pass
+        except Exception as exc:
+            self._record_failure("archive writer", exc)
+            return
+        finally:
+            snapshot = self.get_status_snapshot()
+            if snapshot["state"] != self.STATE_FAILED:
+                self._transition_state(self.STATE_CLOSED)
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
     def enqueue(self, sweep_timestamps, block_array):
-        """Enqueue a block of sweeps for writing. Non-blocking; drops on overflow."""
+        """Enqueue a block of sweeps for writing without blocking the caller."""
+        with self._state_lock:
+            if self._state in {self.STATE_CLOSED, self.STATE_FAILED}:
+                self._dropped_blocks += 1
+                return False
+            self._enqueued_blocks += 1
+            self._last_enqueue_time = time.monotonic()
+
         try:
             self.queue.put_nowait((sweep_timestamps, block_array))
+            return True
         except Exception:
-            pass
+            with self._state_lock:
+                self._dropped_blocks += 1
+                self._enqueued_blocks = max(0, self._enqueued_blocks - 1)
+            return False
 
     def stop_nowait(self):
-        """Signal the writer to finish but do NOT block the caller.
-
-        The thread is daemon=True, so it will complete and close the file in
-        the background.  Use this from the GUI thread to avoid freezing the UI
-        while a large queue drains.  Only use the blocking ``stop()`` when you
-        need the file to be fully closed before proceeding (e.g. before deleting
-        it from disk).
-        """
+        """Signal the writer to finish but do not block the caller."""
         self._stop_event.set()
-        try:
-            self.queue.put_nowait(None)
-        except Exception:
-            pass
-        # Do NOT join — let the daemon thread finish without blocking the caller.
+        self._transition_state(self.STATE_DRAINING)
+        return self.get_status_snapshot()
 
-    def stop(self):
-        """Signal the writer to finish and block until the queue is fully drained."""
-        self._stop_event.set()
-        try:
-            self.queue.put_nowait(None)
-        except Exception:
-            pass
-        self.join(timeout=15.0)
+    def stop(self, timeout: float = 15.0):
+        """Signal the writer to finish and wait for it to close."""
+        self.stop_nowait()
+        self.join(timeout=timeout)
+        if not self.is_alive():
+            self._closed_event.wait(timeout=0.0)
+        return self.get_status_snapshot()

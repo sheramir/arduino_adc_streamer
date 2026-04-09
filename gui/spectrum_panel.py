@@ -5,7 +5,6 @@ Provides UI components for real-time frequency-domain visualization.
 """
 
 import csv
-import json
 from datetime import datetime
 from pathlib import Path
 
@@ -36,6 +35,7 @@ from config_constants import (
     FILTER_NOTCH2_DEFAULT_ENABLED, FILTER_NOTCH2_DEFAULT_FREQ_HZ, FILTER_NOTCH2_DEFAULT_Q,
     FILTER_NOTCH3_DEFAULT_ENABLED, FILTER_NOTCH3_DEFAULT_FREQ_HZ, FILTER_NOTCH3_DEFAULT_Q,
 )
+from file_operations.settings_persistence import load_settings_payload, save_settings_payload
 
 
 class SpectrumPanelMixin:
@@ -91,12 +91,28 @@ class SpectrumPanelMixin:
         if filter_settings and hasattr(self, 'filter_master_check'):
             self._apply_filter_widgets(filter_settings)
 
+    def save_spectrum_settings_to_path(self, file_path, log_message=True):
+        path = save_settings_payload(
+            file_path,
+            self._serialize_spectrum_settings(),
+            log_callback=self.log_status if log_message else None,
+            success_message="Saved spectrum settings: {path}",
+        )
+        return path
+
+    def load_spectrum_settings_from_path(self, file_path, log_message=True):
+        path, loaded_settings = load_settings_payload(file_path, payload_key="spectrum_settings")
+        self._apply_spectrum_settings(loaded_settings)
+        filter_settings = loaded_settings.get('filter_settings')
+        if filter_settings:
+            self.apply_filter_settings(filter_settings, reprocess_existing=False)
+        if log_message:
+            self.log_status(f"Loaded spectrum settings: {path}")
+        return True
+
     def save_last_spectrum_settings(self):
         try:
-            path = self._get_last_spectrum_settings_path()
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with path.open('w', encoding='utf-8') as f:
-                json.dump(self._serialize_spectrum_settings(), f, indent=2)
+            self.save_spectrum_settings_to_path(self._get_last_spectrum_settings_path(), log_message=False)
         except Exception as e:
             self.log_status(f"Warning: could not save spectrum settings: {e}")
 
@@ -105,14 +121,7 @@ class SpectrumPanelMixin:
             path = self._get_last_spectrum_settings_path()
             if not path.exists():
                 return
-            with path.open('r', encoding='utf-8') as f:
-                payload = json.load(f)
-            loaded_settings = payload.get('spectrum_settings', payload)
-            self._apply_spectrum_settings(loaded_settings)
-            filter_settings = loaded_settings.get('filter_settings')
-            if filter_settings:
-                self.apply_filter_settings(filter_settings, reprocess_existing=False)
-            self.log_status(f"Loaded spectrum settings: {path}")
+            self.load_spectrum_settings_from_path(path, log_message=True)
         except Exception as e:
             self.log_status(f"Warning: could not load spectrum settings: {e}")
 

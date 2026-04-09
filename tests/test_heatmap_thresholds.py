@@ -67,6 +67,9 @@ class DummyPiezoProcessor(PiezoHeatmapProcessorMixin):
             "positions": [0, 1, 2, 3, 4],
         }]
 
+    def get_sensor_package_groups(self, required_channels, channels=None):
+        return self.get_array_selected_sensor_groups()
+
 
 class HeatmapThresholdTests(unittest.TestCase):
     def test_555_thresholds_use_package_sensor_id_and_per_channel_totals(self):

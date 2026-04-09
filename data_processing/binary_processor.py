@@ -71,10 +71,10 @@ class BinaryProcessorMixin:
                     timing.trim_recent('mcu_block_gap_us', MAX_TIMING_SAMPLES)
                 timing.mcu_last_block_end_us = block_end_us
                 
-                # Calculate samples per sweep from configuration
-                channel_count = len(self.config.get('channels', [])) * self.get_effective_channel_multiplier()
-                repeat_count = self.config.get('repeat', 1)
-                samples_per_sweep = channel_count * repeat_count
+                # Calculate samples per sweep from the same physical-width rule
+                # used when capture starts, so parser expectations and buffer
+                # layout stay aligned for paired-MUX array modes.
+                samples_per_sweep = self.get_effective_samples_per_sweep()
                 
                 if samples_per_sweep == 0:
                     self.log_status("ERROR: Invalid configuration, samples_per_sweep is 0")
@@ -214,8 +214,7 @@ class BinaryProcessorMixin:
                         self.update_plot()
                         self.update_force_plot()
                     # Always update the info label
-                    actual_sweeps = min(self.sweep_count, self.MAX_SWEEPS_BUFFER)
-                    total_samples = actual_sweeps * samples_per_sweep
+                    total_samples = int(self.sweep_count) * samples_per_sweep
                     force_samples = len(self.force_data)
                     if self.is_full_view:
                         self.plot_info_label.setText(
@@ -223,6 +222,7 @@ class BinaryProcessorMixin:
                         )
                     else:
                         window_size = self.window_size_spin.value()
+                        actual_sweeps = min(self.sweep_count, self.MAX_SWEEPS_BUFFER)
                         displayed_sweeps = min(actual_sweeps, window_size, MAX_PLOT_SWEEPS)
                         self.plot_info_label.setText(
                             f"ADC - Sweeps: {self.sweep_count} (showing last {displayed_sweeps}) | Samples: {total_samples}  |  Force: {force_samples} samples"

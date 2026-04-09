@@ -14,4 +14,7 @@ pyqtgraph>=0.13.0
 numpy>=1.21.0
 scipy>=1.9.0
 
+# Test Tooling
+pytest>=8.0.0
+
 # Note: csv module is part of Python standard library

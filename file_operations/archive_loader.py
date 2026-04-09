@@ -12,6 +12,42 @@ from pathlib import Path
 class ArchiveLoaderMixin:
     """Mixin class for archive loading operations."""
 
+    def _show_full_view_loading_notice(self) -> None:
+        """Show a visible loading notice before building full view from archive."""
+        from PyQt6.QtCore import QEventLoop, Qt
+        from PyQt6.QtWidgets import QApplication, QProgressDialog
+
+        dialog = getattr(self, "_full_view_loading_dialog", None)
+        if dialog is None:
+            dialog = QProgressDialog("Building Full View...", None, 0, 0, self)
+            dialog.setWindowTitle("Please Wait")
+            dialog.setCancelButton(None)
+            dialog.setWindowModality(Qt.WindowModality.WindowModal)
+            dialog.setMinimumDuration(0)
+            dialog.setAutoClose(False)
+            dialog.setAutoReset(False)
+            self._full_view_loading_dialog = dialog
+
+        dialog.setLabelText("Building Full View...")
+        dialog.setRange(0, 0)
+        dialog.setValue(0)
+        dialog.show()
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
+
+    def _hide_full_view_loading_notice(self) -> None:
+        """Hide the temporary full-view loading notice."""
+        from PyQt6.QtCore import QEventLoop
+        from PyQt6.QtWidgets import QApplication
+
+        dialog = getattr(self, "_full_view_loading_dialog", None)
+        if dialog is not None:
+            dialog.hide()
+
+        if QApplication.overrideCursor() is not None:
+            QApplication.restoreOverrideCursor()
+        QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
+
     def _apply_full_view_time_range(self, timestamps) -> None:
         """Update plot X ranges so full view actually shows the full capture span."""
         if timestamps is None or len(timestamps) == 0:
@@ -47,9 +83,18 @@ class ArchiveLoaderMixin:
             return
 
         try:
+            snapshot = writer.get_status_snapshot() if hasattr(writer, "get_status_snapshot") else {}
             if writer.is_alive():
-                self.log_status("Waiting for archive save to finish before loading full view...")
-            writer.stop()
+                state = snapshot.get("state", "unknown")
+                if state == "failed":
+                    self.log_status("WARNING: Archive writer failed before full-view load; archive may be incomplete")
+                else:
+                    self.log_status("Waiting for archive save to finish before loading full view...")
+
+            final_snapshot = writer.stop()
+            if final_snapshot.get("state") == "failed":
+                error_text = final_snapshot.get("last_error") or "unknown archive writer failure"
+                self.log_status(f"WARNING: Archive writer failed before full-view load: {error_text}")
         except Exception as e:
             self.log_status(f"WARNING: Failed to finalize archive writer cleanly: {e}")
         finally:
@@ -67,6 +112,8 @@ class ArchiveLoaderMixin:
             sweeps = []
             timestamps = []
             archive_timestamps = []  # timestamps embedded per sweep (new-format archives)
+            invalid_archive_lines = 0
+            unknown_archive_entries = 0
             
             with open(self._archive_path, 'r', encoding='utf-8') as f:
                 # First line is metadata - skip it
@@ -99,9 +146,17 @@ class ArchiveLoaderMixin:
                             # Unknown format: skip
                             else:
                                 archive_timestamps.append(None)
+                                unknown_archive_entries += 1
                                 continue
                         except json.JSONDecodeError:
+                            invalid_archive_lines += 1
                             continue
+
+            if invalid_archive_lines or unknown_archive_entries:
+                self.log_status(
+                    "WARNING: Archive load skipped "
+                    f"{invalid_archive_lines} invalid line(s) and {unknown_archive_entries} unsupported entries"
+                )
             
             # Prefer per-sweep timestamps embedded in archive (if present for all sweeps)
             if len(archive_timestamps) == len(sweeps) and all(ts is not None for ts in archive_timestamps):
@@ -110,6 +165,8 @@ class ArchiveLoaderMixin:
             # Otherwise reconstruct timestamps from the CSV timing sidecar
             elif self._block_timing_path and Path(self._block_timing_path).exists():
                 try:
+                    invalid_timing_rows = 0
+                    sidecar_base_us = None
                     with open(self._block_timing_path, 'r', encoding='utf-8', newline='') as f:
                         reader = csv.reader(f)
                         header = next(reader, None)  # Skip header row
@@ -118,6 +175,7 @@ class ArchiveLoaderMixin:
                         # avg_dt_us, block_start_us, block_end_us, mcu_gap_us
                         for row in reader:
                             if len(row) < 6:
+                                invalid_timing_rows += 1
                                 continue
 
                             try:
@@ -126,22 +184,28 @@ class ArchiveLoaderMixin:
                                 avg_dt_us = float(row[3])
                                 block_start_us = int(row[4])
                             except (ValueError, TypeError):
+                                invalid_timing_rows += 1
                                 continue
 
-                            # Initialize reference if missing
-                            if not hasattr(self, 'first_sweep_timestamp_us'):
-                                self.first_sweep_timestamp_us = block_start_us
-
-                            base_us = self.first_sweep_timestamp_us
+                            if sidecar_base_us is None:
+                                sidecar_base_us = block_start_us
 
                             # Build timestamps for each sweep in this block
                             for i in range(sweeps_in_block):
                                 ts_us = block_start_us + (i * samples_per_sweep * avg_dt_us)
-                                ts_sec = (ts_us - base_us) / 1e6
+                                ts_sec = (ts_us - sidecar_base_us) / 1e6
                                 timestamps.append(ts_sec)
+                                if len(timestamps) >= len(sweeps):
+                                    break
+                            if len(timestamps) >= len(sweeps):
+                                break
+                    if invalid_timing_rows:
+                        self.log_status(
+                            f"WARNING: Archive timing load skipped {invalid_timing_rows} invalid CSV row(s)"
+                        )
                 except Exception:
                     # Fall back to legacy behavior if parsing fails
-                    pass
+                    self.log_status("WARNING: Failed to parse archive timing sidecar; using timestamp fallback")
             
             # Fallback: if no timing data or insufficient timestamps, use uniform spacing
             if len(timestamps) < len(sweeps):
@@ -177,31 +241,35 @@ class ArchiveLoaderMixin:
             return
 
         if self._capture_exceeds_memory_buffer():
-            self._finalize_archive_if_active()
-            sweeps, timestamps = self.load_archive_data()
-            if not sweeps or not timestamps:
-                self.log_status("WARNING: Full archive unavailable; falling back to buffered data only")
-            else:
-                self.raw_data = np.asarray(sweeps, dtype=np.float32)
-                self.sweep_timestamps = np.asarray(timestamps, dtype=np.float64)
-                actual_sweeps = len(self.raw_data)
-                self.is_full_view = True
-                self.full_view_btn.setEnabled(False)
+            self._show_full_view_loading_notice()
+            try:
+                self._finalize_archive_if_active()
+                sweeps, timestamps = self.load_archive_data()
+                if not sweeps or not timestamps:
+                    self.log_status("WARNING: Full archive unavailable; falling back to buffered data only")
+                else:
+                    self.raw_data = np.asarray(sweeps, dtype=np.float32)
+                    self.sweep_timestamps = np.asarray(timestamps, dtype=np.float64)
+                    actual_sweeps = len(self.raw_data)
+                    self.is_full_view = True
+                    self.full_view_btn.setEnabled(False)
 
-                self.update_plot()
-                self._apply_full_view_time_range(self.sweep_timestamps)
-                self.update_force_plot()
+                    self.update_plot()
+                    self._apply_full_view_time_range(self.sweep_timestamps)
+                    self.update_force_plot()
 
-                total_samples = actual_sweeps * self.raw_data.shape[1] if self.raw_data.ndim == 2 else actual_sweeps
-                force_samples = len(self.force_data)
-                time_range = float(self.sweep_timestamps[-1] - self.sweep_timestamps[0]) if len(self.sweep_timestamps) > 1 else 0.0
+                    total_samples = actual_sweeps * self.raw_data.shape[1] if self.raw_data.ndim == 2 else actual_sweeps
+                    force_samples = len(self.force_data)
+                    time_range = float(self.sweep_timestamps[-1] - self.sweep_timestamps[0]) if len(self.sweep_timestamps) > 1 else 0.0
 
-                self.plot_info_label.setText(
-                    f"ADC - Sweeps: {actual_sweeps} (FULL VIEW) | Samples: {total_samples} | "
-                    f"Time: {time_range:.2f}s  |  Force: {force_samples} samples"
-                )
-                self.log_status(f"Full view active from archive: {actual_sweeps} sweeps, {time_range:.2f}s")
-                return
+                    self.plot_info_label.setText(
+                        f"ADC - Sweeps: {actual_sweeps} (FULL VIEW) | Samples: {total_samples} | "
+                        f"Time: {time_range:.2f}s  |  Force: {force_samples} samples"
+                    )
+                    self.log_status(f"Full view active from archive: {actual_sweeps} sweeps, {time_range:.2f}s")
+                    return
+            finally:
+                self._hide_full_view_loading_notice()
 
         active_buffer = self.get_active_data_buffer()
         if active_buffer is None:

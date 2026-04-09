@@ -4,12 +4,22 @@ Configuration Management Mixin
 Handles all configuration event handlers and Arduino configuration workflow.
 """
 
-import time
-import threading
 from PyQt6.QtCore import Qt
 
+from config.adc_configuration_service import ADCConfigurationRequest
+from config.channel_utils import unique_channels_in_order
+from config.config_view_state import (
+    build_configuration_failed_state,
+    build_configuration_success_state,
+    build_configuring_state,
+    build_start_needs_config_state,
+    build_start_ready_state,
+    build_start_unavailable_state,
+)
+from config.config_snapshot import build_adc_configuration_snapshot
+from config.mcu_profile import resolve_mcu_profile
 from config_constants import (
-    INTER_COMMAND_DELAY, MAX_SAMPLES_BUFFER, MAX_PLOT_COLUMNS,
+    MAX_SAMPLES_BUFFER, MAX_PLOT_COLUMNS,
     ANALYZER555_DEFAULT_CF_UNIT, ANALYZER555_DEFAULT_CF_VALUE
 )
 from config.buffer_utils import validate_and_limit_sweeps_per_block
@@ -18,13 +28,43 @@ from config.buffer_utils import validate_and_limit_sweeps_per_block
 class ConfigurationMixin:
     """Mixin class for configuration management and event handlers."""
 
+    def get_vref_voltage(self) -> float:
+        """Get the numeric voltage reference value for the current configuration."""
+        vref_str = self.config['reference']
+
+        if vref_str == "1.2":
+            return 1.2
+        if vref_str == "3.3" or vref_str == "vdd":
+            return 3.3
+        if vref_str == "0.8vdd":
+            return 3.3 * 0.8
+        if vref_str == "ext":
+            return 1.25
+        return 3.3
+
+    def _apply_configure_button_state(self, state):
+        self.configure_btn.setEnabled(state.enabled)
+        if state.style is not None:
+            self.configure_btn.setStyleSheet(state.style)
+        if state.status_message:
+            self.statusBar().showMessage(state.status_message, state.status_timeout_ms)
+
+    def _apply_start_button_state(self, state):
+        self.start_btn.setEnabled(state.enabled)
+        if state.style is not None:
+            self.start_btn.setStyleSheet(state.style)
+        self.start_btn.setText(state.text)
+
     def is_array_mcu_mode(self) -> bool:
         """Return True for any Array* MCU identifier."""
-        return (self.current_mcu or "").strip().lower().startswith("array")
+        return resolve_mcu_profile(self.current_mcu).is_array_mcu
 
     def is_array_pzt1_mode(self) -> bool:
         """Return True when the connected MCU streams paired MUX data."""
-        return (self.current_mcu or "").strip().lower() == "array_pzt1".lower()
+        return resolve_mcu_profile(
+            self.current_mcu,
+            selected_array_mode=self.get_selected_array_operation_mode(),
+        ).is_array_pzt1
 
     def get_allowed_channel_max(self) -> int:
         """Return max channel index for manual channel entry validation."""
@@ -32,7 +72,7 @@ class ConfigurationMixin:
 
     def is_array_pzt_pzr_mode(self) -> bool:
         """Return True when MCU supports runtime PZT/PZR mode switching."""
-        return (self.current_mcu or "").strip().lower().startswith("array_pzt_pzr")
+        return resolve_mcu_profile(self.current_mcu).is_array_dual
 
     def get_selected_array_operation_mode(self) -> str:
         """Return selected operation mode for dual Array_PZT_PZR devices."""
@@ -259,10 +299,7 @@ class ConfigurationMixin:
                 })
             return normalized_groups
 
-        unique_channels = []
-        for channel in channels:
-            if channel not in unique_channels:
-                unique_channels.append(channel)
+        unique_channels = unique_channels_in_order(channels)
 
         if len(unique_channels) < required_channels or len(unique_channels) % required_channels != 0:
             return []
@@ -292,14 +329,7 @@ class ConfigurationMixin:
             return []
 
         if self.is_array_sensor_selection_mode():
-            unique_channels = []
-            seen = set()
-            for channel in channels:
-                if channel in seen:
-                    continue
-                seen.add(channel)
-                unique_channels.append(channel)
-            return unique_channels
+            return unique_channels_in_order(channels)
 
         return channels
 
@@ -309,15 +339,14 @@ class ConfigurationMixin:
             channels = self.config.get('channels', [])
         if repeat_count is None:
             repeat_count = self.config.get('repeat', 1)
-        return len(channels) * max(1, int(repeat_count)) * self.get_effective_channel_multiplier()
+        physical_channels = list(channels or [])
+        if self.is_array_pzt1_mode() and self.is_array_sensor_selection_mode():
+            physical_channels = self.get_channels_for_arduino_command()
+        return len(physical_channels) * max(1, int(repeat_count)) * self.get_effective_channel_multiplier()
 
     @staticmethod
     def _get_unique_channels_in_order(channels):
-        unique_channels = []
-        for channel in channels:
-            if channel not in unique_channels:
-                unique_channels.append(channel)
-        return unique_channels
+        return unique_channels_in_order(channels)
 
     def _get_grouped_manual_channel_labels(self, channels):
         """Return manual channel labels with sensor placement names when layout is unambiguous."""
@@ -370,6 +399,7 @@ class ConfigurationMixin:
         if self.is_array_mcu_mode() and selection_source == 'array' and selected_array_sensors:
             sensor_groups = self.get_array_selected_sensor_groups()
             channel_sensor_map = self.get_active_channel_sensor_map() if hasattr(self, 'get_active_channel_sensor_map') else ["T", "R", "C", "L", "B"]
+            unique_channel_positions = {channel: index for index, channel in enumerate(unique_channels)}
 
             color_slot = 0
             for group in sensor_groups:
@@ -381,13 +411,15 @@ class ConfigurationMixin:
                 for local_idx, channel in enumerate(sensor_channels):
                     sample_indices = []
                     if local_idx < len(seq_positions):
-                        seq_idx = int(seq_positions[local_idx])
                         if self.is_array_pzt1_mode():
-                            mux_index = max(0, min(1, mux_num - 1))
-                            base_idx = seq_idx * repeat_count * 2
-                            for repeat_idx in range(repeat_count):
-                                sample_indices.append(base_idx + (repeat_idx * 2) + mux_index)
+                            unique_idx = unique_channel_positions.get(channel)
+                            if unique_idx is not None:
+                                mux_index = max(0, min(1, mux_num - 1))
+                                base_idx = unique_idx * repeat_count * 2
+                                for repeat_idx in range(repeat_count):
+                                    sample_indices.append(base_idx + (repeat_idx * 2) + mux_index)
                         else:
+                            seq_idx = int(seq_positions[local_idx])
                             base_idx = seq_idx * repeat_count
                             sample_indices.extend(range(base_idx, base_idx + repeat_count))
 
@@ -615,23 +647,99 @@ class ConfigurationMixin:
         self.config_is_valid = False
         self.update_start_button_state()
 
+    def _build_adc_configuration_request(self) -> ADCConfigurationRequest:
+        """Build a plain-data snapshot for the ADC configuration service."""
+        snapshot = build_adc_configuration_snapshot(
+            current_reference=str(self.config.get('reference', 'vdd')),
+            vref_label=self.vref_combo.currentText() if hasattr(self, 'vref_combo') else None,
+            use_vref_control=bool(hasattr(self, 'vref_combo') and not self.is_array_mcu_mode() and not (self.current_mcu and "Teensy" in self.current_mcu)),
+            current_osr=int(self.config.get('osr', 2)),
+            osr_label=self.osr_combo.currentText().strip() if hasattr(self, 'osr_combo') and self.osr_combo.currentText().strip() else None,
+            current_gain=int(self.config.get('gain', 1)),
+            gain_label=self.gain_combo.currentText() if hasattr(self, 'gain_combo') else None,
+            current_repeat=int(self.config.get('repeat', 1)),
+            repeat_value=int(self.repeat_spin.value()) if hasattr(self, 'repeat_spin') else None,
+            current_use_ground=bool(self.config.get('use_ground', False)),
+            use_ground_checked=bool(self.use_ground_check.isChecked()) if hasattr(self, 'use_ground_check') else None,
+            current_ground_pin=int(self.config.get('ground_pin', -1)),
+            ground_pin_value=int(self.ground_pin_spin.value()) if hasattr(self, 'ground_pin_spin') else None,
+            current_conv_speed=str(self.config.get('conv_speed', 'med')),
+            conv_speed_label=self.conv_speed_combo.currentText() if hasattr(self, 'conv_speed_combo') else None,
+            current_samp_speed=str(self.config.get('samp_speed', 'med')),
+            samp_speed_label=self.samp_speed_combo.currentText() if hasattr(self, 'samp_speed_combo') else None,
+            current_sample_rate=int(self.config.get('sample_rate', 0)),
+            sample_rate_value=int(self.sample_rate_spin.value()) if hasattr(self, 'sample_rate_spin') else None,
+            current_array_operation_mode=str(self.config.get('array_operation_mode', 'PZT')),
+            array_operation_mode=self.get_selected_array_operation_mode() if self.is_array_pzt_pzr_mode() else None,
+            current_rb_ohms=float(self.config.get('rb_ohms', 0.0)),
+            rb_value=float(self.rb_spin.value()) if hasattr(self, 'rb_spin') else None,
+            current_rk_ohms=float(self.config.get('rk_ohms', 0.0)),
+            rk_value=float(self.rk_spin.value()) if hasattr(self, 'rk_spin') else None,
+            cf_farads=self._get_cf_farads_from_controls(),
+            current_rxmax_ohms=float(self.config.get('rxmax_ohms', 0.0)),
+            rxmax_value=float(self.rxmax_spin.value()) if hasattr(self, 'rxmax_spin') else None,
+        )
+
+        snapshot.apply_to_config(self.config)
+        buffer_size = int(self.buffer_spin.value()) if hasattr(self, 'buffer_spin') else 128
+
+        return ADCConfigurationRequest(
+            current_mcu=self.current_mcu,
+            device_mode=str(getattr(self, 'device_mode', 'adc')),
+            channels=list(self.config.get('channels', [])),
+            channels_to_send=self.get_channels_for_arduino_command(),
+            repeat=snapshot.repeat,
+            use_ground=snapshot.use_ground,
+            ground_pin=snapshot.ground_pin,
+            buffer_size=buffer_size,
+            reference=snapshot.reference,
+            osr=snapshot.osr,
+            gain=snapshot.gain,
+            conv_speed=snapshot.conv_speed,
+            samp_speed=snapshot.samp_speed,
+            sample_rate=snapshot.sample_rate,
+            rb_ohms=snapshot.rb_ohms,
+            rk_ohms=snapshot.rk_ohms,
+            cf_farads=snapshot.cf_farads,
+            rxmax_ohms=snapshot.rxmax_ohms,
+            array_operation_mode=snapshot.array_operation_mode,
+            is_array_mcu=self.is_array_mcu_mode(),
+            is_array_pzt_pzr_mode=self.is_array_pzt_pzr_mode(),
+            is_array_sensor_selection_mode=self.is_array_sensor_selection_mode(),
+            effective_channel_multiplier=self.get_effective_channel_multiplier(),
+        )
+
+    def _apply_configuration_result(self, result):
+        """Apply service output back onto GUI-owned state."""
+        self.device_mode = result.resolved_device_mode
+        self.arduino_status.apply(result.arduino_status)
+
+        normalized_buffer_size = int(result.normalized_buffer_size)
+        current_buffer_size = int(self.buffer_spin.value()) if hasattr(self, 'buffer_spin') else normalized_buffer_size
+        if normalized_buffer_size != current_buffer_size:
+            if getattr(self, 'device_mode', 'adc') == '555' and current_buffer_size > 256:
+                self.log_status(f"555 mode buffer limited from {current_buffer_size} to {normalized_buffer_size}")
+            elif normalized_buffer_size == 128 and current_buffer_size <= 0:
+                self.log_status(f"Invalid buffer size, using default value: {normalized_buffer_size}")
+            else:
+                self.log_status(f"Buffer size limited to {normalized_buffer_size} sweeps (Arduino buffer capacity)")
+            self.buffer_spin.setValue(normalized_buffer_size)
+
+        for message in result.messages:
+            self.log_status(message)
+
     def _apply_555_parameter(self, command_name: str, value: str):
-        if not self.serial_port or not self.serial_port.is_open:
-            self.log_status("ERROR: Connect a device before applying 555 parameters")
-            return
-
-        if getattr(self, 'device_mode', 'adc') != '555':
-            self.log_status("Ignoring 555 parameter apply while not in 555 mode")
-            return
-
-        success, received = self.send_command_and_wait_ack(f"{command_name} {value}", None)
-        if success:
-            shown = received if received is not None and received != '' else value
-            self.log_status(f"Applied {command_name}={shown}")
+        result = self.adc_configuration_service.apply_555_parameter(
+            command_name,
+            value,
+            is_connected=bool(self.serial_port and self.serial_port.is_open),
+            device_mode=str(getattr(self, 'device_mode', 'adc')),
+        )
+        for message in result.messages:
+            self.log_status(message)
+        if result.success:
             self.config_is_valid = False
             self.update_start_button_state()
-        else:
-            self.log_status(f"ERROR: Failed to apply {command_name}")
 
     def on_apply_rb_clicked(self):
         value = str(int(round(self.rb_spin.value())))
@@ -718,66 +826,37 @@ class ConfigurationMixin:
             self.log_status(f"Using Array sensor selection -> channels: {effective_channels_text}")
         
         self.log_status("Configuring Arduino...")
-        self.configure_btn.setEnabled(False)
+        self._apply_configure_button_state(build_configuring_state())
         
         # Clear timing data from previous runs
         self.timing_state.arduino_sample_times.clear()
         self.timing_state.buffer_gap_times.clear()
-        
-        # Reset completion status and start checking
-        self.config_completion_status = None
+
         self.config_check_timer.start()
-        
-        # Run configuration in a separate thread to avoid blocking UI
-        def config_worker():
-            success_flag = False
-            try:
-                # Check serial port is still valid
-                if not self.serial_port or not self.serial_port.is_open:
-                    return
-                    
-                # Flush buffers before configuration
-                self.serial_port.reset_input_buffer()
-                self.serial_port.reset_output_buffer()
-                time.sleep(0.05)
-                
-                max_attempts = 3
-                for attempt in range(max_attempts):
-                    success = self.send_config_with_verification()
-                    
-                    if success:
-                        # Verify final configuration
-                        verified = self.verify_configuration()
-                        if verified:
-                            success_flag = True
-                            break
-                    
-                    time.sleep(0.05)  # Brief delay between retries
-                    
-            except Exception as e:
-                self.log_status(f"Configuration error: {e}")
-            finally:
-                # Set completion status for main thread to handle
-                if success_flag:
-                    self.config_completion_status = True
-                else:
-                    self.config_completion_status = False
-        
-        # Start configuration in background thread
-        threading.Thread(target=config_worker, daemon=True).start()
+
+        request = self._build_adc_configuration_request()
+        started = self.adc_configuration_runner.start(self.serial_port, request, max_attempts=3)
+        if not started:
+            self.config_check_timer.stop()
+            self.log_status("Configuration already in progress")
+            self._apply_configure_button_state(build_configuration_failed_state())
     
     def check_config_completion(self):
         """Check if configuration has completed (called by timer)."""
-        if self.config_completion_status is not None:
-            self.config_check_timer.stop()
-            
-            if self.config_completion_status:
-                self.on_configuration_success()
-            else:
-                self.on_configuration_failed()
-            
-            # Reset status
-            self.config_completion_status = None
+        outcome = self.adc_configuration_runner.take_outcome()
+        if outcome is None:
+            return
+
+        self.config_check_timer.stop()
+        if outcome.error_message:
+            self.log_status(outcome.error_message)
+        if outcome.result is not None:
+            self._apply_configuration_result(outcome.result)
+
+        if outcome.success:
+            self.on_configuration_success()
+        else:
+            self.on_configuration_failed()
     
     def on_configuration_success(self):
         """Handle successful configuration."""
@@ -785,332 +864,34 @@ class ConfigurationMixin:
         self.log_status("✓ Configuration verified - Ready to start")
         self.log_status("Configuration complete - all parameters confirmed")
         self.update_start_button_state()
-        self.configure_btn.setEnabled(True)
-        self.configure_btn.setStyleSheet("QPushButton { background-color: #2196F3; color: white; font-weight: bold; }")
-        self.statusBar().showMessage("Configured - Ready to capture", 3000)
+        self._apply_configure_button_state(build_configuration_success_state())
     
     def on_configuration_failed(self):
         """Handle failed configuration."""
         self.log_status("ERROR: Configuration failed after retries")
-        self.configure_btn.setEnabled(True)
-        self.configure_btn.setStyleSheet("QPushButton { background-color: #FF9800; color: white; font-weight: bold; }")
-        self.statusBar().showMessage("Configuration failed - please retry", 5000)
+        self._apply_configure_button_state(build_configuration_failed_state())
     
-    def send_config_with_verification(self) -> bool:
-        """Send configuration to Arduino with ACK verification and retry.
-        
-        Returns:
-            bool: True if all parameters were set successfully
-        """
-        # Thread-safe check of serial port
-        if not self.serial_port or not self.serial_port.is_open:
-            return False
-
-        if self.is_array_pzt_pzr_mode():
-            selected_mode = self.get_selected_array_operation_mode()
-            self.config['array_operation_mode'] = selected_mode
-            self.device_mode = '555' if selected_mode == 'PZR' else 'adc'
-
-            success, received = self.send_command_and_wait_ack(f"mode {selected_mode}", selected_mode)
-            if not success:
-                self.log_status(f"Dual-mode command failed: mode {selected_mode}")
-                return False
-
-            self.log_status(f"Set Array operating mode: {received or selected_mode}")
-            time.sleep(INTER_COMMAND_DELAY)
-
-        if getattr(self, 'device_mode', 'adc') == '555':
-            return self._send_555_config_with_verification()
-        
-        all_success = True
-        
-        # Determine if this is a Teensy MCU
-        is_teensy = self.current_mcu and "Teensy" in self.current_mcu
-        is_array_mcu = self.is_array_mcu_mode()
-        
-        # Send voltage reference (skip for Teensy/Array - fixed 3.3V behavior)
-        if not is_teensy and not is_array_mcu:
-            vref_text = self.vref_combo.currentText()
-            vref_map = {
-                "1.2V (Internal)": "1.2",
-                "3.3V (VDD)": "vdd"
-            }
-            vref_cmd = vref_map.get(vref_text, "vdd")
-            success, received = self.send_command_and_wait_ack(f"ref {vref_cmd}", vref_cmd)
-            if success:
-                self.arduino_status['reference'] = received
-            else:
-                all_success = False
-            time.sleep(INTER_COMMAND_DELAY)
-        elif is_array_mcu:
-            self.config['reference'] = 'vdd'
-            self.arduino_status['reference'] = 'vdd'
-        
-        # Send OSR (oversampling ratio) / Averaging
-        osr_value = self.osr_combo.currentText()
-        success, received = self.send_command_and_wait_ack(f"osr {osr_value}", osr_value)
-        if success:
-            self.arduino_status['osr'] = int(received)
-        else:
-            all_success = False
-        time.sleep(INTER_COMMAND_DELAY)
-        
-        # Send gain (skip for Teensy - doesn't support gain)
-        if not is_teensy:
-            gain_value = str(self.config['gain'])
-            success, received = self.send_command_and_wait_ack(f"gain {gain_value}", gain_value)
-            if success:
-                self.arduino_status['gain'] = int(received)
-            else:
-                all_success = False
-            time.sleep(INTER_COMMAND_DELAY)
-        
-        # Teensy-specific: Send conversion speed
-        if is_teensy:
-            conv_speed = self.conv_speed_combo.currentText()
-            success, received = self.send_command_and_wait_ack(f"conv {conv_speed}", conv_speed)
-            if not success:
-                all_success = False
-            time.sleep(INTER_COMMAND_DELAY)
-        
-        # Teensy-specific: Send sampling speed
-        if is_teensy:
-            samp_speed = self.samp_speed_combo.currentText()
-            success, received = self.send_command_and_wait_ack(f"samp {samp_speed}", samp_speed)
-            if not success:
-                all_success = False
-            time.sleep(INTER_COMMAND_DELAY)
-        
-        # Teensy-specific: Send sampling rate
-        if is_teensy:
-            sample_rate = self.sample_rate_spin.value()
-            success, received = self.send_command_and_wait_ack(f"rate {sample_rate}", str(sample_rate))
-            if not success:
-                all_success = False
-            time.sleep(INTER_COMMAND_DELAY)
-        
-        # Send channels to firmware (array sensor mode uses unique channel addresses)
-        channels_to_send = self.get_channels_for_arduino_command()
-        channels_text = ",".join(str(channel) for channel in channels_to_send)
-        if channels_text:
-            success, received = self.send_command_and_wait_ack(f"channels {channels_text}", channels_text)
-            if success and received:
-                self.arduino_status['channels'] = [int(c.strip()) for c in received.split(',')]
-            else:
-                all_success = False
-        time.sleep(0.05)
-        
-        # Send repeat count
-        repeat = str(self.repeat_spin.value())
-        success, received = self.send_command_and_wait_ack(f"repeat {repeat}", repeat)
-        if success:
-            self.arduino_status['repeat'] = int(received)
-        else:
-            all_success = False
-        time.sleep(0.05)
-        
-        # Send ground settings
-        if self.use_ground_check.isChecked():
-            # Send "ground N" where N is the pin number (automatically enables ground)
-            ground_pin = str(self.ground_pin_spin.value())
-            success, received = self.send_command_and_wait_ack(f"ground {ground_pin}", ground_pin)
-            if success:
-                self.arduino_status['ground_pin'] = int(received)
-                self.arduino_status['use_ground'] = True
-            else:
-                all_success = False
-        else:
-            # Send "ground false" to disable ground
-            success, received = self.send_command_and_wait_ack("ground false", "false")
-            if success:
-                self.arduino_status['use_ground'] = False
-            else:
-                all_success = False
-        time.sleep(0.05)
-        
-        # Send buffer size (sweeps per block)
-        time.sleep(0.05)
-        buffer_size = self.buffer_spin.value()
-        # Validate buffer size using firmware channel sequence
-        channel_count = len(channels_to_send) * self.get_effective_channel_multiplier()
-        repeat_count = self.config.get('repeat', 1)
-        
-        if buffer_size <= 0:
-            # Use default value
-            buffer_size = 128
-            self.log_status(f"Invalid buffer size, using default value: {buffer_size}")
-            self.buffer_spin.setValue(buffer_size)
-        else:
-            # Validate against buffer capacity
-            buffer_size = validate_and_limit_sweeps_per_block(buffer_size, channel_count, repeat_count)
-            if buffer_size != self.buffer_spin.value():
-                self.log_status(f"Buffer size limited to {buffer_size} sweeps (Arduino buffer capacity)")
-                self.buffer_spin.setValue(buffer_size)
-        
-        buffer_str = str(buffer_size)
-        success, received = self.send_command_and_wait_ack(f"buffer {buffer_str}", buffer_str)
-        if success:
-            self.arduino_status['buffer'] = int(received)
-        else:
-            all_success = False
-        
-        return all_success
-
-    def _send_555_config_with_verification(self) -> bool:
-        """Send only 555-analyzer supported configuration commands."""
-        all_success = True
-
-        channels_to_send = self.get_channels_for_arduino_command()
-        channels_text = ",".join(str(channel) for channel in channels_to_send)
-        if channels_text:
-            desired_channels = [int(c.strip()) for c in channels_text.split(',') if c.strip()]
-            success, received = self.send_command_and_wait_ack(f"channels {channels_text}", None)
-            if success:
-                if received:
-                    try:
-                        self.arduino_status['channels'] = [int(c.strip()) for c in received.split(',') if c.strip()]
-                    except Exception:
-                        self.arduino_status['channels'] = desired_channels
-                else:
-                    self.arduino_status['channels'] = desired_channels
-            else:
-                self.log_status(f"555 config command failed: channels {channels_text}")
-                all_success = False
-            time.sleep(0.05)
-
-        repeat = str(self.repeat_spin.value())
-        success, received = self.send_command_and_wait_ack(f"repeat {repeat}", None)
-        if success:
-            try:
-                self.arduino_status['repeat'] = int(received) if received not in (None, '') else int(repeat)
-            except Exception:
-                self.arduino_status['repeat'] = int(repeat)
-        else:
-            self.log_status(f"555 config command failed: repeat {repeat}")
-            all_success = False
-        time.sleep(0.05)
-
-        buffer_size = self.buffer_spin.value()
-        if buffer_size <= 0:
-            buffer_size = 1
-        if buffer_size > 256:
-            self.log_status(f"555 mode buffer limited from {buffer_size} to 256")
-            buffer_size = 256
-            self.buffer_spin.setValue(256)
-        buffer_str = str(int(buffer_size))
-        success, received = self.send_command_and_wait_ack(f"buffer {buffer_str}", None)
-        if success:
-            try:
-                self.arduino_status['buffer'] = int(received) if received not in (None, '') else int(buffer_str)
-            except Exception:
-                self.arduino_status['buffer'] = int(buffer_str)
-        else:
-            self.log_status(f"555 config command failed: buffer {buffer_str}")
-            all_success = False
-        time.sleep(0.05)
-
-        rb_value = str(int(round(self.rb_spin.value())))
-        rk_value = str(int(round(self.rk_spin.value())))
-        cf_farads = self._get_cf_farads_from_controls()
-        cf_value = f"{cf_farads:.12g}"
-        rxmax_value = str(int(round(self.rxmax_spin.value())))
-
-        self.config['rb_ohms'] = float(rb_value)
-        self.config['rk_ohms'] = float(rk_value)
-        self.config['cf_farads'] = cf_farads
-        self.config['rxmax_ohms'] = float(rxmax_value)
-
-        for cmd, value in [
-            ('rb', rb_value),
-            ('rk', rk_value),
-            ('cf', cf_value),
-            ('rxmax', rxmax_value),
-        ]:
-            success, _ = self.send_command_and_wait_ack(f"{cmd} {value}", None)
-            if not success:
-                self.log_status(f"555 config command failed: {cmd} {value}")
-                all_success = False
-            time.sleep(0.05)
-
-        return all_success
-
     def verify_configuration(self) -> bool:
         """Verify that Arduino status matches expected configuration."""
-        if getattr(self, 'device_mode', 'adc') == '555':
-            expected_channels = self.config.get('channels', [])
-            actual_channels = self.arduino_status.get('channels')
-            if actual_channels is None:
-                # Some 555 firmwares ACK without echoing values; use desired channels if
-                # command stage succeeded and no status payload was provided.
-                actual_channels = expected_channels
-                self.arduino_status['channels'] = actual_channels
-            if expected_channels != actual_channels:
-                self.log_status(f"MISMATCH: Expected channels {expected_channels}, got {actual_channels}")
-                return False
-            if self.arduino_status.get('repeat') is not None:
-                if self.arduino_status['repeat'] != self.config.get('repeat'):
-                    self.log_status(
-                        f"MISMATCH: Expected repeat {self.config.get('repeat')}, got {self.arduino_status['repeat']}"
-                    )
-                    return False
-            self.log_status(f"555 configuration matches: {actual_channels}")
-            return True
-
-        # Check if we have valid status data
-        if self.arduino_status['channels'] is None:
-            self.log_status("No status data received yet")
-            return False
-        
-        # Compare channels (most critical)
-        # For array mode with duplicate channels (dual MUX), Arduino may echo unique channels only
-        expected_channels = self.config.get('channels', [])
-        actual_channels = self.arduino_status['channels']
-        
-        # First try exact match
-        if expected_channels == actual_channels:
-            pass  # Match successful
-        elif self.is_array_sensor_selection_mode():
-            # In array sensor selection mode, Arduino might deduplicate the echo
-            # Check if unique versions match
-            expected_unique = []
-            for ch in expected_channels:
-                if ch not in expected_unique:
-                    expected_unique.append(ch)
-            actual_unique = []
-            for ch in actual_channels:
-                if ch not in actual_unique:
-                    actual_unique.append(ch)
-            
-            if expected_unique != actual_unique:
-                self.log_status(f"MISMATCH: Expected channels {expected_channels}, got {actual_channels}")
-                return False
-        else:
-            self.log_status(f"MISMATCH: Expected channels {expected_channels}, got {actual_channels}")
-            return False
-        
-        # Check other parameters (optional - only if they were parsed)
-        if self.arduino_status['repeat'] is not None:
-            if self.arduino_status['repeat'] != self.config.get('repeat'):
-                self.log_status(f"MISMATCH: Expected repeat {self.config.get('repeat')}, got {self.arduino_status['repeat']}")
-                return False
-        
-        # All critical checks passed
-        self.log_status(f"Configuration matches: {actual_channels}")
-        return True
+        request = self._build_adc_configuration_request()
+        result = self.adc_configuration_service.verify_configuration_state(
+            request,
+            self.arduino_status,
+            resolved_device_mode=str(getattr(self, 'device_mode', 'adc')),
+        )
+        for message in result.messages:
+            self.log_status(message)
+        return result.success
     
     def update_start_button_state(self):
         """Update Start button state based on configuration validity."""
         if self.serial_port and self.serial_port.is_open and not self.is_capturing:
             if self.config_is_valid:
-                self.start_btn.setEnabled(True)
-                self.start_btn.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; font-weight: bold; }")
-                self.start_btn.setText("Start ✓")
+                self._apply_start_button_state(build_start_ready_state())
             else:
-                self.start_btn.setEnabled(False)
-                self.start_btn.setStyleSheet("QPushButton { background-color: #CCCCCC; color: #666666; font-weight: bold; }")
-                self.start_btn.setText("Start (Configure First)")
+                self._apply_start_button_state(build_start_needs_config_state())
         else:
-            self.start_btn.setEnabled(False)
+            self._apply_start_button_state(build_start_unavailable_state())
 
     # ========================================================================
     # Channel Management

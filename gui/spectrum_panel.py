@@ -102,15 +102,31 @@ class SpectrumPanelMixin:
 
     def load_spectrum_settings_from_path(self, file_path, log_message=True):
         path, loaded_settings = load_settings_payload(file_path, payload_key="spectrum_settings")
-        self._apply_spectrum_settings(loaded_settings)
-        filter_settings = loaded_settings.get('filter_settings')
-        if filter_settings:
-            self.apply_filter_settings(filter_settings, reprocess_existing=False)
+        self._spectrum_settings_loading = True
+        try:
+            startup_settings = dict(loaded_settings or {})
+            filter_settings = startup_settings.get('filter_settings')
+            startup_filter_settings = None
+            if filter_settings:
+                startup_filter_settings = {
+                    **filter_settings,
+                    'enabled': False,
+                    'notches': [dict(notch) for notch in filter_settings.get('notches', [])],
+                }
+                startup_settings['filter_settings'] = startup_filter_settings
+
+            self._apply_spectrum_settings(startup_settings)
+            if startup_filter_settings:
+                self.apply_filter_settings(startup_filter_settings, reprocess_existing=False)
+        finally:
+            self._spectrum_settings_loading = False
         if log_message:
             self.log_status(f"Loaded spectrum settings: {path}")
         return True
 
     def save_last_spectrum_settings(self):
+        if getattr(self, '_spectrum_settings_loading', False):
+            return
         try:
             self.save_spectrum_settings_to_path(self._get_last_spectrum_settings_path(), log_message=False)
         except Exception as e:
@@ -355,14 +371,16 @@ class SpectrumPanelMixin:
         self.filter_order_spin.setValue(FILTER_DEFAULT_ORDER)
         filter_layout.addWidget(self.filter_order_spin, 0, 4)
 
-        filter_layout.addWidget(QLabel('Low cutoff (Hz):'), 0, 5)
+        self.filter_low_cutoff_label = QLabel('Low cutoff (Hz):')
+        filter_layout.addWidget(self.filter_low_cutoff_label, 0, 5)
         self.filter_low_cutoff_spin = QDoubleSpinBox()
         self.filter_low_cutoff_spin.setRange(0.01, 1_000_000.0)
         self.filter_low_cutoff_spin.setDecimals(2)
         self.filter_low_cutoff_spin.setValue(FILTER_DEFAULT_LOW_CUTOFF_HZ)
         filter_layout.addWidget(self.filter_low_cutoff_spin, 0, 6)
 
-        filter_layout.addWidget(QLabel('High cutoff (Hz):'), 0, 7)
+        self.filter_high_cutoff_label = QLabel('High cutoff (Hz):')
+        filter_layout.addWidget(self.filter_high_cutoff_label, 0, 7)
         self.filter_high_cutoff_spin = QDoubleSpinBox()
         self.filter_high_cutoff_spin.setRange(0.01, 1_000_000.0)
         self.filter_high_cutoff_spin.setDecimals(2)
@@ -488,6 +506,7 @@ class SpectrumPanelMixin:
         root_layout.addWidget(plot_group)
 
         self.spectrum_mode_combo.currentTextChanged.connect(self._on_spectrum_mode_changed)
+        self.filter_main_type_combo.currentTextChanged.connect(self._update_filter_cutoff_ui)
         self._on_spectrum_mode_changed(self.spectrum_mode_combo.currentText())
         self._apply_filter_widgets(self.get_default_filter_settings())
         self._connect_spectrum_settings_autosave()
@@ -543,6 +562,24 @@ class SpectrumPanelMixin:
         }
         return mapping.get(code, 'None')
 
+    def _update_filter_cutoff_ui(self, *_):
+        main_type = self._filter_main_type_to_code(self.filter_main_type_combo.currentText())
+
+        show_low = main_type in ('lowpass', 'bandpass')
+        show_high = main_type in ('highpass', 'bandpass')
+
+        if hasattr(self, 'filter_low_cutoff_label'):
+            self.filter_low_cutoff_label.setText('Cutoff (Hz):' if main_type == 'lowpass' else 'Low cutoff (Hz):')
+            self.filter_low_cutoff_label.setVisible(show_low)
+        if hasattr(self, 'filter_low_cutoff_spin'):
+            self.filter_low_cutoff_spin.setVisible(show_low)
+
+        if hasattr(self, 'filter_high_cutoff_label'):
+            self.filter_high_cutoff_label.setText('Cutoff (Hz):' if main_type == 'highpass' else 'High cutoff (Hz):')
+            self.filter_high_cutoff_label.setVisible(show_high)
+        if hasattr(self, 'filter_high_cutoff_spin'):
+            self.filter_high_cutoff_spin.setVisible(show_high)
+
     def get_filter_settings_from_ui(self) -> dict:
         return {
             'enabled': bool(self.filter_master_check.isChecked()),
@@ -591,12 +628,16 @@ class SpectrumPanelMixin:
         self.notch3_enable_check.setChecked(bool(notches[2].get('enabled', FILTER_NOTCH3_DEFAULT_ENABLED)))
         self.notch3_freq_spin.setValue(float(notches[2].get('freq_hz', FILTER_NOTCH3_DEFAULT_FREQ_HZ)))
         self.notch3_q_spin.setValue(float(notches[2].get('q', FILTER_NOTCH3_DEFAULT_Q)))
+        self._update_filter_cutoff_ui()
 
     def on_apply_filter_clicked(self):
         settings = self.get_filter_settings_from_ui()
-        success, error = self.apply_filter_settings(settings, reprocess_existing=True)
+        reprocess_existing = not bool(getattr(self, 'is_capturing', False))
+        success, error = self.apply_filter_settings(settings, reprocess_existing=reprocess_existing)
         if success:
             state = 'ON' if settings.get('enabled') else 'OFF'
+            if settings.get('enabled') and not reprocess_existing:
+                self.log_status('Filtering will apply to incoming live data without reprocessing the full capture buffer')
             self.log_status(f'Filtering applied ({state})')
             self.trigger_plot_update()
             self.update_spectrum()

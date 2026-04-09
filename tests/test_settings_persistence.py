@@ -25,12 +25,16 @@ def workspace_tempdir(prefix: str):
 class SimpleSpin:
     def __init__(self, value=0.0):
         self._value = value
+        self.visible = True
 
     def value(self):
         return self._value
 
     def setValue(self, value):
         self._value = value
+
+    def setVisible(self, visible):
+        self.visible = bool(visible)
 
 
 class SimpleCheck:
@@ -63,6 +67,21 @@ class SimpleCombo:
 
     def setCurrentIndex(self, index):
         self._text = self._items[index]
+
+
+class SimpleLabel:
+    def __init__(self, text=""):
+        self._text = text
+        self.visible = True
+
+    def text(self):
+        return self._text
+
+    def setText(self, text):
+        self._text = text
+
+    def setVisible(self, visible):
+        self.visible = bool(visible)
 
 
 class SimpleTimer:
@@ -145,6 +164,7 @@ class ShearSettingsHarness(ShearPanelMixin):
 class SpectrumSettingsHarness(SpectrumPanelMixin):
     def __init__(self, settings_path: Path):
         self._settings_path = settings_path
+        self._spectrum_settings_loading = False
         self.log_messages = []
         self.applied_filter_settings = None
         self.spectrum_timer = SimpleTimer()
@@ -169,7 +189,9 @@ class SpectrumSettingsHarness(SpectrumPanelMixin):
         self.filter_master_check = SimpleCheck(True)
         self.filter_main_type_combo = SimpleCombo(["None", "Low-pass", "High-pass", "Band-pass"], current="Band-pass")
         self.filter_order_spin = SimpleSpin(3)
+        self.filter_low_cutoff_label = SimpleLabel("Low cutoff (Hz):")
         self.filter_low_cutoff_spin = SimpleSpin(44.0)
+        self.filter_high_cutoff_label = SimpleLabel("High cutoff (Hz):")
         self.filter_high_cutoff_spin = SimpleSpin(333.0)
         self.notch1_enable_check = SimpleCheck(True)
         self.notch1_freq_spin = SimpleSpin(60.0)
@@ -180,6 +202,9 @@ class SpectrumSettingsHarness(SpectrumPanelMixin):
         self.notch3_enable_check = SimpleCheck(True)
         self.notch3_freq_spin = SimpleSpin(180.0)
         self.notch3_q_spin = SimpleSpin(35.0)
+        self.plot_update_triggered = False
+        self.spectrum_updated = False
+        self.is_capturing = False
 
     def _get_last_spectrum_settings_path(self):
         return self._settings_path
@@ -187,6 +212,12 @@ class SpectrumSettingsHarness(SpectrumPanelMixin):
     def apply_filter_settings(self, settings: dict, reprocess_existing: bool = True):
         self.applied_filter_settings = (settings, reprocess_existing)
         return True, ""
+
+    def trigger_plot_update(self):
+        self.plot_update_triggered = True
+
+    def update_spectrum(self):
+        self.spectrum_updated = True
 
     def log_status(self, message: str):
         self.log_messages.append(message)
@@ -257,9 +288,44 @@ class SettingsPersistenceTests(unittest.TestCase):
 
             self.assertEqual(harness.spectrum_mode_combo.currentText(), "Single FFT")
             self.assertEqual(harness.filter_main_type_combo.currentText(), "Band-pass")
+            self.assertFalse(harness.filter_master_check.isChecked())
             self.assertEqual(harness.spectrum_timer.interval_ms, int(1000 / 7))
             self.assertIsNotNone(harness.applied_filter_settings)
+            self.assertFalse(harness.applied_filter_settings[0]["enabled"])
             self.assertFalse(harness.applied_filter_settings[1])
+
+    def test_spectrum_filter_cutoff_ui_matches_filter_type(self):
+        harness = SpectrumSettingsHarness(Path("unused.json"))
+
+        harness.filter_main_type_combo.setCurrentText("Low-pass")
+        harness._update_filter_cutoff_ui()
+        self.assertEqual(harness.filter_low_cutoff_label.text(), "Cutoff (Hz):")
+        self.assertTrue(harness.filter_low_cutoff_spin.visible)
+        self.assertFalse(harness.filter_high_cutoff_spin.visible)
+
+        harness.filter_main_type_combo.setCurrentText("High-pass")
+        harness._update_filter_cutoff_ui()
+        self.assertEqual(harness.filter_high_cutoff_label.text(), "Cutoff (Hz):")
+        self.assertFalse(harness.filter_low_cutoff_spin.visible)
+        self.assertTrue(harness.filter_high_cutoff_spin.visible)
+
+        harness.filter_main_type_combo.setCurrentText("Band-pass")
+        harness._update_filter_cutoff_ui()
+        self.assertEqual(harness.filter_low_cutoff_label.text(), "Low cutoff (Hz):")
+        self.assertEqual(harness.filter_high_cutoff_label.text(), "High cutoff (Hz):")
+        self.assertTrue(harness.filter_low_cutoff_spin.visible)
+        self.assertTrue(harness.filter_high_cutoff_spin.visible)
+
+    def test_spectrum_live_filter_apply_skips_full_reprocess(self):
+        harness = SpectrumSettingsHarness(Path("unused.json"))
+        harness.is_capturing = True
+
+        harness.on_apply_filter_clicked()
+
+        self.assertIsNotNone(harness.applied_filter_settings)
+        self.assertFalse(harness.applied_filter_settings[1])
+        self.assertTrue(harness.plot_update_triggered)
+        self.assertTrue(harness.spectrum_updated)
 
 
 if __name__ == "__main__":

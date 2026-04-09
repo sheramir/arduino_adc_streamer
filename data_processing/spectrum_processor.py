@@ -12,6 +12,8 @@ from typing import Dict, List
 import numpy as np
 from PyQt6.QtCore import QThread, pyqtSignal
 
+from data_processing.adc_filter_engine import ADCFilterEngine, SCIPY_FILTERS_AVAILABLE
+
 
 class SpectrumWorkerThread(QThread):
     """Background worker thread for spectrum computations."""
@@ -158,6 +160,8 @@ def _compute_spectrum_payload(payload: dict) -> dict:
     remove_dc = bool(payload['remove_dc'])
     welch_segment = int(payload['welch_segment'])
     welch_overlap = float(payload['welch_overlap'])
+    filter_settings = payload.get('filter_settings')
+    filter_engine = ADCFilterEngine() if filter_settings and SCIPY_FILTERS_AVAILABLE else None
 
     channels_out = []
     freqs_ref = None
@@ -184,6 +188,16 @@ def _compute_spectrum_payload(payload: dict) -> dict:
                         uniform_ts = np.arange(t0, t1, dt_sec, dtype=np.float64)
                         if uniform_ts.size > 8:
                             samples = np.interp(uniform_ts, timestamps, samples)
+                            timestamps = uniform_ts
+
+        if filter_settings and filter_engine is not None and fs_hz > 0 and samples.size > 8:
+            try:
+                samples = filter_engine.filter_signal(filter_settings, samples, fs_hz)
+            except Exception as exc:
+                return {
+                    'status': 'error',
+                    'message': f'Filter error: {exc}',
+                }
 
         requested_window_samples = int(channel_entry.get('window_samples', 0))
 
@@ -277,39 +291,34 @@ class SpectrumProcessorMixin:
             self.spectrum_worker.wait(1500)
 
     def _extract_recent_sweeps(self, required_sweeps: int):
-        data_buffer = self.get_active_data_buffer()
-        if data_buffer is None or self.samples_per_sweep <= 0:
+        if self.samples_per_sweep <= 0:
             return None
 
+        if hasattr(self, 'get_spectrum_source_state'):
+            data_buffer, start_abs, end_abs = self.get_spectrum_source_state()
+        else:
+            data_buffer = self.get_active_data_buffer()
+            with self.buffer_lock:
+                current_sweep_count = self.sweep_count
+                current_write_index = self.buffer_write_index
+                actual_sweeps = min(current_sweep_count, self.MAX_SWEEPS_BUFFER)
+            start_abs = max(0, current_write_index - actual_sweeps)
+            end_abs = current_write_index
+
+        if data_buffer is None:
+            return None
+
+        available_sweeps = max(0, int(end_abs) - int(start_abs))
+        if available_sweeps <= 0:
+            return None
+
+        take_sweeps = max(1, min(required_sweeps, available_sweeps))
+        take_start_abs = int(end_abs) - take_sweeps
+
         with self.buffer_lock:
-            current_sweep_count = self.sweep_count
-            current_write_index = self.buffer_write_index
-
-            actual_sweeps = min(current_sweep_count, self.MAX_SWEEPS_BUFFER)
-            if actual_sweeps <= 0:
-                return None
-
-            take_sweeps = max(1, min(required_sweeps, actual_sweeps))
-            write_pos = current_write_index % self.MAX_SWEEPS_BUFFER
-
-            if actual_sweeps < self.MAX_SWEEPS_BUFFER:
-                start_idx = max(0, actual_sweeps - take_sweeps)
-                data_array = data_buffer[start_idx:actual_sweeps, :].copy()
-                sweep_timestamps = self.sweep_timestamps_buffer[start_idx:actual_sweeps].copy()
-            else:
-                start_pos = (write_pos - take_sweeps) % self.MAX_SWEEPS_BUFFER
-                if start_pos < write_pos:
-                    data_array = data_buffer[start_pos:write_pos, :].copy()
-                    sweep_timestamps = self.sweep_timestamps_buffer[start_pos:write_pos].copy()
-                else:
-                    data_array = np.concatenate([
-                        data_buffer[start_pos:, :],
-                        data_buffer[:write_pos, :]
-                    ])
-                    sweep_timestamps = np.concatenate([
-                        self.sweep_timestamps_buffer[start_pos:],
-                        self.sweep_timestamps_buffer[:write_pos]
-                    ])
+            positions = np.arange(take_start_abs, int(end_abs), dtype=np.int64) % self.MAX_SWEEPS_BUFFER
+            data_array = data_buffer[positions, :].copy()
+            sweep_timestamps = self.sweep_timestamps_buffer[positions].copy()
 
         return data_array, sweep_timestamps
 
@@ -472,6 +481,14 @@ class SpectrumProcessorMixin:
             'welch_overlap': spectrum_settings['welch_overlap'],
             'channels': payload_channels,
         }
+
+        if hasattr(self, 'should_filter_adc_data') and self.should_filter_adc_data():
+            filter_settings = getattr(self, 'filter_settings', None)
+            if filter_settings and SCIPY_FILTERS_AVAILABLE:
+                payload['filter_settings'] = {
+                    **filter_settings,
+                    'notches': [dict(notch) for notch in filter_settings.get('notches', [])],
+                }
 
         return payload, None
 

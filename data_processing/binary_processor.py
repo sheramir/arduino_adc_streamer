@@ -116,9 +116,6 @@ class BinaryProcessorMixin:
                 # Keep uint16 view for archive (preserves integer format); cast to float32 for processing.
                 block_u16 = samples[:total_samples].reshape(sweeps_in_block, samples_per_sweep)
                 block_samples_array = block_u16.astype(np.float32)
-                total_fs_hz = (1000000.0 / avg_sample_time_us) if avg_sample_time_us > 0 else 0.0
-                filtered_block_array = block_samples_array
-
                 # Track block sizing for timing export (keep only recent)
                 timing.block_sample_counts.append(total_samples)
                 timing.block_sweeps_counts.append(sweeps_in_block)
@@ -182,17 +179,10 @@ class BinaryProcessorMixin:
                         block_write_base + np.arange(sweeps_in_block)
                     ) % self.MAX_SWEEPS_BUFFER
                     self.raw_data_buffer[positions] = block_samples_array
-                    self.processed_data_buffer[positions] = filtered_block_array.astype(np.float32, copy=False)
+                    self.processed_data_buffer[positions] = block_samples_array.astype(np.float32, copy=False)
                     self.sweep_timestamps_buffer[positions] = sweep_timestamps_sec
                     self.buffer_write_index += sweeps_in_block
                     self.sweep_count += sweeps_in_block
-
-                should_filter_live_adc = False
-                if hasattr(self, 'should_filter_adc_data'):
-                    should_filter_live_adc = bool(self.should_filter_adc_data())
-
-                if should_filter_live_adc and hasattr(self, 'enqueue_live_adc_filter'):
-                    self.enqueue_live_adc_filter(block_samples_array, total_fs_hz, block_write_base, sweeps_in_block)
 
                 # Cache avg sample time so update_plot avoids O(n) list sum on every frame.
                 self._cached_avg_sample_time_sec = (

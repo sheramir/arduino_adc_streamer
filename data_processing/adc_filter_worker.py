@@ -1,7 +1,7 @@
 """
 ADC Filter Worker
 =================
-Background worker for live ADC-only filtering.
+Background worker for latest-only ADC display filtering.
 """
 
 from __future__ import annotations
@@ -14,21 +14,27 @@ from data_processing.adc_filter_engine import ADCFilterEngine
 
 
 class ADCFilterWorkerThread(QThread):
-    """Background worker that filters ADC blocks away from the GUI thread."""
+    """Background worker that filters ADC windows away from the GUI thread."""
 
     result_ready = pyqtSignal(object)
     error_occurred = pyqtSignal(str)
 
     def __init__(self):
         super().__init__()
-        self._queue = queue.Queue()
+        self._queue = queue.Queue(maxsize=1)
         self._running = True
         self._engine = ADCFilterEngine()
         self._last_signature = None
         self._runtime_plan = {}
+        self._last_generation = None
 
     def submit(self, payload: dict):
         try:
+            if self._queue.full():
+                try:
+                    self._queue.get_nowait()
+                except queue.Empty:
+                    pass
             self._queue.put_nowait(payload)
         except Exception:
             pass
@@ -44,6 +50,14 @@ class ADCFilterWorkerThread(QThread):
                 break
 
             try:
+                mode = str(payload.get("mode", "timeseries_window"))
+                generation = int(payload.get("generation", 0))
+                if generation != self._last_generation:
+                    self._last_signature = None
+                    self._runtime_plan = {}
+                    self._last_generation = generation
+
+                channel_rates = payload.get("channel_fs_by_channel") or {}
                 signature = payload["signature"]
                 if signature != self._last_signature:
                     self._runtime_plan = self._engine.build_runtime_plan(
@@ -51,12 +65,27 @@ class ADCFilterWorkerThread(QThread):
                         payload["total_fs_hz"],
                         payload["channels"],
                         payload["repeat_count"],
+                        sweep_timestamps_sec=payload.get("sweep_timestamps_sec"),
+                        channel_fs_by_channel=channel_rates,
                     )
-                    self._engine.reset_runtime_states(self._runtime_plan)
                     self._last_signature = signature
+
+                if mode == "timeseries_window":
+                    self._engine.reset_runtime_states(self._runtime_plan)
+                    filtered_window = self._engine.filter_block(self._runtime_plan, payload["window_data"])
+                    self.result_ready.emit({
+                        "mode": mode,
+                        "generation": payload.get("generation", 0),
+                        "snapshot_key": payload["snapshot_key"],
+                        "sweep_timestamps_sec": payload["sweep_timestamps_sec"],
+                        "filtered_data": filtered_window,
+                    })
+                    continue
 
                 filtered_block = self._engine.filter_block(self._runtime_plan, payload["block_data"])
                 self.result_ready.emit({
+                    "mode": mode,
+                    "generation": payload.get("generation", 0),
                     "write_base": payload["write_base"],
                     "sweeps_in_block": payload["sweeps_in_block"],
                     "filtered_block": filtered_block,
@@ -67,6 +96,11 @@ class ADCFilterWorkerThread(QThread):
     def stop(self):
         self._running = False
         try:
+            if self._queue.full():
+                try:
+                    self._queue.get_nowait()
+                except queue.Empty:
+                    pass
             self._queue.put_nowait(None)
         except Exception:
             pass

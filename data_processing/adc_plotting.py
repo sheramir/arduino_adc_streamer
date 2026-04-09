@@ -180,6 +180,18 @@ class ADCPlottingMixin:
         if active_data_buffer is None or self.sweep_timestamps_buffer is None:
             return None
 
+        live_snapshot = self._get_live_plot_window_snapshot(active_data_buffer)
+        if live_snapshot is None:
+            return None
+
+        data_array, timestamps_array, _snapshot_key = live_snapshot
+        return data_array, timestamps_array
+
+    def _get_live_plot_window_snapshot(self, active_data_buffer):
+        """Return the trailing live window plus a stable key for worker-cached filtering."""
+        if active_data_buffer is None or self.sweep_timestamps_buffer is None:
+            return None
+
         with self.buffer_lock:
             current_sweep_count = self.sweep_count
             current_write_index = self.buffer_write_index
@@ -189,12 +201,19 @@ class ADCPlottingMixin:
             return None
 
         window_sweeps = min(self.window_size_spin.value(), MAX_PLOT_SWEEPS, actual_sweeps)
-        return self._extract_recent_buffer_window(
+        snapshot = self._extract_recent_buffer_window(
             active_data_buffer,
             actual_sweeps,
             current_write_index,
             window_sweeps,
         )
+        if snapshot is None:
+            return None
+
+        data_array, timestamps_array = snapshot
+        generation = int(getattr(self, '_live_filter_generation', 0))
+        snapshot_key = (generation, int(current_write_index), int(window_sweeps))
+        return data_array, timestamps_array, snapshot_key
 
     def _prepare_channel_plot_series(self, spec, data_array, timestamps_array, avg_sample_time_sec, max_samples_per_series):
         """Build flattened channel samples/timestamps for plotting without changing behavior."""
@@ -345,8 +364,6 @@ class ADCPlottingMixin:
         self.is_updating_plot = True
 
         try:
-            active_data_buffer = self.get_active_data_buffer()
-
             if not self.config['channels']:
                 self._hide_all_adc_curves()
                 return
@@ -359,12 +376,34 @@ class ADCPlottingMixin:
                 return
 
             repeat_count = self.config['repeat']
-            plot_snapshot = self._get_plot_data_snapshot(active_data_buffer)
-            if plot_snapshot is None:
-                self._hide_all_adc_curves()
-                return
+            if (
+                hasattr(self, 'should_filter_live_timeseries_locally')
+                and self.should_filter_live_timeseries_locally()
+            ):
+                live_snapshot = self._get_live_plot_window_snapshot(self.raw_data_buffer)
+                if live_snapshot is None:
+                    self._hide_all_adc_curves()
+                    return
 
-            data_array, timestamps_array = plot_snapshot
+                data_array, timestamps_array, snapshot_key = live_snapshot
+                if hasattr(self, 'maybe_get_live_timeseries_filtered_snapshot'):
+                    filtered_snapshot = self.maybe_get_live_timeseries_filtered_snapshot(
+                        data_array,
+                        timestamps_array,
+                        snapshot_key,
+                    )
+                    if filtered_snapshot is None:
+                        return
+                    data_array, timestamps_array = filtered_snapshot
+            else:
+                active_data_buffer = self.get_active_data_buffer()
+                plot_snapshot = self._get_plot_data_snapshot(active_data_buffer)
+                if plot_snapshot is None:
+                    self._hide_all_adc_curves()
+                    return
+
+                data_array, timestamps_array = plot_snapshot
+
             if len(data_array) == 0 or len(timestamps_array) == 0:
                 self._hide_all_adc_curves()
                 return

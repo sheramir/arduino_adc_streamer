@@ -65,6 +65,10 @@ class CaptureLifecycleMixin:
         """Reset filter pipeline state and optionally shear processing."""
         self.filter_apply_pending = True
         self.reset_filter_states()
+        if hasattr(self, '_invalidate_timeseries_filter_cache'):
+            self._invalidate_timeseries_filter_cache()
+        if hasattr(self, '_reset_live_filtered_tracking'):
+            self._reset_live_filtered_tracking(preserve_existing=False)
         if reset_shear:
             self.reset_shear_processing_state()
 
@@ -245,6 +249,12 @@ class CaptureLifecycleMixin:
         self.plot_widget.setMenuEnabled(True)
 
         self.statusBar().showMessage("Connected - Static Display Mode")
+
+        if hasattr(self, 'should_filter_adc_data') and self.should_filter_adc_data():
+            try:
+                self.reprocess_filtered_buffer()
+            except Exception as exc:
+                self.log_status(f"WARNING: failed to rebuild filtered ADC buffer after capture: {exc}")
 
         self.update_plot()
 

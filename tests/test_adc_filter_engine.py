@@ -46,6 +46,34 @@ class ADCFilterEngineTests(unittest.TestCase):
         self.assertEqual(set(plan.keys()), {0, 1})
         np.testing.assert_allclose(filtered, block)
 
+    def test_estimate_channel_sample_rates_uses_sweep_timestamps(self):
+        engine = ADCFilterEngine()
+        sweep_rate_hz = 1488.0
+        sweep_timestamps = np.arange(16, dtype=np.float64) / sweep_rate_hz
+
+        rates = engine.estimate_channel_sample_rates(
+            total_fs_hz=83333.33,
+            channels=[0, 1, 2, 3, 4],
+            repeat_count=1,
+            sweep_timestamps_sec=sweep_timestamps,
+        )
+
+        self.assertEqual(set(rates.keys()), {0, 1, 2, 3, 4})
+        self.assertAlmostEqual(rates[0], sweep_rate_hz, delta=5.0)
+
+    @unittest.skipUnless(SCIPY_FILTERS_AVAILABLE, "SciPy not available")
+    def test_filter_signal_preserves_constant_level_without_zero_drop(self):
+        engine = ADCFilterEngine()
+        settings = build_default_filter_settings()
+        settings["main_type"] = "lowpass"
+        settings["low_cutoff_hz"] = 50.0
+        settings["notches"] = []
+        samples = np.full(64, 1.65, dtype=np.float64)
+
+        filtered = engine.filter_signal(settings, samples, channel_fs_hz=1500.0)
+
+        self.assertAlmostEqual(float(filtered[0]), 1.65, places=3)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -388,6 +388,18 @@ class ADCStreamerGUI(
         else:
             self.stop_spectrum_updates()
 
+        if current_tab == "Time Series":
+            if hasattr(self, 'spectrum_busy'):
+                self.spectrum_busy = False
+            if (
+                hasattr(self, 'should_filter_adc_data')
+                and self.should_filter_adc_data()
+                and hasattr(self, 'prepare_timeseries_filter_resume')
+            ):
+                self.prepare_timeseries_filter_resume()
+            self.trigger_plot_update()
+            self.update_force_plot()
+
         self.sync_visualization_capture_buttons()
 
     def get_current_visualization_tab_name(self) -> str:
@@ -454,6 +466,8 @@ class ADCStreamerGUI(
         """Start spectrum updates."""
         if not self.spectrum_timer.isActive():
             self.spectrum_timer.start()
+        self.spectrum_busy = False
+        QTimer.singleShot(0, self.update_spectrum)
 
     def stop_spectrum_updates(self):
         """Stop spectrum updates."""

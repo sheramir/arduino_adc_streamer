@@ -393,11 +393,15 @@ class SpectrumPanelMixin:
         self.notch1_freq_spin = QDoubleSpinBox()
         self.notch1_freq_spin.setRange(1.0, 1_000_000.0)
         self.notch1_freq_spin.setDecimals(2)
+        self.notch1_freq_spin.setSuffix(' Hz')
+        self.notch1_freq_spin.setToolTip('Notch center frequency in Hz')
         self.notch1_freq_spin.setValue(FILTER_NOTCH1_DEFAULT_FREQ_HZ)
         filter_layout.addWidget(self.notch1_freq_spin, 1, 1)
         self.notch1_q_spin = QDoubleSpinBox()
         self.notch1_q_spin.setRange(0.1, 200.0)
         self.notch1_q_spin.setDecimals(2)
+        self.notch1_q_spin.setPrefix('Q=')
+        self.notch1_q_spin.setToolTip('Notch quality factor (unitless). Approx. bandwidth = frequency / Q')
         self.notch1_q_spin.setValue(FILTER_NOTCH1_DEFAULT_Q)
         filter_layout.addWidget(self.notch1_q_spin, 1, 2)
 
@@ -407,11 +411,15 @@ class SpectrumPanelMixin:
         self.notch2_freq_spin = QDoubleSpinBox()
         self.notch2_freq_spin.setRange(1.0, 1_000_000.0)
         self.notch2_freq_spin.setDecimals(2)
+        self.notch2_freq_spin.setSuffix(' Hz')
+        self.notch2_freq_spin.setToolTip('Notch center frequency in Hz')
         self.notch2_freq_spin.setValue(FILTER_NOTCH2_DEFAULT_FREQ_HZ)
         filter_layout.addWidget(self.notch2_freq_spin, 1, 4)
         self.notch2_q_spin = QDoubleSpinBox()
         self.notch2_q_spin.setRange(0.1, 200.0)
         self.notch2_q_spin.setDecimals(2)
+        self.notch2_q_spin.setPrefix('Q=')
+        self.notch2_q_spin.setToolTip('Notch quality factor (unitless). Approx. bandwidth = frequency / Q')
         self.notch2_q_spin.setValue(FILTER_NOTCH2_DEFAULT_Q)
         filter_layout.addWidget(self.notch2_q_spin, 1, 5)
 
@@ -421,11 +429,15 @@ class SpectrumPanelMixin:
         self.notch3_freq_spin = QDoubleSpinBox()
         self.notch3_freq_spin.setRange(1.0, 1_000_000.0)
         self.notch3_freq_spin.setDecimals(2)
+        self.notch3_freq_spin.setSuffix(' Hz')
+        self.notch3_freq_spin.setToolTip('Notch center frequency in Hz')
         self.notch3_freq_spin.setValue(FILTER_NOTCH3_DEFAULT_FREQ_HZ)
         filter_layout.addWidget(self.notch3_freq_spin, 1, 7)
         self.notch3_q_spin = QDoubleSpinBox()
         self.notch3_q_spin.setRange(0.1, 200.0)
         self.notch3_q_spin.setDecimals(2)
+        self.notch3_q_spin.setPrefix('Q=')
+        self.notch3_q_spin.setToolTip('Notch quality factor (unitless). Approx. bandwidth = frequency / Q')
         self.notch3_q_spin.setValue(FILTER_NOTCH3_DEFAULT_Q)
         filter_layout.addWidget(self.notch3_q_spin, 1, 8)
 
@@ -433,9 +445,14 @@ class SpectrumPanelMixin:
         self.filter_apply_btn.clicked.connect(self.on_apply_filter_clicked)
         filter_layout.addWidget(self.filter_apply_btn, 2, 0)
 
+        self.filter_disable_btn = QPushButton('Turn Off Filter')
+        self.filter_disable_btn.clicked.connect(self.on_turn_off_filter_clicked)
+        self.filter_disable_btn.setEnabled(False)
+        filter_layout.addWidget(self.filter_disable_btn, 2, 1)
+
         self.filter_reset_btn = QPushButton('Reset Filter Defaults')
         self.filter_reset_btn.clicked.connect(self.on_reset_filter_defaults_clicked)
-        filter_layout.addWidget(self.filter_reset_btn, 2, 1, 1, 3)
+        filter_layout.addWidget(self.filter_reset_btn, 2, 2, 1, 3)
 
         root_layout.addWidget(filter_group)
 
@@ -445,6 +462,8 @@ class SpectrumPanelMixin:
         self.spectrum_plot_widget = pg.PlotWidget()
         self.spectrum_plot_widget.setBackground('w')
         self.spectrum_plot_widget.showGrid(x=True, y=True, alpha=0.3)
+        self.spectrum_plot_widget.setMouseEnabled(x=False, y=False)
+        self.spectrum_plot_widget.setMenuEnabled(False)
         self.spectrum_plot_widget.setLabel('left', 'PSD', units='')
         self.spectrum_plot_widget.setLabel('bottom', 'Frequency', units='Hz')
         self.spectrum_plot_widget.addLegend(offset=(10, 10))
@@ -601,6 +620,7 @@ class SpectrumPanelMixin:
             'notch3_freq_spin',
             'notch3_q_spin',
             'filter_apply_btn',
+            'filter_disable_btn',
             'filter_reset_btn',
         ]
 
@@ -622,6 +642,25 @@ class SpectrumPanelMixin:
 
         if log_message and not supported and hasattr(self, 'log_status'):
             self.log_status('Filtering is available only for ADC mode data')
+
+        self.refresh_filter_action_buttons()
+
+    def refresh_filter_action_buttons(self):
+        disable_btn = getattr(self, 'filter_disable_btn', None)
+        if disable_btn is None or not hasattr(disable_btn, 'setEnabled'):
+            return
+
+        supported = True
+        if hasattr(self, 'is_adc_filter_supported_mode'):
+            supported = bool(self.is_adc_filter_supported_mode())
+
+        if hasattr(self, 'filtering_enabled'):
+            filter_is_on = bool(self.filtering_enabled)
+        else:
+            check = getattr(self, 'filter_master_check', None)
+            filter_is_on = bool(check.isChecked()) if check is not None and hasattr(check, 'isChecked') else False
+
+        disable_btn.setEnabled(bool(supported and filter_is_on))
 
     def get_filter_settings_from_ui(self) -> dict:
         return {
@@ -673,13 +712,26 @@ class SpectrumPanelMixin:
         self.notch3_q_spin.setValue(float(notches[2].get('q', FILTER_NOTCH3_DEFAULT_Q)))
         self._update_filter_cutoff_ui()
         self.refresh_spectrum_filter_availability()
+        self.refresh_filter_action_buttons()
 
     def on_apply_filter_clicked(self):
         settings = self.get_filter_settings_from_ui()
+        has_active_filter_selection = (
+            settings.get('main_type') != 'none'
+            or any(bool(notch.get('enabled', False)) for notch in settings.get('notches', []))
+        )
+        if not settings.get('enabled') and has_active_filter_selection:
+            settings['enabled'] = True
+            self.filter_master_check.setChecked(True)
+            self.log_status('Filtering ON was enabled automatically because an active main filter or notch is selected')
         reprocess_existing = not bool(getattr(self, 'is_capturing', False))
         success, error = self.apply_filter_settings(settings, reprocess_existing=reprocess_existing)
         if success:
             state = 'ON' if settings.get('enabled') else 'OFF'
+            self.filtering_enabled = bool(settings.get('enabled'))
+            self.refresh_filter_action_buttons()
+            if hasattr(self, 'reset_spectrum_averaging'):
+                self.reset_spectrum_averaging()
             if settings.get('enabled') and not reprocess_existing:
                 self.log_status('Filtering will apply to incoming live data without reprocessing the full capture buffer')
             self.log_status(f'Filtering applied ({state})')
@@ -687,6 +739,24 @@ class SpectrumPanelMixin:
             self.update_spectrum()
         else:
             self.log_status(f'Filter apply failed: {error}')
+            QMessageBox.warning(self, 'Filter Error', error)
+
+    def on_turn_off_filter_clicked(self):
+        settings = self.get_filter_settings_from_ui()
+        settings['enabled'] = False
+        self.filter_master_check.setChecked(False)
+        reprocess_existing = not bool(getattr(self, 'is_capturing', False))
+        success, error = self.apply_filter_settings(settings, reprocess_existing=reprocess_existing)
+        if success:
+            self.filtering_enabled = False
+            self.refresh_filter_action_buttons()
+            if hasattr(self, 'reset_spectrum_averaging'):
+                self.reset_spectrum_averaging()
+            self.log_status('Filtering turned OFF')
+            self.trigger_plot_update()
+            self.update_spectrum()
+        else:
+            self.log_status(f'Filter turn-off failed: {error}')
             QMessageBox.warning(self, 'Filter Error', error)
 
     def on_reset_filter_defaults_clicked(self):
@@ -832,7 +902,7 @@ class SpectrumPanelMixin:
             band_mask = (freqs_show >= band_f1) & (freqs_show <= band_f2)
             if np.any(band_mask):
                 if mode == 'welch':
-                    integrate_trapezoid = getattr(np, 'trapezoid', np.trapz)
+                    integrate_trapezoid = np.trapezoid if hasattr(np, 'trapezoid') else np.lib.function_base.trapz
                     band_power = float(integrate_trapezoid(display_linear[band_mask], freqs_show[band_mask]))
                     band_rms = float(np.sqrt(max(band_power, 0.0)))
                 else:

@@ -21,6 +21,7 @@ class ForceOverlayHarness(ForceOverlayMixin):
         self.buffer_lock = threading.Lock()
         self.window_size_spin = FakeSpinBox(3)
         self.sweep_timestamps_buffer = np.zeros(self.MAX_SWEEPS_BUFFER, dtype=np.float64)
+        self.sweep_timestamps = np.array([], dtype=np.float64)
         self.sweep_count = 0
         self.buffer_write_index = 0
         self.is_capturing = False
@@ -56,14 +57,14 @@ class ForceOverlayTests(unittest.TestCase):
 
         self.assertEqual(harness._get_force_plot_time_window(), (4.0, 8.0))
 
-    def test_time_window_returns_none_for_full_view(self):
+    def test_time_window_uses_full_view_timestamp_span(self):
         harness = ForceOverlayHarness()
         harness.is_full_view = True
         harness.sweep_count = 3
         harness.buffer_write_index = 3
-        harness.sweep_timestamps_buffer[:3] = [1.0, 2.0, 3.0]
+        harness.sweep_timestamps = np.array([1.0, 2.0, 3.0], dtype=np.float64)
 
-        self.assertIsNone(harness._get_force_plot_time_window())
+        self.assertEqual(harness._get_force_plot_time_window(), (1.0, 3.0))
 
     def test_time_window_returns_none_without_adc_sweeps(self):
         harness = ForceOverlayHarness()

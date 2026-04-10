@@ -146,6 +146,23 @@ class ExportHarness(DataExporterMixin, FilterProcessorMixin):
 
 @unittest.skipUnless(SCIPY_FILTERS_AVAILABLE, "SciPy not available")
 class DataExporterTests(unittest.TestCase):
+    def test_export_prefers_fullest_available_source_over_short_archive_cache(self):
+        with workspace_tempdir("data_exporter_source_choice") as tmpdir:
+            harness = ExportHarness(tmpdir)
+            archive_path = tmpdir / "capture_cache.jsonl"
+            archive_path.write_text('{"metadata": {}}\n', encoding="utf-8")
+            harness._archive_path = str(archive_path)
+            harness.load_archive_data = lambda: (
+                [[1.0], [2.0], [3.0]],
+                [0.0, 0.1, 0.2],
+            )
+
+            source_sweeps, source_timestamps, export_source = harness._load_export_source_data(archive_path)
+
+            self.assertEqual(export_source, "full_view")
+            self.assertEqual(len(source_sweeps), len(harness.raw_data))
+            self.assertEqual(len(source_timestamps), len(harness.sweep_timestamps))
+
     def test_save_data_filters_csv_and_records_filter_metadata(self):
         with workspace_tempdir("data_exporter") as tmpdir:
             harness = ExportHarness(tmpdir)

@@ -18,6 +18,15 @@ class ForceOverlayMixin:
 
     def _get_force_plot_time_window(self):
         """Return the active ADC plot time span that the force overlay should match."""
+        if self.is_full_view:
+            timestamps = getattr(self, 'sweep_timestamps', None)
+            if timestamps is None or len(timestamps) == 0:
+                return None
+
+            min_time = float(timestamps[0])
+            max_time = float(timestamps[-1])
+            return min_time, max_time
+
         if self.sweep_timestamps_buffer is None:
             return None
 
@@ -27,9 +36,6 @@ class ForceOverlayMixin:
             actual_sweeps = min(current_sweep_count, self.MAX_SWEEPS_BUFFER)
 
             if actual_sweeps == 0:
-                return None
-
-            if self.is_full_view:
                 return None
 
             if self.is_capturing:

@@ -14,6 +14,11 @@ from PyQt6.QtWidgets import QMessageBox
 
 from config_constants import IADC_RESOLUTION_BITS
 from data_processing.force_state import get_force_runtime_state
+from file_operations.force_export_alignment import (
+    build_export_row_timestamps,
+    build_force_export_series,
+    get_nearest_force_values,
+)
 
 
 class DataExporterMixin:
@@ -73,31 +78,64 @@ class DataExporterMixin:
         except Exception:
             return False
 
+    def _choose_best_export_source(self, candidates):
+        """Pick the fullest available export source, preferring complete data."""
+        valid_candidates = [candidate for candidate in candidates if self._has_exportable_sweeps(candidate[0])]
+        if not valid_candidates:
+            return None, None, None
+
+        source_sweeps, source_timestamps, export_source = max(
+            valid_candidates,
+            key=lambda candidate: int(len(candidate[0])),
+        )
+
+        if len(valid_candidates) > 1:
+            candidate_lengths = {
+                candidate[2]: int(len(candidate[0]))
+                for candidate in valid_candidates
+            }
+            max_length = int(len(source_sweeps))
+            shorter_sources = [
+                f"{name}={length}"
+                for name, length in candidate_lengths.items()
+                if length < max_length
+            ]
+            if shorter_sources:
+                self.log_status(
+                    "Export source selection: using "
+                    f"{export_source} with {max_length} sweeps; ignoring shorter source(s): "
+                    + ", ".join(shorter_sources)
+                )
+
+        return source_sweeps, source_timestamps, export_source
+
     def _load_export_source_data(self, archive_path: Path | None):
+        candidates = []
+
         if archive_path is not None and archive_path.exists() and hasattr(self, 'load_archive_data'):
             if hasattr(self, '_finalize_archive_if_active'):
                 self._finalize_archive_if_active()
             sweeps, timestamps = self.load_archive_data()
             if self._has_exportable_sweeps(sweeps):
-                return (
+                candidates.append((
                     np.asarray(sweeps, dtype=np.float32),
                     np.asarray(timestamps, dtype=np.float64) if self._has_exportable_sweeps(timestamps) else None,
                     'archive',
-                )
+                ))
 
         if self._has_exportable_sweeps(getattr(self, 'raw_data', None)):
             timestamps = getattr(self, 'sweep_timestamps', None)
             timestamp_array = None
             if self._has_exportable_sweeps(timestamps):
                 timestamp_array = np.asarray(timestamps, dtype=np.float64)
-            return np.asarray(self.raw_data, dtype=np.float32), timestamp_array, 'full_view'
+            candidates.append((np.asarray(self.raw_data, dtype=np.float32), timestamp_array, 'full_view'))
 
         if (
             getattr(self, 'raw_data_buffer', None) is None
             or getattr(self, 'sweep_timestamps_buffer', None) is None
             or getattr(self, 'samples_per_sweep', 0) <= 0
         ):
-            return None, None, None
+            return self._choose_best_export_source(candidates)
 
         with self.buffer_lock:
             current_sweep_count = int(getattr(self, 'sweep_count', 0))
@@ -105,7 +143,7 @@ class DataExporterMixin:
             actual_sweeps = min(current_sweep_count, int(getattr(self, 'MAX_SWEEPS_BUFFER', current_sweep_count)))
 
             if actual_sweeps <= 0:
-                return None, None, None
+                return self._choose_best_export_source(candidates)
 
             if actual_sweeps < self.MAX_SWEEPS_BUFFER:
                 ordered_data = self.raw_data_buffer[:actual_sweeps].copy()
@@ -121,7 +159,12 @@ class DataExporterMixin:
                     self.sweep_timestamps_buffer[:write_pos],
                 ])
 
-        return ordered_data.astype(np.float32, copy=False), ordered_timestamps.astype(np.float64, copy=False), 'buffer'
+        candidates.append((
+            ordered_data.astype(np.float32, copy=False),
+            ordered_timestamps.astype(np.float64, copy=False),
+            'buffer',
+        ))
+        return self._choose_best_export_source(candidates)
     
     def save_data(self):
         """Save captured data to CSV file with metadata."""
@@ -215,16 +258,11 @@ class DataExporterMixin:
                 header = [f"CH{ch}" for ch in self.config['channels']] * repeat_count
 
             force_state = get_force_runtime_state(self)
+            force_series = build_force_export_series(force_state.data)
 
             # Determine if we have force data
-            has_force_x = any(d[1] != 0 for d in force_state.data) if force_state.data else False
-            has_force_z = any(d[2] != 0 for d in force_state.data) if force_state.data else False
-            
-            # Create a mapping of ADC timestamps to force data
-            force_dict = {}
-            if force_state.data:
-                for timestamp, x_force, z_force in force_state.data:
-                    force_dict[timestamp] = (x_force, z_force)
+            has_force_x = bool(force_series is not None and np.any(force_series.x_force != 0.0))
+            has_force_z = bool(force_series is not None and np.any(force_series.z_force != 0.0))
 
             selected_sweeps = np.asarray(source_sweeps[save_min:save_max], dtype=np.float32).copy()
             selected_timestamps = None
@@ -266,41 +304,21 @@ class DataExporterMixin:
                 if self.timing_state.capture_start_time and self.timing_state.capture_end_time:
                     capture_duration = self.timing_state.capture_end_time - self.timing_state.capture_start_time
 
-                # Approximate row timestamp in seconds from capture start (fallback only)
-                def get_row_timestamp(saved_idx):
-                    if capture_duration is None or saved_total <= 1:
-                        return None
-                    # Spread timestamps across the measured capture duration
-                    return (saved_idx / (saved_total - 1)) * capture_duration
-
-                # Helper to find closest force sample given the sweep timestamp (seconds)
-                def get_closest_force(sweep_time_s):
-                    if not force_dict or sweep_time_s is None:
-                        return (0.0, 0.0)
-                    closest_force = (0.0, 0.0)
-                    min_diff = float('inf')
-                    for f_time, (x, z) in force_dict.items():
-                        diff = abs(f_time - sweep_time_s)
-                        if diff < min_diff:
-                            min_diff = diff
-                            closest_force = (x, z)
-                    return closest_force
-
-                def resolve_sweep_time(saved_idx):
-                    if selected_timestamps is not None and saved_idx < len(selected_timestamps):
-                        try:
-                            return float(selected_timestamps[saved_idx])
-                        except Exception:
-                            pass
-                    return get_row_timestamp(saved_idx)
+                row_timestamps = build_export_row_timestamps(
+                    selected_timestamps=selected_timestamps,
+                    saved_total=saved_total,
+                    capture_duration_s=capture_duration,
+                )
 
                 for saved_index, sweep in enumerate(selected_sweeps):
-                    row_time = resolve_sweep_time(saved_index)
+                    row_time = None
+                    if row_timestamps is not None and saved_index < len(row_timestamps):
+                        row_time = float(row_timestamps[saved_index])
                     row = np.asarray(sweep).tolist()
                     if is_555_mode:
                         timestamp_to_write = row_time if row_time is not None else 0.0
                         row.insert(0, float(timestamp_to_write))
-                    row.extend(list(get_closest_force(row_time)))
+                    row.extend(list(get_nearest_force_values(force_series, row_time)))
                     writer.writerow(row)
 
                 saved_index = saved_total

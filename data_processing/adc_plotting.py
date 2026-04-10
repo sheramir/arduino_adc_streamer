@@ -220,6 +220,41 @@ class ADCPlottingMixin:
         snapshot_key = (generation, int(current_write_index), int(window_sweeps))
         return data_array, timestamps_array, snapshot_key
 
+    def _get_live_plot_filter_snapshot(self, active_data_buffer):
+        """Return a live filter input window with extra history to warm up causal filters."""
+        if active_data_buffer is None or self.sweep_timestamps_buffer is None:
+            return None
+
+        with self.buffer_lock:
+            current_sweep_count = self.sweep_count
+            current_write_index = self.buffer_write_index
+
+        actual_sweeps = min(current_sweep_count, self.MAX_SWEEPS_BUFFER)
+        if actual_sweeps == 0:
+            return None
+
+        display_sweeps = min(self.window_size_spin.value(), MAX_PLOT_SWEEPS, actual_sweeps)
+        if display_sweeps <= 0:
+            return None
+
+        available_history_sweeps = max(0, actual_sweeps - display_sweeps)
+        history_sweeps = min(available_history_sweeps, max(display_sweeps, 256))
+        filter_sweeps = display_sweeps + history_sweeps
+
+        snapshot = self._extract_recent_buffer_window(
+            active_data_buffer,
+            actual_sweeps,
+            current_write_index,
+            filter_sweeps,
+        )
+        if snapshot is None:
+            return None
+
+        data_array, timestamps_array = snapshot
+        generation = int(getattr(self, '_live_filter_generation', 0))
+        snapshot_key = (generation, int(current_write_index), int(display_sweeps), int(history_sweeps))
+        return data_array, timestamps_array, int(display_sweeps), snapshot_key
+
     def _prepare_channel_plot_series(self, spec, data_array, timestamps_array, avg_sample_time_sec, max_samples_per_series):
         """Build flattened channel samples/timestamps for plotting without changing behavior."""
         sample_indices = spec['sample_indices']
@@ -391,11 +426,20 @@ class ADCPlottingMixin:
                     return
 
                 data_array, timestamps_array, snapshot_key = live_snapshot
+                filter_snapshot = self._get_live_plot_filter_snapshot(self.raw_data_buffer)
+                filter_data_array = data_array
+                filter_timestamps_array = timestamps_array
+                display_sweeps = len(data_array)
+                if filter_snapshot is not None:
+                    filter_data_array, filter_timestamps_array, display_sweeps, snapshot_key = filter_snapshot
                 if hasattr(self, 'maybe_get_live_timeseries_filtered_snapshot'):
                     filtered_snapshot = self.maybe_get_live_timeseries_filtered_snapshot(
                         data_array,
                         timestamps_array,
                         snapshot_key,
+                        filter_data_array=filter_data_array,
+                        filter_timestamps_sec=filter_timestamps_array,
+                        display_sweeps=display_sweeps,
                     )
                     if filtered_snapshot is None:
                         return

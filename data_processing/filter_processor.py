@@ -231,9 +231,20 @@ class FilterProcessorMixin:
         data_array: np.ndarray,
         sweep_timestamps_sec: np.ndarray,
         snapshot_key,
+        *,
+        filter_data_array: np.ndarray | None = None,
+        filter_timestamps_sec: np.ndarray | None = None,
+        display_sweeps: int | None = None,
     ):
         if not self.should_filter_live_timeseries_locally():
             return data_array, sweep_timestamps_sec
+
+        if filter_data_array is None:
+            filter_data_array = data_array
+        if filter_timestamps_sec is None:
+            filter_timestamps_sec = sweep_timestamps_sec
+        if display_sweeps is None:
+            display_sweeps = len(data_array)
 
         if (
             self._timeseries_filter_cached_key == snapshot_key
@@ -257,9 +268,10 @@ class FilterProcessorMixin:
             if same_generation:
                 if self._timeseries_filter_pending_key != snapshot_key:
                     self.request_live_timeseries_filter_snapshot(
-                        data_array,
-                        sweep_timestamps_sec,
+                        filter_data_array,
+                        filter_timestamps_sec,
                         snapshot_key,
+                        display_sweeps=display_sweeps,
                     )
                 return self._timeseries_filter_cached_data, self._timeseries_filter_cached_timestamps
 
@@ -267,9 +279,10 @@ class FilterProcessorMixin:
             return data_array, sweep_timestamps_sec
 
         requested = self.request_live_timeseries_filter_snapshot(
-            data_array,
-            sweep_timestamps_sec,
+            filter_data_array,
+            filter_timestamps_sec,
             snapshot_key,
+            display_sweeps=display_sweeps,
         )
         if requested:
             return data_array, sweep_timestamps_sec
@@ -478,8 +491,13 @@ class FilterProcessorMixin:
         data_array: np.ndarray,
         sweep_timestamps_sec: np.ndarray,
         snapshot_key,
+        *,
+        display_sweeps: int | None = None,
     ) -> bool:
         snapshot_key = tuple(snapshot_key)
+        if display_sweeps is None:
+            display_sweeps = len(data_array)
+        display_sweeps = max(0, int(display_sweeps))
 
         if not self.should_filter_live_timeseries_locally():
             return False
@@ -528,6 +546,7 @@ class FilterProcessorMixin:
             'snapshot_key': snapshot_key,
             'window_data': np.asarray(data_array, dtype=np.float32).copy(),
             'sweep_timestamps_sec': np.asarray(sweep_timestamps_sec, dtype=np.float64).copy(),
+            'display_sweeps': display_sweeps,
         }
         worker.submit(payload)
         self._timeseries_filter_pending_key = snapshot_key
@@ -593,17 +612,20 @@ class FilterProcessorMixin:
             if filtered_data is None or filtered_timestamps is None:
                 return
 
+            display_sweeps = max(0, int(result.get('display_sweeps', 0) or 0))
+            filtered_data_array = np.asarray(filtered_data, dtype=np.float32)
+            filtered_timestamps_array = np.asarray(filtered_timestamps, dtype=np.float64)
+            if display_sweeps > 0:
+                if filtered_data_array.shape[0] > display_sweeps:
+                    filtered_data_array = filtered_data_array[-display_sweeps:].copy()
+                if filtered_timestamps_array.shape[0] > display_sweeps:
+                    filtered_timestamps_array = filtered_timestamps_array[-display_sweeps:].copy()
+
             if tuple(self._timeseries_filter_pending_key or ()) == snapshot_key:
                 self._timeseries_filter_pending_key = None
             self._timeseries_filter_cached_key = snapshot_key
-            self._timeseries_filter_cached_data = np.asarray(
-                filtered_data,
-                dtype=np.float32,
-            )
-            self._timeseries_filter_cached_timestamps = np.asarray(
-                filtered_timestamps,
-                dtype=np.float64,
-            )
+            self._timeseries_filter_cached_data = filtered_data_array
+            self._timeseries_filter_cached_timestamps = filtered_timestamps_array
 
             if hasattr(self, 'should_update_live_timeseries_display') and self.should_update_live_timeseries_display():
                 self.trigger_plot_update()

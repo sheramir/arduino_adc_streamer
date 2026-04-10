@@ -94,7 +94,28 @@ class FilterWorkerIntegrationTests(unittest.TestCase):
         self.assertEqual(payload["snapshot_key"], snapshot_key)
         np.testing.assert_allclose(payload["window_data"], data)
         np.testing.assert_allclose(payload["sweep_timestamps_sec"], timestamps)
+        self.assertEqual(payload["display_sweeps"], 2)
         self.assertEqual(harness._timeseries_filter_pending_key, snapshot_key)
+
+    def test_request_live_timeseries_filter_snapshot_keeps_history_for_warmup(self):
+        harness = FilterWorkerHarness()
+        data = np.array([[8.0, 9.0], [10.0, 11.0], [12.0, 13.0]], dtype=np.float32)
+        timestamps = np.array([0.1, 0.2, 0.3], dtype=np.float64)
+        snapshot_key = (0, 4, 2, 1)
+
+        submitted = harness.request_live_timeseries_filter_snapshot(
+            data,
+            timestamps,
+            snapshot_key,
+            display_sweeps=2,
+        )
+
+        self.assertTrue(submitted)
+        self.assertEqual(len(harness.adc_filter_worker.submissions), 1)
+        payload = harness.adc_filter_worker.submissions[0]
+        np.testing.assert_allclose(payload["window_data"], data)
+        np.testing.assert_allclose(payload["sweep_timestamps_sec"], timestamps)
+        self.assertEqual(payload["display_sweeps"], 2)
 
     def test_duplicate_live_timeseries_snapshot_request_is_skipped(self):
         harness = FilterWorkerHarness()
@@ -129,6 +150,31 @@ class FilterWorkerIntegrationTests(unittest.TestCase):
         np.testing.assert_allclose(harness._timeseries_filter_cached_data, filtered)
         np.testing.assert_allclose(harness._timeseries_filter_cached_timestamps, timestamps)
         self.assertEqual(harness.plot_updates, 1)
+
+    def test_timeseries_worker_result_trims_history_to_visible_window(self):
+        harness = FilterWorkerHarness()
+        snapshot_key = (0, 4, 2, 1)
+        filtered = np.array([[8.0, 9.0], [10.0, 11.0], [12.0, 13.0]], dtype=np.float32)
+        timestamps = np.array([0.1, 0.2, 0.3], dtype=np.float64)
+        harness._timeseries_filter_pending_key = snapshot_key
+
+        harness.on_adc_filter_worker_result({
+            "mode": "timeseries_window",
+            "generation": 0,
+            "snapshot_key": snapshot_key,
+            "sweep_timestamps_sec": timestamps,
+            "filtered_data": filtered,
+            "display_sweeps": 2,
+        })
+
+        np.testing.assert_allclose(
+            harness._timeseries_filter_cached_data,
+            np.array([[10.0, 11.0], [12.0, 13.0]], dtype=np.float32),
+        )
+        np.testing.assert_allclose(
+            harness._timeseries_filter_cached_timestamps,
+            np.array([0.2, 0.3], dtype=np.float64),
+        )
 
     def test_stale_timeseries_worker_result_updates_cached_window(self):
         harness = FilterWorkerHarness()

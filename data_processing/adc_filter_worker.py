@@ -79,6 +79,7 @@ class ADCFilterWorkerThread(QThread):
                         "snapshot_key": payload["snapshot_key"],
                         "sweep_timestamps_sec": payload["sweep_timestamps_sec"],
                         "filtered_data": filtered_window,
+                        "display_sweeps": payload.get("display_sweeps", 0),
                     })
                     continue
 

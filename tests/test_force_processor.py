@@ -2,7 +2,7 @@ import unittest
 from collections import deque
 from unittest.mock import patch
 
-from config_constants import FORCE_CALIBRATION_SAMPLES
+from config_constants import FORCE_CALIBRATION_SAMPLES, FORCE_STATUS_UPDATE_INTERVAL_SAMPLES
 from data_processing.force_processor import ForceProcessorMixin
 
 
@@ -47,6 +47,19 @@ class ForceProcessorHarness(ForceProcessorMixin):
 
 
 class ForceProcessorTests(unittest.TestCase):
+    def test_force_calibration_logs_ready_status_when_offsets_complete(self):
+        harness = ForceProcessorHarness()
+        harness.calibrate_force_sensors()
+
+        for value in range(FORCE_CALIBRATION_SAMPLES):
+            harness.process_force_data(float(value), float(value + 100.0))
+
+        self.assertFalse(harness.force_calibrating)
+        self.assertIn("Force sensors ready (calibrated to zero)", harness.logged)
+        self.assertTrue(
+            any(message.startswith("Force calibration complete:") for message in harness.logged)
+        )
+
     def test_force_samples_do_not_buffer_before_capture_starts(self):
         harness = ForceProcessorHarness()
         harness.calibrate_force_sensors()
@@ -78,6 +91,26 @@ class ForceProcessorTests(unittest.TestCase):
         self.assertAlmostEqual(x_force, 10.0)
         self.assertAlmostEqual(z_force, 20.0)
         self.assertEqual(harness.force_plot_timer.started, [25])
+
+    def test_force_status_label_updates_on_interval_boundary(self):
+        harness = ForceProcessorHarness()
+        harness.force_calibration_offset = {'x': 0.0, 'z': 0.0}
+        harness.is_capturing = True
+        harness.force_start_time = 5.0
+        harness.sweep_count = 4
+        harness.samples_per_sweep = 5
+
+        for sample_index in range(FORCE_STATUS_UPDATE_INTERVAL_SAMPLES):
+            with patch(
+                "data_processing.force_processor.time.time",
+                return_value=10.0 + sample_index,
+            ):
+                harness.process_force_data(float(sample_index), float(sample_index))
+
+        self.assertEqual(
+            harness.plot_info_label.text,
+            "ADC - Sweeps: 4 | Samples: 20  |  Force: 10 samples",
+        )
 
 
 if __name__ == "__main__":

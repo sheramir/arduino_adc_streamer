@@ -897,6 +897,47 @@ class ConfigurationMixin:
     # Channel Management
     # ========================================================================
 
+    def _reset_force_channel_checkbox_refs(self):
+        """Clear force-overlay checkbox references after the layout is rebuilt."""
+        self.force_x_checkbox = None
+        self.force_z_checkbox = None
+
+    def _should_show_force_channel_checkboxes(self) -> bool:
+        """Return True when the force overlay checkboxes should be present."""
+        force_port = getattr(self, 'force_serial_port', None)
+        return bool(force_port and force_port.is_open)
+
+    def _add_force_channel_checkboxes(self, start_index: int):
+        """Append force overlay checkboxes after the ADC channel checkboxes."""
+        if not self._should_show_force_channel_checkboxes():
+            return
+
+        from PyQt6.QtWidgets import QCheckBox
+
+        checkbox_specs = [
+            ("force_x_checkbox", "X Force [N]", "red"),
+            ("force_z_checkbox", "Z Force [N]", "blue"),
+        ]
+
+        for offset, (attribute_name, label, color) in enumerate(checkbox_specs):
+            checkbox = QCheckBox(label)
+            checkbox.setChecked(True)
+            checkbox.setStyleSheet(f"QCheckBox {{ color: {color}; }}")
+            checkbox.stateChanged.connect(self.trigger_plot_update)
+
+            position = start_index + offset
+            row = position // MAX_PLOT_COLUMNS
+            col = position % MAX_PLOT_COLUMNS
+            self.channel_checkboxes_layout.addWidget(checkbox, row, col)
+            setattr(self, attribute_name, checkbox)
+
+    def _set_force_channel_checkboxes_checked(self, checked: bool):
+        """Set both force-overlay channel toggles when they exist."""
+        if self.force_x_checkbox:
+            self.force_x_checkbox.setChecked(checked)
+        if self.force_z_checkbox:
+            self.force_z_checkbox.setChecked(checked)
+
     def update_channel_list(self):
         """Update the channel selector checkboxes based on configured channels."""
         # Clear existing checkboxes
@@ -909,6 +950,7 @@ class ConfigurationMixin:
             item = self.channel_checkboxes_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
+        self._reset_force_channel_checkbox_refs()
 
         if not self.config['channels']:
             return
@@ -927,45 +969,20 @@ class ConfigurationMixin:
             self.channel_checkboxes_layout.addWidget(checkbox, row, col)
 
             self.channel_checkboxes[spec['key']] = checkbox
-        
-        # Add force sensor checkboxes if force data is available
-        if self.force_serial_port and self.force_serial_port.is_open:
-            from PyQt6.QtWidgets import QCheckBox
-            # X Force checkbox
-            self.force_x_checkbox = QCheckBox("X Force [N]")
-            self.force_x_checkbox.setChecked(True)
-            self.force_x_checkbox.setStyleSheet("QCheckBox { color: red; }")
-            self.force_x_checkbox.stateChanged.connect(self.trigger_plot_update)
-            row = len(display_specs) // MAX_PLOT_COLUMNS
-            col = len(display_specs) % MAX_PLOT_COLUMNS
-            self.channel_checkboxes_layout.addWidget(self.force_x_checkbox, row, col)
-            
-            # Z Force checkbox
-            self.force_z_checkbox = QCheckBox("Z Force [N]")
-            self.force_z_checkbox.setChecked(True)
-            self.force_z_checkbox.setStyleSheet("QCheckBox { color: blue; }")
-            self.force_z_checkbox.stateChanged.connect(self.trigger_plot_update)
-            row = (len(display_specs) + 1) // MAX_PLOT_COLUMNS
-            col = (len(display_specs) + 1) % MAX_PLOT_COLUMNS
-            self.channel_checkboxes_layout.addWidget(self.force_z_checkbox, row, col)
+
+        self._add_force_channel_checkboxes(start_index=len(display_specs))
 
     def select_all_channels(self):
         """Select all channel checkboxes."""
         for checkbox in self.channel_checkboxes.values():
             checkbox.setChecked(True)
-        if self.force_x_checkbox:
-            self.force_x_checkbox.setChecked(True)
-        if self.force_z_checkbox:
-            self.force_z_checkbox.setChecked(True)
+        self._set_force_channel_checkboxes_checked(True)
 
     def deselect_all_channels(self):
         """Deselect all channel checkboxes."""
         for checkbox in self.channel_checkboxes.values():
             checkbox.setChecked(False)
-        if self.force_x_checkbox:
-            self.force_x_checkbox.setChecked(False)
-        if self.force_z_checkbox:
-            self.force_z_checkbox.setChecked(False)
+        self._set_force_channel_checkboxes_checked(False)
 
     # ========================================================================
     # Plot Update Triggers

@@ -253,8 +253,8 @@ MAX_SWEEPS_IN_MEMORY = 50000
 # Higher values = more force data for analysis, but more memory usage
 MAX_FORCE_SAMPLES = 50000
 
-# Number of samples collected when zeroing the force sensor offset
-FORCE_CALIBRATION_SAMPLES = 10
+# Number of raw samples collected when zeroing the force sensor offset
+FORCE_CALIBRATION_SAMPLES = 25
 
 # Force status label refresh cadence (every N force samples)
 FORCE_STATUS_UPDATE_INTERVAL_SAMPLES = 10
@@ -268,6 +268,9 @@ FORCE_THREAD_STOP_TIMEOUT_MS = 250
 # Newtons = calibrated_raw / FORCE_SENSOR_TO_NEWTON
 X_FORCE_SENSOR_TO_NEWTON = 44600.0
 Z_FORCE_SENSOR_TO_NEWTON = 44900.0
+
+# Plot-only force deadband. Values within +/- threshold are rendered as 0.
+FORCE_PLOT_ZERO_THRESHOLD_MN = 20.0
 
 # Maximum number of log lines to keep in status text window
 # Prevents excessive memory usage from log accumulation during long sessions

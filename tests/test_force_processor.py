@@ -112,6 +112,23 @@ class ForceProcessorTests(unittest.TestCase):
             "ADC - Sweeps: 4 | Samples: 20  |  Force: 10 samples",
         )
 
+    def test_force_reset_uses_recent_raw_samples_not_capture_buffered_values(self):
+        harness = ForceProcessorHarness()
+
+        for index in range(FORCE_CALIBRATION_SAMPLES):
+            harness.process_force_data(float(index + 10), float(index + 110))
+
+        self.assertTrue(harness.reset_force_baseline_from_recent_samples())
+        self.assertAlmostEqual(
+            harness.force_calibration_offset['x'],
+            sum(range(10, 10 + FORCE_CALIBRATION_SAMPLES)) / FORCE_CALIBRATION_SAMPLES,
+        )
+        self.assertAlmostEqual(
+            harness.force_calibration_offset['z'],
+            sum(range(110, 110 + FORCE_CALIBRATION_SAMPLES)) / FORCE_CALIBRATION_SAMPLES,
+        )
+        self.assertTrue(any(message.startswith("Load cell reset complete:") for message in harness.logged))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -14,7 +14,7 @@ from pathlib import Path
 from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QMessageBox
 
-from config_constants import CACHE_SUBDIR_NAME
+from config_constants import CACHE_SUBDIR_NAME, FORCE_CALIBRATION_SAMPLES
 from data_processing.archive_writer import ArchiveWriterThread
 from data_processing.force_state import get_force_runtime_state
 
@@ -45,6 +45,19 @@ class CaptureLifecycleMixin:
         state = get_force_runtime_state(self)
         state.data.clear()
         state.start_time = None
+
+    def _restart_force_baseline_measurement_if_connected(self):
+        """Re-zero the force baseline from fresh raw samples at capture start."""
+        force_port = getattr(self, 'force_serial_port', None)
+        if force_port is None or not getattr(force_port, 'is_open', False):
+            return
+        if not hasattr(self, 'calibrate_force_sensors'):
+            return
+
+        self.log_status(
+            f"Re-zeroing force sensors at capture start (collecting {FORCE_CALIBRATION_SAMPLES} samples)..."
+        )
+        self.calibrate_force_sensors()
 
     def _reset_timing_measurements(self, *, log_timestamp_clear=False, reset_labels=False):
         """Reset capture timing fields, histories, and optional UI labels."""
@@ -186,6 +199,8 @@ class CaptureLifecycleMixin:
         else:
             self.send_command("run")
             self.log_status("Starting continuous capture")
+
+        self._restart_force_baseline_measurement_if_connected()
 
         self.start_btn.setEnabled(False)
         self.start_btn.setStyleSheet("QPushButton { background-color: #CCCCCC; color: #666666; font-weight: bold; }")

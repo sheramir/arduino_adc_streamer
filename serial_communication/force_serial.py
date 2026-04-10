@@ -25,6 +25,8 @@ class ForceSerialMixin:
     def _apply_force_connection_view_state(self, view_state):
         self.force_connect_btn.setText(view_state.connect_button_text)
         self.force_port_combo.setEnabled(view_state.port_selection_enabled)
+        if hasattr(self, "force_reset_btn") and self.force_reset_btn is not None:
+            self.force_reset_btn.setEnabled(view_state.reset_button_enabled)
 
     def _sync_force_transport_state(self):
         """Mirror controller-owned transport objects on the GUI for existing callers."""
@@ -75,6 +77,7 @@ class ForceSerialMixin:
                 self.force_session = self._build_force_session()
 
             state.raw_samples_seen = 0
+            state.recent_raw_samples.clear()
             state.selected_port_text = port_text
             outcome = self.force_connection_workflow.connect(self.force_session, port_name)
             self._sync_force_transport_state()
@@ -115,6 +118,18 @@ class ForceSerialMixin:
         self.log_status("Force sensor connection lost - disconnecting")
         QTimer.singleShot(0, self.disconnect_force_serial)
 
+    def reset_force_load_cell(self):
+        """Re-zero the load cell using the most recent raw force samples."""
+        force_port = getattr(self, "force_serial_port", None)
+        if force_port is None or not getattr(force_port, "is_open", False):
+            self.log_status("WARNING: Connect the force sensor before resetting the load cell")
+            return
+
+        self.log_status(
+            f"Resetting load cell baseline from the last {FORCE_CALIBRATION_SAMPLES} raw samples..."
+        )
+        self.reset_force_baseline_from_recent_samples()
+
     def disconnect_force_serial(self):
         """Disconnect from the force sensor serial port."""
         state = get_force_runtime_state(self)
@@ -130,6 +145,7 @@ class ForceSerialMixin:
 
             self._sync_force_transport_state()
             state.selected_port_text = None
+            state.recent_raw_samples.clear()
             
             self.log_status("Force sensor disconnected")
             self._apply_force_connection_view_state(build_force_disconnected_view_state())

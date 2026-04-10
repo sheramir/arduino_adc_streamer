@@ -16,8 +16,10 @@ class ForceConnectionStateTests(unittest.TestCase):
         self.assertIsInstance(disconnected, ForceConnectionViewState)
         self.assertEqual(connected.connect_button_text, "Disconnect Force")
         self.assertFalse(connected.port_selection_enabled)
+        self.assertTrue(connected.reset_button_enabled)
         self.assertEqual(disconnected.connect_button_text, "Connect Force")
         self.assertTrue(disconnected.port_selection_enabled)
+        self.assertFalse(disconnected.reset_button_enabled)
 
 
 if __name__ == "__main__":

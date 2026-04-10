@@ -9,8 +9,21 @@ from __future__ import annotations
 import numpy as np
 import pyqtgraph as pg
 
-from config_constants import MAX_PLOT_SWEEPS, X_FORCE_SENSOR_TO_NEWTON, Z_FORCE_SENSOR_TO_NEWTON
+from config_constants import (
+    FORCE_PLOT_ZERO_THRESHOLD_MN,
+    MAX_PLOT_SWEEPS,
+    X_FORCE_SENSOR_TO_NEWTON,
+    Z_FORCE_SENSOR_TO_NEWTON,
+)
 from data_processing.force_state import get_force_runtime_state
+
+
+def apply_force_plot_zero_threshold(force_values_newtons):
+    """Zero small calibrated forces for plotting without changing stored samples."""
+    threshold_newtons = float(FORCE_PLOT_ZERO_THRESHOLD_MN) / 1000.0
+    if threshold_newtons <= 0:
+        return force_values_newtons
+    return np.where(np.abs(force_values_newtons) <= threshold_newtons, 0.0, force_values_newtons)
 
 
 class ForceOverlayMixin:
@@ -109,6 +122,8 @@ class ForceOverlayMixin:
             times = force_filtered[:, 0]
             x_forces = force_filtered[:, 1] / X_FORCE_SENSOR_TO_NEWTON
             z_forces = force_filtered[:, 2] / Z_FORCE_SENSOR_TO_NEWTON
+            x_forces = apply_force_plot_zero_threshold(x_forces)
+            z_forces = apply_force_plot_zero_threshold(z_forces)
 
             if show_x_force:
                 if self._force_x_curve is None:

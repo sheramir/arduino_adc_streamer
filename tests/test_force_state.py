@@ -30,6 +30,7 @@ class ForceStateTests(unittest.TestCase):
         self.assertEqual(state.calibration_offset, {"x": 0.0, "z": 0.0})
         self.assertFalse(state.calibrating)
         self.assertEqual(state.calibration_samples, {"x": [], "z": []})
+        self.assertIsInstance(state.recent_raw_samples, collections.deque)
         self.assertFalse(state.disconnect_in_progress)
         self.assertEqual(state.raw_samples_seen, 0)
         self.assertIsNone(state.selected_port_text)
@@ -42,6 +43,7 @@ class ForceStateTests(unittest.TestCase):
         state.calibration_offset["x"] = 2.0
         state.calibrating = True
         state.calibration_samples["z"].append(3.5)
+        state.recent_raw_samples.append((4.5, 5.5))
         state.disconnect_in_progress = True
         state.raw_samples_seen = 7
         state.selected_port_text = "COM20 - USB Serial Device"
@@ -51,6 +53,7 @@ class ForceStateTests(unittest.TestCase):
         self.assertEqual(harness.force_calibration_offset["x"], 2.0)
         self.assertTrue(harness.force_calibrating)
         self.assertEqual(harness.calibration_samples["z"], [3.5])
+        self.assertEqual(list(harness._force_recent_raw_samples), [(4.5, 5.5)])
         self.assertTrue(harness._force_disconnect_in_progress)
         self.assertEqual(harness._force_raw_samples_seen, 7)
         self.assertEqual(harness._force_selected_port_text, "COM20 - USB Serial Device")

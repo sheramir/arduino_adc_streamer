@@ -9,7 +9,7 @@ from __future__ import annotations
 import collections
 from dataclasses import dataclass, field
 
-from config_constants import MAX_FORCE_SAMPLES
+from config_constants import FORCE_CALIBRATION_SAMPLES, MAX_FORCE_SAMPLES
 
 
 @dataclass(slots=True)
@@ -24,6 +24,9 @@ class ForceRuntimeState:
     calibrating: bool = False
     calibration_samples: dict[str, list[float]] = field(
         default_factory=lambda: {"x": [], "z": []}
+    )
+    recent_raw_samples: collections.deque = field(
+        default_factory=lambda: collections.deque(maxlen=FORCE_CALIBRATION_SAMPLES)
     )
     disconnect_in_progress: bool = False
     raw_samples_seen: int = 0
@@ -79,6 +82,18 @@ class LegacyForceRuntimeStateAdapter:
     @calibration_samples.setter
     def calibration_samples(self, value):
         self.owner.calibration_samples = value
+
+    @property
+    def recent_raw_samples(self):
+        samples = getattr(self.owner, "_force_recent_raw_samples", None)
+        if samples is None:
+            samples = collections.deque(maxlen=FORCE_CALIBRATION_SAMPLES)
+            self.owner._force_recent_raw_samples = samples
+        return samples
+
+    @recent_raw_samples.setter
+    def recent_raw_samples(self, value):
+        self.owner._force_recent_raw_samples = value
 
     @property
     def disconnect_in_progress(self):

@@ -26,6 +26,30 @@ class ForceProcessorMixin:
         state.calibration_samples = {'x': [], 'z': []}
         # Calibration will be completed in process_force_data after enough samples.
 
+    def reset_force_baseline_from_recent_samples(self) -> bool:
+        """Recompute the force baseline offset from the latest raw samples."""
+        state = get_force_runtime_state(self)
+        recent_samples = list(state.recent_raw_samples)
+        if len(recent_samples) < FORCE_CALIBRATION_SAMPLES:
+            self.log_status(
+                "WARNING: Need at least "
+                f"{FORCE_CALIBRATION_SAMPLES} recent force samples before resetting load cell"
+            )
+            return False
+
+        baseline_window = recent_samples[-FORCE_CALIBRATION_SAMPLES:]
+        state.calibration_offset['x'] = sum(sample[0] for sample in baseline_window) / FORCE_CALIBRATION_SAMPLES
+        state.calibration_offset['z'] = sum(sample[1] for sample in baseline_window) / FORCE_CALIBRATION_SAMPLES
+        state.calibrating = False
+        state.calibration_samples = {'x': [], 'z': []}
+        self.log_status(
+            "Load cell reset complete: "
+            f"X offset={state.calibration_offset['x']:.1f}, "
+            f"Z offset={state.calibration_offset['z']:.1f}"
+        )
+        self.log_status("Force sensors ready (calibrated to zero)")
+        return True
+
     def _collect_force_calibration_sample(self, state, x_force: float, z_force: float) -> bool:
         """Capture calibration samples until the zero offset is ready."""
         if not state.calibrating:
@@ -65,6 +89,7 @@ class ForceProcessorMixin:
         """Process incoming force measurement data."""
         state = get_force_runtime_state(self)
         state.raw_samples_seen += 1
+        state.recent_raw_samples.append((x_force, z_force))
         log_first_force_sample(self, state=state, x_force=x_force, z_force=z_force)
 
         if self._collect_force_calibration_sample(state, x_force, z_force):

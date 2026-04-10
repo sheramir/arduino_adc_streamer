@@ -72,7 +72,12 @@ class ControlPanelsMixin:
         # Connect/Disconnect button for force sensors
         self.force_connect_btn = QPushButton("Connect Force")
         self.force_connect_btn.clicked.connect(self.toggle_force_connection)
-        layout.addWidget(self.force_connect_btn, 3, 0, 1, 3)
+        layout.addWidget(self.force_connect_btn, 3, 0, 1, 2)
+
+        self.force_reset_btn = QPushButton("Reset Load Cell")
+        self.force_reset_btn.setEnabled(False)
+        self.force_reset_btn.clicked.connect(self.reset_force_load_cell)
+        layout.addWidget(self.force_reset_btn, 3, 2)
 
         # Array operation mode selector (shown only for Array_PZT_PZR* MCU)
         self.array_mode_label = QLabel("Array Mode:")

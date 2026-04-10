@@ -3,7 +3,7 @@ import unittest
 
 import numpy as np
 
-from data_processing.force_overlay import ForceOverlayMixin
+from data_processing.force_overlay import ForceOverlayMixin, apply_force_plot_zero_threshold
 
 
 class FakeSpinBox:
@@ -75,6 +75,18 @@ class ForceOverlayTests(unittest.TestCase):
         ]
 
         self.assertIsNone(harness._get_force_plot_time_window())
+
+    def test_plot_zero_threshold_flattens_small_force_jiggle(self):
+        values = np.asarray([-0.025, -0.020, -0.005, 0.0, 0.019, 0.020, 0.030], dtype=np.float64)
+
+        thresholded = apply_force_plot_zero_threshold(values)
+
+        self.assertTrue(
+            np.allclose(
+                thresholded,
+                [-0.025, 0.0, 0.0, 0.0, 0.0, 0.0, 0.030],
+            )
+        )
 
 
 if __name__ == '__main__':

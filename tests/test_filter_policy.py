@@ -2,6 +2,7 @@ import unittest
 
 import numpy as np
 
+from data_processing.adc_filter_engine import ADCFilterEngine, SCIPY_FILTERS_AVAILABLE
 from data_processing.filter_processor import FilterProcessorMixin
 from gui.spectrum_panel import SpectrumPanelMixin
 
@@ -58,8 +59,11 @@ class FilterPolicyHarness(FilterProcessorMixin):
         self.device_mode = device_mode
         self.filtering_enabled = True
         self.filter_settings = self.get_default_filter_settings()
+        self.adc_filter_engine = ADCFilterEngine()
         self.processed_data_buffer = np.array([[9.0, 9.0]], dtype=np.float32)
         self.raw_data_buffer = np.array([[1.0, 2.0]], dtype=np.float32)
+        self.raw_data = np.array([[1.0, 2.0]], dtype=np.float32)
+        self.sweep_timestamps = np.array([0.0], dtype=np.float64)
         self.samples_per_sweep = 2
         self.timing_state = type("Timing", (), {"arduino_sample_times": [], "timing_data": {}})()
         self.config = {"channels": [0, 1], "repeat": 1, "sample_rate": 0}
@@ -71,6 +75,9 @@ class FilterPolicyHarness(FilterProcessorMixin):
         self.is_capturing = is_capturing
         self.is_full_view = False
         self.current_tab = current_tab
+        self._full_view_filter_cache_key = None
+        self._full_view_filter_cache_data = None
+        self._full_view_filter_cache_timestamps = None
 
     def should_update_live_timeseries_display(self):
         return self.current_tab == "Time Series"
@@ -160,6 +167,23 @@ class FilterPolicyTests(unittest.TestCase):
         active = harness.get_active_data_buffer()
 
         self.assertIs(active, harness.raw_data_buffer)
+
+    @unittest.skipUnless(SCIPY_FILTERS_AVAILABLE, "SciPy not available")
+    def test_full_view_snapshot_uses_filtered_dataset_when_enabled(self):
+        harness = FilterPolicyHarness(device_mode="adc")
+        harness.is_full_view = True
+        harness.raw_data = np.array([[0.0], [100.0], [0.0], [100.0], [0.0], [100.0]], dtype=np.float32)
+        harness.sweep_timestamps = np.arange(6, dtype=np.float64) / 100.0
+        harness.config = {"channels": [0], "repeat": 1, "sample_rate": 100.0}
+        harness.filter_settings["main_type"] = "lowpass"
+        harness.filter_settings["low_cutoff_hz"] = 5.0
+        harness.filter_settings["notches"] = []
+
+        filtered_data, filtered_timestamps = harness.get_full_view_plot_snapshot()
+
+        self.assertEqual(filtered_data.shape, harness.raw_data.shape)
+        np.testing.assert_allclose(filtered_timestamps, harness.sweep_timestamps)
+        self.assertFalse(np.allclose(filtered_data, harness.raw_data))
 
     def test_filter_block_bypasses_when_mode_not_supported(self):
         harness = FilterPolicyHarness(device_mode="555")

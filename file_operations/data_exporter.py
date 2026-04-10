@@ -9,6 +9,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+import numpy as np
 from PyQt6.QtWidgets import QMessageBox
 
 from config_constants import IADC_RESOLUTION_BITS
@@ -16,81 +17,192 @@ from config_constants import IADC_RESOLUTION_BITS
 
 class DataExporterMixin:
     """Mixin class for data export operations."""
+
+    def _show_save_data_notice(self, label_text: str = "Saving data...") -> None:
+        """Show a modal busy notice while data export is running."""
+        from PyQt6.QtCore import QEventLoop, Qt
+        from PyQt6.QtWidgets import QApplication, QProgressDialog
+
+        dialog = getattr(self, "_save_data_progress_dialog", None)
+        if dialog is None:
+            dialog = QProgressDialog(label_text, None, 0, 0, self)
+            dialog.setWindowTitle("Saving Data")
+            dialog.setCancelButton(None)
+            dialog.setWindowModality(Qt.WindowModality.WindowModal)
+            dialog.setMinimumDuration(0)
+            dialog.setAutoClose(False)
+            dialog.setAutoReset(False)
+            self._save_data_progress_dialog = dialog
+
+        dialog.setLabelText(label_text)
+        dialog.setRange(0, 0)
+        dialog.setValue(0)
+        dialog.show()
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
+
+    def _update_save_data_notice(self, label_text: str) -> None:
+        """Refresh the export progress notice text if it is visible."""
+        from PyQt6.QtCore import QEventLoop
+        from PyQt6.QtWidgets import QApplication
+
+        dialog = getattr(self, "_save_data_progress_dialog", None)
+        if dialog is None:
+            return
+
+        dialog.setLabelText(label_text)
+        QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
+
+    def _hide_save_data_notice(self) -> None:
+        """Hide the temporary export progress notice."""
+        from PyQt6.QtCore import QEventLoop
+        from PyQt6.QtWidgets import QApplication
+
+        dialog = getattr(self, "_save_data_progress_dialog", None)
+        if dialog is not None:
+            dialog.hide()
+
+        if QApplication.overrideCursor() is not None:
+            QApplication.restoreOverrideCursor()
+        QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
+
+    def _has_exportable_sweeps(self, data) -> bool:
+        try:
+            return data is not None and len(data) > 0
+        except Exception:
+            return False
+
+    def _load_export_source_data(self, archive_path: Path | None):
+        if archive_path is not None and archive_path.exists() and hasattr(self, 'load_archive_data'):
+            if hasattr(self, '_finalize_archive_if_active'):
+                self._finalize_archive_if_active()
+            sweeps, timestamps = self.load_archive_data()
+            if self._has_exportable_sweeps(sweeps):
+                return (
+                    np.asarray(sweeps, dtype=np.float32),
+                    np.asarray(timestamps, dtype=np.float64) if self._has_exportable_sweeps(timestamps) else None,
+                    'archive',
+                )
+
+        if self._has_exportable_sweeps(getattr(self, 'raw_data', None)):
+            timestamps = getattr(self, 'sweep_timestamps', None)
+            timestamp_array = None
+            if self._has_exportable_sweeps(timestamps):
+                timestamp_array = np.asarray(timestamps, dtype=np.float64)
+            return np.asarray(self.raw_data, dtype=np.float32), timestamp_array, 'full_view'
+
+        if (
+            getattr(self, 'raw_data_buffer', None) is None
+            or getattr(self, 'sweep_timestamps_buffer', None) is None
+            or getattr(self, 'samples_per_sweep', 0) <= 0
+        ):
+            return None, None, None
+
+        with self.buffer_lock:
+            current_sweep_count = int(getattr(self, 'sweep_count', 0))
+            current_write_index = int(getattr(self, 'buffer_write_index', 0))
+            actual_sweeps = min(current_sweep_count, int(getattr(self, 'MAX_SWEEPS_BUFFER', current_sweep_count)))
+
+            if actual_sweeps <= 0:
+                return None, None, None
+
+            if actual_sweeps < self.MAX_SWEEPS_BUFFER:
+                ordered_data = self.raw_data_buffer[:actual_sweeps].copy()
+                ordered_timestamps = self.sweep_timestamps_buffer[:actual_sweeps].copy()
+            else:
+                write_pos = current_write_index % self.MAX_SWEEPS_BUFFER
+                ordered_data = np.concatenate([
+                    self.raw_data_buffer[write_pos:],
+                    self.raw_data_buffer[:write_pos],
+                ])
+                ordered_timestamps = np.concatenate([
+                    self.sweep_timestamps_buffer[write_pos:],
+                    self.sweep_timestamps_buffer[:write_pos],
+                ])
+
+        return ordered_data.astype(np.float32, copy=False), ordered_timestamps.astype(np.float64, copy=False), 'buffer'
     
     def save_data(self):
         """Save captured data to CSV file with metadata."""
-        # Determine archive info (if an archive file exists for this capture)
-        archived_count = 0
         archive_path = None
         try:
             if getattr(self, '_archive_path', None):
-                archive_path = Path(self._archive_path)
-                if archive_path.exists():
-                    # Count archived sweeps (exclude metadata first line)
-                    with archive_path.open('r', encoding='utf-8') as af:
-                        # Read and discard metadata
-                        first = af.readline()
-                        for _ in af:
-                            archived_count += 1
+                candidate_path = Path(self._archive_path)
+                if candidate_path.exists():
+                    archive_path = candidate_path
         except Exception:
-            archived_count = 0
+            archive_path = None
 
-        has_archive_data = archived_count > 0 and archive_path is not None
-        if not has_archive_data and not self.raw_data:
-            QMessageBox.warning(self, "No Data", "No data to save.")
-            return
+        notice_visible = False
 
-        # Total sweeps available for saving
-        total_sweeps = archived_count if has_archive_data else len(self.raw_data)
-        sweep_range_text = "All"
+        def hide_notice():
+            nonlocal notice_visible
+            if notice_visible:
+                self._hide_save_data_notice()
+                notice_visible = False
 
-        # Check if range is enabled (range refers to the global sweep index across archive+memory)
-        save_min = 0
-        save_max = total_sweeps  # exclusive
-        if self.use_range_check.isChecked():
-            min_sweep = self.min_sweep_spin.value()
-            max_sweep = self.max_sweep_spin.value()
-
-            # Validate range against total_sweeps
-            if min_sweep >= max_sweep:
-                QMessageBox.warning(
-                    self,
-                    "Invalid Range",
-                    f"Min sweep ({min_sweep}) must be less than max sweep ({max_sweep})."
-                )
-                return
-
-            if min_sweep < 0 or min_sweep >= total_sweeps:
-                QMessageBox.warning(
-                    self,
-                    "Invalid Range",
-                    f"Min sweep ({min_sweep}) is out of bounds. Valid range: 0 to {total_sweeps - 1}."
-                )
-                return
-
-            if max_sweep <= 0 or max_sweep > total_sweeps:
-                QMessageBox.warning(
-                    self,
-                    "Invalid Range",
-                    f"Max sweep ({max_sweep}) is out of bounds. Valid range: 1 to {total_sweeps}."
-                )
-                return
-
-            save_min = min_sweep
-            save_max = max_sweep
-            sweep_range_text = f"{save_min} to {save_max - 1}"
-            self.log_status(f"Saving sweep range: {sweep_range_text} (global indices)")
-
-        # Prepare file paths
-        directory = Path(self.dir_input.text())
-        filename = self.filename_input.text()
-        # Use minute-resolution filenames (no seconds)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-
-        csv_path = directory / f"{filename}_{timestamp}.csv"
-        metadata_path = directory / f"{filename}_{timestamp}_metadata.json"
+        self._show_save_data_notice("Preparing data export...")
+        notice_visible = True
 
         try:
+            source_sweeps, source_timestamps, export_source = self._load_export_source_data(archive_path)
+            if not self._has_exportable_sweeps(source_sweeps):
+                hide_notice()
+                QMessageBox.warning(self, "No Data", "No data to save.")
+                return
+
+            total_sweeps = len(source_sweeps)
+            sweep_range_text = "All"
+
+            # Check if range is enabled (range refers to the global sweep index across archive+memory)
+            save_min = 0
+            save_max = total_sweeps  # exclusive
+            if self.use_range_check.isChecked():
+                min_sweep = self.min_sweep_spin.value()
+                max_sweep = self.max_sweep_spin.value()
+
+                # Validate range against total_sweeps
+                if min_sweep >= max_sweep:
+                    hide_notice()
+                    QMessageBox.warning(
+                        self,
+                        "Invalid Range",
+                        f"Min sweep ({min_sweep}) must be less than max sweep ({max_sweep})."
+                    )
+                    return
+
+                if min_sweep < 0 or min_sweep >= total_sweeps:
+                    hide_notice()
+                    QMessageBox.warning(
+                        self,
+                        "Invalid Range",
+                        f"Min sweep ({min_sweep}) is out of bounds. Valid range: 0 to {total_sweeps - 1}."
+                    )
+                    return
+
+                if max_sweep <= 0 or max_sweep > total_sweeps:
+                    hide_notice()
+                    QMessageBox.warning(
+                        self,
+                        "Invalid Range",
+                        f"Max sweep ({max_sweep}) is out of bounds. Valid range: 1 to {total_sweeps}."
+                    )
+                    return
+
+                save_min = min_sweep
+                save_max = max_sweep
+                sweep_range_text = f"{save_min} to {save_max - 1}"
+                self.log_status(f"Saving sweep range: {sweep_range_text} (global indices)")
+
+            # Prepare file paths
+            directory = Path(self.dir_input.text())
+            filename = self.filename_input.text()
+            # Use minute-resolution filenames (no seconds)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+
+            csv_path = directory / f"{filename}_{timestamp}.csv"
+            metadata_path = directory / f"{filename}_{timestamp}_metadata.json"
+
             is_555_mode = (getattr(self, 'device_mode', 'adc') == '555') or ('555' in (self.current_mcu or ''))
             repeat_count = max(1, int(self.config.get('repeat', 1)))
             if self.is_array_pzt1_mode():
@@ -111,8 +223,29 @@ class DataExporterMixin:
                 for timestamp, x_force, z_force in self.force_data:
                     force_dict[timestamp] = (x_force, z_force)
 
-            # Save CSV data with force columns. We'll stream archive (if present) + in-memory data
-            with open(csv_path, 'w', newline='') as f:
+            selected_sweeps = np.asarray(source_sweeps[save_min:save_max], dtype=np.float32).copy()
+            selected_timestamps = None
+            if source_timestamps is not None and len(source_timestamps) >= save_max:
+                selected_timestamps = np.asarray(source_timestamps[save_min:save_max], dtype=np.float64).copy()
+
+            applied_filter_to_csv = False
+            if hasattr(self, 'should_filter_adc_data') and self.should_filter_adc_data():
+                if not is_555_mode and hasattr(self, 'filter_dataset_copy'):
+                    self._update_save_data_notice("Applying ADC filter for export...")
+                    selected_sweeps = self.filter_dataset_copy(
+                        selected_sweeps,
+                        sweep_timestamps_sec=selected_timestamps,
+                    )
+                    applied_filter_to_csv = True
+                elif is_555_mode:
+                    applied_filter_to_csv = False
+
+            first_sweep_len = int(selected_sweeps.shape[1]) if selected_sweeps.ndim == 2 and len(selected_sweeps) > 0 else 0
+            saved_total = int(len(selected_sweeps))
+
+            # Save CSV data with force columns from the selected ordered dataset.
+            self._update_save_data_notice("Writing CSV data...")
+            with open(csv_path, 'w', newline='', encoding='utf-8') as f:
 
                 writer = csv.writer(f)
 
@@ -123,10 +256,7 @@ class DataExporterMixin:
                 writer.writerow(header)
 
                 # Determine how many sweeps will be saved (respecting range selection)
-                saved_total = max(0, save_max - save_min)
                 saved_index = 0  # index among saved sweeps (0..saved_total-1)
-                global_idx = 0  # index across archive + in-memory
-                first_sweep_len = None
 
                 # Precompute capture duration for approximate timestamp mapping
                 capture_duration = None
@@ -139,22 +269,6 @@ class DataExporterMixin:
                         return None
                     # Spread timestamps across the measured capture duration
                     return (saved_idx / (saved_total - 1)) * capture_duration
-
-                def parse_archive_sweep_entry(line_text):
-                    payload = json.loads(line_text)
-
-                    # New format: {"timestamp_s": ..., "samples": [...]}
-                    if isinstance(payload, dict) and 'samples' in payload:
-                        timestamp_s = payload.get('timestamp_s')
-                        samples = payload.get('samples')
-                        if isinstance(samples, list):
-                            return samples, (float(timestamp_s) if timestamp_s is not None else None)
-
-                    # Legacy format: [samples...]
-                    if isinstance(payload, list):
-                        return payload, None
-
-                    return None, None
 
                 # Helper to find closest force sample given the sweep timestamp (seconds)
                 def get_closest_force(sweep_time_s):
@@ -169,77 +283,24 @@ class DataExporterMixin:
                             closest_force = (x, z)
                     return closest_force
 
-                # Resolve the sweep timestamp using archive data, loaded timestamps, or fallback spacing
-                def resolve_sweep_time(saved_idx, archive_ts, global_idx):
-                    # Prefer explicit timestamp from archive (new format)
-                    if archive_ts is not None:
+                def resolve_sweep_time(saved_idx):
+                    if selected_timestamps is not None and saved_idx < len(selected_timestamps):
                         try:
-                            return float(archive_ts)
+                            return float(selected_timestamps[saved_idx])
                         except Exception:
                             pass
-
-                    # If we are in full view, use loaded sweep_timestamps when available
-                    if self.sweep_timestamps and global_idx < len(self.sweep_timestamps):
-                        try:
-                            return float(self.sweep_timestamps[global_idx])
-                        except Exception:
-                            pass
-
-                    # Fallback to evenly spaced approximation across capture duration
                     return get_row_timestamp(saved_idx)
 
-                # Stream archived sweeps only if present; otherwise use in-memory sweeps
-                if has_archive_data:
-                    with archive_path.open('r', encoding='utf-8') as af:
-                        # skip metadata line
-                        af.readline()
-                        for line in af:
-                            if global_idx >= save_max:
-                                break
-                            if global_idx >= save_min:
-                                try:
-                                    sweep, row_timestamp = parse_archive_sweep_entry(line)
-                                except Exception:
-                                    global_idx += 1
-                                    continue
+                for saved_index, sweep in enumerate(selected_sweeps):
+                    row_time = resolve_sweep_time(saved_index)
+                    row = np.asarray(sweep).tolist()
+                    if is_555_mode:
+                        timestamp_to_write = row_time if row_time is not None else 0.0
+                        row.insert(0, float(timestamp_to_write))
+                    row.extend(list(get_closest_force(row_time)))
+                    writer.writerow(row)
 
-                                if sweep is None:
-                                    global_idx += 1
-                                    continue
-
-                                if first_sweep_len is None:
-                                    first_sweep_len = len(sweep)
-
-                                row_time = resolve_sweep_time(saved_index, row_timestamp, global_idx)
-
-                                row = list(sweep)
-                                if is_555_mode:
-                                    # Preserve MCU timestamp if present; otherwise fallback spacing
-                                    timestamp_to_write = row_time if row_time is not None else 0.0
-                                    row.insert(0, float(timestamp_to_write))
-                                row.extend(list(get_closest_force(row_time)))
-                                writer.writerow(row)
-                                saved_index += 1
-                            global_idx += 1
-                else:
-                    # Stream in-memory sweeps (preserve order)
-                    for sweep in self.raw_data:
-                        if global_idx >= save_max:
-                            break
-                        if global_idx >= save_min:
-                            if first_sweep_len is None:
-                                first_sweep_len = len(sweep)
-
-                            row_time = resolve_sweep_time(saved_index, None, global_idx)
-
-                            row = list(sweep)
-                            if is_555_mode:
-                                timestamp_to_write = row_time if row_time is not None else 0.0
-                                row.insert(0, float(timestamp_to_write))
-                            row.extend(list(get_closest_force(row_time)))
-                            writer.writerow(row)
-                            saved_index += 1
-                        global_idx += 1
+                saved_index = saved_total
 
             # Prepare metadata dictionary
             capture_duration_s = None
@@ -286,9 +347,17 @@ class DataExporterMixin:
                 "row_timestamp": {
                     "included_in_csv": bool(is_555_mode),
                     "column_name": "Timestamp_s" if is_555_mode else None,
-                    "source": "mcu_sweep_timestamp_from_archive_with_linear_fallback"
-                }
+                    "source": "selected_sweep_timestamps_with_linear_fallback" if selected_timestamps is not None else "capture_duration_linear_fallback"
+                },
+                "export_source": export_source,
             }
+
+            if hasattr(self, 'build_filter_metadata'):
+                metadata["filtering"] = self.build_filter_metadata(
+                    applied=applied_filter_to_csv,
+                    sweep_timestamps_sec=selected_timestamps,
+                )
+                metadata["filtering"]["applied_to_csv"] = bool(applied_filter_to_csv)
 
             # Add user notes if provided
             notes = self.notes_input.toPlainText().strip()
@@ -296,12 +365,14 @@ class DataExporterMixin:
                 metadata["notes"] = notes
 
             # Save metadata as JSON
+            self._update_save_data_notice("Writing metadata...")
             with open(metadata_path, 'w') as f:
                 json.dump(metadata, f, indent=2)
 
             self.log_status(f"Data saved to {csv_path}")
             self.log_status(f"Metadata saved to {metadata_path}")
 
+            hide_notice()
             QMessageBox.information(
                 self,
                 "Save Successful",
@@ -310,4 +381,7 @@ class DataExporterMixin:
 
         except Exception as e:
             self.log_status(f"ERROR: Failed to save data - {e}")
+            hide_notice()
             QMessageBox.critical(self, "Save Error", f"Failed to save data:\n{e}")
+        finally:
+            hide_notice()

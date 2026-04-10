@@ -67,6 +67,8 @@ class CaptureLifecycleMixin:
         self.reset_filter_states()
         if hasattr(self, '_invalidate_timeseries_filter_cache'):
             self._invalidate_timeseries_filter_cache()
+        if hasattr(self, '_invalidate_full_view_filter_cache'):
+            self._invalidate_full_view_filter_cache()
         if hasattr(self, '_reset_live_filtered_tracking'):
             self._reset_live_filtered_tracking(preserve_existing=False)
         if reset_shear:
@@ -78,6 +80,8 @@ class CaptureLifecycleMixin:
         with self.buffer_lock:
             self.raw_data = []
             self.sweep_timestamps = []
+        if hasattr(self, '_invalidate_full_view_filter_cache'):
+            self._invalidate_full_view_filter_cache()
 
         if button_enabled is None:
             button_enabled = not self.is_capturing

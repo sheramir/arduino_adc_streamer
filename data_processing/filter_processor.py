@@ -51,6 +51,9 @@ class FilterProcessorMixin:
         self._timeseries_filter_cached_key = None
         self._timeseries_filter_cached_data = None
         self._timeseries_filter_cached_timestamps = None
+        self._full_view_filter_cache_key = None
+        self._full_view_filter_cache_data = None
+        self._full_view_filter_cache_timestamps = None
 
     def get_default_filter_settings(self) -> dict:
         return build_default_filter_settings()
@@ -90,6 +93,117 @@ class FilterProcessorMixin:
         self._timeseries_filter_cached_data = None
         self._timeseries_filter_cached_timestamps = None
 
+    def _invalidate_full_view_filter_cache(self):
+        self._full_view_filter_cache_key = None
+        self._full_view_filter_cache_data = None
+        self._full_view_filter_cache_timestamps = None
+
+    def _copy_filter_settings_snapshot(self) -> dict:
+        settings = getattr(self, 'filter_settings', None) or self.get_default_filter_settings()
+        return {
+            **settings,
+            'notches': [dict(notch) for notch in settings.get('notches', [])],
+        }
+
+    def build_filter_metadata(self, *, applied: bool = False, sweep_timestamps_sec=None) -> dict:
+        supported_mode = bool(self.is_adc_filter_supported_mode())
+        enabled = bool(getattr(self, 'filtering_enabled', False))
+        total_fs_hz = float(self._get_filter_total_sample_rate_hz()) if supported_mode else 0.0
+
+        per_channel_rates = {}
+        if supported_mode and total_fs_hz > 0:
+            try:
+                per_channel_rates = {
+                    str(int(channel)): float(fs_hz)
+                    for channel, fs_hz in self._estimate_filter_channel_rates(
+                        total_fs_hz,
+                        sweep_timestamps_sec=sweep_timestamps_sec,
+                    ).items()
+                }
+            except Exception:
+                per_channel_rates = {}
+
+        return {
+            'supported_mode': supported_mode,
+            'enabled': enabled,
+            'applied': bool(applied and enabled and supported_mode),
+            'settings': self._copy_filter_settings_snapshot(),
+            'total_sample_rate_hz': total_fs_hz if total_fs_hz > 0 else None,
+            'per_channel_sample_rates_hz': per_channel_rates,
+        }
+
+    def filter_dataset_copy(self, data_array: np.ndarray, sweep_timestamps_sec=None) -> np.ndarray:
+        if data_array is None:
+            return None
+
+        dataset = np.asarray(data_array, dtype=np.float32)
+        if dataset.size == 0:
+            return dataset.copy()
+
+        if not self.should_filter_adc_data():
+            return dataset.copy()
+
+        total_fs_hz = self._get_filter_total_sample_rate_hz()
+        if total_fs_hz <= 0:
+            raise ValueError('Sample rate unavailable for ADC filtering.')
+
+        timestamps_array = None
+        if sweep_timestamps_sec is not None:
+            timestamps_array = np.asarray(sweep_timestamps_sec, dtype=np.float64)
+
+        channels = list(self.config.get('channels', []))
+        repeat_count = max(1, int(self.config.get('repeat', 1)))
+        channel_rates = self._estimate_filter_channel_rates(
+            total_fs_hz,
+            sweep_timestamps_sec=timestamps_array,
+        )
+        runtime = self.adc_filter_engine.build_runtime_plan(
+            self.filter_settings,
+            total_fs_hz,
+            channels,
+            repeat_count,
+            sweep_timestamps_sec=timestamps_array,
+            channel_fs_by_channel=channel_rates,
+        )
+        self.adc_filter_engine.reset_runtime_states(runtime)
+        return self.adc_filter_engine.filter_block(runtime, dataset.astype(np.float32, copy=True))
+
+    def get_full_view_plot_snapshot(self):
+        if not bool(getattr(self, 'is_full_view', False)):
+            return None
+        if self.raw_data is None or self.sweep_timestamps is None:
+            return None
+
+        data_array = np.asarray(self.raw_data, dtype=np.float32)
+        timestamps_array = np.asarray(self.sweep_timestamps, dtype=np.float64)
+        if data_array.size == 0 or timestamps_array.size == 0:
+            return data_array, timestamps_array
+
+        if not self.should_filter_adc_data():
+            return data_array, timestamps_array
+
+        cache_key = (
+            int(getattr(self, '_live_filter_generation', 0)),
+            id(self.raw_data),
+            id(self.sweep_timestamps),
+            tuple(data_array.shape),
+            int(timestamps_array.size),
+            float(timestamps_array[0]),
+            float(timestamps_array[-1]),
+        )
+        if (
+            self._full_view_filter_cache_key == cache_key
+            and self._full_view_filter_cache_data is not None
+            and self._full_view_filter_cache_timestamps is not None
+        ):
+            return self._full_view_filter_cache_data, self._full_view_filter_cache_timestamps
+
+        filtered_data = self.filter_dataset_copy(data_array, sweep_timestamps_sec=timestamps_array)
+        self._full_view_filter_cache_key = cache_key
+        self._full_view_filter_cache_data = filtered_data
+        self._full_view_filter_cache_timestamps = timestamps_array
+        return filtered_data, timestamps_array
+
     def _reset_live_filtered_tracking(self, *, preserve_existing=False):
         with self.buffer_lock:
             current_abs = int(getattr(self, 'buffer_write_index', 0))
@@ -110,6 +224,7 @@ class FilterProcessorMixin:
         self._live_filter_generation += 1
         self.filter_apply_pending = True
         self._invalidate_timeseries_filter_cache()
+        self._invalidate_full_view_filter_cache()
 
     def maybe_get_live_timeseries_filtered_snapshot(
         self,
@@ -271,6 +386,7 @@ class FilterProcessorMixin:
         self.filter_settings = settings
         self.filtering_enabled = bool(settings.get('enabled', False))
         self._invalidate_timeseries_filter_cache()
+        self._invalidate_full_view_filter_cache()
 
         if self.filtering_enabled and not self.is_adc_filter_supported_mode():
             self.filtering_enabled = False

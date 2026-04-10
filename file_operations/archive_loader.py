@@ -271,7 +271,7 @@ class ArchiveLoaderMixin:
             finally:
                 self._hide_full_view_loading_notice()
 
-        active_buffer = self.get_active_data_buffer()
+        active_buffer = self.raw_data_buffer
         if active_buffer is None:
             self.log_status("No data buffer available for full view")
             return

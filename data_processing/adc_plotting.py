@@ -163,6 +163,11 @@ class ADCPlottingMixin:
     def _get_plot_data_snapshot(self, active_data_buffer):
         """Return the data/timestamp arrays that should be shown in the ADC plot."""
         if self.is_full_view:
+            if hasattr(self, 'get_full_view_plot_snapshot'):
+                snapshot = self.get_full_view_plot_snapshot()
+                if snapshot is not None:
+                    return snapshot
+
             raw_ok = self.raw_data is not None and hasattr(self.raw_data, '__len__') and len(self.raw_data) > 0
             ts_ok = self.sweep_timestamps is not None and hasattr(self.sweep_timestamps, '__len__') and len(self.sweep_timestamps) > 0
             if not raw_ok or not ts_ok:

@@ -25,6 +25,7 @@ class ForceOverlayHarness(ForceOverlayMixin):
         self.buffer_write_index = 0
         self.is_capturing = False
         self.is_full_view = False
+        self.force_data = []
 
 
 class ForceOverlayTests(unittest.TestCase):
@@ -61,6 +62,16 @@ class ForceOverlayTests(unittest.TestCase):
         harness.sweep_count = 3
         harness.buffer_write_index = 3
         harness.sweep_timestamps_buffer[:3] = [1.0, 2.0, 3.0]
+
+        self.assertIsNone(harness._get_force_plot_time_window())
+
+    def test_time_window_returns_none_without_adc_sweeps(self):
+        harness = ForceOverlayHarness()
+        harness.force_data = [
+            (0.25, 1.0, 2.0),
+            (0.75, 1.5, 2.5),
+            (1.50, 2.0, 3.0),
+        ]
 
         self.assertIsNone(harness._get_force_plot_time_window())
 

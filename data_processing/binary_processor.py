@@ -10,6 +10,7 @@ import csv
 import numpy as np
 
 from config_constants import MAX_TIMING_SAMPLES, MAX_PLOT_SWEEPS, PLOT_UPDATE_INTERVAL_SEC
+from data_processing.force_state import get_force_runtime_state
 
 
 class BinaryProcessorMixin:
@@ -31,6 +32,7 @@ class BinaryProcessorMixin:
         """
         if self.is_capturing:
             try:
+                force_state = get_force_runtime_state(self)
                 timing = self.timing_state
                 if not hasattr(self, '_debug_capture_blocks_seen'):
                     self._debug_capture_blocks_seen = 0
@@ -51,7 +53,7 @@ class BinaryProcessorMixin:
                 
                 if is_first_sweep:
                     timing.capture_start_time = block_start_time
-                    self.force_start_time = timing.capture_start_time  # Sync force timing
+                    force_state.start_time = timing.capture_start_time  # Sync force timing
                     timing.last_buffer_time = block_start_time
                 
                 # Store the average sampling time from Arduino (keep only last 1000)
@@ -208,7 +210,7 @@ class BinaryProcessorMixin:
                             self.update_force_plot()
                     # Always update the info label
                     total_samples = int(self.sweep_count) * samples_per_sweep
-                    force_samples = len(self.force_data)
+                    force_samples = len(force_state.data)
                     if self.is_full_view:
                         self.plot_info_label.setText(
                             f"ADC - Sweeps: {self.sweep_count} (full view) | Samples: {total_samples}  |  Force: {force_samples} samples"

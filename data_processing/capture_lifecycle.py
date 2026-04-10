@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import QMessageBox
 
 from config_constants import CACHE_SUBDIR_NAME
 from data_processing.archive_writer import ArchiveWriterThread
+from data_processing.force_state import get_force_runtime_state
 
 
 class CaptureLifecycleMixin:
@@ -41,8 +42,9 @@ class CaptureLifecycleMixin:
 
     def _reset_force_capture_state(self):
         """Reset force samples for a new capture lifecycle."""
-        self.force_data.clear()
-        self.force_start_time = None
+        state = get_force_runtime_state(self)
+        state.data.clear()
+        state.start_time = None
 
     def _reset_timing_measurements(self, *, log_timestamp_clear=False, reset_labels=False):
         """Reset capture timing fields, histories, and optional UI labels."""
@@ -224,7 +226,7 @@ class CaptureLifecycleMixin:
         timing.capture_end_time = time.time()
 
         self.is_capturing = False
-        self.force_start_time = None
+        get_force_runtime_state(self).start_time = None
 
         if self.serial_thread:
             self.serial_thread.set_capturing(False)
@@ -264,7 +266,7 @@ class CaptureLifecycleMixin:
 
         with self.buffer_lock:
             total_samples = int(self.sweep_count) * self.samples_per_sweep if self.samples_per_sweep > 0 else 0
-        force_samples = len(self.force_data)
+        force_samples = len(get_force_runtime_state(self).data)
         self.plot_info_label.setText(
             f"ADC - Sweeps: {self.sweep_count} | Samples: {total_samples}  |  Force: {force_samples} samples"
         )

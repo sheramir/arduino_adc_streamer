@@ -4,6 +4,8 @@ Serial Reader Threads
 Background threads for reading serial data without blocking the GUI.
 """
 
+import re
+
 import numpy as np
 from PyQt6.QtCore import QThread, pyqtSignal
 
@@ -15,6 +17,45 @@ from config_constants import (
     SERIAL_READER_DEBUG_LOG_LIMIT,
     SERIAL_READER_IDLE_MS,
 )
+
+
+FORCE_NUMERIC_TOKEN_RE = re.compile(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?")
+
+
+def parse_force_sensor_line(line: str):
+    """Parse a force-sensor line into ``(x_force, z_force)`` floats.
+
+    Supported formats:
+    - ``x,z``
+    - ``timestamp,x,z``
+    - labeled/noisy variants that still contain at least two numeric tokens
+    """
+    stripped = (line or "").strip()
+    if not stripped:
+        return None
+
+    parts = [part.strip() for part in stripped.split(',') if part.strip()]
+
+    if len(parts) >= 3:
+        try:
+            return float(parts[1]), float(parts[2])
+        except ValueError:
+            pass
+
+    if len(parts) >= 2:
+        try:
+            return float(parts[0]), float(parts[1])
+        except ValueError:
+            pass
+
+    numeric_tokens = FORCE_NUMERIC_TOKEN_RE.findall(stripped)
+    if len(numeric_tokens) >= 2:
+        try:
+            return float(numeric_tokens[-2]), float(numeric_tokens[-1])
+        except ValueError:
+            return None
+
+    return None
 
 
 class SerialReaderThread(QThread):
@@ -210,6 +251,8 @@ class ForceReaderThread(QThread):
         super().__init__()
         self.serial_port = serial_port
         self.running = True
+        self._debug_parse_failures = 0
+        self._debug_parsed_samples = 0
 
     def run(self):
         """Continuously read CSV data from force sensor serial port."""
@@ -220,15 +263,21 @@ class ForceReaderThread(QThread):
                         line = self.serial_port.readline().decode('utf-8', errors='ignore').strip()
                         
                         if line:
-                            # Parse CSV format: x,z
-                            try:
-                                parts = line.split(',')
-                                if len(parts) >= 2:
-                                    x_force = float(parts[0].strip())
-                                    z_force = float(parts[1].strip())
-                                    self.force_data_received.emit(x_force, z_force)
-                            except ValueError:
-                                pass  # Skip invalid lines
+                            parsed = parse_force_sensor_line(line)
+                            if parsed is not None:
+                                x_force, z_force = parsed
+                                if self._debug_parsed_samples < 3:
+                                    self._debug_parsed_samples += 1
+                                    self.error_occurred.emit(
+                                        f"Force reader parsed sample {self._debug_parsed_samples}: "
+                                        f"x={x_force:.3f}, z={z_force:.3f}"
+                                    )
+                                self.force_data_received.emit(x_force, z_force)
+                            elif self._debug_parse_failures < SERIAL_READER_DEBUG_LOG_LIMIT:
+                                self._debug_parse_failures += 1
+                                self.error_occurred.emit(
+                                    f"Force reader skipped unparsed line {self._debug_parse_failures}: {line[:120]}"
+                                )
                 else:
                     break
 

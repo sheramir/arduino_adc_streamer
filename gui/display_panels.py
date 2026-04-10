@@ -118,6 +118,7 @@ class DisplayPanelsMixin:
         
         # Connect view resize to update force viewbox geometry
         self.plot_widget.getViewBox().sigResized.connect(self.update_force_viewbox)
+        self.update_force_viewbox()
 
         plot_layout.addWidget(self.plot_widget)
 

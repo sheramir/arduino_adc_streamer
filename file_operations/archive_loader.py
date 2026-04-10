@@ -8,6 +8,8 @@ import csv
 import json
 from pathlib import Path
 
+from data_processing.force_state import get_force_runtime_state
+
 
 class ArchiveLoaderMixin:
     """Mixin class for archive loading operations."""
@@ -259,7 +261,7 @@ class ArchiveLoaderMixin:
                     self.update_force_plot()
 
                     total_samples = actual_sweeps * self.raw_data.shape[1] if self.raw_data.ndim == 2 else actual_sweeps
-                    force_samples = len(self.force_data)
+                    force_samples = len(get_force_runtime_state(self).data)
                     time_range = float(self.sweep_timestamps[-1] - self.sweep_timestamps[0]) if len(self.sweep_timestamps) > 1 else 0.0
 
                     self.plot_info_label.setText(
@@ -314,7 +316,7 @@ class ArchiveLoaderMixin:
 
         # Update info label
         total_samples = actual_sweeps * ordered_data.shape[1] if ordered_data.ndim == 2 else actual_sweeps
-        force_samples = len(self.force_data)
+        force_samples = len(get_force_runtime_state(self).data)
         time_range = float(ordered_timestamps[-1] - ordered_timestamps[0]) if len(ordered_timestamps) > 1 else 0.0
 
         self.plot_info_label.setText(

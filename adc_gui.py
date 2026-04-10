@@ -40,6 +40,7 @@ from serial_communication.adc_connection_state import (
     build_default_last_sent_config,
 )
 from serial_communication.adc_connection_workflow import ADCConnectionWorkflow
+from serial_communication.force_connection_workflow import ForceConnectionWorkflow
 from serial_communication.serial_threads import SerialReaderThread
 from config import MCUDetectorMixin, ConfigurationMixin
 from config.adc_config_state import build_default_adc_config_state
@@ -62,6 +63,7 @@ from data_processing import (
     ShearProcessorMixin,
     SpectrumProcessorMixin,
 )
+from data_processing.force_state import build_default_force_runtime_state
 from file_operations import (
     ArchiveLoaderMixin,
     DataExporterMixin,
@@ -160,14 +162,11 @@ class ADCStreamerGUI(
 
     def _init_force_state(self):
         """Initialize force sensor state."""
-        import collections
+        self.force_connection_workflow = ForceConnectionWorkflow()
+        self.force_session = None
         self.force_serial_port: Optional[serial.Serial] = None
         self.force_serial_thread: Optional[QThread] = None
-        # Bounded deque: auto-drops oldest samples when full (no unbounded growth).
-        self.force_data = collections.deque(maxlen=MAX_FORCE_SAMPLES)
-        self.force_start_time: Optional[float] = None
-        self.force_calibration_offset = {'x': 0.0, 'z': 0.0}
-        self.force_calibrating = False
+        self.force_state = build_default_force_runtime_state()
 
     def _init_timing_state(self):
         """Initialize timing measurement state."""
@@ -204,7 +203,6 @@ class ADCStreamerGUI(
         self._force_z_curve = None
         self.force_plot_debounce_ms = FORCE_PLOT_DEBOUNCE_MS
         self._serial_disconnect_in_progress = False
-        self._force_disconnect_in_progress = False
     
     def _init_heatmap_state(self):
         """Initialize heatmap processing state."""

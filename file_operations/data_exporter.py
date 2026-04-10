@@ -13,6 +13,7 @@ import numpy as np
 from PyQt6.QtWidgets import QMessageBox
 
 from config_constants import IADC_RESOLUTION_BITS
+from data_processing.force_state import get_force_runtime_state
 
 
 class DataExporterMixin:
@@ -213,14 +214,16 @@ class DataExporterMixin:
             else:
                 header = [f"CH{ch}" for ch in self.config['channels']] * repeat_count
 
+            force_state = get_force_runtime_state(self)
+
             # Determine if we have force data
-            has_force_x = any(d[1] != 0 for d in self.force_data) if self.force_data else False
-            has_force_z = any(d[2] != 0 for d in self.force_data) if self.force_data else False
+            has_force_x = any(d[1] != 0 for d in force_state.data) if force_state.data else False
+            has_force_z = any(d[2] != 0 for d in force_state.data) if force_state.data else False
             
             # Create a mapping of ADC timestamps to force data
             force_dict = {}
-            if self.force_data:
-                for timestamp, x_force, z_force in self.force_data:
+            if force_state.data:
+                for timestamp, x_force, z_force in force_state.data:
                     force_dict[timestamp] = (x_force, z_force)
 
             selected_sweeps = np.asarray(source_sweeps[save_min:save_max], dtype=np.float32).copy()
@@ -336,13 +339,13 @@ class DataExporterMixin:
                     "buffer_gap_time_ms": self.timing_state.timing_data.get('buffer_gap_time_ms')
                 },
                 "force_data": {
-                    "available": len(self.force_data) > 0,
+                    "available": len(force_state.data) > 0,
                     "x_force_available": has_force_x,
                     "z_force_available": has_force_z,
-                    "total_force_samples": len(self.force_data),
-                    "calibration_offset_x": self.force_calibration_offset['x'],
-                    "calibration_offset_z": self.force_calibration_offset['z'],
-                    "note": "Force data not available" if not self.force_data else "Force data synchronized with ADC samples (calibrated to zero at connection)"
+                    "total_force_samples": len(force_state.data),
+                    "calibration_offset_x": force_state.calibration_offset['x'],
+                    "calibration_offset_z": force_state.calibration_offset['z'],
+                    "note": "Force data not available" if not force_state.data else "Force data synchronized with ADC samples (calibrated to zero at connection)"
                 },
                 "row_timestamp": {
                     "included_in_csv": bool(is_555_mode),

@@ -10,6 +10,7 @@ import numpy as np
 import pyqtgraph as pg
 
 from config_constants import MAX_PLOT_SWEEPS, X_FORCE_SENSOR_TO_NEWTON, Z_FORCE_SENSOR_TO_NEWTON
+from data_processing.force_state import get_force_runtime_state
 
 
 class ForceOverlayMixin:
@@ -60,6 +61,7 @@ class ForceOverlayMixin:
 
     def update_force_plot(self):
         """Update the force measurement plot with time-based alignment to ADC data."""
+        state = get_force_runtime_state(self)
         show_x_force = self.force_x_checkbox and self.force_x_checkbox.isChecked()
         show_z_force = self.force_z_checkbox and self.force_z_checkbox.isChecked()
 
@@ -68,7 +70,7 @@ class ForceOverlayMixin:
         if not show_z_force and self._force_z_curve is not None:
             self._force_z_curve.setVisible(False)
 
-        if not self.force_data or (not show_x_force and not show_z_force):
+        if not state.data or (not show_x_force and not show_z_force):
             return
 
         if self.sweep_count == 0:
@@ -79,8 +81,11 @@ class ForceOverlayMixin:
             return
         min_time, max_time = time_window
 
+        if hasattr(self, 'update_force_viewbox'):
+            self.update_force_viewbox()
+
         try:
-            force_array = np.array(self.force_data, dtype=np.float64)
+            force_array = np.array(state.data, dtype=np.float64)
             force_times = force_array[:, 0]
 
             start_idx = np.searchsorted(force_times, min_time, side='left')
@@ -116,6 +121,8 @@ class ForceOverlayMixin:
 
                 self._force_z_curve.setVisible(True)
                 self._force_z_curve.setData(x=times, y=z_forces)
+
+            self.force_viewbox.enableAutoRange(axis='y')
 
         except Exception as e:
             self.log_status(f"ERROR: Failed to update force plot - {e}")

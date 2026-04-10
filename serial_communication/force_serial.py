@@ -1,24 +1,57 @@
 """
 Force Serial Communication Mixin
 ================================
-Handles force sensor serial port connection and communication.
+Handles force sensor connection workflow and GUI coordination.
 """
 
-import serial
 from PyQt6.QtWidgets import QMessageBox
 from PyQt6.QtCore import QTimer
 
 from config_constants import (
     FORCE_CALIBRATION_SAMPLES,
     FORCE_SENSOR_BAUD_RATE,
-    FORCE_SENSOR_STARTUP_DELAY_SEC,
-    FORCE_THREAD_STOP_TIMEOUT_MS,
 )
-from serial_communication.serial_threads import ForceReaderThread
+from data_processing.force_state import get_force_runtime_state
+from serial_communication.force_connection_state import (
+    build_force_connected_view_state,
+    build_force_disconnected_view_state,
+)
+from serial_communication.force_session import ForceSessionController
 
 
 class ForceSerialMixin:
     """Mixin class for force sensor serial communication methods."""
+
+    def _apply_force_connection_view_state(self, view_state):
+        self.force_connect_btn.setText(view_state.connect_button_text)
+        self.force_port_combo.setEnabled(view_state.port_selection_enabled)
+
+    def _sync_force_transport_state(self):
+        """Mirror controller-owned transport objects on the GUI for existing callers."""
+        session = getattr(self, "force_session", None)
+        self.force_serial_port = session.serial_port if session is not None else None
+        self.force_serial_thread = session.serial_thread if session is not None else None
+
+    def _build_force_session(self):
+        return ForceSessionController(
+            self.process_force_data,
+            self._handle_force_reader_error,
+        )
+
+    def _warn_if_no_force_data_received(self):
+        """Emit a bounded warning when the connected force port stays silent."""
+        state = get_force_runtime_state(self)
+        port = getattr(self, "force_serial_port", None)
+        if port is None or not getattr(port, "is_open", False):
+            return
+        if state.raw_samples_seen > 0:
+            return
+
+        port_label = state.selected_port_text or "force port"
+        self.log_status(
+            f"WARNING: No force data received from {port_label} after connect. "
+            "Plotting will stay empty until the device streams serial data."
+        )
     
     def toggle_force_connection(self):
         """Connect or disconnect from the force sensor serial port."""
@@ -37,39 +70,32 @@ class ForceSerialMixin:
         port_name = port_text.split(" - ")[0]
 
         try:
-            self.force_serial_port = serial.Serial(
-                port=port_name,
-                baudrate=FORCE_SENSOR_BAUD_RATE,
-                timeout=1.0
-            )
-            
-            # Clear any startup messages
-            import time
-            time.sleep(FORCE_SENSOR_STARTUP_DELAY_SEC)
-            self.force_serial_port.reset_input_buffer()
+            state = get_force_runtime_state(self)
+            if getattr(self, "force_session", None) is None:
+                self.force_session = self._build_force_session()
 
-            # Start force serial reader thread
-            self.force_serial_thread = ForceReaderThread(self.force_serial_port)
-            self.force_serial_thread.force_data_received.connect(self.process_force_data)
-            self.force_serial_thread.error_occurred.connect(self._handle_force_reader_error)
-            self.force_serial_thread.start()
+            state.raw_samples_seen = 0
+            state.selected_port_text = port_text
+            outcome = self.force_connection_workflow.connect(self.force_session, port_name)
+            self._sync_force_transport_state()
 
-            self.log_status(f"Connected to force sensor on {port_name} at {FORCE_SENSOR_BAUD_RATE} baud")
+            self.log_status(f"Connected to force sensor on {port_text} at {FORCE_SENSOR_BAUD_RATE} baud")
             self.log_status(f"Calibrating force sensors (collecting {FORCE_CALIBRATION_SAMPLES} samples)...")
+            QTimer.singleShot(3000, self._warn_if_no_force_data_received)
             
             # Start calibration
-            self.calibrate_force_sensors()
-            
-            self.force_connect_btn.setText("Disconnect Force")
-            
-            # Disable port selection during connection
-            self.force_port_combo.setEnabled(False)
+            if outcome.should_start_calibration:
+                self.calibrate_force_sensors()
+
+            self._apply_force_connection_view_state(build_force_connected_view_state())
             
             # Update channel list to add force checkboxes
             if self.config['channels']:  # Only if ADC is already configured
                 self.update_channel_list()
 
         except Exception as e:
+            self._sync_force_transport_state()
+            self._apply_force_connection_view_state(build_force_disconnected_view_state())
             self.log_status(f"ERROR: Failed to connect to force sensor - {e}")
             QMessageBox.critical(self, "Force Connection Error", f"Failed to connect:\n{e}")
 
@@ -77,7 +103,11 @@ class ForceSerialMixin:
         """Handle force-reader errors and transition to a clean disconnected state."""
         self.log_status(message)
 
-        if self._force_disconnect_in_progress:
+        if not str(message).startswith("Force sensor read error:"):
+            return
+
+        state = get_force_runtime_state(self)
+        if state.disconnect_in_progress:
             return
         if not self.force_serial_port and not self.force_serial_thread:
             return
@@ -87,38 +117,25 @@ class ForceSerialMixin:
 
     def disconnect_force_serial(self):
         """Disconnect from the force sensor serial port."""
-        if self._force_disconnect_in_progress:
+        state = get_force_runtime_state(self)
+        if state.disconnect_in_progress:
             return
 
-        self._force_disconnect_in_progress = True
+        state.disconnect_in_progress = True
 
         try:
-            thread = self.force_serial_thread
-            if thread:
-                try:
-                    thread.stop()
-                    if not thread.wait(FORCE_THREAD_STOP_TIMEOUT_MS):
-                        self.log_status("WARNING: Force serial thread shutdown timed out; continuing disconnect")
-                except Exception as e:
-                    self.log_status(f"WARNING: Force serial thread did not stop cleanly: {e}")
-                self.force_serial_thread = None
+            outcome = self.force_connection_workflow.disconnect(getattr(self, "force_session", None))
+            for warning in outcome.warnings:
+                self.log_status(f"WARNING: {warning}")
 
-            if self.force_serial_port and self.force_serial_port.is_open:
-                try:
-                    self.force_serial_port.close()
-                except Exception as e:
-                    self.log_status(f"WARNING: Failed to close force serial port cleanly: {e}")
-
-            self.force_serial_port = None
+            self._sync_force_transport_state()
+            state.selected_port_text = None
             
             self.log_status("Force sensor disconnected")
-            self.force_connect_btn.setText("Connect Force")
-            
-            # Re-enable port selection
-            self.force_port_combo.setEnabled(True)
+            self._apply_force_connection_view_state(build_force_disconnected_view_state())
             
             # Update channel list to remove force checkboxes
             if self.config['channels']:  # Only if ADC is configured
                 self.update_channel_list()
         finally:
-            self._force_disconnect_in_progress = False
+            state.disconnect_in_progress = False

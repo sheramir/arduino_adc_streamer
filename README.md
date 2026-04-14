@@ -1,64 +1,102 @@
 # Arduino ADC Streamer
 
-Desktop GUI and firmware workspace for high-speed sensor acquisition, plotting, force sensing, heatmap visualization, and export.
+Desktop GUI and firmware workspace for streaming ADC data from MG24 and Teensy boards, visualizing sensor packages in real time, and exporting aligned capture data.
+
+## Current App Features
+
+- Real-time ADC plotting with selectable channels, repeat handling, baseline subtraction, and rolling window controls
+- Shared live filtering for time-series and spectrum views
+- Spectrum tab with FFT and Welch PSD modes
+- Force-sensor overlay with timestamp alignment against ADC capture timing
+- Heatmap and shear views for grouped multi-channel sensor packages
+- Editable sensor library with both 5-channel layouts and 3x3 array layouts
+- Archive-backed capture flow with full-view reload for captures larger than RAM
+- CSV export, metadata export, and plot image export
 
 ## Quick Start
 
-1. Upload the recommended firmware from `Arduino_Sketches/MG24/ADC_Streamer_binary_scan/`.
-2. Install Python dependencies:
+1. Flash one of the supported sketches from [Arduino_Sketches/README.md](Arduino_Sketches/README.md).
+2. Install dependencies.
+
+   ```bash
+   uv sync
+   ```
+
+   Or with `pip`:
+
    ```bash
    pip install -r requirements.txt
    ```
-3. Run the GUI:
+
+3. Launch the GUI.
+
    ```bash
    python adc_gui.py
-   # or
+   ```
+
+   Or with `uv`:
+
+   ```bash
    uv run adc_gui.py
    ```
+
+4. Connect the MCU, configure channels or sensors, and start capture from the GUI.
 
 ## Repository Layout
 
 ### Application
-- `adc_gui.py` - main GUI entry point
-- `config/` - board detection, configuration, and buffer helpers
-- `serial_communication/` - ADC and force serial communication
-- `data_processing/` - capture, plotting, filtering, heatmap, shear, and spectrum logic
-- `gui/` - panel construction and GUI widgets
-- `file_operations/` - export and archive loading
+
+- `adc_gui.py`: main PyQt application entry point
+- `config_constants.py`: shared defaults and numeric limits
+- `config/`: MCU detection, config state, sensor library helpers, and channel-selection logic
+- `serial_communication/`: ADC and force connection workflows, sessions, parser, and reader threads
+- `data_processing/`: binary parsing, filtering, plotting, force processing, heatmap, shear, spectrum, and capture lifecycle
+- `gui/`: tab construction and UI panels for time series, heatmap, shear, display, sensor, and spectrum views
+- `file_operations/`: archive loading, export, plot export, and settings persistence helpers
 
 ### Firmware
-- `Arduino_Sketches/` - MG24, Teensy, and SPI sketch variants
 
-### Tests
-- `tests/` - current automated test modules
+- `Arduino_Sketches/MG24/`: MG24-based ADC streamer sketches
+- `Arduino_Sketches/Teensy/`: Teensy ADC and 555-resistance sketches
+- `Arduino_Sketches/Teensy_MG24_SPI/`: specialized Teensy + MG24 SPI array sketches
 
-### Documentation
-- `docs/user/ARRAY_CONFIGURATION_GUIDE.md` - configuring array sensor layouts
-- `docs/user/HEATMAP_README.md` - current heatmap behavior and usage
-- `docs/architecture/HEATMAP_IMPLEMENTATION.md` - implementation notes
-- `docs/history/` - historical refactor and phase-completion notes
+### Configuration And Data
 
-### Bundled Sensor Library
-- `sensors_library/` - bundled starter sensor configurations shipped with the repo
+- `sensors_library/sensor_configurations.json`: bundled starter sensor library shipped with the repo
+- `~/.adc_streamer/sensors/sensor_configurations.json`: user-edited sensor library persisted by the GUI
+- `~/.adc_streamer/heatmap/`: last-used heatmap settings saved per mode
+- `~/.adc_streamer/shear/`: last-used shear settings saved per mode
+- `~/.adc_streamer/spectrum/`: last-used spectrum settings
 
-## Main Features
+### Tests And Docs
 
-- Real-time ADC plotting with configurable windowing
-- Full-view loading from archive cache when captures exceed RAM
-- Live force overlay synchronized against ADC capture timing
-- Heatmap views for grouped 5-channel sensors and array sensor layouts
-- Shear / center-of-pressure view for MG-24 piezo layouts
-- Shared filtering pipeline for time series and spectrum views
-- CSV export, plot export, and cached archive capture
+- `tests/`: current automated regression coverage
+- `docs/user/`: user-facing guides for array configuration and heatmap behavior
+- `docs/architecture/`: implementation notes for active subsystems
+- `docs/history/`: historical refactor logs and milestone notes
 
-## Configuration Files
+## Recommended Documentation
 
-The bundled starter sensor library now lives under `sensors_library/` so a fresh clone starts with usable defaults:
+- [Arduino_Sketches/README.md](Arduino_Sketches/README.md): current firmware sketch map and serial protocol summary
+- [docs/user/ARRAY_CONFIGURATION_GUIDE.md](docs/user/ARRAY_CONFIGURATION_GUIDE.md): configuring bundled and custom sensor layouts
+- [docs/user/HEATMAP_README.md](docs/user/HEATMAP_README.md): heatmap modes, inputs, and saved settings behavior
+- [docs/history/FORCE_SENSOR_REFACTOR_PLAN.md](docs/history/FORCE_SENSOR_REFACTOR_PLAN.md): future force-path cleanup roadmap
 
-- `sensors_library/sensor_configurations.json`
-- `plus_heatmap_config.json`
+## Testing
+
+Run the current automated tests with:
+
+```bash
+python -m pytest
+```
+
+Or:
+
+```bash
+uv run pytest
+```
 
 ## Notes
 
-- Historical docs were moved under `docs/history/` to keep the root focused on the runnable app and active project files.
-- The root-level `tests/` directory now contains the real automated tests; old one-off diagnostic scripts were removed.
+- The bundled sensor library is loaded from `sensors_library/` when present, then overlaid by the user library under `~/.adc_streamer/sensors/`.
+- `plus_heatmap_config.json` is a legacy root-level sample file and is not part of the automatic heatmap startup path.

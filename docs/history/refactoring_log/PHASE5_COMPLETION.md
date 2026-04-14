@@ -181,7 +181,7 @@ These are either:
 
 ### Final Module Structure
 
-```
+```text
 arduino_adc_streamer/
 ├── adc_gui.py                      # Original (preserved, 3,499 lines)
 ├── adc_gui_modular.py              # Production modular version (84 lines)

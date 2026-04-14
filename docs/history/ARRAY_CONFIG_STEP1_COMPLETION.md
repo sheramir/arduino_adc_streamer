@@ -104,7 +104,7 @@ Successfully implemented the array sensor configuration GUI in the Sensor tab, e
 ## Configuration Storage
 
 ### Location
-```
+```text
 ~/.adc_streamer/sensors/sensor_configurations.json
 ```
 

@@ -137,7 +137,7 @@ uv run adc_gui.py
 
 ### Example Workflow: Multi-Channel Acquisition
 
-```
+```text
 1. Connect Arduino on COM9
 2. Configure: Ref=VDD, OSR=2, Gain=1
 3. Set channels: 0,1,2,3,4,5
@@ -152,7 +152,7 @@ uv run adc_gui.py
 
 ### Example Workflow: Ground Subtraction
 
-```
+```text
 1. Connect Arduino
 2. Set channels: 0,1,2,3
 3. Set repeat: 8
@@ -167,7 +167,7 @@ uv run adc_gui.py
 
 ### Example Workflow: High-Speed Single Channel
 
-```
+```text
 1. Connect Arduino
 2. Set channels: 0
 3. Set repeat: 1
@@ -218,7 +218,7 @@ Example with channels `0,1`, repeat `3`:
 
 ### Metadata File
 Saved alongside CSV with `_metadata.txt` suffix:
-```
+```text
 ADC Streamer - Acquisition Metadata
 ==================================================
 
@@ -460,7 +460,7 @@ for config in configs:
 
 ### Qt Geometry Warning
 You may see a warning about window geometry on startup:
-```
+```text
 QWindowsWindow::setGeometry: Unable to set geometry...
 ```
 **This is harmless** - Qt automatically adjusts the window to fit your display. No action needed.

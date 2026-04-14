@@ -6,7 +6,7 @@ The `adc_gui.py` file has grown to over 3,500 lines. This document outlines the 
 
 ## Proposed Directory Structure
 
-```
+```text
 arduino_adc_streamer/
 ├── adc_gui.py                      # Main entry point (~200 lines)
 ├── config_constants.py             # ✓ Configuration constants

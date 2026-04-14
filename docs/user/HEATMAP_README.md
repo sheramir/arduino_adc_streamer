@@ -2,73 +2,81 @@
 
 ## Overview
 
-The heatmap tab renders grouped 5-channel sensor data as a center-of-pressure view with live intensity, coordinate readouts, and per-channel values.
+The heatmap tab renders grouped sensor packages as a live center-of-pressure view. It is fed from the same rolling capture buffers used by the rest of the application rather than from a simulated source.
 
-The current app no longer uses a simulated heatmap source. Heatmap updates are driven by real captured data from the active buffers.
+## What The Current App Supports
 
-## Current Architecture
+- live heatmap rendering for active sensor packages
+- separate processing paths for piezo/PZT and 555/PZR modes
+- center-of-pressure X/Y readouts
+- intensity and confidence readouts
+- per-channel value display
+- shared package grouping with the shear view
+- save/load controls for heatmap settings
 
-The heatmap path is split across these modules:
+## Runtime Architecture
 
-- `data_processing/heatmap_processor.py` - shared heatmap state and setup
-- `data_processing/heatmap_piezo_processor.py` - piezo/PZT heatmap intensity processing
-- `data_processing/heatmap_555_processor.py` - 555/PZR displacement heatmap processing
-- `gui/heatmap_panel.py` - heatmap widgets, controls, readouts, and rendering
-- `config/config_handlers.py` - sensor grouping and heatmap-related configuration helpers
+The current heatmap path is split across these files:
 
-## How Channel Grouping Works
+- `data_processing/heatmap_processor.py`: shared heatmap state and per-package setup
+- `data_processing/heatmap_piezo_processor.py`: piezo/PZT intensity and CoP processing
+- `data_processing/heatmap_555_processor.py`: 555/PZR displacement heatmap processing
+- `data_processing/heatmap_signal_processing.py`: per-channel conditioning for heatmap magnitude extraction
+- `gui/heatmap_panel.py`: heatmap widgets, controls, save/load behavior, and rendering
+- `config/config_handlers.py`: active sensor grouping and channel-selection helpers
+- `adc_gui.py`: timer wiring and tab-driven update flow
 
-Heatmap processing is based on normalized sensor package grouping.
+## Input Requirements
 
-- In array mode, the app uses the active array configuration and MUX mapping.
-- In manual channel mode, the app groups channels into 5-channel sensor packages when the selection is compatible with the active sensor layout.
-- The same sensor-package grouping is shared by both heatmap and shear processing so the two views interpret channel layout consistently.
+Heatmap output depends on the active sensor configuration and selected device mode.
+
+- In channel-layout mode, the app interprets compatible 5-channel packages using the active channel-to-position map.
+- In array-layout mode, the app derives visible packages from the selected array sensors and their configured MUX/channel assignments.
+- The shear view uses the same package grouping so both tabs stay spatially consistent.
+
+If the current selection does not produce valid grouped sensor data, the heatmap view stays present but will not show useful package output.
 
 ## Heatmap Modes
 
-### Piezo / PZT
+### Piezo / PZT mode
 
-The piezo heatmap computes per-channel intensities over a recent time window and builds a center-of-pressure view from the active sensor package.
+The PZT path computes per-channel magnitudes over a recent integration window, applies the current calibration and threshold settings, and builds a center-of-pressure heatmap for each active package.
 
-### 555 / PZR
+### 555 / PZR mode
 
-The 555 heatmap uses the 555 displacement processing path, thresholding, and per-channel baselines to compute display values and center-of-pressure.
+The PZR path uses the 555 displacement pipeline, baseline tracking, and thresholding to build smoothed displacement heatmaps and CoP output.
 
-## UI Behavior
+## Saved Settings
 
-The heatmap tab provides:
+The GUI keeps separate last-used settings files for the two heatmap modes:
 
-- live heatmap image rendering
-- center-of-pressure X/Y readouts
-- intensity readout
-- per-channel sensor value display
-- channel placement mapping based on the active sensor configuration
-- zeroing/baseline support for compatible modes
+- `~/.adc_streamer/heatmap/last_used_heatmap_settings_PZT.json`
+- `~/.adc_streamer/heatmap/last_used_heatmap_settings_PZR.json`
 
-If the current configuration does not provide valid grouped 5-channel sensor data, the heatmap view will not render useful sensor packages.
+The Heatmap tab also lets you save or load arbitrary exported heatmap settings JSON files from the UI.
 
-## Configuration
+`plus_heatmap_config.json` in the repo root is not part of the automatic startup path for the current app.
 
-Heatmap behavior depends on:
+## Related Controls
 
-- sensor layout and channel placement configuration
-- selected channels or selected array sensors
-- active device mode (`adc` vs `555`)
-- thresholds, gains, smoothing, and calibration values from the heatmap settings UI
+The Heatmap tab exposes controls for:
 
-For array layout setup, see `ARRAY_CONFIGURATION_GUIDE.md`.
+- package-level thresholds and calibration
+- RMS or integration windows
+- DC removal mode and high-pass cutoff
+- blob size and smoothing
+- mode-specific PZR controls such as displacement thresholds and CoP smoothing
 
 ## Performance Notes
 
 The heatmap path is designed for live use:
 
 - rendering is timer-driven in the GUI thread
-- data extraction works from the rolling capture buffers
-- processing avoids unnecessary recomputation where possible
-- heatmap state is initialized once and reused during capture
+- reusable buffers and coordinate grids are initialized once
+- window extraction works from the rolling in-memory capture buffers
+- package processing avoids unnecessary recomputation where possible
 
-## Related Files
+## Related Docs
 
-- `config_constants.py` - default heatmap constants
-- `plus_heatmap_config.json` - bundled heatmap configuration data
-- `../architecture/HEATMAP_IMPLEMENTATION.md` - historical implementation notes
+- [ARRAY_CONFIGURATION_GUIDE.md](ARRAY_CONFIGURATION_GUIDE.md): configuring sensor layouts and array mappings
+- [../architecture/HEATMAP_IMPLEMENTATION.md](../architecture/HEATMAP_IMPLEMENTATION.md): implementation notes and historical context

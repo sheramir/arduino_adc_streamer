@@ -2,161 +2,99 @@
 
 ## Overview
 
-The Array Configuration system allows you to organize multiple PZT (Piezoelectric) and PZR (Piezoelectric Resistor) sensors in a 3×4 matrix layout, with flexible MUX (multiplexer) assignments and channel mappings.
+The sensor library supports two configuration types:
 
-## Configuration Structure
+- `channel_layout`: a single 5-channel package using the logical positions `T`, `R`, `C`, `L`, and `B`
+- `array_layout`: a 3x3 grid of named sensors with per-sensor MUX and channel assignments
 
-### 1. Array Layout (3×4 Matrix)
+This guide covers the current array-layout path used by the GUI.
 
-The physical arrangement of sensors in a grid:
-- **3 Columns** (horizontal)
-- **4 Rows** (vertical)
-- Total of 12 potential sensor positions
+## Current Array Model
 
-Each cell can contain:
-- **Sensor ID**: Format `PZT_N` or `PZR_N` (e.g., `PZT_1`, `PZR_2`)
-- **Empty**: Leave blank if no sensor at that position
+The current editor in the Sensor tab uses:
 
-**Example Array Layout:**
-```
-[PZT_1]  [PZT_2]  [PZT_3]
-[PZR_1]  [PZR_2]  [Empty]
-[PZT_5]  [PZR_3]  [PZT_8]
-[Empty]  [PZT_9]  [Empty]
-```
+- a `3 x 3` array grid
+- sensor IDs in canonical form such as `PZT1` or `PZR2`
+- optional legacy input such as `PZT_1`, which is normalized when saved
+- `1..5` logical channels per sensor
+- MUX IDs `1..2`
+- physical channel indices `0..15`
 
-### 2. Channel Layout
+## What Array Layouts Affect
 
-Specifies the number of channels per sensor:
-- **Channels per Sensor**: 1–5 (default: 5)
-- This defines how many physical ADC channels each sensor uses
+An active array configuration is used to:
 
-### 3. MUX Configuration
+- resolve selected array sensors into physical acquisition channels
+- build display labels for the time-series view
+- define package grouping used by the heatmap and shear tabs
+- persist the selected sensor library entry across app restarts
 
-For each sensor in the array, configure:
-- **MUX Number**: Which MUX board (1 or 2)
-- **Channels**: Comma-separated list of physical channels (0–9) on that MUX
+## Where Configurations Are Stored
 
-**Example MUX Configuration:**
-```
-PZT_1:  MUX=1, Channels=0,1,2,3,4
-PZT_2:  MUX=2, Channels=0,1,2,3,4
-PZT_3:  MUX=2, Channels=5,6,7,8,9
-PZR_1:  MUX=1, Channels=5,6,7,8,9
-```
+- Bundled starter library: `sensors_library/sensor_configurations.json`
+- User-edited library: `~/.adc_streamer/sensors/sensor_configurations.json`
 
-**Channel Mapping Semantics:**
-- The array of physical channels is passed to the MCU as-is
-- During acquisition, if you select **PZT_1** and **PZT_3** from the same MUX, the Arduino reads **all unique channels** from both sensors simultaneously
-- The Python GUI displays only the selected sensors' channels, labeled as `PZT1_1`, `PZT1_2`, ... `PZT3_1`, `PZT3_2`, etc.
+The app loads the bundled library first when available, then overlays user edits from the local settings path.
 
-## Using Array Configurations in the GUI
+## Creating Or Editing An Array Layout
 
-### Step 1: Create a New Array Configuration
+1. Open the `Sensor` tab.
+2. Create a new configuration or select an existing one.
+3. Set the configuration type to `Array Layout`.
+4. Fill the `3 x 3` array grid with sensor IDs such as `PZT1`, `PZR2`, or leave cells blank.
+5. Add a MUX mapping for every sensor present in the grid.
+6. Set `Channels per Sensor` to match the hardware layout.
+7. Save the configuration.
 
-1. Open the **Sensor** tab
-2. Click **"Add New"** button
-3. In the **Type** dropdown, select **"Array Layout"**
-4. A new configuration with default blank array is created
+## Example Layout
 
-### Step 2: Configure Array Layout
+Example `3 x 3` grid:
 
-1. Click on the **"Array Layout"** tab (appears in the editor area)
-2. In the **"Array Layout (3×4)"** grid, enter sensor IDs:
-   - Click each cell to enter `PZT_N` or `PZR_N`
-   - Leave empty for unused positions
-3. Click **"Save"** to confirm
-
-### Step 3: Configure MUX Assignments
-
-1. In the **"MUX Configuration"** section of the Array Layout tab:
-   - The table auto-populates with all sensors from your array
-   - For each sensor, set:
-     - **MUX (1-2)**: Which MUX board
-     - **Channels**: Comma-separated physical channels (0–9)
-2. Example: `PZT_1` on MUX 1 with channels `5,6,7,8,9`
-3. Click **"Save"** to confirm
-
-### Step 4: Set Channels per Sensor
-
-1. In **"Channels per Sensor"** spinner (default: 5)
-   - Set the number of channels each sensor reports
-   - Used for data interpretation during acquisition
-2. Click **"Save"** to confirm
-
-### Step 5: Save Configuration
-
-1. Click **"Save"** button to persist the configuration
-2. Configuration is saved locally (`~/.adc_streamer/sensors/sensor_configurations.json`)
-3. Last active configuration auto-loads on GUI restart
-
-## Example: Complete Array Configuration
-
-**Setup:**
-- 4 PZT sensors in a 2×2 pattern
-- Each sensor has 5 channels
-- Sensors on MUX 1: PZT_1, PZT_2
-- Sensors on MUX 2: PZT_3, PZT_4
-
-### Array Layout:
-```
-[PZT_1]  [PZT_2]  [Empty]
-[PZT_3]  [PZT_4]  [Empty]
-[Empty]  [Empty]  [Empty]
-[Empty]  [Empty]  [Empty]
+```text
+[PZT1] [PZT2] [PZT3]
+[PZR4] [PZT5] [PZR6]
+[   ]  [PZT7] [   ]
 ```
 
-### MUX Configuration:
+Example MUX mapping:
+
+```text
+PZT1 -> MUX 1, Channels 0,1,2,3,4
+PZT2 -> MUX 1, Channels 5,6,7,8,9
+PZT3 -> MUX 2, Channels 0,1,2,3,4
+PZR4 -> MUX 2, Channels 5,6,7,8,9
 ```
-Sensor    | MUX | Channels
-----------|-----|------------------
-PZT_1     |  1  | 0,1,2,3,4
-PZT_2     |  1  | 5,6,7,8,9
-PZT_3     |  2  | 0,1,2,3,4
-PZT_4     |  2  | 5,6,7,8,9
-```
 
-### Channels Per Sensor: 5
+## How Acquisition Mapping Works
 
-## Data Flow During Acquisition
+During acquisition:
 
-1. **Configuration Phase**:
-   - Arduino receives channel configuration
-   - Based on MUX assignments, Arduino selects which channels to read
-   - Example: If firmware detects MUX 1 has channels [0,1,2,3,4,5,6,7,8,9], it reconfigures both PZT_1 and PZT_2 simultaneously
+1. The selected array sensors are converted into the set of unique physical channels required by the active layout.
+2. The MCU receives that physical channel list in acquisition order.
+3. The GUI remaps the returned samples back into sensor-aware labels for display and processing.
 
-2. **Acquisition Phase**:
-   - Arduino reads selected channels from both MUXes
-   - Data blocks contain 12 channels (5 from PZT_1 + 5 from PZT_2 on MUX 1, then 5 from PZT_3 + 5 from PZT_4 on MUX 2)
+This means the physical stream can contain shared or de-duplicated channels, while the GUI still renders the selected sensors using sensor-specific labels.
 
-3. **Display Phase**:
-   - Python GUI receives raw 12-channel data
-   - Remaps channels to sensor names using MUX configuration
-   - Time series plot displays: `PZT1_1`, `PZT1_2`, ..., `PZT3_1`, `PZT3_2`, etc.
-   - Heatmap/Shear panels show only selected sensors
-
-## Configuration File Format
-
-Array configurations are stored in JSON format:
+## Example JSON Shape
 
 ```json
 {
-  "name": "My Array Setup",
+  "name": "Array_V2",
   "type": "array_layout",
+  "channel_sensor_map": ["T", "R", "C", "B", "L"],
   "array_layout": {
     "cells": [
-      ["PZT_1", "PZT_2", "PZT_3"],
-      ["PZR_1", "PZR_2", null],
-      ["PZT_5", "PZR_3", "PZT_8"],
-      [null, "PZT_9", null]
+      [null, "PZT7", null],
+      ["PZT1", "PZR6", "PZT5"],
+      ["PZR2", "PZT3", "PZR4"]
     ]
   },
   "mux_mapping": {
-    "PZT_1": {
+    "PZT1": {
       "mux": 1,
       "channels": [0, 1, 2, 3, 4]
     },
-    "PZT_2": {
+    "PZR2": {
       "mux": 2,
       "channels": [0, 1, 2, 3, 4]
     }
@@ -169,32 +107,23 @@ Array configurations are stored in JSON format:
 
 ## Validation Rules
 
-- All sensor IDs must match `PZT_N` or `PZR_N` format (N > 0)
-- MUX numbers must be 1 or 2
-- Channels must be integers 0–9 (10 channels per MUX)
-- No duplicate channel assignments within a single MUX
-- All sensors in the array must have MUX mappings
+- Every populated cell must be a valid `PZTn` or `PZRn` sensor ID.
+- Every sensor in the grid must have a MUX mapping.
+- MUX values must stay within `1..2`.
+- Physical channels must stay within `0..15`.
+- `channels_per_sensor` must stay within `1..5`.
 
 ## Troubleshooting
 
-| Issue | Cause | Solution |
-|-------|-------|----------|
-| "Save" button doesn't work | Invalid MUX table entry | Check all MUX entries are valid integers |
-| Array not loading | Configuration corrupted | Delete config and recreate |
-| Channels misaligned in time series | MUX/channel mapping error | Verify MUX table matches wiring |
+| Issue | Likely cause | What to check |
+| --- | --- | --- |
+| Array config will not save | Invalid sensor ID or incomplete MUX mapping | Check every populated grid cell has a matching mapping row |
+| Sensors display the wrong channels | MUX/channel assignments do not match wiring | Compare the saved mapping with the hardware wiring |
+| Heatmap or shear view is empty | Selected sensors do not form valid grouped input for the active mode | Verify sensor selection, mode, and channel count |
 
-## Future Steps
+## Related Files
 
-1. **Acquisition Integration** (Step 2):
-   - Modify acquisition settings to show sensor selector instead of raw channels
-   - Auto-generate channel list from selected sensors
-
-2. **Display Integration** (Step 3):
-   - Update time series plot to use `SensorN_ChannelN` naming
-   - Update heatmap to visualize array geometry
-
-3. **Advanced Features**:
-   - Save/load array configurations from files
-   - Visual array editor with drag-and-drop
-   - Sensor geometry visualization for heatmap overlay
-
+- `config/sensor_config.py`: normalization, validation, and persistence helpers
+- `gui/sensor_panel.py`: Sensor tab editor and save/load behavior
+- `config/config_handlers.py`: mapping from selected sensors to acquisition channels
+- `docs/user/HEATMAP_README.md`: how array layouts feed the heatmap path

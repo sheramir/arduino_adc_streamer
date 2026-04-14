@@ -80,7 +80,7 @@ Updated GUI to support Arduino's new high-speed IADC scan with oversampling and 
 ## UI Layout Changes
 
 **ADC Configuration Section** now shows:
-```
+```text
 ┌─ ADC Configuration ─────────────────┐
 │ Voltage Reference:  [3.3V (VDD) ▼] │
 │ OSR (Oversampling): [2 ▼]          │
@@ -130,7 +130,7 @@ Updated GUI to support Arduino's new high-speed IADC scan with oversampling and 
 ## Binary Protocol - NO CHANGES
 
 The binary block format remains **exactly the same**:
-```
+```text
 [0xAA][0x55][countL][countH]  // 4-byte header
 [sample0_L][sample0_H]         // count × 2 bytes of uint16 samples
 [sample1_L][sample1_H]

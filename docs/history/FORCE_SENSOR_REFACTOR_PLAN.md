@@ -314,4 +314,4 @@ Run these once the real force sensor is connected:
 
 When force hardware is available, a good starting prompt is:
 
-`Use docs/FORCE_SENSOR_REFACTOR_PLAN.md as the force-sensor roadmap. Start with slice 1 only, explain exactly what you will change, implement it, let me test with hardware, then continue slice by slice. Do not mix ADC and force serial paths.`
+`Use docs/history/FORCE_SENSOR_REFACTOR_PLAN.md as the force-sensor roadmap. Start with slice 1 only, explain exactly what you will change, implement it, let me test with hardware, then continue slice by slice. Do not mix ADC and force serial paths.`

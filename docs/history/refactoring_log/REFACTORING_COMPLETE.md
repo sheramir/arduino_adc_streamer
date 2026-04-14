@@ -15,7 +15,7 @@ Successfully transformed a 3,499-line monolithic Python file into a clean, modul
 ## Architecture
 
 ### Module Structure
-```
+```text
 arduino_adc_streamer/
 ├── serial_communication/    # Serial I/O, threads, binary protocol
 ├── config/                  # MCU detection, configuration handlers

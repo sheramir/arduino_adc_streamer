@@ -5,6 +5,7 @@ This folder contains the firmware variants used by the desktop ADC Streamer GUI.
 ## Folder Layout
 
 - `MG24/`: MG24 standalone ADC streamer variants
+- `legacy/`: archived sketches that are no longer part of the default GUI workflow
 - `Teensy/`: Teensy ADC and 555-resistance streamer variants
 - `Teensy_MG24_SPI/`: specialized multi-board SPI array experiments
 
@@ -220,3 +221,9 @@ ch14 s1, ch14 s2, ch14 s3, ch14 s4, ch15 s1, ch15 s2
 ## Legacy And Experimental Sketches
 
 Some additional `.ino` files in this tree are historical or specialized variants. Keep them for reference or hardware-specific work, but prefer the sketches listed in the current sketch map when pairing with the main GUI.
+
+Archived MG24 variants now live under `legacy/MG24/`:
+
+- `legacy/MG24/ADC_Streamer_binary/`: older single-sweep binary/CSV-era host flow
+- `legacy/MG24/ADC_Streamer_binary_buffer/`: pre-scan blocked-output MG24 variant
+- `legacy/MG24/ADC_Streamer XIAO MG24/`: older interactive CSV sweeper variant

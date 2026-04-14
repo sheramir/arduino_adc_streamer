@@ -57,6 +57,7 @@ Desktop GUI and firmware workspace for streaming ADC data from MG24 and Teensy b
 ### Firmware
 
 - `Arduino_Sketches/MG24/`: MG24-based ADC streamer sketches
+- `Arduino_Sketches/legacy/`: archived firmware variants kept for reference
 - `Arduino_Sketches/Teensy/`: Teensy ADC and 555-resistance sketches
 - `Arduino_Sketches/Teensy_MG24_SPI/`: specialized Teensy + MG24 SPI array sketches
 

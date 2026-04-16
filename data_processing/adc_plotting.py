@@ -92,7 +92,8 @@ class ADCPlottingMixin:
         if getattr(self, 'subtract_baseline_check', None) is not None and not self.subtract_baseline_check.isChecked():
             self.subtract_baseline_check.setChecked(True)
 
-        self.reset_555_heatmap_state()
+        if hasattr(self, "reset_555_heatmap_state"):
+            self.reset_555_heatmap_state()
 
         if log_message:
             self.log_status(f"Zeroed signals using last {baseline_window_sec:.2f}s baseline window")

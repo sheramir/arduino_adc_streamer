@@ -11,7 +11,7 @@ from typing import Dict
 import numpy as np
 
 from config_constants import HEATMAP_CHANNEL_SENSOR_MAP, HEATMAP_HEIGHT, HEATMAP_REQUIRED_CHANNELS, HEATMAP_WIDTH, MAX_SENSOR_PACKAGES
-from data_processing.shear_cop_processor import (
+from Legacy.data_processing.shear_cop_processor import (
     SHEAR_SENSOR_ORDER,
     ShearCoPProcessor,
     generate_gaussian_blob,

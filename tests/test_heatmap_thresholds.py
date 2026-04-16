@@ -4,8 +4,8 @@ import unittest
 import numpy as np
 
 from config_constants import HEATMAP_HEIGHT, HEATMAP_WIDTH
-from data_processing.heatmap_555_processor import Heatmap555ProcessorMixin
-from data_processing.heatmap_piezo_processor import PiezoHeatmapProcessorMixin
+from Legacy.data_processing.heatmap_555_processor import Heatmap555ProcessorMixin
+from Legacy.data_processing.heatmap_piezo_processor import PiezoHeatmapProcessorMixin
 
 
 class Dummy555Processor(Heatmap555ProcessorMixin):

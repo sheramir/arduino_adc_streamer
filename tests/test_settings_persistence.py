@@ -5,8 +5,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from uuid import uuid4
 
-from gui.heatmap_panel import HeatmapPanelMixin
-from gui.shear_panel import ShearPanelMixin
+from Legacy.gui.heatmap_panel import HeatmapPanelMixin
+from Legacy.gui.shear_panel import ShearPanelMixin
 from gui.spectrum_panel import SpectrumPanelMixin
 
 

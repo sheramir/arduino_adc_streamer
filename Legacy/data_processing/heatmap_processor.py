@@ -15,9 +15,9 @@ from config_constants import (
     HEATMAP_HEIGHT,
 )
 
-from data_processing.heatmap_555_processor import Heatmap555ProcessorMixin
-from data_processing.heatmap_piezo_processor import PiezoHeatmapProcessorMixin
-from data_processing.heatmap_signal_processing import HeatmapSignalProcessor
+from Legacy.data_processing.heatmap_555_processor import Heatmap555ProcessorMixin
+from Legacy.data_processing.heatmap_piezo_processor import PiezoHeatmapProcessorMixin
+from Legacy.data_processing.heatmap_signal_processing import HeatmapSignalProcessor
 
 
 class HeatmapProcessorMixin(PiezoHeatmapProcessorMixin, Heatmap555ProcessorMixin):

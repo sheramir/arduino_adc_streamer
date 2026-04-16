@@ -1,6 +1,6 @@
 # Arduino ADC Streamer
 
-Desktop GUI and firmware workspace for streaming ADC data from MG24 and Teensy boards, visualizing sensor packages in real time, and exporting aligned capture data.
+Desktop GUI and firmware workspace for streaming ADC data from MG24 and Teensy boards, visualizing ADC and spectrum data in real time, and exporting aligned capture data.
 
 ## Current App Features
 
@@ -8,7 +8,6 @@ Desktop GUI and firmware workspace for streaming ADC data from MG24 and Teensy b
 - Shared live filtering for time-series and spectrum views
 - Spectrum tab with FFT and Welch PSD modes
 - Force-sensor overlay with timestamp alignment against ADC capture timing
-- Heatmap and shear views for grouped multi-channel sensor packages
 - Editable sensor library with both 5-channel layouts and 3x3 array layouts
 - Archive-backed capture flow with full-view reload for captures larger than RAM
 - CSV export, metadata export, and plot image export
@@ -50,9 +49,10 @@ Desktop GUI and firmware workspace for streaming ADC data from MG24 and Teensy b
 - `config_constants.py`: shared defaults and numeric limits
 - `config/`: MCU detection, config state, sensor library helpers, and channel-selection logic
 - `serial_communication/`: ADC and force connection workflows, sessions, parser, and reader threads
-- `data_processing/`: binary parsing, filtering, plotting, force processing, heatmap, shear, spectrum, and capture lifecycle
-- `gui/`: tab construction and UI panels for time series, heatmap, shear, display, sensor, and spectrum views
+- `data_processing/`: binary parsing, filtering, plotting, force processing, spectrum, and capture lifecycle
+- `gui/`: tab construction and UI panels for time series, spectrum, sensor, controls, files, and status views
 - `file_operations/`: archive loading, export, plot export, and settings persistence helpers
+- `Legacy/`: archived heatmap, shear, and combined Display tab GUI/processing modules kept for reference or rollback
 
 ### Firmware
 
@@ -65,8 +65,6 @@ Desktop GUI and firmware workspace for streaming ADC data from MG24 and Teensy b
 
 - `sensors_library/sensor_configurations.json`: bundled starter sensor library shipped with the repo
 - `~/.adc_streamer/sensors/sensor_configurations.json`: user-edited sensor library persisted by the GUI
-- `~/.adc_streamer/heatmap/`: last-used heatmap settings saved per mode
-- `~/.adc_streamer/shear/`: last-used shear settings saved per mode
 - `~/.adc_streamer/spectrum/`: last-used spectrum settings
 
 ### Tests And Docs
@@ -80,7 +78,7 @@ Desktop GUI and firmware workspace for streaming ADC data from MG24 and Teensy b
 
 - [Arduino_Sketches/README.md](Arduino_Sketches/README.md): current firmware sketch map and serial protocol summary
 - [docs/user/ARRAY_CONFIGURATION_GUIDE.md](docs/user/ARRAY_CONFIGURATION_GUIDE.md): configuring bundled and custom sensor layouts
-- [docs/user/HEATMAP_README.md](docs/user/HEATMAP_README.md): heatmap modes, inputs, and saved settings behavior
+- [docs/user/HEATMAP_README.md](docs/user/HEATMAP_README.md): legacy heatmap modes, inputs, and saved settings behavior
 - [docs/history/FORCE_SENSOR_REFACTOR_PLAN.md](docs/history/FORCE_SENSOR_REFACTOR_PLAN.md): future force-path cleanup roadmap
 
 ## Testing
@@ -100,4 +98,5 @@ uv run pytest
 ## Notes
 
 - The bundled sensor library is loaded from `sensors_library/` when present, then overlaid by the user library under `~/.adc_streamer/sensors/`.
-- `plus_heatmap_config.json` is a legacy root-level sample file and is not part of the automatic heatmap startup path.
+- The active GUI now shows only `Time Series`, `Spectrum`, and `Sensor` tabs, with `Sensor` last.
+- `plus_heatmap_config.json` is a legacy root-level sample file and is not part of the active startup path.

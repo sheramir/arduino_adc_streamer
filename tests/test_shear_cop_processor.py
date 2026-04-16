@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from data_processing.shear_cop_processor import (
+from Legacy.data_processing.shear_cop_processor import (
     SHEAR_SENSOR_ORDER,
     ShearCoPProcessor,
     extract_shear_pair,

@@ -46,21 +46,16 @@ from config import MCUDetectorMixin, ConfigurationMixin
 from config.adc_config_state import build_default_adc_config_state
 from config.adc_configuration_service import ADCConfigurationService
 from config.adc_configuration_runner import ADCConfigurationRunner
-from config.channel_utils import unique_channels_in_order
 from gui import (
     ControlPanelsMixin,
     DisplayPanelsMixin,
     FilePanelsMixin,
-    HeatmapPanelMixin,
     SensorPanelMixin,
-    ShearPanelMixin as ShearPanelUIMixin,
     SpectrumPanelMixin,
     StatusLoggingMixin,
 )
 from data_processing import (
     DataProcessorMixin,
-    HeatmapProcessorMixin,
-    ShearProcessorMixin,
     SpectrumProcessorMixin,
 )
 from data_processing.force_state import build_default_force_runtime_state
@@ -80,14 +75,10 @@ class ADCStreamerGUI(
     ControlPanelsMixin,     # ✅ Control panel UI
     DisplayPanelsMixin,     # ✅ Display panel UI
     FilePanelsMixin,        # ✅ File panel UI
-    HeatmapPanelMixin,      # ✅ Heatmap panel UI
     SensorPanelMixin,       # ✅ Sensor panel UI
-    ShearPanelUIMixin,      # ✅ Shear panel UI
     SpectrumPanelMixin,     # ✅ Spectrum panel UI
     ConfigurationMixin,     # ✅ Configuration management
     DataProcessorMixin,     # ✅ Data processing
-    HeatmapProcessorMixin,  # ✅ Heatmap CoP calculation
-    ShearProcessorMixin,    # ✅ Shear / CoP calculation
     SpectrumProcessorMixin, # ✅ Spectrum processing
     DataExporterMixin,      # ✅ Data export
     PlotExporterMixin,      # ✅ Plot export
@@ -110,18 +101,12 @@ class ADCStreamerGUI(
         self._init_config_state()
         self._init_ui_state()
         self.init_sensor_config_state()
-        self._init_heatmap_state()
-        self._init_shear_state()
         self._init_spectrum_state()
         self._init_timers()
 
         # Build user interface
         self.init_ui()
         self._refresh_sensor_tab_ui()
-        self.load_last_heatmap_settings()
-        self.enable_heatmap_settings_autosave()
-        self.load_last_shear_settings()
-        self.enable_shear_settings_autosave()
         self.load_last_spectrum_settings()
 
         # Post-initialization
@@ -191,9 +176,6 @@ class ADCStreamerGUI(
         self.channel_checkboxes: Dict[int, QCheckBox] = {}
         self.force_x_checkbox: Optional[QCheckBox] = None
         self.force_z_checkbox: Optional[QCheckBox] = None
-        self._heatmap_autosave_enabled = False
-        self._shear_autosave_enabled = False
-        self.visualization_capture_data_enabled = False
         
         self.is_updating_plot = False
         self._adc_curves = {}
@@ -204,14 +186,6 @@ class ADCStreamerGUI(
         self.force_plot_debounce_ms = FORCE_PLOT_DEBOUNCE_MS
         self._serial_disconnect_in_progress = False
     
-    def _init_heatmap_state(self):
-        """Initialize heatmap processing state."""
-        self.init_heatmap_processing_state()
-
-    def _init_shear_state(self):
-        """Initialize shear / CoP processing state."""
-        self.init_shear_processing_state()
-
     def _init_timers(self):
         """Initialize Qt timers."""
         self.plot_update_timer = QTimer()
@@ -231,11 +205,6 @@ class ADCStreamerGUI(
         self.config_check_timer = QTimer()
         self.config_check_timer.timeout.connect(self.check_config_completion)
         self.config_check_timer.setInterval(CONFIG_CHECK_INTERVAL)
-        
-        # Heatmap update timer
-        self.heatmap_timer = QTimer()
-        self.heatmap_timer.timeout.connect(self.update_heatmap)
-        self.heatmap_timer.setInterval(int(1000 / HEATMAP_FPS))  # Convert FPS to milliseconds
 
         # Spectrum update timer
         self.spectrum_timer = QTimer()
@@ -277,7 +246,6 @@ class ADCStreamerGUI(
         # Status bar
         self.statusBar().showMessage("Disconnected")
         
-        # Connect tab change signal to start/stop heatmap simulation
         self.visualization_tabs.currentChanged.connect(self.on_visualization_tab_changed)
 
         self._fit_window_to_screen()
@@ -350,8 +318,6 @@ class ADCStreamerGUI(
 
     def closeEvent(self, event):
         """Handle window close event."""
-        self.save_last_heatmap_settings()
-        self.save_last_shear_settings()
         self.save_last_spectrum_settings()
 
         if self.serial_port and self.serial_port.is_open:
@@ -365,21 +331,12 @@ class ADCStreamerGUI(
         event.accept()
     
     # ========================================================================
-    # Heatmap Update Logic
+    # Visualization Tab Logic
     # ========================================================================
     
     def on_visualization_tab_changed(self, index):
-        """Handle tab change to start/stop heatmap simulation.
-        
-        Args:
-            index: Tab index (0=Time Series, 1=Heatmap)
-        """
+        """Handle tab changes for time-series and spectrum refresh behavior."""
         current_tab = self.visualization_tabs.tabText(index)
-
-        if current_tab in {"2D Heatmap", "Shear", "Display"}:
-            self.start_heatmap_simulation()
-        else:  # Time Series or other tabs
-            self.stop_heatmap_simulation()
 
         if current_tab == "Spectrum":
             self.start_spectrum_updates()
@@ -398,8 +355,6 @@ class ADCStreamerGUI(
             self.trigger_plot_update()
             self.update_force_plot()
 
-        self.sync_visualization_capture_buttons()
-
     def get_current_visualization_tab_name(self) -> str:
         """Return the current visualization tab title."""
         if not hasattr(self, "visualization_tabs") or self.visualization_tabs is None:
@@ -411,54 +366,15 @@ class ADCStreamerGUI(
 
     def is_live_visualization_only_tab(self) -> bool:
         """Return True when current tab should avoid time-series capture by default."""
-        return self.get_current_visualization_tab_name() in {"2D Heatmap", "Shear", "Display"}
+        return False
 
     def should_store_capture_data(self) -> bool:
         """Return True when capture should persist/archive time-series data."""
-        if not self.is_capturing:
-            return False
-        if self.is_live_visualization_only_tab():
-            return bool(self.visualization_capture_data_enabled)
-        return True
+        return bool(self.is_capturing)
 
     def should_update_live_timeseries_display(self) -> bool:
         """Return True when live ADC/force plot redraws should run."""
         return self.get_current_visualization_tab_name() == "Time Series"
-
-    def set_visualization_capture_data_enabled(self, enabled: bool):
-        """Enable or disable time-series capture while on heatmap/shear tabs."""
-        enabled = bool(enabled)
-        if self.visualization_capture_data_enabled == enabled:
-            self.sync_visualization_capture_buttons()
-            return
-        self.visualization_capture_data_enabled = enabled
-        state_text = "enabled" if enabled else "disabled"
-        self.log_status(f"Visualization tab data capture {state_text}")
-        self.sync_visualization_capture_buttons()
-
-    def sync_visualization_capture_buttons(self):
-        """Keep heatmap/shear Capture Data buttons in sync with shared state."""
-        for attr_name in ("heatmap_capture_button", "shear_capture_button"):
-            button = getattr(self, attr_name, None)
-            if button is None:
-                continue
-            old_block = button.blockSignals(True)
-            button.setChecked(bool(self.visualization_capture_data_enabled))
-            button.blockSignals(old_block)
-    
-    def start_heatmap_simulation(self):
-        """Start heatmap updates."""
-        
-        # Start heatmap update timer
-        if not self.heatmap_timer.isActive():
-            self.heatmap_timer.start()
-    
-    def stop_heatmap_simulation(self):
-        """Stop heatmap updates."""
-        
-        # Stop heatmap update timer
-        if self.heatmap_timer.isActive():
-            self.heatmap_timer.stop()
 
     def start_spectrum_updates(self):
         """Start spectrum updates."""
@@ -471,108 +387,6 @@ class ADCStreamerGUI(
         """Stop spectrum updates."""
         if self.spectrum_timer.isActive():
             self.spectrum_timer.stop()
-    
-    def update_heatmap(self):
-        """Update heatmap display (called by QTimer at HEATMAP_FPS rate)."""
-        current_tab = self.visualization_tabs.tabText(self.visualization_tabs.currentIndex())
-        if current_tab not in {"2D Heatmap", "Shear", "Display"}:
-            return
-
-        if hasattr(self, 'update_heatmap_ui_for_mode'):
-            self.update_heatmap_ui_for_mode()
-        
-        channels = self.config.get('channels', [])
-        num_channels = len(channels)
-
-        if self.is_array_sensor_selection_mode():
-            sensor_groups = self.get_array_selected_sensor_groups()
-            valid_channel_count = (
-                len(sensor_groups) > 0
-                and len(sensor_groups) <= MAX_SENSOR_PACKAGES
-                and all(len(group.get('channels', [])) == HEATMAP_REQUIRED_CHANNELS for group in sensor_groups)
-            )
-            sensor_package_count = len(sensor_groups) if valid_channel_count else 1
-        else:
-            unique_channels = unique_channels_in_order(channels)
-            num_channels = len(unique_channels)
-            valid_channel_count = (
-                num_channels >= HEATMAP_REQUIRED_CHANNELS
-                and num_channels <= HEATMAP_REQUIRED_CHANNELS * MAX_SENSOR_PACKAGES
-                and num_channels % HEATMAP_REQUIRED_CHANNELS == 0
-            )
-            sensor_package_count = max(1, num_channels // HEATMAP_REQUIRED_CHANNELS) if valid_channel_count else 1
-
-        required_channels = "5, 10, 15, or 20"
-
-        self.active_sensor_package_count = sensor_package_count
-        if hasattr(self, "update_visible_heatmap_cards"):
-            self.update_visible_heatmap_cards(sensor_package_count)
-        if hasattr(self, "update_visible_shear_cards"):
-            self.update_visible_shear_cards(sensor_package_count)
-        if hasattr(self, "update_visible_display_cards"):
-            self.update_visible_display_cards(sensor_package_count)
-
-        if not valid_channel_count:
-            if current_tab == "Shear":
-                self.show_shear_channel_warning(num_channels, required_channels)
-            else:
-                self.show_heatmap_channel_warning(num_channels, required_channels)
-            return
-        else:
-            self.clear_heatmap_channel_warning()
-            self.clear_shear_channel_warning()
-        
-        # Reset processing state if capture restarted
-        if self.sweep_count < self.last_heatmap_sweep_count:
-            for processor in getattr(self, "heatmap_signal_processors", []):
-                processor.reset()
-            self.reset_shear_processing_state()
-            self.reset_555_heatmap_state()
-        self.last_heatmap_sweep_count = self.sweep_count
-        self.last_shear_sweep_count = self.sweep_count
-
-        if current_tab == "Shear":
-            processed = self.compute_shear_visualization(self.get_shear_settings())
-            if processed is None:
-                return
-
-            self.update_shear_display(processed)
-            return
-
-        settings = self.get_heatmap_settings()
-
-        if getattr(self, 'device_mode', 'adc') == '555':
-            pzr_results = self.process_555_displacement_heatmap(settings)
-            if pzr_results is None:
-                return
-            shear_settings = self.get_shear_settings()
-            shear_processed = self.compute_shear_visualization(shear_settings)
-            shear_results = shear_processed if shear_processed is not None else []
-            if current_tab == "Display" and hasattr(self, "update_display_tab"):
-                self.update_display_tab(pzr_results, shear_results=shear_results)
-            else:
-                self.update_heatmap_display(pzr_results, shear_results=[])
-            return
-
-        sensor_packages = self.compute_channel_intensities(settings)
-        if sensor_packages is None:
-            return
-
-        package_results = [
-            self.process_sensor_data_for_heatmap(sensor_values, settings, package_index=index)
-            for index, sensor_values in enumerate(sensor_packages)
-        ]
-
-        # Compute shear data for arrow visualization
-        shear_settings = self.get_shear_settings()
-        shear_processed = self.compute_shear_visualization(shear_settings)
-        shear_results = shear_processed if shear_processed is not None else []
-
-        # Update display
-        if current_tab == "Display" and hasattr(self, "update_display_tab"):
-            self.update_display_tab(package_results, shear_results=shear_results)
-        else:
-            self.update_heatmap_display(package_results, shear_results=shear_results)
 
 
 def main():

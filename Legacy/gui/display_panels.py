@@ -2,7 +2,7 @@
 Display Panels Mixin
 ====================
 GUI components for plot display, visualization controls, and timing information.
-Includes the active tabbed interface for time-series, spectrum, and sensor views.
+Now includes tabbed interface for time-series and heatmap views.
 """
 
 from PyQt6.QtWidgets import (
@@ -22,10 +22,10 @@ class DisplayPanelsMixin:
     """Mixin class for display and visualization GUI components."""
     
     def create_plot_section(self) -> QWidget:
-        """Create tabbed visualization section with active application views.
+        """Create tabbed visualization section with time-series plot and heatmap.
         
         Returns:
-            QWidget: Widget containing Time Series, Spectrum, and Sensor tabs.
+            QWidget: Widget containing tabbed display (Time Series + Heatmap)
         """
         # Create tab widget
         self.visualization_tabs = QTabWidget()
@@ -34,16 +34,28 @@ class DisplayPanelsMixin:
         timeseries_tab = self.create_timeseries_tab()
         self.visualization_tabs.addTab(timeseries_tab, "Time Series")
         self.timeseries_tab_index = 0
+        
+        # Create heatmap tab (from HeatmapPanelMixin)
+        heatmap_tab = self.create_heatmap_tab()
+        self.visualization_tabs.addTab(heatmap_tab, "2D Heatmap")
+        self.heatmap_tab_index = 1
+
+        shear_tab = self.create_shear_tab()
+        self.visualization_tabs.addTab(shear_tab, "Shear")
+        self.shear_tab_index = 2
+
+        display_tab = self.create_display_tab()
+        self.visualization_tabs.addTab(display_tab, "Display")
+        self.display_tab_index = 3
+
+        sensor_tab = self.create_sensor_tab()
+        self.visualization_tabs.addTab(sensor_tab, "Sensor")
+        self.sensor_tab_index = 4
 
         # Create spectrum tab (from SpectrumPanelMixin)
         spectrum_tab = self.create_spectrum_tab()
         self.visualization_tabs.addTab(spectrum_tab, "Spectrum")
-        self.spectrum_tab_index = 1
-
-        # Create sensor tab last (from SensorPanelMixin)
-        sensor_tab = self.create_sensor_tab()
-        self.visualization_tabs.addTab(sensor_tab, "Sensor")
-        self.sensor_tab_index = 2
+        self.spectrum_tab_index = 5
         
         return self.visualization_tabs
     

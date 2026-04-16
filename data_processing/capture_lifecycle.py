@@ -86,7 +86,7 @@ class CaptureLifecycleMixin:
             self._invalidate_full_view_filter_cache()
         if hasattr(self, '_reset_live_filtered_tracking'):
             self._reset_live_filtered_tracking(preserve_existing=False)
-        if reset_shear:
+        if reset_shear and hasattr(self, "reset_shear_processing_state"):
             self.reset_shear_processing_state()
 
     def _reset_full_view_state(self, *, button_enabled=None, trigger_plot_update=False):

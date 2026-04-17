@@ -25,9 +25,9 @@ from PyQt6.QtWidgets import (
     QDoubleSpinBox,
     QGridLayout,
     QGroupBox,
-    QHBoxLayout,
     QLabel,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -44,7 +44,6 @@ from constants.signal_integration import (
     DEFAULT_HPF_CUTOFF_HZ,
     DEFAULT_INTEGRATION_WINDOW_SAMPLES,
     SIGNAL_INTEGRATION_AVERAGE_LINE_WIDTH,
-    SIGNAL_INTEGRATION_CHANNEL_GRID_SPACING,
     SIGNAL_INTEGRATION_DIMMED_COLOR_FRACTION,
     SIGNAL_INTEGRATION_DISABLED_HPF_CUTOFF_HZ,
     SIGNAL_INTEGRATION_DISPLAY_WINDOW_DECIMALS,
@@ -64,13 +63,58 @@ from constants.signal_integration import (
     SIGNAL_INTEGRATION_MAX_TOTAL_POINTS_TO_DISPLAY,
     SIGNAL_INTEGRATION_MIN_POINTS_PER_VISIBLE_CHANNEL,
     SIGNAL_INTEGRATION_NYQUIST_DIVISOR,
+    SIGNAL_INTEGRATION_PLOT_MAX_HEIGHT_PX,
+    SIGNAL_INTEGRATION_PLOT_MIN_HEIGHT_PX,
     SIGNAL_INTEGRATION_PLOT_LINE_WIDTH,
     SIGNAL_INTEGRATION_REPEAT_LINE_WIDTH,
+    SIGNAL_INTEGRATION_POSITION_ORDER,
     SIGNAL_INTEGRATION_WINDOW_MAX_SAMPLES,
     SIGNAL_INTEGRATION_WINDOW_MIN_SAMPLES,
 )
-from constants.ui import MAX_PLOT_COLUMNS
+from constants.shear import (
+    DEFAULT_ARROW_BASE_WIDTH_PX,
+    DEFAULT_ARROW_GAIN,
+    DEFAULT_ARROW_MAX_LENGTH_PX,
+    DEFAULT_ARROW_MIN_THRESHOLD,
+    DEFAULT_ARROW_WIDTH_SCALES,
+    DEFAULT_SHEAR_CALIBRATION_GAIN,
+    DEFAULT_SHEAR_NOISE_THRESHOLD,
+    SHEAR_ARROW_BASE_WIDTH_DECIMALS,
+    SHEAR_ARROW_BASE_WIDTH_MAX_PX,
+    SHEAR_ARROW_BASE_WIDTH_MIN_PX,
+    SHEAR_ARROW_BASE_WIDTH_STEP_PX,
+    SHEAR_ARROW_GAIN_DECIMALS,
+    SHEAR_ARROW_GAIN_MAX,
+    SHEAR_ARROW_GAIN_MIN,
+    SHEAR_ARROW_GAIN_STEP,
+    SHEAR_ARROW_MAX_LENGTH_DECIMALS,
+    SHEAR_ARROW_MAX_LENGTH_MAX,
+    SHEAR_ARROW_MAX_LENGTH_MIN,
+    SHEAR_ARROW_MAX_LENGTH_STEP,
+    SHEAR_ARROW_MIN_THRESHOLD_DECIMALS,
+    SHEAR_ARROW_MIN_THRESHOLD_MAX,
+    SHEAR_ARROW_MIN_THRESHOLD_MIN,
+    SHEAR_ARROW_MIN_THRESHOLD_STEP,
+    SHEAR_CALIBRATION_GAIN_DECIMALS,
+    SHEAR_CALIBRATION_GAIN_MAX,
+    SHEAR_CALIBRATION_GAIN_MIN,
+    SHEAR_CALIBRATION_GAIN_STEP,
+    SHEAR_NOISE_THRESHOLD_DECIMALS,
+    SHEAR_NOISE_THRESHOLD_MAX,
+    SHEAR_NOISE_THRESHOLD_MIN,
+    SHEAR_NOISE_THRESHOLD_STEP,
+    SHEAR_CONTROL_SPIN_WIDTH_PX,
+    SHEAR_GAIN_LABEL_MAX_WIDTH_PX,
+    SHEAR_GAIN_SPIN_WIDTH_PX,
+    SHEAR_SENSOR_POSITIONS,
+    SHEAR_SETTINGS_GRID_COLUMNS,
+    SHEAR_SETTINGS_HORIZONTAL_SPACING_PX,
+    SHEAR_SETTINGS_VERTICAL_SPACING_PX,
+    SHEAR_VISUALIZATION_STRETCH,
+)
 from data_processing.adc_filter_engine import ADCFilterEngine, SCIPY_FILTERS_AVAILABLE
+from data_processing.shear_detector import ShearDetector, ShearResult
+from gui.shear_visualization_widget import ShearVisualizationWidget
 
 
 class SignalIntegrationPanelMixin:
@@ -94,13 +138,17 @@ class SignalIntegrationPanelMixin:
 
         Returns:
             QWidget containing HPF controls, integration controls, display
-            controls, channel toggles, and the integrated voltage plot.
+            controls, the integrated voltage plot, and the shear visualization.
 
         Raises:
             None.
         """
-        tab = QWidget()
-        root_layout = QVBoxLayout(tab)
+        tab = QScrollArea()
+        tab.setWidgetResizable(True)
+        tab.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        content_widget = QWidget()
+        root_layout = QVBoxLayout(content_widget)
+        tab.setWidget(content_widget)
 
         controls_group = QGroupBox("Signal Integration Controls")
         controls_layout = QGridLayout(controls_group)
@@ -153,28 +201,9 @@ class SignalIntegrationPanelMixin:
         controls_layout.addWidget(self.signal_integration_reset_btn, 0, 6)
         root_layout.addWidget(controls_group)
 
-        channel_group = QGroupBox("Display Channels")
-        channel_root_layout = QVBoxLayout(channel_group)
-        self.signal_integration_channel_container = QWidget()
-        self.signal_integration_channel_layout = QGridLayout(self.signal_integration_channel_container)
-        self.signal_integration_channel_layout.setSpacing(SIGNAL_INTEGRATION_CHANNEL_GRID_SPACING)
-        self.signal_integration_channel_checks: dict[Hashable, QCheckBox] = {}
-        self._signal_integration_channel_labels: dict[Hashable, str] = {}
-        channel_root_layout.addWidget(self.signal_integration_channel_container)
-
-        channel_button_layout = QHBoxLayout()
-        self.signal_integration_select_all_btn = QPushButton("All")
-        self.signal_integration_select_all_btn.clicked.connect(self.select_all_signal_integration_channels)
-        channel_button_layout.addWidget(self.signal_integration_select_all_btn)
-
-        self.signal_integration_deselect_all_btn = QPushButton("None")
-        self.signal_integration_deselect_all_btn.clicked.connect(self.deselect_all_signal_integration_channels)
-        channel_button_layout.addWidget(self.signal_integration_deselect_all_btn)
-        channel_button_layout.addStretch()
-        channel_root_layout.addLayout(channel_button_layout)
-        root_layout.addWidget(channel_group)
-
         self.signal_integration_plot_widget = pg.PlotWidget()
+        self.signal_integration_plot_widget.setMinimumHeight(SIGNAL_INTEGRATION_PLOT_MIN_HEIGHT_PX)
+        self.signal_integration_plot_widget.setMaximumHeight(SIGNAL_INTEGRATION_PLOT_MAX_HEIGHT_PX)
         self.signal_integration_plot_widget.setBackground("w")
         self.signal_integration_plot_widget.setLabel("left", "Integrated HPF Voltage", units="V samples")
         self.signal_integration_plot_widget.setLabel("bottom", "Time", units="s")
@@ -188,12 +217,119 @@ class SignalIntegrationPanelMixin:
         self.signal_integration_status_label = QLabel("Waiting for raw ADC data")
         root_layout.addWidget(self.signal_integration_status_label)
 
+        self.shear_detector = ShearDetector()
+        self.shear_visualization_widget = ShearVisualizationWidget()
+        root_layout.addWidget(self.shear_visualization_widget, stretch=SHEAR_VISUALIZATION_STRETCH)
+        root_layout.addWidget(self._create_shear_visualization_settings_group())
+
         self.signal_integration_curves: dict[Hashable, object] = {}
+        self._latest_signal_integration_values_by_position: dict[str, float] = {}
+        self._latest_shear_result: ShearResult | None = None
         self._signal_integration_filter_engine = ADCFilterEngine()
         self._signal_integration_filter_warning = ""
         self._signal_integration_updating_plot = False
 
         return tab
+
+    def _create_shear_visualization_settings_group(self) -> QGroupBox:
+        group = QGroupBox("Shear Visualization Settings")
+        layout = QGridLayout(group)
+        layout.setHorizontalSpacing(SHEAR_SETTINGS_HORIZONTAL_SPACING_PX)
+        layout.setVerticalSpacing(SHEAR_SETTINGS_VERTICAL_SPACING_PX)
+
+        layout.addWidget(QLabel("Noise threshold:"), 0, 0)
+        self.shear_noise_threshold_spin = QDoubleSpinBox()
+        self.shear_noise_threshold_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
+        self.shear_noise_threshold_spin.setRange(SHEAR_NOISE_THRESHOLD_MIN, SHEAR_NOISE_THRESHOLD_MAX)
+        self.shear_noise_threshold_spin.setDecimals(SHEAR_NOISE_THRESHOLD_DECIMALS)
+        self.shear_noise_threshold_spin.setSingleStep(SHEAR_NOISE_THRESHOLD_STEP)
+        self.shear_noise_threshold_spin.setValue(DEFAULT_SHEAR_NOISE_THRESHOLD)
+        self.shear_noise_threshold_spin.setToolTip(
+            "Zeros each integrated channel before gain and shear detection when its magnitude is below this value."
+        )
+        self.shear_noise_threshold_spin.valueChanged.connect(self.on_shear_processing_settings_changed)
+        layout.addWidget(self.shear_noise_threshold_spin, 0, 1)
+
+        self.shear_gain_spins: dict[str, QDoubleSpinBox] = {}
+        for index, position in enumerate(SHEAR_SENSOR_POSITIONS):
+            row = 1 + (index // SHEAR_SETTINGS_GRID_COLUMNS)
+            col = (index % SHEAR_SETTINGS_GRID_COLUMNS) * 2
+            gain_label = QLabel(f"{position} gain:")
+            gain_label.setMaximumWidth(SHEAR_GAIN_LABEL_MAX_WIDTH_PX)
+            layout.addWidget(gain_label, row, col)
+            gain_spin = QDoubleSpinBox()
+            gain_spin.setMaximumWidth(SHEAR_GAIN_SPIN_WIDTH_PX)
+            gain_spin.setRange(SHEAR_CALIBRATION_GAIN_MIN, SHEAR_CALIBRATION_GAIN_MAX)
+            gain_spin.setDecimals(SHEAR_CALIBRATION_GAIN_DECIMALS)
+            gain_spin.setSingleStep(SHEAR_CALIBRATION_GAIN_STEP)
+            gain_spin.setValue(DEFAULT_SHEAR_CALIBRATION_GAIN)
+            gain_spin.setToolTip(f"Calibration multiplier for the {position} integrated channel.")
+            gain_spin.valueChanged.connect(self.on_shear_processing_settings_changed)
+            layout.addWidget(gain_spin, row, col + 1)
+            self.shear_gain_spins[position] = gain_spin
+
+        arrow_row = 2
+        layout.addWidget(QLabel("Arrow gain:"), arrow_row, 0)
+        self.shear_arrow_gain_spin = QDoubleSpinBox()
+        self.shear_arrow_gain_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
+        self.shear_arrow_gain_spin.setRange(SHEAR_ARROW_GAIN_MIN, SHEAR_ARROW_GAIN_MAX)
+        self.shear_arrow_gain_spin.setDecimals(SHEAR_ARROW_GAIN_DECIMALS)
+        self.shear_arrow_gain_spin.setSingleStep(SHEAR_ARROW_GAIN_STEP)
+        self.shear_arrow_gain_spin.setValue(DEFAULT_ARROW_GAIN)
+        self.shear_arrow_gain_spin.valueChanged.connect(self.on_shear_visualization_settings_changed)
+        layout.addWidget(self.shear_arrow_gain_spin, arrow_row, 1)
+
+        layout.addWidget(QLabel("Arrow threshold:"), arrow_row, 2)
+        self.shear_arrow_threshold_spin = QDoubleSpinBox()
+        self.shear_arrow_threshold_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
+        self.shear_arrow_threshold_spin.setRange(
+            SHEAR_ARROW_MIN_THRESHOLD_MIN,
+            SHEAR_ARROW_MIN_THRESHOLD_MAX,
+        )
+        self.shear_arrow_threshold_spin.setDecimals(SHEAR_ARROW_MIN_THRESHOLD_DECIMALS)
+        self.shear_arrow_threshold_spin.setSingleStep(SHEAR_ARROW_MIN_THRESHOLD_STEP)
+        self.shear_arrow_threshold_spin.setValue(DEFAULT_ARROW_MIN_THRESHOLD)
+        self.shear_arrow_threshold_spin.setToolTip(
+            "Hides only the displayed arrow when detected shear magnitude is below this value."
+        )
+        self.shear_arrow_threshold_spin.valueChanged.connect(self.on_shear_visualization_settings_changed)
+        layout.addWidget(self.shear_arrow_threshold_spin, arrow_row, 3)
+
+        layout.addWidget(QLabel("Arrow max radius:"), arrow_row, 4)
+        self.shear_arrow_max_length_spin = QDoubleSpinBox()
+        self.shear_arrow_max_length_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
+        self.shear_arrow_max_length_spin.setRange(
+            SHEAR_ARROW_MAX_LENGTH_MIN,
+            SHEAR_ARROW_MAX_LENGTH_MAX,
+        )
+        self.shear_arrow_max_length_spin.setDecimals(SHEAR_ARROW_MAX_LENGTH_DECIMALS)
+        self.shear_arrow_max_length_spin.setSingleStep(SHEAR_ARROW_MAX_LENGTH_STEP)
+        self.shear_arrow_max_length_spin.setValue(DEFAULT_ARROW_MAX_LENGTH_PX)
+        self.shear_arrow_max_length_spin.valueChanged.connect(self.on_shear_visualization_settings_changed)
+        layout.addWidget(self.shear_arrow_max_length_spin, arrow_row, 5)
+
+        layout.addWidget(QLabel("Arrow width:"), arrow_row, 6)
+        self.shear_arrow_base_width_spin = QDoubleSpinBox()
+        self.shear_arrow_base_width_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
+        self.shear_arrow_base_width_spin.setRange(
+            SHEAR_ARROW_BASE_WIDTH_MIN_PX,
+            SHEAR_ARROW_BASE_WIDTH_MAX_PX,
+        )
+        self.shear_arrow_base_width_spin.setDecimals(SHEAR_ARROW_BASE_WIDTH_DECIMALS)
+        self.shear_arrow_base_width_spin.setSingleStep(SHEAR_ARROW_BASE_WIDTH_STEP_PX)
+        self.shear_arrow_base_width_spin.setValue(DEFAULT_ARROW_BASE_WIDTH_PX)
+        self.shear_arrow_base_width_spin.valueChanged.connect(self.on_shear_visualization_settings_changed)
+        layout.addWidget(self.shear_arrow_base_width_spin, arrow_row, 7)
+
+        self.shear_arrow_width_scales_check = QCheckBox("Scale width")
+        self.shear_arrow_width_scales_check.setChecked(DEFAULT_ARROW_WIDTH_SCALES)
+        self.shear_arrow_width_scales_check.setToolTip(
+            "When enabled, the arrow shaft becomes wider as shear magnitude grows."
+        )
+        self.shear_arrow_width_scales_check.stateChanged.connect(self.on_shear_visualization_settings_changed)
+        layout.addWidget(self.shear_arrow_width_scales_check, arrow_row + 1, 0)
+
+        return group
 
     def on_signal_integration_settings_changed(self, _value: object | None = None) -> None:
         """Apply HPF, integration, and display-window changes.
@@ -213,11 +349,11 @@ class SignalIntegrationPanelMixin:
         self._signal_integration_filter_warning = ""
         self.update_signal_integration_plot()
 
-    def on_signal_integration_channel_visibility_changed(self, _state: int) -> None:
-        """Refresh the integrated voltage preview after a channel checkbox changes.
+    def on_shear_processing_settings_changed(self, _value: object | None = None) -> None:
+        """Recompute shear after noise-threshold or gain controls change.
 
         Args:
-            _state: Qt checkbox state value.
+            _value: Qt signal payload from the changed control.
 
         Returns:
             None.
@@ -225,13 +361,13 @@ class SignalIntegrationPanelMixin:
         Raises:
             None.
         """
-        self.update_signal_integration_plot()
+        self._update_shear_visualization_from_latest()
 
-    def select_all_signal_integration_channels(self) -> None:
-        """Show every integrated voltage channel trace in the Signal Integration tab.
+    def on_shear_visualization_settings_changed(self, _value: object | None = None) -> None:
+        """Apply arrow-display settings to the current shear result.
 
         Args:
-            None.
+            _value: Qt signal payload from the changed control.
 
         Returns:
             None.
@@ -239,29 +375,17 @@ class SignalIntegrationPanelMixin:
         Raises:
             None.
         """
-        for checkbox in self.signal_integration_channel_checks.values():
-            checkbox.blockSignals(True)
-            checkbox.setChecked(True)
-            checkbox.blockSignals(False)
-        self.update_signal_integration_plot()
+        if not hasattr(self, "shear_visualization_widget"):
+            return
 
-    def deselect_all_signal_integration_channels(self) -> None:
-        """Hide every integrated voltage channel trace in the Signal Integration tab.
-
-        Args:
-            None.
-
-        Returns:
-            None.
-
-        Raises:
-            None.
-        """
-        for checkbox in self.signal_integration_channel_checks.values():
-            checkbox.blockSignals(True)
-            checkbox.setChecked(False)
-            checkbox.blockSignals(False)
-        self.update_signal_integration_plot()
+        self.shear_visualization_widget.configure(
+            arrow_gain=float(self.shear_arrow_gain_spin.value()),
+            arrow_max_length_fraction=float(self.shear_arrow_max_length_spin.value()),
+            arrow_min_threshold=float(self.shear_arrow_threshold_spin.value()),
+            arrow_width_scales=bool(self.shear_arrow_width_scales_check.isChecked()),
+            arrow_base_width_px=float(self.shear_arrow_base_width_spin.value()),
+        )
+        self.shear_visualization_widget.update_display(self._latest_shear_result)
 
     def on_signal_integration_reset_clicked(self) -> None:
         """Reset the integrated voltage preview to the latest display window.
@@ -302,31 +426,34 @@ class SignalIntegrationPanelMixin:
         try:
             if not self.config["channels"]:
                 self._hide_all_signal_integration_curves()
+                self._clear_shear_visualization()
                 self.signal_integration_status_label.setText("Configure channels first")
                 return
 
             display_specs = self.get_display_channel_specs()
-            self._sync_signal_integration_channel_checks(display_specs)
-
-            selected_channels = self._get_selected_signal_integration_channels()
-            if not selected_channels:
+            selected_channels = {spec["key"] for spec in display_specs}
+            if not display_specs:
                 self._hide_all_signal_integration_curves()
-                self.signal_integration_status_label.setText("All integrated channels are hidden")
+                self._clear_shear_visualization()
+                self.signal_integration_status_label.setText("No integrated channels available")
                 return
 
             plot_snapshot = self._get_signal_integration_raw_snapshot()
             if plot_snapshot is None:
                 self._hide_all_signal_integration_curves()
+                self._clear_shear_visualization()
                 self.signal_integration_status_label.setText("Waiting for raw ADC data")
                 return
 
             data_array, timestamps_array, visible_start_time_sec = plot_snapshot
             if len(data_array) == 0 or len(timestamps_array) == 0:
                 self._hide_all_signal_integration_curves()
+                self._clear_shear_visualization()
                 self.signal_integration_status_label.setText("Waiting for raw ADC data")
                 return
 
             desired_curve_keys = set()
+            latest_integrated_by_position: dict[str, float] = {}
             visible_series_count = max(1, len(selected_channels))
             max_samples_per_series = max(
                 SIGNAL_INTEGRATION_MIN_POINTS_PER_VISIBLE_CHANNEL,
@@ -335,8 +462,14 @@ class SignalIntegrationPanelMixin:
             avg_sample_time_sec = getattr(self, "_cached_avg_sample_time_sec", 0.0)
             repeat_count = max(1, int(self.config.get("repeat", 1)))
 
-            for spec in display_specs:
-                if spec["key"] not in selected_channels:
+            for spec_index, spec in enumerate(display_specs):
+                should_plot = spec["key"] in selected_channels
+                shear_position = self._get_shear_position_for_display_spec(spec, spec_index)
+                should_collect_shear = (
+                    shear_position in SHEAR_SENSOR_POSITIONS
+                    and shear_position not in latest_integrated_by_position
+                )
+                if not should_plot and not should_collect_shear:
                     continue
 
                 color = PLOT_COLORS[spec["color_slot"] % len(PLOT_COLORS)]
@@ -351,7 +484,12 @@ class SignalIntegrationPanelMixin:
                 if prepared_series is None:
                     continue
 
-                channel_data, channel_times = prepared_series
+                channel_data, channel_times, latest_value = prepared_series
+                if should_collect_shear and latest_value is not None:
+                    latest_integrated_by_position[str(shear_position)] = float(latest_value)
+
+                if not should_plot:
+                    continue
 
                 if self.show_all_repeats_radio.isChecked() and repeat_count > 1:
                     self._plot_signal_integration_repeat_series(
@@ -377,6 +515,8 @@ class SignalIntegrationPanelMixin:
                     curve.setVisible(False)
 
             self._apply_signal_integration_axis_settings()
+            self._latest_signal_integration_values_by_position = latest_integrated_by_position
+            self._update_shear_visualization_from_latest()
             self.signal_integration_status_label.setText("")
 
         except Exception as exc:
@@ -392,52 +532,67 @@ class SignalIntegrationPanelMixin:
             return self.get_current_visualization_tab_name() == "Signal Integration"
         return True
 
-    def _sync_signal_integration_channel_checks(self, display_specs: list[dict]) -> None:
-        desired_keys = [spec["key"] for spec in display_specs]
-        existing_keys = set(self.signal_integration_channel_checks)
-        if desired_keys == list(self.signal_integration_channel_checks):
-            return
-
-        preserved_checks = {
-            key: checkbox.isChecked()
-            for key, checkbox in self.signal_integration_channel_checks.items()
-        }
-
-        while self.signal_integration_channel_layout.count():
-            item = self.signal_integration_channel_layout.takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                widget.deleteLater()
-
-        self.signal_integration_channel_checks = {}
-        self._signal_integration_channel_labels = {}
-
-        for index, spec in enumerate(display_specs):
-            key = spec["key"]
-            label = str(spec["label"])
-            checkbox = QCheckBox(label)
-            checkbox.setChecked(preserved_checks.get(key, key not in existing_keys))
-            color = PLOT_COLORS[spec["color_slot"] % len(PLOT_COLORS)]
-            checkbox.setStyleSheet(f"QCheckBox {{ color: rgb({color[0]}, {color[1]}, {color[2]}); }}")
-            checkbox.stateChanged.connect(self.on_signal_integration_channel_visibility_changed)
-
-            row = index // MAX_PLOT_COLUMNS
-            col = index % MAX_PLOT_COLUMNS
-            self.signal_integration_channel_layout.addWidget(checkbox, row, col)
-
-            self.signal_integration_channel_checks[key] = checkbox
-            self._signal_integration_channel_labels[key] = label
-
-    def _get_selected_signal_integration_channels(self) -> set[Hashable]:
-        return {
-            channel_key
-            for channel_key, checkbox in self.signal_integration_channel_checks.items()
-            if checkbox.isChecked()
-        }
-
     def _hide_all_signal_integration_curves(self) -> None:
         for curve in self.signal_integration_curves.values():
             curve.setVisible(False)
+
+    def _clear_shear_visualization(self) -> None:
+        self._latest_signal_integration_values_by_position = {}
+        self._latest_shear_result = None
+        if hasattr(self, "shear_visualization_widget"):
+            self.shear_visualization_widget.update_display(None)
+
+    def _update_shear_visualization_from_latest(self) -> None:
+        if not hasattr(self, "shear_visualization_widget"):
+            return
+
+        latest_values = getattr(self, "_latest_signal_integration_values_by_position", {})
+        if not all(position in latest_values for position in SHEAR_SENSOR_POSITIONS):
+            self._latest_shear_result = None
+            self.shear_visualization_widget.update_display(None)
+            return
+
+        calibrated_values = self._calibrate_signal_integration_values_for_shear(latest_values)
+        self._latest_shear_result = self.shear_detector.detect(calibrated_values)
+        self.shear_visualization_widget.update_display(self._latest_shear_result)
+
+    def _calibrate_signal_integration_values_for_shear(
+        self,
+        latest_values: dict[str, float],
+    ) -> dict[str, float]:
+        threshold = float(self.shear_noise_threshold_spin.value())
+        calibrated: dict[str, float] = {}
+        for position in SHEAR_SENSOR_POSITIONS:
+            value = float(latest_values.get(position, 0.0))
+            if abs(value) < threshold:
+                value = 0.0
+            gain_spin = self.shear_gain_spins.get(position)
+            gain = float(gain_spin.value()) if gain_spin is not None else DEFAULT_SHEAR_CALIBRATION_GAIN
+            calibrated[position] = value * gain
+        return calibrated
+
+    def _get_shear_position_for_display_spec(self, spec: dict, spec_index: int) -> str | None:
+        key = spec.get("key")
+        if isinstance(key, tuple) and len(key) >= 3 and key[0] == "sensor":
+            candidate = str(key[2]).strip().upper()
+            if candidate in SHEAR_SENSOR_POSITIONS:
+                return candidate
+
+        label = str(spec.get("label", "")).strip().upper()
+        if "_" in label:
+            candidate = label.rsplit("_", 1)[-1]
+            if candidate in SHEAR_SENSOR_POSITIONS:
+                return candidate
+
+        if hasattr(self, "get_active_channel_sensor_map"):
+            channel_map = [str(value).strip().upper() for value in self.get_active_channel_sensor_map()]
+        else:
+            channel_map = list(SIGNAL_INTEGRATION_POSITION_ORDER)
+
+        if spec_index < len(channel_map) and channel_map[spec_index] in SHEAR_SENSOR_POSITIONS:
+            return channel_map[spec_index]
+
+        return None
 
     def _get_signal_integration_raw_snapshot(self) -> tuple[np.ndarray, np.ndarray, float] | None:
         data_buffer = self.raw_data_buffer
@@ -516,7 +671,7 @@ class SignalIntegrationPanelMixin:
         avg_sample_time_sec: float,
         max_samples_per_series: int,
         visible_start_time_sec: float | None = None,
-    ) -> tuple[np.ndarray, np.ndarray] | None:
+    ) -> tuple[np.ndarray, np.ndarray, float | None] | None:
         sample_indices = spec["sample_indices"]
         if not sample_indices:
             return None
@@ -536,12 +691,14 @@ class SignalIntegrationPanelMixin:
             channel_data = channel_data[visible_mask]
             channel_times = channel_times[visible_mask]
 
+        latest_value = float(channel_data[-1]) if channel_data.size > 0 else None
+
         if len(channel_data) > max_samples_per_series:
             downsample_factor = max(1, len(channel_data) // max_samples_per_series)
             channel_data = channel_data[::downsample_factor]
             channel_times = channel_times[::downsample_factor]
 
-        return channel_data, channel_times
+        return channel_data, channel_times, latest_value
 
     def _convert_signal_integration_counts_to_voltage(self, adc_counts: np.ndarray) -> np.ndarray:
         max_adc_value = float((2 ** IADC_RESOLUTION_BITS) - 1)

@@ -10,8 +10,19 @@ from constants.signal_integration import (
     DEFAULT_INTEGRATION_WINDOW_SAMPLES,
     SIGNAL_INTEGRATION_DISABLED_HPF_CUTOFF_HZ,
 )
+from constants.shear import SHEAR_SENSOR_POSITIONS
 from data_processing.adc_filter_engine import ADCFilterEngine
 from gui.signal_integration_panel import SignalIntegrationPanelMixin
+
+
+class DummySpinBox:
+    """Small value-only stand-in for Qt spin boxes."""
+
+    def __init__(self, value):
+        self._value = value
+
+    def value(self):
+        return self._value
 
 
 class SignalIntegrationPanelHarness(SignalIntegrationPanelMixin):
@@ -83,7 +94,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         )
         timestamps = np.asarray([0.0, 0.001, 0.002], dtype=np.float64)
 
-        integrated_data, integrated_times = harness._prepare_signal_integration_integrated_series(
+        integrated_data, integrated_times, latest_value = harness._prepare_signal_integration_integrated_series(
             {"sample_indices": [0]},
             data,
             timestamps,
@@ -99,6 +110,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         ])
         np.testing.assert_allclose(integrated_data, expected_integrated, rtol=1e-6, atol=1e-6)
         np.testing.assert_allclose(integrated_times, timestamps)
+        self.assertAlmostEqual(latest_value, expected_integrated[-1])
 
     def test_prepare_integrated_series_uses_history_before_visible_start(self):
         harness = SignalIntegrationPanelHarness()
@@ -108,7 +120,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         data = np.full((5, 1), one_volt_count, dtype=np.float32)
         timestamps = np.arange(5, dtype=np.float64) / self.SAMPLE_RATE_HZ
 
-        integrated_data, integrated_times = harness._prepare_signal_integration_integrated_series(
+        integrated_data, integrated_times, latest_value = harness._prepare_signal_integration_integrated_series(
             {"sample_indices": [0]},
             data,
             timestamps,
@@ -124,6 +136,24 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             atol=1e-6,
         )
         np.testing.assert_allclose(integrated_times, timestamps[2:])
+        self.assertAlmostEqual(latest_value, float(self.INTEGRATION_WINDOW_SAMPLES), places=6)
+
+    def test_shear_calibration_applies_threshold_then_gain(self):
+        harness = SignalIntegrationPanelHarness()
+        harness.shear_noise_threshold_spin = DummySpinBox(0.5)
+        harness.shear_gain_spins = {
+            position: DummySpinBox(2.0 if position == "R" else 1.0)
+            for position in SHEAR_SENSOR_POSITIONS
+        }
+        latest_values = {"C": 0.1, "L": -0.6, "R": 0.7, "T": 0.0, "B": 0.8}
+
+        calibrated = harness._calibrate_signal_integration_values_for_shear(latest_values)
+
+        self.assertEqual(calibrated["C"], 0.0)
+        self.assertEqual(calibrated["L"], -0.6)
+        self.assertEqual(calibrated["R"], 1.4)
+        self.assertEqual(calibrated["T"], 0.0)
+        self.assertEqual(calibrated["B"], 0.8)
 
 
 if __name__ == "__main__":

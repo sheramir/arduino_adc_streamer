@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from config_constants import MAX_LOG_LINES
+from constants.ui import MAX_LOG_LINES
 
 
 class StatusLoggingMixin:

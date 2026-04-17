@@ -1,0 +1,18 @@
+"""Force sensor constants."""
+
+# Force sensor serial settings
+FORCE_SENSOR_BAUD_RATE = 115200
+FORCE_SENSOR_STARTUP_DELAY_SEC = 0.5
+FORCE_THREAD_STOP_TIMEOUT_MS = 250
+
+# Force calibration and runtime settings
+FORCE_CALIBRATION_SAMPLES = 25
+FORCE_STATUS_UPDATE_INTERVAL_SAMPLES = 10
+MAX_FORCE_SAMPLES = 50000
+
+# Conversion factors (raw counts per Newton)
+X_FORCE_SENSOR_TO_NEWTON = 44600.0
+Z_FORCE_SENSOR_TO_NEWTON = 44900.0
+
+# Plot-only force deadband
+FORCE_PLOT_ZERO_THRESHOLD_MN = 20.0

@@ -5,7 +5,12 @@ This module provides helper functions for calculating optimal buffer sizes
 and validating buffer configurations based on hardware constraints.
 """
 
-from config_constants import MAX_SAMPLES_BUFFER, TARGET_LATENCY_SEC, USB_PACKET_SIZE, BAUD_RATE
+from constants.serial import (
+    BAUD_RATE,
+    MAX_SAMPLES_BUFFER,
+    TARGET_LATENCY_SEC,
+    USB_PACKET_SIZE,
+)
 
 
 def calculate_optimal_sweeps_per_block(channel_count, repeat_count, baud_rate=BAUD_RATE, 

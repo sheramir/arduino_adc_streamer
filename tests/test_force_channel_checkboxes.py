@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import patch
 
 from config.config_handlers import ConfigurationMixin
-from config_constants import MAX_PLOT_COLUMNS
+from constants.ui import MAX_PLOT_COLUMNS
 
 
 class FakeSignal:

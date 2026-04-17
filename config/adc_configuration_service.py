@@ -12,7 +12,7 @@ from typing import Callable
 
 from config.channel_utils import unique_channels_in_order
 from config.buffer_utils import validate_and_limit_sweeps_per_block
-from config_constants import INTER_COMMAND_DELAY
+from constants.serial import INTER_COMMAND_DELAY
 from serial_communication.adc_connection_state import ArduinoStatus, build_default_arduino_status
 
 

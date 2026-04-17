@@ -14,9 +14,10 @@ from config.mcu_state import (
     build_disconnected_mcu_state,
     build_unknown_mcu_state,
 )
-from config_constants import (
-    CONFIG_COMMAND_TIMEOUT, CONFIG_RETRY_ATTEMPTS,
-    CLEAR_CACHE_ON_EXIT,
+from constants.capture_archive import CLEAR_CACHE_ON_EXIT
+from constants.serial import (
+    CONFIG_COMMAND_TIMEOUT,
+    CONFIG_RETRY_ATTEMPTS,
     MCU_DETECTION_TIMEOUT_SEC,
 )
 from serial_communication.adc_connection_state import (

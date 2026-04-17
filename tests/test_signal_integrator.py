@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from config_constants import (
+from constants.signal_integration import (
     DEFAULT_HPF_CUTOFF_HZ,
     DEFAULT_INTEGRATION_WINDOW_SAMPLES,
     SIGNAL_INTEGRATION_CHANNEL_COUNT,

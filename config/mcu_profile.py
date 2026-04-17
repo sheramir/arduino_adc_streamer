@@ -8,7 +8,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from config_constants import ANALYZER555_BUFFER_SIZE_MAX, BUFFER_SIZE_MAX
+from constants.defaults_555 import ANALYZER555_BUFFER_SIZE_MAX
+from constants.serial import BUFFER_SIZE_MAX
 
 
 @dataclass(frozen=True, slots=True)

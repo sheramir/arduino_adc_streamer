@@ -14,7 +14,8 @@ from pathlib import Path
 from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QMessageBox
 
-from config_constants import CACHE_SUBDIR_NAME, FORCE_CALIBRATION_SAMPLES
+from constants.capture_archive import CACHE_SUBDIR_NAME
+from constants.force import FORCE_CALIBRATION_SAMPLES
 from data_processing.archive_writer import ArchiveWriterThread
 from data_processing.force_state import get_force_runtime_state
 

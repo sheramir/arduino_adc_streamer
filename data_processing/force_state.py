@@ -9,7 +9,10 @@ from __future__ import annotations
 import collections
 from dataclasses import dataclass, field
 
-from config_constants import FORCE_CALIBRATION_SAMPLES, MAX_FORCE_SAMPLES
+from constants.force import (
+    FORCE_CALIBRATION_SAMPLES,
+    MAX_FORCE_SAMPLES,
+)
 
 
 @dataclass(slots=True)

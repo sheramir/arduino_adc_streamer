@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from config_constants import FILTER_DEFAULT_ENABLED
+from constants.filtering_defaults import FILTER_DEFAULT_ENABLED
 from data_processing.adc_filter_worker import ADCFilterWorkerThread
 from data_processing.adc_filter_engine import (
     ADCFilterEngine,

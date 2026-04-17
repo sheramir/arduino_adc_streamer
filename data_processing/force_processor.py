@@ -6,7 +6,7 @@ Handles force sensor data processing and calibration.
 
 import time
 
-from config_constants import FORCE_CALIBRATION_SAMPLES
+from constants.force import FORCE_CALIBRATION_SAMPLES
 from data_processing.force_feedback import (
     log_first_force_sample,
     log_force_calibration_ready,

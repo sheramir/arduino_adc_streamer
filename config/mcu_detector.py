@@ -10,7 +10,7 @@ from config.mcu_state import (
     build_unknown_mcu_state,
 )
 from config.mcu_view_state import build_mcu_view_state
-from config_constants import MCU_DETECTION_TIMEOUT_SEC
+from constants.serial import MCU_DETECTION_TIMEOUT_SEC
 
 
 class MCUDetectorMixin:

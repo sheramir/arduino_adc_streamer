@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from config_constants import FORCE_SENSOR_BAUD_RATE
+from constants.force import FORCE_SENSOR_BAUD_RATE
 from serial_communication.force_session import ForceSessionController
 
 

@@ -5,7 +5,7 @@ These values were removed from the active root config because they now belong
 only to archived visualization implementations kept under Legacy.
 """
 
-from config_constants import DEFAULT_SENSOR_CONFIGURATION
+from constants.sensor_config import DEFAULT_SENSOR_CONFIGURATION
 
 
 # ============================================================================

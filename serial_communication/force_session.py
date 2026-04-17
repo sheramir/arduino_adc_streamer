@@ -10,7 +10,7 @@ import time
 
 import serial
 
-from config_constants import (
+from constants.force import (
     FORCE_SENSOR_BAUD_RATE,
     FORCE_SENSOR_STARTUP_DELAY_SEC,
     FORCE_THREAD_STOP_TIMEOUT_MS,

@@ -1,0 +1,1 @@
+"""Domain-scoped application constants."""

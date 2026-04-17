@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from config_constants import (
+from constants.defaults_555 import (
     ANALYZER555_DEFAULT_CF_FARADS,
     ANALYZER555_DEFAULT_RB_OHMS,
     ANALYZER555_DEFAULT_RK_OHMS,

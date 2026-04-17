@@ -2,7 +2,10 @@ import unittest
 from collections import deque
 from unittest.mock import patch
 
-from config_constants import FORCE_CALIBRATION_SAMPLES, FORCE_STATUS_UPDATE_INTERVAL_SAMPLES
+from constants.force import (
+    FORCE_CALIBRATION_SAMPLES,
+    FORCE_STATUS_UPDATE_INTERVAL_SAMPLES,
+)
 from data_processing.force_processor import ForceProcessorMixin
 
 

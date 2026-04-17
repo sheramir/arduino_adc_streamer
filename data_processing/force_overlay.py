@@ -9,12 +9,12 @@ from __future__ import annotations
 import numpy as np
 import pyqtgraph as pg
 
-from config_constants import (
+from constants.force import (
     FORCE_PLOT_ZERO_THRESHOLD_MN,
-    MAX_PLOT_SWEEPS,
     X_FORCE_SENSOR_TO_NEWTON,
     Z_FORCE_SENSOR_TO_NEWTON,
 )
+from constants.plotting import MAX_PLOT_SWEEPS
 from data_processing.force_state import get_force_runtime_state
 
 

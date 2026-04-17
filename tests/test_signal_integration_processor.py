@@ -4,10 +4,10 @@ import unittest
 
 import numpy as np
 
-from config_constants import (
+from constants.plotting import MICROSECONDS_PER_SECOND
+from constants.signal_integration import (
     DEFAULT_HPF_CUTOFF_HZ,
     DEFAULT_INTEGRATION_WINDOW_SAMPLES,
-    MICROSECONDS_PER_SECOND,
     SIGNAL_INTEGRATION_CHANNEL_COUNT,
     SIGNAL_INTEGRATION_DISPLAY_BUFFER_MARGIN_SAMPLES,
     SIGNAL_INTEGRATION_MAX_TOTAL_POINTS_TO_DISPLAY,

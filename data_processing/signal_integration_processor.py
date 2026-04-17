@@ -8,7 +8,7 @@ Time Series tab so we can validate UI responsiveness before reintroducing HPF
 processing and then moving-sum integration.
 
 Dependencies:
-    numpy, config channel utilities, config_constants, and
+    numpy, config channel utilities, constants modules, and
     data_processing.signal_integrator.
 """
 
@@ -22,21 +22,21 @@ from typing import Hashable, Iterable
 import numpy as np
 
 from config.channel_utils import unique_channels_in_order
-from config_constants import (
+from constants.plotting import MICROSECONDS_PER_SECOND
+from constants.signal_integration import (
     DEFAULT_DISPLAY_WINDOW_SEC,
     DEFAULT_HPF_CUTOFF_HZ,
     DEFAULT_INTEGRATION_SCALE_BY_DT,
     DEFAULT_INTEGRATION_WINDOW_SAMPLES,
     SIGNAL_INTEGRATION_CHANNEL_COUNT,
-    SIGNAL_INTEGRATION_DISPLAY_WINDOW_MIN_SEC,
     SIGNAL_INTEGRATION_DISPLAY_BUFFER_MARGIN_SAMPLES,
     SIGNAL_INTEGRATION_DISPLAY_SAMPLE_RATE_FALLBACK_HZ,
+    SIGNAL_INTEGRATION_DISPLAY_WINDOW_MIN_SEC,
     SIGNAL_INTEGRATION_GROUND_CHANNEL_INDEX,
     SIGNAL_INTEGRATION_MAX_TOTAL_POINTS_TO_DISPLAY,
     SIGNAL_INTEGRATION_PLOT_UPDATE_INTERVAL_SEC,
     SIGNAL_INTEGRATION_POSITION_ORDER,
     SIGNAL_INTEGRATION_PZT1_MUX_COUNT,
-    MICROSECONDS_PER_SECOND,
 )
 from data_processing.signal_integrator import SignalIntegrator
 

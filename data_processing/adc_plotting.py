@@ -10,7 +10,12 @@ import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import Qt
 
-from config_constants import IADC_RESOLUTION_BITS, MAX_PLOT_SWEEPS, MAX_TOTAL_POINTS_TO_DISPLAY, PLOT_COLORS
+from constants.plotting import (
+    IADC_RESOLUTION_BITS,
+    MAX_PLOT_SWEEPS,
+    MAX_TOTAL_POINTS_TO_DISPLAY,
+    PLOT_COLORS,
+)
 
 
 class ADCPlottingMixin:

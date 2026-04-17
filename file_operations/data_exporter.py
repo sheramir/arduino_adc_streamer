@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 from PyQt6.QtWidgets import QMessageBox
 
-from config_constants import IADC_RESOLUTION_BITS
+from constants.plotting import IADC_RESOLUTION_BITS
 from data_processing.force_state import get_force_runtime_state
 from file_operations.force_export_alignment import (
     build_export_row_timestamps,

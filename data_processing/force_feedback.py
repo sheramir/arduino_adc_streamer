@@ -7,7 +7,7 @@ sample-ingestion and calibration flow.
 
 from __future__ import annotations
 
-from config_constants import FORCE_STATUS_UPDATE_INTERVAL_SAMPLES
+from constants.force import FORCE_STATUS_UPDATE_INTERVAL_SAMPLES
 
 
 def log_first_force_sample(owner, *, state, x_force: float, z_force: float) -> None:

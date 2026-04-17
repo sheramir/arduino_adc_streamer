@@ -9,7 +9,11 @@ import csv
 
 import numpy as np
 
-from config_constants import MAX_TIMING_SAMPLES, MAX_PLOT_SWEEPS, PLOT_UPDATE_INTERVAL_SEC
+from constants.plotting import (
+    MAX_PLOT_SWEEPS,
+    PLOT_UPDATE_INTERVAL_SEC,
+)
+from constants.runtime import MAX_TIMING_SAMPLES
 from data_processing.force_state import get_force_runtime_state
 
 

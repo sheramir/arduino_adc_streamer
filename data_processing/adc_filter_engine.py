@@ -12,12 +12,12 @@ from typing import Dict, List, Tuple
 import numpy as np
 
 from config.channel_utils import unique_channels_in_order
-from config_constants import (
+from constants.filtering_defaults import (
     FILTER_DEFAULT_ENABLED,
+    FILTER_DEFAULT_HIGH_CUTOFF_HZ,
+    FILTER_DEFAULT_LOW_CUTOFF_HZ,
     FILTER_DEFAULT_MAIN_TYPE,
     FILTER_DEFAULT_ORDER,
-    FILTER_DEFAULT_LOW_CUTOFF_HZ,
-    FILTER_DEFAULT_HIGH_CUTOFF_HZ,
     FILTER_NOTCH1_DEFAULT_ENABLED,
     FILTER_NOTCH1_DEFAULT_FREQ_HZ,
     FILTER_NOTCH1_DEFAULT_Q,

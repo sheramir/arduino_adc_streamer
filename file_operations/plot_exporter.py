@@ -10,7 +10,7 @@ from pathlib import Path
 from PyQt6.QtWidgets import QMessageBox
 from pyqtgraph.exporters import ImageExporter
 
-from config_constants import PLOT_EXPORT_WIDTH
+from constants.plotting import PLOT_EXPORT_WIDTH
 
 
 class PlotExporterMixin:

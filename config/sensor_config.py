@@ -9,10 +9,9 @@ import re
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-from config_constants import (
+from constants.sensor_config import (
     DEFAULT_SENSOR_CONFIGURATION,
     DEFAULT_SENSOR_CONFIGURATION_NAME,
-    SENSOR_LOCATION_CODES,
     SENSOR_CONFIG_ARRAY_CELL_CHANNELS_MAX,
     SENSOR_CONFIG_ARRAY_COLS,
     SENSOR_CONFIG_ARRAY_ROWS,
@@ -23,6 +22,7 @@ from config_constants import (
     SENSOR_CONFIG_JSON_INDENT,
     SENSOR_CONFIG_MUX_MAX,
     SENSOR_CONFIG_MUX_MIN,
+    SENSOR_LOCATION_CODES,
 )
 
 SENSOR_POSITION_ORDER = ["T", "R", "C", "L", "B"]

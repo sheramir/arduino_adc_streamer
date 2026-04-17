@@ -12,9 +12,12 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 
-from config_constants import (
-    SWEEP_RANGE_MIN, SWEEP_RANGE_MAX, SWEEP_RANGE_DEFAULT_MAX,
-    NOTES_INPUT_HEIGHT, STATUS_TEXT_HEIGHT
+from constants.ui import (
+    NOTES_INPUT_HEIGHT,
+    STATUS_TEXT_HEIGHT,
+    SWEEP_RANGE_DEFAULT_MAX,
+    SWEEP_RANGE_MAX,
+    SWEEP_RANGE_MIN,
 )
 
 

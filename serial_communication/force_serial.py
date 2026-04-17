@@ -7,7 +7,7 @@ Handles force sensor connection workflow and GUI coordination.
 from PyQt6.QtWidgets import QMessageBox
 from PyQt6.QtCore import QTimer
 
-from config_constants import (
+from constants.force import (
     FORCE_CALIBRATION_SAMPLES,
     FORCE_SENSOR_BAUD_RATE,
 )

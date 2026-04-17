@@ -18,10 +18,12 @@ from config.config_view_state import (
 )
 from config.config_snapshot import build_adc_configuration_snapshot
 from config.mcu_profile import resolve_mcu_profile
-from config_constants import (
-    MAX_SAMPLES_BUFFER, MAX_PLOT_COLUMNS,
-    ANALYZER555_DEFAULT_CF_UNIT, ANALYZER555_DEFAULT_CF_VALUE
+from constants.serial import MAX_SAMPLES_BUFFER
+from constants.defaults_555 import (
+    ANALYZER555_DEFAULT_CF_UNIT,
+    ANALYZER555_DEFAULT_CF_VALUE,
 )
+from constants.ui import MAX_PLOT_COLUMNS
 from config.buffer_utils import validate_and_limit_sweeps_per_block
 
 

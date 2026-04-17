@@ -1,7 +1,7 @@
 import unittest
 
 from config.mcu_detector import MCUDetectorMixin
-from config_constants import COMMAND_TERMINATOR
+from constants.serial import COMMAND_TERMINATOR
 from serial_communication.adc_serial import ADCSerialMixin
 from serial_communication.adc_session import ADCSessionController
 

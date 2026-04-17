@@ -13,8 +13,11 @@ from PyQt6.QtCore import Qt
 import pyqtgraph as pg
 import types
 
-from config_constants import (
-    WINDOW_SIZE_MIN, WINDOW_SIZE_MAX, DEFAULT_WINDOW_SIZE, CHANNEL_SCROLL_HEIGHT
+from constants.ui import (
+    CHANNEL_SCROLL_HEIGHT,
+    DEFAULT_WINDOW_SIZE,
+    WINDOW_SIZE_MAX,
+    WINDOW_SIZE_MIN,
 )
 
 

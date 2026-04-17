@@ -2,7 +2,6 @@ import ast
 from pathlib import Path
 
 
-ROOT_CONSTANTS = Path("config_constants.py")
 LEGACY_CONSTANTS = Path("Legacy/config_constants.py")
 
 LEGACY_VISUALIZATION_CONSTANTS = {
@@ -83,11 +82,9 @@ def _assigned_uppercase_names(path: Path) -> set[str]:
     return names
 
 
-def test_legacy_visualization_constants_live_outside_root_config():
-    root_names = _assigned_uppercase_names(ROOT_CONSTANTS)
+def test_legacy_visualization_constants_live_in_legacy_config():
     legacy_names = _assigned_uppercase_names(LEGACY_CONSTANTS)
 
-    assert not (LEGACY_VISUALIZATION_CONSTANTS & root_names)
     assert LEGACY_VISUALIZATION_CONSTANTS <= legacy_names
 
 

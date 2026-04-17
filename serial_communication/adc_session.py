@@ -11,7 +11,7 @@ import time
 import serial
 from PyQt6.QtCore import QCoreApplication
 
-from config_constants import (
+from constants.serial import (
     ARDUINO_RESET_DELAY,
     BAUD_RATE,
     COMMAND_TERMINATOR,

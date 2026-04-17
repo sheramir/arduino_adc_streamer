@@ -4,10 +4,10 @@ import unittest
 
 import numpy as np
 
-from config_constants import (
+from constants.plotting import IADC_RESOLUTION_BITS
+from constants.signal_integration import (
     DEFAULT_HPF_CUTOFF_HZ,
     DEFAULT_INTEGRATION_WINDOW_SAMPLES,
-    IADC_RESOLUTION_BITS,
     SIGNAL_INTEGRATION_DISABLED_HPF_CUTOFF_HZ,
 )
 from data_processing.adc_filter_engine import ADCFilterEngine

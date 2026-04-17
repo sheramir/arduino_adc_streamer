@@ -31,7 +31,21 @@ from PyQt6.QtGui import QGuiApplication
 import serial
 
 # Import configuration constants
-from config_constants import *
+from constants.runtime import MAX_SWEEPS_IN_MEMORY
+from constants.ui import (
+    CONFIG_CHECK_INTERVAL,
+    CONTROL_PANEL_STRETCH,
+    FORCE_PLOT_DEBOUNCE_MS,
+    MAIN_PANEL_LAYOUT_SPACING,
+    SPECTRUM_UPDATE_INTERVAL_MS,
+    STATUS_SEPARATOR_WIDTH,
+    VISUALIZATION_PANEL_STRETCH,
+    WINDOW_HEIGHT,
+    WINDOW_MIN_FIT_HEIGHT,
+    WINDOW_MIN_FIT_WIDTH,
+    WINDOW_SCREEN_MARGIN_PX,
+    WINDOW_WIDTH,
+)
 
 # Import mixin modules
 from serial_communication import ADCSerialMixin, ForceSerialMixin

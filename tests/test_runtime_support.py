@@ -1,7 +1,7 @@
-﻿import unittest
+import unittest
 
 from config.config_handlers import ConfigurationMixin
-from config_constants import MAX_LOG_LINES
+from constants.ui import MAX_LOG_LINES
 from data_processing.adc_plotting import ADCPlottingMixin
 from gui.status_logging import StatusLoggingMixin
 

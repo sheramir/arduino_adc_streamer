@@ -9,7 +9,7 @@ import re
 import numpy as np
 from PyQt6.QtCore import QThread, pyqtSignal
 
-from config_constants import (
+from constants.serial import (
     FORCE_READER_IDLE_MS,
     SERIAL_PACKET_AVG_SAMPLE_TIME_BYTES,
     SERIAL_PACKET_BLOCK_TIMESTAMP_BYTES,

@@ -33,6 +33,8 @@ ENV/
 *.swo
 *~
 .codex_test_tmp/
+.codex_pytest_tmp/
+.pytest_cache/
 
 # OS
 .DS_Store

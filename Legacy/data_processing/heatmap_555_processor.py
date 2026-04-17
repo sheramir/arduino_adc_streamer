@@ -6,7 +6,7 @@
 
 import numpy as np
 
-from config_constants import (
+from Legacy.config_constants import (
     HEATMAP_WIDTH, HEATMAP_HEIGHT,
     INTENSITY_SCALE, COP_EPS, BLOB_SIGMA_X, BLOB_SIGMA_Y,
     R_HEATMAP_CHANNEL_SENSOR_MAP, R_HEATMAP_REQUIRED_CHANNELS,

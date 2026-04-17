@@ -7,7 +7,7 @@ Piezoelectric-specific heatmap signal processing and CoP generation.
 import math
 import numpy as np
 
-from config_constants import (
+from Legacy.config_constants import (
     SENSOR_POS_X, SENSOR_POS_Y,
     INTENSITY_SCALE, COP_EPS, BLOB_SIGMA_X, BLOB_SIGMA_Y, SMOOTH_ALPHA,
     HEATMAP_REQUIRED_CHANNELS, CONFIDENCE_INTENSITY_REF, SIGMA_SPREAD_FACTOR,

@@ -6,7 +6,7 @@ Coordinates heatmap processing with separate piezo and 555-specific modules.
 
 import numpy as np
 
-from config_constants import (
+from Legacy.config_constants import (
     BIAS_CALIBRATION_DURATION_SEC,
     HPF_CUTOFF_HZ,
     HEATMAP_REQUIRED_CHANNELS,

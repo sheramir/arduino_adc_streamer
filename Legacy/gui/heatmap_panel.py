@@ -11,7 +11,7 @@ from pathlib import Path
 
 from gui.custom_widgets import NonScrollableSpinBox as QSpinBox, NonScrollableDoubleSpinBox as QDoubleSpinBox
 
-from config_constants import (
+from Legacy.config_constants import (
     HEATMAP_WIDTH, HEATMAP_HEIGHT, SENSOR_CALIBRATION, SENSOR_SIZE,
     INTENSITY_SCALE, BLOB_SIGMA_X, BLOB_SIGMA_Y, SMOOTH_ALPHA,
     RMS_WINDOW_MS, SENSOR_NOISE_FLOOR, HEATMAP_DC_REMOVAL_MODE,

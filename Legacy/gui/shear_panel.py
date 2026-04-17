@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
 
 from gui.custom_widgets import NonScrollableDoubleSpinBox as QDoubleSpinBox
 
-from config_constants import (
+from Legacy.config_constants import (
     HEATMAP_HEIGHT,
     HEATMAP_WIDTH,
     MAX_SENSOR_PACKAGES,

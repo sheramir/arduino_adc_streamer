@@ -277,141 +277,17 @@ FORCE_PLOT_ZERO_THRESHOLD_MN = 20.0
 MAX_LOG_LINES = 1000
 
 # ============================================================================
-# Heatmap Display Constants
+# Sensor Configuration Defaults
 # ============================================================================
 
-# Heatmap update rate
-HEATMAP_FPS = 30  # Target frame rate for heatmap updates
-
-# Heatmap resolution (square display)
-HEATMAP_WIDTH = 160  # Heatmap resolution width
-HEATMAP_HEIGHT = 160  # Heatmap resolution height
-
-# Sensor positions in normalized coordinates [-1, 1]
-# Order: Top, Bottom, Right, Left, Center
-SENSOR_POS_X = [0.0, 0.0, 1.0, -1.0, 0.0]  # X positions
-SENSOR_POS_Y = [-1.0, 1.0, 0.0, 0.0, 0.0]  # Y positions
-
-# Sensor calibration scaling factors (to normalize sensor responses)
-SENSOR_CALIBRATION = [1.0, 1.0, 1.0, 1.0, 1.0]  # Per-sensor scale factors
-
-# Per-sensor baseline noise floor (RMS) to subtract after magnitude calculation
-SENSOR_NOISE_FLOOR = [0.01, 0.01, 0.01, 0.01, 0.01]
-
-# ============================================================================
-# Per-Sensor Threshold and Gain Settings (Mode-Specific)
-# ============================================================================
-# These settings allow individual tuning of threshold and gain for each sensor [T,B,R,L,C]
-# Total threshold applied = general threshold + individual sensor threshold
-# Stored as dict keyed by sensor ID (e.g., "PZR2", "PZT1", "Sensor1" for non-array)
-# Default: empty dict (use global defaults from constants below when sensor not found)
-PZT_SENSOR_CALIBRATION = {}  # {"PZT1": {"gains": [...], "thresholds": [...]}}
-R_SENSOR_CALIBRATION = {}    # {"PZR2": {"gains": [...], "thresholds": [...]}}
-
-# Global defaults when per-sensor settings not available
-PZT_THRESHOLD_DEFAULT = 0.0
-PZT_GAIN_DEFAULT = 1.0
-R_THRESHOLD_DEFAULT = 0.0  # (%)
-R_GAIN_DEFAULT = 1.0
-
-# Physical size between endpoint sensors (for reference)
-SENSOR_SIZE = 0.5
-
-# Intensity mapping
-INTENSITY_SCALE = 0.005  # Scale factor to map signal to blob amplitude
-COP_EPS = 1e-6  # Small epsilon to avoid division by zero in CoP calculation
-
-# Gaussian blob parameters
-BLOB_SIGMA_X = 0.15  # Horizontal spread (in normalized coordinates)
-BLOB_SIGMA_Y = 0.15  # Vertical spread (in normalized coordinates)
-
-# Smoothing parameter (exponential moving average)
-SMOOTH_ALPHA = 0.8  # 0 = no smoothing, 1 = no history
-
-# Magnitude threshold for heatmap (values below are set to 0)
-HEATMAP_THRESHOLD = 18.0
-
-# Confidence calculation parameters
-CONFIDENCE_INTENSITY_REF = 100.0
-SIGMA_SPREAD_FACTOR = 1.5
-
-# Axis-based sigma modulation (0 = off)
-AXIS_SIGMA_FACTOR = 0.5
-
-# RMS calculation window (milliseconds)
-RMS_WINDOW_MS = 20
-
-# DC removal settings
-BIAS_CALIBRATION_DURATION_SEC = 2.0
-HPF_CUTOFF_HZ = 0.5
-HEATMAP_DC_REMOVAL_MODE = "highpass"  # "bias" or "highpass"
-
-# Default channel-to-sensor mapping for heatmap and shear.
+# Default channel-to-sensor mapping for editable sensor configurations.
 # Order is by selected channel index: channel1..channel5 -> sensor location.
-# Example: ["R", "B", "C", "L", "T"] means channel1->Right, channel2->Bottom, ...
 SENSOR_LOCATION_CODES = ["T", "R", "C", "L", "B"]
 DEFAULT_SENSOR_CONFIGURATION_NAME = "ARRAY_v1"
 DEFAULT_SENSOR_CONFIGURATION = {
     "name": DEFAULT_SENSOR_CONFIGURATION_NAME,
     "channel_sensor_map": ["T", "L", "B", "R", "C"],
 }
-
-# Backward-compatible alias for the app's first-run active mapping.
-HEATMAP_CHANNEL_SENSOR_MAP = list(DEFAULT_SENSOR_CONFIGURATION["channel_sensor_map"])
-
-# Expected number of channels for heatmap
-HEATMAP_REQUIRED_CHANNELS = 5
-MAX_SENSOR_PACKAGES = 4
-
-# Auto-baseline behavior for PZR/heatmap plotting
-PZR_ZERO_BASELINE_WINDOW_SEC = 0.5
-PZR_AUTO_BASELINE_DELAY_SEC = 1.5
-
-# PZR sensor (555 analyzer mode) now uses 5 channels like PZT
-# Shares the same heatmap configuration as standard piezo sensors
-R_HEATMAP_CHANNEL_SENSOR_MAP = HEATMAP_CHANNEL_SENSOR_MAP
-R_HEATMAP_REQUIRED_CHANNELS = HEATMAP_REQUIRED_CHANNELS
-R_HEATMAP_SENSOR_POS_X = SENSOR_POS_X
-R_HEATMAP_SENSOR_POS_Y = SENSOR_POS_Y
-R_HEATMAP_DELTA_THRESHOLD = 1.0
-R_HEATMAP_DELTA_RELEASE_THRESHOLD = 0.5
-R_HEATMAP_INTENSITY_MIN = 0.0
-R_HEATMAP_INTENSITY_MAX = 10.0
-R_HEATMAP_AXIS_ADAPT_STRENGTH = 0.0
-R_HEATMAP_MAP_SMOOTH_ALPHA = SMOOTH_ALPHA
-R_HEATMAP_COP_SMOOTH_ALPHA = SMOOTH_ALPHA
-
-# ============================================================================
-# Shear / CoP Visualization Constants
-# ============================================================================
-
-# Signed integration window for shear extraction
-SHEAR_INTEGRATION_WINDOW_MS = 16.0
-
-# EMA coefficients for baseline tracking and light conditioning
-SHEAR_BASELINE_ALPHA = 0.05
-SHEAR_CONDITIONING_ALPHA = 0.25
-
-# Deadband / signed calibration defaults
-SHEAR_DEADBAND_THRESHOLD = 0.0
-SHEAR_CHANNEL_GAINS = [1.0, 1.0, 1.0, 1.0, 1.0]  # [C, R, B, L, T]
-SHEAR_CHANNEL_BASELINES = [0.0, 0.0, 0.0, 0.0, 0.0]  # [C, R, B, L, T]
-
-# Gaussian CoP blob and arrow visualization
-SHEAR_GAUSSIAN_SIGMA_X = 0.18
-SHEAR_GAUSSIAN_SIGMA_Y = 0.18
-SHEAR_INTENSITY_SCALE = 0.2
-SHEAR_ARROW_SCALE = 0.35
-SHEAR_ARROW_HEAD_LENGTH_BASE_PX = 12.0
-SHEAR_ARROW_HEAD_LENGTH_AMPLIFIER = 12.0
-SHEAR_ARROW_THICKNESS_AMPLIFIER = 30.0
-
-# Confidence scoring reference magnitude
-SHEAR_CONFIDENCE_SIGNAL_REF = 0.02
-
-# Shear panel view geometry
-SHEAR_VIEW_EXTENT = 1.25
-SHEAR_SENSOR_RADIUS = 0.72
 
 # ============================================================================
 # Plot Colors

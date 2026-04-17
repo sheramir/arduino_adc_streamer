@@ -3,7 +3,7 @@ import unittest
 
 import numpy as np
 
-from config_constants import HEATMAP_HEIGHT, HEATMAP_WIDTH
+from Legacy.config_constants import HEATMAP_HEIGHT, HEATMAP_WIDTH
 from Legacy.data_processing.heatmap_555_processor import Heatmap555ProcessorMixin
 from Legacy.data_processing.heatmap_piezo_processor import PiezoHeatmapProcessorMixin
 

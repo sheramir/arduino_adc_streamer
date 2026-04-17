@@ -1,6 +1,9 @@
 """Tests for the Signal Integration tab's voltage HPF display helpers."""
 
+import json
+import tempfile
 import unittest
+from pathlib import Path
 
 import numpy as np
 
@@ -24,6 +27,22 @@ class DummySpinBox:
     def value(self):
         return self._value
 
+    def setValue(self, value):
+        self._value = value
+
+
+class DummyCheckBox:
+    """Small checked-state stand-in for Qt check boxes."""
+
+    def __init__(self, checked):
+        self._checked = checked
+
+    def isChecked(self):
+        return self._checked
+
+    def setChecked(self, checked):
+        self._checked = bool(checked)
+
 
 class SignalIntegrationPanelHarness(SignalIntegrationPanelMixin):
     """Minimal harness for exercising non-Qt plotting helper methods."""
@@ -33,8 +52,12 @@ class SignalIntegrationPanelHarness(SignalIntegrationPanelMixin):
     def __init__(self):
         self.signal_integration_hpf_cutoff_hz = SIGNAL_INTEGRATION_DISABLED_HPF_CUTOFF_HZ
         self.signal_integration_window_samples = DEFAULT_INTEGRATION_WINDOW_SAMPLES
+        self.signal_integration_display_window_sec = 1.0
         self._signal_integration_filter_engine = ADCFilterEngine()
         self._signal_integration_filter_warning = ""
+        self._shear_settings_loading = False
+        self._shear_autosave_enabled = False
+        self._latest_shear_result = None
         self.log_messages = []
 
     def get_vref_voltage(self):
@@ -43,6 +66,9 @@ class SignalIntegrationPanelHarness(SignalIntegrationPanelMixin):
     def log_status(self, message):
         self.log_messages.append(message)
 
+    def _get_last_shear_settings_path(self):
+        return self._last_shear_settings_path
+
 
 class SignalIntegrationPanelTests(unittest.TestCase):
     """Verify display-only voltage conversion, HPF, and integration."""
@@ -50,6 +76,21 @@ class SignalIntegrationPanelTests(unittest.TestCase):
     SAMPLE_RATE_HZ = 1000.0
     SAMPLE_COUNT = 500
     INTEGRATION_WINDOW_SAMPLES = 3
+
+    def _install_shear_setting_widgets(self, harness):
+        harness.signal_integration_hpf_spin = DummySpinBox(12.5)
+        harness.signal_integration_window_spin = DummySpinBox(44)
+        harness.signal_integration_display_window_spin = DummySpinBox(2.5)
+        harness.shear_noise_threshold_spin = DummySpinBox(0.75)
+        harness.shear_gain_spins = {
+            position: DummySpinBox(index + 1.25)
+            for index, position in enumerate(SHEAR_SENSOR_POSITIONS)
+        }
+        harness.shear_arrow_gain_spin = DummySpinBox(9.5)
+        harness.shear_arrow_threshold_spin = DummySpinBox(0.33)
+        harness.shear_arrow_max_length_spin = DummySpinBox(1.4)
+        harness.shear_arrow_base_width_spin = DummySpinBox(0.6)
+        harness.shear_arrow_width_scales_check = DummyCheckBox(False)
 
     def test_counts_to_voltage_ignores_time_series_units(self):
         harness = SignalIntegrationPanelHarness()
@@ -154,6 +195,39 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         self.assertEqual(calibrated["R"], 1.4)
         self.assertEqual(calibrated["T"], 0.0)
         self.assertEqual(calibrated["B"], 0.8)
+
+    def test_shear_settings_save_and_load_round_trip(self):
+        harness = SignalIntegrationPanelHarness()
+        self._install_shear_setting_widgets(harness)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            settings_path = Path(temp_dir) / "shear_settings.json"
+
+            harness.save_shear_settings_to_path(settings_path, log_message=True)
+
+            payload = json.loads(settings_path.read_text(encoding="utf-8"))
+            settings = payload["shear_settings"]
+            self.assertEqual(payload["version"], 1)
+            self.assertEqual(settings["signal_integration"]["hpf_cutoff_hz"], 12.5)
+            self.assertEqual(settings["signal_integration"]["integration_window_samples"], 44)
+            self.assertEqual(settings["processing"]["noise_threshold"], 0.75)
+            self.assertEqual(settings["processing"]["sensor_gains"]["C"], 1.25)
+            self.assertFalse(settings["visualization"]["arrow_width_scales"])
+
+            harness.signal_integration_hpf_spin.setValue(1.0)
+            harness.signal_integration_window_spin.setValue(2)
+            harness.shear_noise_threshold_spin.setValue(3.0)
+            harness.shear_gain_spins["C"].setValue(4.0)
+            harness.shear_arrow_width_scales_check.setChecked(True)
+
+            applied = harness.load_shear_settings_from_path(settings_path, log_message=True)
+
+            self.assertTrue(applied)
+            self.assertEqual(harness.signal_integration_hpf_spin.value(), 12.5)
+            self.assertEqual(harness.signal_integration_window_spin.value(), 44)
+            self.assertEqual(harness.shear_noise_threshold_spin.value(), 0.75)
+            self.assertEqual(harness.shear_gain_spins["C"].value(), 1.25)
+            self.assertFalse(harness.shear_arrow_width_scales_check.isChecked())
 
 
 if __name__ == "__main__":

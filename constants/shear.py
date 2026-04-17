@@ -21,6 +21,15 @@ SHEAR_ZERO_VALUE = 0.0
 SHEAR_DEFAULT_ANGLE_DEG = 0.0
 SHEAR_FULL_CIRCLE_DEG = 360.0
 
+# Settings persistence.
+SHEAR_SETTINGS_VERSION = 1
+SHEAR_SETTINGS_PAYLOAD_KEY = "shear_settings"
+SHEAR_SETTINGS_APP_DIRNAME = ".adc_streamer"
+SHEAR_SETTINGS_SUBDIR = "shear"
+SHEAR_SETTINGS_LAST_FILENAME = "last_used_signal_integration_shear_settings.json"
+SHEAR_SETTINGS_DEFAULT_FILENAME = "signal_integration_shear_settings.json"
+SHEAR_SETTINGS_FILE_FILTER = "JSON Files (*.json);;All Files (*)"
+
 # Calibration and threshold controls.
 DEFAULT_SHEAR_NOISE_THRESHOLD = 0.0
 SHEAR_NOISE_THRESHOLD_MIN = 0.0

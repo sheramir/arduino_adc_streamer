@@ -125,6 +125,7 @@ class ADCStreamerGUI(
         self.init_ui()
         self._refresh_sensor_tab_ui()
         self.load_last_spectrum_settings()
+        self.load_last_shear_settings()
 
         # Post-initialization
         self.update_port_list()
@@ -336,6 +337,7 @@ class ADCStreamerGUI(
     def closeEvent(self, event):
         """Handle window close event."""
         self.save_last_spectrum_settings()
+        self.save_last_shear_settings()
 
         if self.serial_port and self.serial_port.is_open:
             self.disconnect_serial()

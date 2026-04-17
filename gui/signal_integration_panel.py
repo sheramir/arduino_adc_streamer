@@ -15,6 +15,7 @@ Dependencies:
 from __future__ import annotations
 
 import math
+from pathlib import Path
 from typing import Hashable
 
 import numpy as np
@@ -26,6 +27,7 @@ from PyQt6.QtWidgets import (
     QGridLayout,
     QGroupBox,
     QLabel,
+    QFileDialog,
     QPushButton,
     QScrollArea,
     QSpinBox,
@@ -107,13 +109,21 @@ from constants.shear import (
     SHEAR_GAIN_LABEL_MAX_WIDTH_PX,
     SHEAR_GAIN_SPIN_WIDTH_PX,
     SHEAR_SENSOR_POSITIONS,
+    SHEAR_SETTINGS_APP_DIRNAME,
+    SHEAR_SETTINGS_DEFAULT_FILENAME,
+    SHEAR_SETTINGS_FILE_FILTER,
     SHEAR_SETTINGS_GRID_COLUMNS,
     SHEAR_SETTINGS_HORIZONTAL_SPACING_PX,
+    SHEAR_SETTINGS_LAST_FILENAME,
+    SHEAR_SETTINGS_PAYLOAD_KEY,
+    SHEAR_SETTINGS_SUBDIR,
     SHEAR_SETTINGS_VERTICAL_SPACING_PX,
+    SHEAR_SETTINGS_VERSION,
     SHEAR_VISUALIZATION_STRETCH,
 )
 from data_processing.adc_filter_engine import ADCFilterEngine, SCIPY_FILTERS_AVAILABLE
 from data_processing.shear_detector import ShearDetector, ShearResult
+from file_operations.settings_persistence import load_settings_payload, save_settings_payload
 from gui.shear_visualization_widget import ShearVisualizationWidget
 
 
@@ -143,6 +153,9 @@ class SignalIntegrationPanelMixin:
         Raises:
             None.
         """
+        self._shear_settings_loading = False
+        self._shear_autosave_enabled = True
+
         tab = QScrollArea()
         tab.setWidgetResizable(True)
         tab.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -329,7 +342,343 @@ class SignalIntegrationPanelMixin:
         self.shear_arrow_width_scales_check.stateChanged.connect(self.on_shear_visualization_settings_changed)
         layout.addWidget(self.shear_arrow_width_scales_check, arrow_row + 1, 0)
 
+        self.shear_save_settings_btn = QPushButton("Save Settings...")
+        self.shear_save_settings_btn.clicked.connect(self.on_save_shear_settings_clicked)
+        layout.addWidget(self.shear_save_settings_btn, arrow_row + 1, 1)
+
+        self.shear_load_settings_btn = QPushButton("Load Settings...")
+        self.shear_load_settings_btn.clicked.connect(self.on_load_shear_settings_clicked)
+        layout.addWidget(self.shear_load_settings_btn, arrow_row + 1, 2)
+
         return group
+
+    def _get_last_shear_settings_path(self) -> Path:
+        return (
+            Path.home()
+            / SHEAR_SETTINGS_APP_DIRNAME
+            / SHEAR_SETTINGS_SUBDIR
+            / SHEAR_SETTINGS_LAST_FILENAME
+        )
+
+    def _serialize_shear_settings(self) -> dict[str, object]:
+        return {
+            "version": SHEAR_SETTINGS_VERSION,
+            SHEAR_SETTINGS_PAYLOAD_KEY: self.get_shear_settings(),
+        }
+
+    def get_shear_settings(self) -> dict[str, object]:
+        """Return the current signal-integration and shear-display settings.
+
+        Args:
+            None.
+
+        Returns:
+            Dict containing the Signal Integration controls, shear processing
+            settings, and shear visualization settings.
+
+        Raises:
+            None.
+        """
+        return {
+            "signal_integration": {
+                "hpf_cutoff_hz": self._spin_float(
+                    "signal_integration_hpf_spin",
+                    float(getattr(self, "signal_integration_hpf_cutoff_hz", DEFAULT_HPF_CUTOFF_HZ)),
+                ),
+                "integration_window_samples": self._spin_int(
+                    "signal_integration_window_spin",
+                    int(getattr(self, "signal_integration_window_samples", DEFAULT_INTEGRATION_WINDOW_SAMPLES)),
+                ),
+                "display_window_sec": self._spin_float(
+                    "signal_integration_display_window_spin",
+                    float(getattr(self, "signal_integration_display_window_sec", DEFAULT_DISPLAY_WINDOW_SEC)),
+                ),
+            },
+            "processing": {
+                "noise_threshold": self._spin_float(
+                    "shear_noise_threshold_spin",
+                    DEFAULT_SHEAR_NOISE_THRESHOLD,
+                ),
+                "sensor_gains": {
+                    position: float(spin.value())
+                    for position, spin in getattr(self, "shear_gain_spins", {}).items()
+                },
+            },
+            "visualization": {
+                "arrow_gain": self._spin_float("shear_arrow_gain_spin", DEFAULT_ARROW_GAIN),
+                "arrow_min_threshold": self._spin_float(
+                    "shear_arrow_threshold_spin",
+                    DEFAULT_ARROW_MIN_THRESHOLD,
+                ),
+                "arrow_max_length_fraction": self._spin_float(
+                    "shear_arrow_max_length_spin",
+                    DEFAULT_ARROW_MAX_LENGTH_PX,
+                ),
+                "arrow_base_width_px": self._spin_float(
+                    "shear_arrow_base_width_spin",
+                    DEFAULT_ARROW_BASE_WIDTH_PX,
+                ),
+                "arrow_width_scales": self._check_bool(
+                    "shear_arrow_width_scales_check",
+                    DEFAULT_ARROW_WIDTH_SCALES,
+                ),
+            },
+        }
+
+    def save_shear_settings_to_path(self, file_path: str | Path, log_message: bool = True) -> Path:
+        """Write the current shear settings to a JSON file.
+
+        Args:
+            file_path: Destination JSON path.
+            log_message: Whether to log a success message through
+                ``log_status``.
+
+        Returns:
+            Path to the saved JSON file.
+
+        Raises:
+            OSError: If the file cannot be written.
+        """
+        return save_settings_payload(
+            file_path,
+            self._serialize_shear_settings(),
+            log_callback=self.log_status if log_message and hasattr(self, "log_status") else None,
+            success_message="Saved shear settings: {path}",
+        )
+
+    def load_shear_settings_from_path(self, file_path: str | Path, log_message: bool = True) -> bool:
+        """Load shear settings from a JSON file and apply applicable fields.
+
+        Args:
+            file_path: Source JSON path.
+            log_message: Whether to log the load result through ``log_status``.
+
+        Returns:
+            True when at least one applicable setting was found and applied.
+
+        Raises:
+            OSError: If the file cannot be read.
+            ValueError: If JSON values cannot be converted to control values.
+        """
+        path, settings = load_settings_payload(file_path, payload_key=SHEAR_SETTINGS_PAYLOAD_KEY)
+        self._shear_settings_loading = True
+        try:
+            applied = self._apply_shear_settings(settings)
+        finally:
+            self._shear_settings_loading = False
+
+        if log_message and hasattr(self, "log_status"):
+            if applied:
+                self.log_status(f"Loaded shear settings: {path}")
+            else:
+                self.log_status(f"Shear settings file loaded, no applicable fields: {path}")
+        return applied
+
+    def save_last_shear_settings(self) -> None:
+        """Persist the current tab settings as the next startup defaults.
+
+        Args:
+            None.
+
+        Returns:
+            None.
+
+        Raises:
+            None. Save failures are logged and do not interrupt the GUI.
+        """
+        if getattr(self, "_shear_settings_loading", False):
+            return
+        if not getattr(self, "_shear_autosave_enabled", True):
+            return
+        try:
+            self.save_shear_settings_to_path(self._get_last_shear_settings_path(), log_message=False)
+        except Exception as exc:
+            if hasattr(self, "log_status"):
+                self.log_status(f"Warning: could not save shear settings: {exc}")
+
+    def load_last_shear_settings(self) -> bool:
+        """Load the last-used shear settings file when it exists.
+
+        Args:
+            None.
+
+        Returns:
+            True when a settings file existed and at least one field was
+            applied; otherwise False.
+
+        Raises:
+            None. Load failures are logged and leave defaults in place.
+        """
+        path = self._get_last_shear_settings_path()
+        if not path.exists():
+            return False
+        try:
+            return self.load_shear_settings_from_path(path, log_message=True)
+        except Exception as exc:
+            if hasattr(self, "log_status"):
+                self.log_status(f"Warning: could not load shear settings: {exc}")
+            return False
+
+    def on_save_shear_settings_clicked(self) -> None:
+        """Prompt for a custom JSON path and save current shear settings.
+
+        Args:
+            None.
+
+        Returns:
+            None.
+
+        Raises:
+            None. Dialog cancellation and save failures are handled in-place.
+        """
+        default_dir = self._get_last_shear_settings_path().parent
+        default_dir.mkdir(parents=True, exist_ok=True)
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Shear Settings",
+            str(default_dir / SHEAR_SETTINGS_DEFAULT_FILENAME),
+            SHEAR_SETTINGS_FILE_FILTER,
+        )
+        if not file_path:
+            return
+        try:
+            self.save_shear_settings_to_path(file_path, log_message=True)
+        except Exception as exc:
+            if hasattr(self, "log_status"):
+                self.log_status(f"ERROR: failed to save shear settings - {exc}")
+
+    def on_load_shear_settings_clicked(self) -> None:
+        """Prompt for a custom JSON file and apply its shear settings.
+
+        Args:
+            None.
+
+        Returns:
+            None.
+
+        Raises:
+            None. Dialog cancellation and load failures are handled in-place.
+        """
+        default_dir = self._get_last_shear_settings_path().parent
+        default_dir.mkdir(parents=True, exist_ok=True)
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Load Shear Settings",
+            str(default_dir),
+            SHEAR_SETTINGS_FILE_FILTER,
+        )
+        if not file_path:
+            return
+        try:
+            applied = self.load_shear_settings_from_path(file_path, log_message=True)
+            if applied:
+                self.save_last_shear_settings()
+        except Exception as exc:
+            if hasattr(self, "log_status"):
+                self.log_status(f"ERROR: failed to load shear settings - {exc}")
+
+    def _apply_shear_settings(self, settings: dict) -> bool:
+        if not settings:
+            return False
+
+        signal_integration = self._settings_section(settings, "signal_integration")
+        processing = self._settings_section(settings, "processing")
+        visualization = self._settings_section(settings, "visualization")
+        changed = False
+
+        changed |= self._set_spin_value("signal_integration_hpf_spin", signal_integration, "hpf_cutoff_hz", float)
+        changed |= self._set_spin_value(
+            "signal_integration_window_spin",
+            signal_integration,
+            "integration_window_samples",
+            int,
+        )
+        changed |= self._set_spin_value(
+            "signal_integration_display_window_spin",
+            signal_integration,
+            "display_window_sec",
+            float,
+        )
+        changed |= self._set_spin_value("shear_noise_threshold_spin", processing, "noise_threshold", float)
+
+        sensor_gains = processing.get("sensor_gains", settings.get("sensor_gains", {}))
+        if isinstance(sensor_gains, dict):
+            for position, value in sensor_gains.items():
+                spin = getattr(self, "shear_gain_spins", {}).get(str(position))
+                if spin is not None and hasattr(spin, "setValue"):
+                    spin.setValue(float(value))
+                    changed = True
+
+        changed |= self._set_spin_value("shear_arrow_gain_spin", visualization, "arrow_gain", float)
+        changed |= self._set_spin_value(
+            "shear_arrow_threshold_spin",
+            visualization,
+            "arrow_min_threshold",
+            float,
+        )
+        changed |= self._set_spin_value(
+            "shear_arrow_max_length_spin",
+            visualization,
+            "arrow_max_length_fraction",
+            float,
+        )
+        changed |= self._set_spin_value(
+            "shear_arrow_base_width_spin",
+            visualization,
+            "arrow_base_width_px",
+            float,
+        )
+        changed |= self._set_check_value(
+            "shear_arrow_width_scales_check",
+            visualization,
+            "arrow_width_scales",
+        )
+
+        if changed:
+            self.on_signal_integration_settings_changed()
+            self.on_shear_processing_settings_changed()
+            self.on_shear_visualization_settings_changed()
+        return changed
+
+    def _settings_section(self, settings: dict, section_name: str) -> dict:
+        section = settings.get(section_name)
+        return section if isinstance(section, dict) else settings
+
+    def _spin_float(self, widget_name: str, fallback: float) -> float:
+        widget = getattr(self, widget_name, None)
+        if widget is None or not hasattr(widget, "value"):
+            return float(fallback)
+        return float(widget.value())
+
+    def _spin_int(self, widget_name: str, fallback: int) -> int:
+        widget = getattr(self, widget_name, None)
+        if widget is None or not hasattr(widget, "value"):
+            return int(fallback)
+        return int(widget.value())
+
+    def _check_bool(self, widget_name: str, fallback: bool) -> bool:
+        widget = getattr(self, widget_name, None)
+        if widget is None or not hasattr(widget, "isChecked"):
+            return bool(fallback)
+        return bool(widget.isChecked())
+
+    def _set_spin_value(self, widget_name: str, settings: dict, key: str, value_type: type) -> bool:
+        if key not in settings:
+            return False
+        widget = getattr(self, widget_name, None)
+        if widget is None or not hasattr(widget, "setValue"):
+            return False
+        widget.setValue(value_type(settings[key]))
+        return True
+
+    def _set_check_value(self, widget_name: str, settings: dict, key: str) -> bool:
+        if key not in settings:
+            return False
+        widget = getattr(self, widget_name, None)
+        if widget is None or not hasattr(widget, "setChecked"):
+            return False
+        widget.setChecked(bool(settings[key]))
+        return True
 
     def on_signal_integration_settings_changed(self, _value: object | None = None) -> None:
         """Apply HPF, integration, and display-window changes.
@@ -348,6 +697,7 @@ class SignalIntegrationPanelMixin:
         self.signal_integration_display_window_sec = float(self.signal_integration_display_window_spin.value())
         self._signal_integration_filter_warning = ""
         self.update_signal_integration_plot()
+        self.save_last_shear_settings()
 
     def on_shear_processing_settings_changed(self, _value: object | None = None) -> None:
         """Recompute shear after noise-threshold or gain controls change.
@@ -362,6 +712,7 @@ class SignalIntegrationPanelMixin:
             None.
         """
         self._update_shear_visualization_from_latest()
+        self.save_last_shear_settings()
 
     def on_shear_visualization_settings_changed(self, _value: object | None = None) -> None:
         """Apply arrow-display settings to the current shear result.
@@ -386,6 +737,7 @@ class SignalIntegrationPanelMixin:
             arrow_base_width_px=float(self.shear_arrow_base_width_spin.value()),
         )
         self.shear_visualization_widget.update_display(self._latest_shear_result)
+        self.save_last_shear_settings()
 
     def on_signal_integration_reset_clicked(self) -> None:
         """Reset the integrated voltage preview to the latest display window.

@@ -1,0 +1,760 @@
+"""
+Integrated voltage preview tab for the future shear/pressure pipeline.
+
+This tab reads the same recent ADC circular-buffer window used by the Time
+Series view, converts the selected traces to voltage independently of the Time
+Series Y-axis setting, and applies a display-only high-pass filter for DC-bias
+removal. It then applies a display-only rectangular moving-sum integrator. The
+live acquisition loop still does not run the streaming integrator, so
+responsiveness can be evaluated one processing stage at a time.
+
+Dependencies:
+    PyQt6, pyqtgraph, numpy, existing ADC plotting helpers, and config constants.
+"""
+
+from __future__ import annotations
+
+import math
+from typing import Hashable
+
+import numpy as np
+import pyqtgraph as pg
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import (
+    QCheckBox,
+    QDoubleSpinBox,
+    QGridLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
+)
+
+from config_constants import (
+    DEFAULT_DISPLAY_WINDOW_SEC,
+    DEFAULT_HPF_CUTOFF_HZ,
+    DEFAULT_INTEGRATION_WINDOW_SAMPLES,
+    FILTER_DEFAULT_LOW_CUTOFF_HZ,
+    IADC_RESOLUTION_BITS,
+    MAX_PLOT_COLUMNS,
+    MAX_PLOT_SWEEPS,
+    PLOT_COLORS,
+    SIGNAL_INTEGRATION_DISPLAY_WINDOW_DECIMALS,
+    SIGNAL_INTEGRATION_DISPLAY_WINDOW_MAX_SEC,
+    SIGNAL_INTEGRATION_DISPLAY_WINDOW_MIN_SEC,
+    SIGNAL_INTEGRATION_DISPLAY_WINDOW_STEP_SEC,
+    SIGNAL_INTEGRATION_DIMMED_COLOR_FRACTION,
+    SIGNAL_INTEGRATION_CHANNEL_GRID_SPACING,
+    SIGNAL_INTEGRATION_HPF_CUTOFF_DECIMALS,
+    SIGNAL_INTEGRATION_HPF_CUTOFF_MAX_HZ,
+    SIGNAL_INTEGRATION_HPF_CUTOFF_MIN_HZ,
+    SIGNAL_INTEGRATION_HPF_CUTOFF_STEP_HZ,
+    SIGNAL_INTEGRATION_HPF_FILTER_ORDER,
+    SIGNAL_INTEGRATION_HISTORY_DISPLAY_WINDOW_MULTIPLIER,
+    SIGNAL_INTEGRATION_HISTORY_INTEGRATION_WINDOW_MULTIPLIER,
+    SIGNAL_INTEGRATION_HISTORY_MIN_SWEEPS,
+    SIGNAL_INTEGRATION_LEGEND_OFFSET,
+    SIGNAL_INTEGRATION_AVERAGE_LINE_WIDTH,
+    SIGNAL_INTEGRATION_MAX_PROCESSING_SWEEPS,
+    SIGNAL_INTEGRATION_MAX_TOTAL_POINTS_TO_DISPLAY,
+    SIGNAL_INTEGRATION_MIN_POINTS_PER_VISIBLE_CHANNEL,
+    SIGNAL_INTEGRATION_NYQUIST_DIVISOR,
+    SIGNAL_INTEGRATION_PLOT_LINE_WIDTH,
+    SIGNAL_INTEGRATION_REPEAT_LINE_WIDTH,
+    SIGNAL_INTEGRATION_WINDOW_MAX_SAMPLES,
+    SIGNAL_INTEGRATION_WINDOW_MIN_SAMPLES,
+    SIGNAL_INTEGRATION_DISABLED_HPF_CUTOFF_HZ,
+)
+from data_processing.adc_filter_engine import ADCFilterEngine, SCIPY_FILTERS_AVAILABLE
+
+
+class SignalIntegrationPanelMixin:
+    """Create and refresh an integrated voltage preview for the integration tab.
+
+    The tab mirrors the Time Series buffering and curve update path while using
+    its own PlotWidget and channel checkboxes. It converts ADC counts to volts
+    and applies high-pass filtering plus moving-sum integration only to the
+    visible display window.
+
+    Usage example:
+        tab = self.create_signal_integration_tab()
+        self.visualization_tabs.addTab(tab, "Signal Integration")
+    """
+
+    def create_signal_integration_tab(self) -> QWidget:
+        """Create the Signal Integration tab with integrated voltage plotting.
+
+        Args:
+            None.
+
+        Returns:
+            QWidget containing HPF controls, integration controls, display
+            controls, channel toggles, and the integrated voltage plot.
+
+        Raises:
+            None.
+        """
+        tab = QWidget()
+        root_layout = QVBoxLayout(tab)
+
+        controls_group = QGroupBox("Signal Integration Controls")
+        controls_layout = QGridLayout(controls_group)
+
+        controls_layout.addWidget(QLabel("HPF cutoff:"), 0, 0)
+        self.signal_integration_hpf_spin = QDoubleSpinBox()
+        self.signal_integration_hpf_spin.setRange(
+            SIGNAL_INTEGRATION_HPF_CUTOFF_MIN_HZ,
+            SIGNAL_INTEGRATION_HPF_CUTOFF_MAX_HZ,
+        )
+        self.signal_integration_hpf_spin.setDecimals(SIGNAL_INTEGRATION_HPF_CUTOFF_DECIMALS)
+        self.signal_integration_hpf_spin.setSingleStep(SIGNAL_INTEGRATION_HPF_CUTOFF_STEP_HZ)
+        self.signal_integration_hpf_spin.setSuffix(" Hz")
+        self.signal_integration_hpf_spin.setValue(
+            float(getattr(self, "signal_integration_hpf_cutoff_hz", DEFAULT_HPF_CUTOFF_HZ))
+        )
+        self.signal_integration_hpf_spin.valueChanged.connect(self.on_signal_integration_settings_changed)
+        controls_layout.addWidget(self.signal_integration_hpf_spin, 0, 1)
+
+        controls_layout.addWidget(QLabel("Integration window:"), 0, 2)
+        self.signal_integration_window_spin = QSpinBox()
+        self.signal_integration_window_spin.setRange(
+            SIGNAL_INTEGRATION_WINDOW_MIN_SAMPLES,
+            SIGNAL_INTEGRATION_WINDOW_MAX_SAMPLES,
+        )
+        self.signal_integration_window_spin.setSuffix(" samples")
+        self.signal_integration_window_spin.setValue(
+            int(getattr(self, "signal_integration_window_samples", DEFAULT_INTEGRATION_WINDOW_SAMPLES))
+        )
+        self.signal_integration_window_spin.valueChanged.connect(self.on_signal_integration_settings_changed)
+        controls_layout.addWidget(self.signal_integration_window_spin, 0, 3)
+
+        controls_layout.addWidget(QLabel("Display window:"), 0, 4)
+        self.signal_integration_display_window_spin = QDoubleSpinBox()
+        self.signal_integration_display_window_spin.setRange(
+            SIGNAL_INTEGRATION_DISPLAY_WINDOW_MIN_SEC,
+            SIGNAL_INTEGRATION_DISPLAY_WINDOW_MAX_SEC,
+        )
+        self.signal_integration_display_window_spin.setDecimals(SIGNAL_INTEGRATION_DISPLAY_WINDOW_DECIMALS)
+        self.signal_integration_display_window_spin.setSingleStep(SIGNAL_INTEGRATION_DISPLAY_WINDOW_STEP_SEC)
+        self.signal_integration_display_window_spin.setSuffix(" s")
+        self.signal_integration_display_window_spin.setValue(
+            float(getattr(self, "signal_integration_display_window_sec", DEFAULT_DISPLAY_WINDOW_SEC))
+        )
+        self.signal_integration_display_window_spin.valueChanged.connect(self.on_signal_integration_settings_changed)
+        controls_layout.addWidget(self.signal_integration_display_window_spin, 0, 5)
+
+        self.signal_integration_reset_btn = QPushButton("Reset View")
+        self.signal_integration_reset_btn.clicked.connect(self.on_signal_integration_reset_clicked)
+        controls_layout.addWidget(self.signal_integration_reset_btn, 0, 6)
+        root_layout.addWidget(controls_group)
+
+        channel_group = QGroupBox("Display Channels")
+        channel_root_layout = QVBoxLayout(channel_group)
+        self.signal_integration_channel_container = QWidget()
+        self.signal_integration_channel_layout = QGridLayout(self.signal_integration_channel_container)
+        self.signal_integration_channel_layout.setSpacing(SIGNAL_INTEGRATION_CHANNEL_GRID_SPACING)
+        self.signal_integration_channel_checks: dict[Hashable, QCheckBox] = {}
+        self._signal_integration_channel_labels: dict[Hashable, str] = {}
+        channel_root_layout.addWidget(self.signal_integration_channel_container)
+
+        channel_button_layout = QHBoxLayout()
+        self.signal_integration_select_all_btn = QPushButton("All")
+        self.signal_integration_select_all_btn.clicked.connect(self.select_all_signal_integration_channels)
+        channel_button_layout.addWidget(self.signal_integration_select_all_btn)
+
+        self.signal_integration_deselect_all_btn = QPushButton("None")
+        self.signal_integration_deselect_all_btn.clicked.connect(self.deselect_all_signal_integration_channels)
+        channel_button_layout.addWidget(self.signal_integration_deselect_all_btn)
+        channel_button_layout.addStretch()
+        channel_root_layout.addLayout(channel_button_layout)
+        root_layout.addWidget(channel_group)
+
+        self.signal_integration_plot_widget = pg.PlotWidget()
+        self.signal_integration_plot_widget.setBackground("w")
+        self.signal_integration_plot_widget.setLabel("left", "Integrated HPF Voltage", units="V samples")
+        self.signal_integration_plot_widget.setLabel("bottom", "Time", units="s")
+        self.signal_integration_plot_widget.showGrid(x=True, y=True, alpha=0.3)
+        self.signal_integration_plot_widget.setMouseEnabled(x=False, y=False)
+        self.signal_integration_plot_widget.getPlotItem().setMenuEnabled(False)
+        self.signal_integration_plot_widget.getViewBox().setMouseEnabled(x=False, y=False)
+        self.signal_integration_plot_widget.addLegend(offset=SIGNAL_INTEGRATION_LEGEND_OFFSET)
+        root_layout.addWidget(self.signal_integration_plot_widget)
+
+        self.signal_integration_status_label = QLabel("Waiting for raw ADC data")
+        root_layout.addWidget(self.signal_integration_status_label)
+
+        self.signal_integration_curves: dict[Hashable, object] = {}
+        self._signal_integration_filter_engine = ADCFilterEngine()
+        self._signal_integration_filter_warning = ""
+        self._signal_integration_updating_plot = False
+
+        return tab
+
+    def on_signal_integration_settings_changed(self, _value: object | None = None) -> None:
+        """Apply HPF, integration, and display-window changes.
+
+        Args:
+            _value: Qt signal payload from the changed spin box.
+
+        Returns:
+            None.
+
+        Raises:
+            None.
+        """
+        self.signal_integration_hpf_cutoff_hz = float(self.signal_integration_hpf_spin.value())
+        self.signal_integration_window_samples = int(self.signal_integration_window_spin.value())
+        self.signal_integration_display_window_sec = float(self.signal_integration_display_window_spin.value())
+        self._signal_integration_filter_warning = ""
+        self.update_signal_integration_plot()
+
+    def on_signal_integration_channel_visibility_changed(self, _state: int) -> None:
+        """Refresh the integrated voltage preview after a channel checkbox changes.
+
+        Args:
+            _state: Qt checkbox state value.
+
+        Returns:
+            None.
+
+        Raises:
+            None.
+        """
+        self.update_signal_integration_plot()
+
+    def select_all_signal_integration_channels(self) -> None:
+        """Show every integrated voltage channel trace in the Signal Integration tab.
+
+        Args:
+            None.
+
+        Returns:
+            None.
+
+        Raises:
+            None.
+        """
+        for checkbox in self.signal_integration_channel_checks.values():
+            checkbox.blockSignals(True)
+            checkbox.setChecked(True)
+            checkbox.blockSignals(False)
+        self.update_signal_integration_plot()
+
+    def deselect_all_signal_integration_channels(self) -> None:
+        """Hide every integrated voltage channel trace in the Signal Integration tab.
+
+        Args:
+            None.
+
+        Returns:
+            None.
+
+        Raises:
+            None.
+        """
+        for checkbox in self.signal_integration_channel_checks.values():
+            checkbox.blockSignals(True)
+            checkbox.setChecked(False)
+            checkbox.blockSignals(False)
+        self.update_signal_integration_plot()
+
+    def on_signal_integration_reset_clicked(self) -> None:
+        """Reset the integrated voltage preview to the latest display window.
+
+        Args:
+            None.
+
+        Returns:
+            None.
+
+        Raises:
+            None.
+        """
+        self.update_signal_integration_plot()
+        if hasattr(self, "signal_integration_status_label"):
+            self.signal_integration_status_label.setText("Integrated display refreshed")
+
+    def update_signal_integration_plot(self) -> None:
+        """Render integrated HPF voltage using the Time Series buffer path.
+
+        Args:
+            None.
+
+        Returns:
+            None.
+
+        Raises:
+            None. Errors are logged through ``log_status`` when available.
+        """
+        if not hasattr(self, "signal_integration_plot_widget"):
+            return
+        if not self._should_refresh_signal_integration_plot():
+            return
+        if self._signal_integration_updating_plot:
+            return
+
+        self._signal_integration_updating_plot = True
+        try:
+            if not self.config["channels"]:
+                self._hide_all_signal_integration_curves()
+                self.signal_integration_status_label.setText("Configure channels first")
+                return
+
+            display_specs = self.get_display_channel_specs()
+            self._sync_signal_integration_channel_checks(display_specs)
+
+            selected_channels = self._get_selected_signal_integration_channels()
+            if not selected_channels:
+                self._hide_all_signal_integration_curves()
+                self.signal_integration_status_label.setText("All integrated channels are hidden")
+                return
+
+            plot_snapshot = self._get_signal_integration_raw_snapshot()
+            if plot_snapshot is None:
+                self._hide_all_signal_integration_curves()
+                self.signal_integration_status_label.setText("Waiting for raw ADC data")
+                return
+
+            data_array, timestamps_array, visible_start_time_sec = plot_snapshot
+            if len(data_array) == 0 or len(timestamps_array) == 0:
+                self._hide_all_signal_integration_curves()
+                self.signal_integration_status_label.setText("Waiting for raw ADC data")
+                return
+
+            desired_curve_keys = set()
+            visible_series_count = max(1, len(selected_channels))
+            max_samples_per_series = max(
+                SIGNAL_INTEGRATION_MIN_POINTS_PER_VISIBLE_CHANNEL,
+                SIGNAL_INTEGRATION_MAX_TOTAL_POINTS_TO_DISPLAY // visible_series_count,
+            )
+            avg_sample_time_sec = getattr(self, "_cached_avg_sample_time_sec", 0.0)
+            repeat_count = max(1, int(self.config.get("repeat", 1)))
+
+            for spec in display_specs:
+                if spec["key"] not in selected_channels:
+                    continue
+
+                color = PLOT_COLORS[spec["color_slot"] % len(PLOT_COLORS)]
+                prepared_series = self._prepare_signal_integration_integrated_series(
+                    spec,
+                    data_array,
+                    timestamps_array,
+                    avg_sample_time_sec,
+                    max_samples_per_series,
+                    visible_start_time_sec,
+                )
+                if prepared_series is None:
+                    continue
+
+                channel_data, channel_times = prepared_series
+
+                if self.show_all_repeats_radio.isChecked() and repeat_count > 1:
+                    self._plot_signal_integration_repeat_series(
+                        spec,
+                        color,
+                        channel_data,
+                        channel_times,
+                        repeat_count,
+                        desired_curve_keys,
+                    )
+                else:
+                    self._plot_signal_integration_single_or_average_series(
+                        spec,
+                        color,
+                        channel_data,
+                        channel_times,
+                        repeat_count,
+                        desired_curve_keys,
+                    )
+
+            for key, curve in self.signal_integration_curves.items():
+                if key not in desired_curve_keys:
+                    curve.setVisible(False)
+
+            self._apply_signal_integration_axis_settings()
+            self.signal_integration_status_label.setText("")
+
+        except Exception as exc:
+            if hasattr(self, "log_status"):
+                self.log_status(f"ERROR updating Signal Integration integrated preview: {exc}")
+        finally:
+            self._signal_integration_updating_plot = False
+
+    def _should_refresh_signal_integration_plot(self) -> bool:
+        if hasattr(self, "should_update_signal_integration_display"):
+            return bool(self.should_update_signal_integration_display())
+        if hasattr(self, "get_current_visualization_tab_name"):
+            return self.get_current_visualization_tab_name() == "Signal Integration"
+        return True
+
+    def _sync_signal_integration_channel_checks(self, display_specs: list[dict]) -> None:
+        desired_keys = [spec["key"] for spec in display_specs]
+        existing_keys = set(self.signal_integration_channel_checks)
+        if desired_keys == list(self.signal_integration_channel_checks):
+            return
+
+        preserved_checks = {
+            key: checkbox.isChecked()
+            for key, checkbox in self.signal_integration_channel_checks.items()
+        }
+
+        while self.signal_integration_channel_layout.count():
+            item = self.signal_integration_channel_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+        self.signal_integration_channel_checks = {}
+        self._signal_integration_channel_labels = {}
+
+        for index, spec in enumerate(display_specs):
+            key = spec["key"]
+            label = str(spec["label"])
+            checkbox = QCheckBox(label)
+            checkbox.setChecked(preserved_checks.get(key, key not in existing_keys))
+            color = PLOT_COLORS[spec["color_slot"] % len(PLOT_COLORS)]
+            checkbox.setStyleSheet(f"QCheckBox {{ color: rgb({color[0]}, {color[1]}, {color[2]}); }}")
+            checkbox.stateChanged.connect(self.on_signal_integration_channel_visibility_changed)
+
+            row = index // MAX_PLOT_COLUMNS
+            col = index % MAX_PLOT_COLUMNS
+            self.signal_integration_channel_layout.addWidget(checkbox, row, col)
+
+            self.signal_integration_channel_checks[key] = checkbox
+            self._signal_integration_channel_labels[key] = label
+
+    def _get_selected_signal_integration_channels(self) -> set[Hashable]:
+        return {
+            channel_key
+            for channel_key, checkbox in self.signal_integration_channel_checks.items()
+            if checkbox.isChecked()
+        }
+
+    def _hide_all_signal_integration_curves(self) -> None:
+        for curve in self.signal_integration_curves.values():
+            curve.setVisible(False)
+
+    def _get_signal_integration_raw_snapshot(self) -> tuple[np.ndarray, np.ndarray, float] | None:
+        data_buffer = self.raw_data_buffer
+        if data_buffer is None or self.sweep_timestamps_buffer is None or self.samples_per_sweep <= 0:
+            return None
+
+        with self.buffer_lock:
+            current_sweep_count = self.sweep_count
+            current_write_index = self.buffer_write_index
+
+        actual_sweeps = min(current_sweep_count, self.MAX_SWEEPS_BUFFER)
+        if actual_sweeps <= 0:
+            return None
+
+        window_sweeps = self._get_signal_integration_window_sweeps(actual_sweeps)
+        processing_sweeps = self._get_signal_integration_processing_sweeps(
+            actual_sweeps,
+            window_sweeps,
+        )
+        snapshot = self._extract_recent_buffer_window(
+            data_buffer,
+            actual_sweeps,
+            current_write_index,
+            processing_sweeps,
+        )
+        if snapshot is None:
+            return None
+
+        data_array, timestamps_array = snapshot
+        visible_start_index = max(0, len(timestamps_array) - window_sweeps)
+        visible_start_time_sec = float(timestamps_array[visible_start_index])
+        return data_array, timestamps_array, visible_start_time_sec
+
+    def _get_signal_integration_window_sweeps(self, actual_sweeps: int) -> int:
+        display_window_sec = max(
+            SIGNAL_INTEGRATION_DISPLAY_WINDOW_MIN_SEC,
+            float(getattr(self, "signal_integration_display_window_sec", DEFAULT_DISPLAY_WINDOW_SEC)),
+        )
+        avg_sample_time_sec = float(getattr(self, "_cached_avg_sample_time_sec", 0.0) or 0.0)
+        sweep_time_sec = avg_sample_time_sec * max(1, int(getattr(self, "samples_per_sweep", 1)))
+        if sweep_time_sec > 0.0:
+            requested_sweeps = max(1, int(math.ceil(display_window_sec / sweep_time_sec)))
+        else:
+            requested_sweeps = min(self.window_size_spin.value(), MAX_PLOT_SWEEPS)
+        return max(1, min(int(actual_sweeps), MAX_PLOT_SWEEPS, requested_sweeps))
+
+    def _get_signal_integration_processing_sweeps(
+        self,
+        actual_sweeps: int,
+        display_sweeps: int,
+    ) -> int:
+        integration_window_samples = max(
+            SIGNAL_INTEGRATION_WINDOW_MIN_SAMPLES,
+            int(getattr(self, "signal_integration_window_samples", DEFAULT_INTEGRATION_WINDOW_SAMPLES)),
+        )
+        history_sweeps = max(
+            SIGNAL_INTEGRATION_HISTORY_MIN_SWEEPS,
+            display_sweeps * SIGNAL_INTEGRATION_HISTORY_DISPLAY_WINDOW_MULTIPLIER,
+            integration_window_samples * SIGNAL_INTEGRATION_HISTORY_INTEGRATION_WINDOW_MULTIPLIER,
+        )
+        requested_sweeps = display_sweeps + history_sweeps
+        return max(
+            display_sweeps,
+            min(
+                int(actual_sweeps),
+                SIGNAL_INTEGRATION_MAX_PROCESSING_SWEEPS,
+                requested_sweeps,
+            ),
+        )
+
+    def _prepare_signal_integration_integrated_series(
+        self,
+        spec: dict,
+        data_array: np.ndarray,
+        timestamps_array: np.ndarray,
+        avg_sample_time_sec: float,
+        max_samples_per_series: int,
+        visible_start_time_sec: float | None = None,
+    ) -> tuple[np.ndarray, np.ndarray] | None:
+        sample_indices = spec["sample_indices"]
+        if not sample_indices:
+            return None
+
+        sample_index_array = np.asarray(sample_indices, dtype=np.int32)
+        channel_counts = data_array[:, sample_index_array].reshape(-1).astype(np.float64, copy=False)
+
+        time_offsets = sample_index_array.astype(np.float64) * avg_sample_time_sec
+        channel_times = (timestamps_array.reshape(-1, 1) + time_offsets.reshape(1, -1)).reshape(-1)
+
+        channel_data = self._convert_signal_integration_counts_to_voltage(channel_counts)
+        channel_data = self._remove_signal_integration_dc_bias(channel_data, channel_times)
+        channel_data = self._integrate_signal_integration_voltage_samples(channel_data)
+
+        if visible_start_time_sec is not None:
+            visible_mask = channel_times >= float(visible_start_time_sec)
+            channel_data = channel_data[visible_mask]
+            channel_times = channel_times[visible_mask]
+
+        if len(channel_data) > max_samples_per_series:
+            downsample_factor = max(1, len(channel_data) // max_samples_per_series)
+            channel_data = channel_data[::downsample_factor]
+            channel_times = channel_times[::downsample_factor]
+
+        return channel_data, channel_times
+
+    def _convert_signal_integration_counts_to_voltage(self, adc_counts: np.ndarray) -> np.ndarray:
+        max_adc_value = float((2 ** IADC_RESOLUTION_BITS) - 1)
+        return (np.asarray(adc_counts, dtype=np.float64) / max_adc_value) * float(self.get_vref_voltage())
+
+    def _remove_signal_integration_dc_bias(
+        self,
+        voltage_samples: np.ndarray,
+        sample_times_sec: np.ndarray,
+    ) -> np.ndarray:
+        cutoff_hz = float(getattr(self, "signal_integration_hpf_cutoff_hz", DEFAULT_HPF_CUTOFF_HZ))
+        if cutoff_hz <= SIGNAL_INTEGRATION_DISABLED_HPF_CUTOFF_HZ:
+            return voltage_samples
+
+        if voltage_samples.size == 0:
+            return voltage_samples
+
+        sample_rate_hz = self._estimate_signal_integration_series_rate_hz(sample_times_sec)
+        if sample_rate_hz <= 0.0:
+            return self._subtract_signal_integration_visible_mean(
+                voltage_samples,
+                "sample rate unavailable",
+            )
+
+        nyquist_hz = sample_rate_hz / SIGNAL_INTEGRATION_NYQUIST_DIVISOR
+        if cutoff_hz >= nyquist_hz:
+            return self._subtract_signal_integration_visible_mean(
+                voltage_samples,
+                f"cutoff {cutoff_hz:.2f} Hz is at or above Nyquist {nyquist_hz:.2f} Hz",
+            )
+
+        if not SCIPY_FILTERS_AVAILABLE:
+            return self._subtract_signal_integration_visible_mean(
+                voltage_samples,
+                "SciPy unavailable",
+            )
+
+        settings = self._build_signal_integration_hpf_settings(cutoff_hz)
+        try:
+            filtered = self._signal_integration_filter_engine.filter_signal(
+                settings,
+                voltage_samples,
+                sample_rate_hz,
+            )
+            self._signal_integration_filter_warning = ""
+            return np.asarray(filtered, dtype=np.float64)
+        except Exception as exc:
+            return self._subtract_signal_integration_visible_mean(
+                voltage_samples,
+                str(exc),
+            )
+
+    def _integrate_signal_integration_voltage_samples(self, voltage_samples: np.ndarray) -> np.ndarray:
+        samples = np.asarray(voltage_samples, dtype=np.float64).reshape(-1)
+        if samples.size == 0:
+            return samples
+
+        window_samples = max(
+            SIGNAL_INTEGRATION_WINDOW_MIN_SAMPLES,
+            int(getattr(self, "signal_integration_window_samples", DEFAULT_INTEGRATION_WINDOW_SAMPLES)),
+        )
+        if window_samples <= SIGNAL_INTEGRATION_WINDOW_MIN_SAMPLES:
+            return samples.copy()
+
+        cumulative_sum = np.cumsum(samples, dtype=np.float64)
+        integrated = cumulative_sum.copy()
+        if samples.size > window_samples:
+            integrated[window_samples:] = cumulative_sum[window_samples:] - cumulative_sum[:-window_samples]
+        return integrated
+
+    def _build_signal_integration_hpf_settings(self, cutoff_hz: float) -> dict:
+        return {
+            "enabled": True,
+            "main_type": "highpass",
+            "order": SIGNAL_INTEGRATION_HPF_FILTER_ORDER,
+            "low_cutoff_hz": FILTER_DEFAULT_LOW_CUTOFF_HZ,
+            "high_cutoff_hz": float(cutoff_hz),
+            "notches": [],
+        }
+
+    def _estimate_signal_integration_series_rate_hz(self, sample_times_sec: np.ndarray) -> float:
+        sample_times = np.asarray(sample_times_sec, dtype=np.float64).reshape(-1)
+        if sample_times.size <= 1:
+            return 0.0
+
+        sample_intervals = np.diff(sample_times)
+        positive_intervals = sample_intervals[sample_intervals > 0.0]
+        if positive_intervals.size == 0:
+            return 0.0
+
+        return float(1.0 / np.median(positive_intervals))
+
+    def _subtract_signal_integration_visible_mean(
+        self,
+        voltage_samples: np.ndarray,
+        reason: str,
+    ) -> np.ndarray:
+        self._record_signal_integration_filter_warning(reason)
+        return voltage_samples - float(np.mean(voltage_samples))
+
+    def _record_signal_integration_filter_warning(self, reason: str) -> None:
+        message = f"Signal Integration HPF fallback: {reason}; subtracting visible-window mean"
+        if message == self._signal_integration_filter_warning:
+            return
+        self._signal_integration_filter_warning = message
+        if hasattr(self, "log_status"):
+            self.log_status(message)
+
+    def _get_or_create_signal_integration_curve(self, curve_key: Hashable, name: str, pen):
+        curve = self.signal_integration_curves.get(curve_key)
+        if curve is None:
+            curve = self.signal_integration_plot_widget.plot([], [], pen=pen, name=name)
+            curve.setClipToView(True)
+            curve.setDownsampling(auto=True, method="peak")
+            self.signal_integration_curves[curve_key] = curve
+        return curve
+
+    def _set_signal_integration_curve_data(
+        self,
+        curve_key: Hashable,
+        name: str,
+        pen,
+        x_data: np.ndarray,
+        y_data: np.ndarray,
+    ) -> None:
+        curve = self._get_or_create_signal_integration_curve(curve_key, name, pen)
+        curve.setVisible(True)
+        curve.setPen(pen)
+        curve.setData(x=x_data, y=y_data)
+
+    def _plot_signal_integration_repeat_series(
+        self,
+        spec: dict,
+        color: tuple[int, int, int],
+        channel_data: np.ndarray,
+        channel_times: np.ndarray,
+        repeat_count: int,
+        desired_curve_keys: set,
+    ) -> bool:
+        try:
+            num_samples = len(channel_data) // repeat_count
+            if num_samples <= 0:
+                return False
+
+            channel_data_2d = channel_data[:num_samples * repeat_count].reshape(-1, repeat_count)
+            channel_times_2d = channel_times[:num_samples * repeat_count].reshape(-1, repeat_count)
+
+            for repeat_idx in range(repeat_count):
+                repeat_data = channel_data_2d[:, repeat_idx]
+                repeat_times = channel_times_2d[:, repeat_idx]
+
+                if repeat_idx == 0:
+                    pen = pg.mkPen(color=color, width=SIGNAL_INTEGRATION_PLOT_LINE_WIDTH)
+                else:
+                    lighter_color = tuple(
+                        int(component * SIGNAL_INTEGRATION_DIMMED_COLOR_FRACTION)
+                        for component in color
+                    )
+                    pen = pg.mkPen(
+                        color=lighter_color,
+                        width=SIGNAL_INTEGRATION_REPEAT_LINE_WIDTH,
+                        style=Qt.PenStyle.DashLine,
+                    )
+
+                name = f"{spec['label']}.{repeat_idx}"
+                curve_key = ("signal_integration_repeat", spec["key"], repeat_idx)
+                desired_curve_keys.add(curve_key)
+                self._set_signal_integration_curve_data(curve_key, name, pen, repeat_times, repeat_data)
+
+            return True
+        except Exception as exc:
+            if hasattr(self, "log_status"):
+                self.log_status(f"ERROR: Failed to render Signal Integration repeats - {exc}")
+            return False
+
+    def _plot_signal_integration_single_or_average_series(
+        self,
+        spec: dict,
+        color: tuple[int, int, int],
+        channel_data: np.ndarray,
+        channel_times: np.ndarray,
+        repeat_count: int,
+        desired_curve_keys: set,
+    ) -> bool:
+        if self.show_average_radio.isChecked() and repeat_count > 1:
+            try:
+                num_samples = len(channel_data) // repeat_count
+                if num_samples <= 0:
+                    return False
+
+                channel_data_2d = channel_data[:num_samples * repeat_count].reshape(-1, repeat_count)
+                channel_times_2d = channel_times[:num_samples * repeat_count].reshape(-1, repeat_count)
+                channel_data = np.mean(channel_data_2d, axis=1)
+                channel_times = channel_times_2d[:, 0]
+                name = f"{spec['label']} (avg)"
+                pen = pg.mkPen(
+                    color=color,
+                    width=SIGNAL_INTEGRATION_AVERAGE_LINE_WIDTH,
+                    style=Qt.PenStyle.DashLine,
+                )
+                curve_key = ("signal_integration_avg", spec["key"], 0)
+            except Exception as exc:
+                if hasattr(self, "log_status"):
+                    self.log_status(f"ERROR: Failed to average Signal Integration data - {exc}")
+                return False
+        else:
+            name = spec["label"]
+            pen = pg.mkPen(color=color, width=SIGNAL_INTEGRATION_PLOT_LINE_WIDTH)
+            curve_key = ("signal_integration_single", spec["key"], 0)
+
+        desired_curve_keys.add(curve_key)
+        self._set_signal_integration_curve_data(curve_key, name, pen, channel_times, channel_data)
+        return True
+
+    def _apply_signal_integration_axis_settings(self) -> None:
+        self.signal_integration_plot_widget.setLabel("left", "Integrated HPF Voltage", units="V samples")
+        self.signal_integration_plot_widget.enableAutoRange(axis="y")
+        self.signal_integration_plot_widget.setLabel("bottom", "Time", units="s")

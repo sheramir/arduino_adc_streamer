@@ -35,15 +35,20 @@ class DisplayPanelsMixin:
         self.visualization_tabs.addTab(timeseries_tab, "Time Series")
         self.timeseries_tab_index = 0
 
+        # Create signal integration evaluation tab (from SignalIntegrationPanelMixin)
+        signal_integration_tab = self.create_signal_integration_tab()
+        self.visualization_tabs.addTab(signal_integration_tab, "Signal Integration")
+        self.signal_integration_tab_index = 1
+
         # Create spectrum tab (from SpectrumPanelMixin)
         spectrum_tab = self.create_spectrum_tab()
         self.visualization_tabs.addTab(spectrum_tab, "Spectrum")
-        self.spectrum_tab_index = 1
+        self.spectrum_tab_index = 2
 
         # Create sensor tab last (from SensorPanelMixin)
         sensor_tab = self.create_sensor_tab()
         self.visualization_tabs.addTab(sensor_tab, "Sensor")
-        self.sensor_tab_index = 2
+        self.sensor_tab_index = 3
         
         return self.visualization_tabs
     

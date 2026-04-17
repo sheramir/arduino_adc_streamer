@@ -208,6 +208,8 @@ class BinaryProcessorMixin:
                         if not hasattr(self, 'should_update_live_timeseries_display') or self.should_update_live_timeseries_display():
                             self.update_plot()
                             self.update_force_plot()
+                        elif hasattr(self, 'should_update_signal_integration_display') and self.should_update_signal_integration_display():
+                            self.update_signal_integration_plot()
                     # Always update the info label
                     total_samples = int(self.sweep_count) * samples_per_sweep
                     force_samples = len(force_state.data)

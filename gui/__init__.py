@@ -8,6 +8,7 @@ from gui.control_panels import ControlPanelsMixin
 from gui.display_panels import DisplayPanelsMixin
 from gui.file_panels import FilePanelsMixin
 from gui.sensor_panel import SensorPanelMixin
+from gui.signal_integration_panel import SignalIntegrationPanelMixin
 from gui.spectrum_panel import SpectrumPanelMixin
 from gui.status_logging import StatusLoggingMixin
 
@@ -16,6 +17,7 @@ __all__ = [
     'DisplayPanelsMixin',
     'FilePanelsMixin',
     'SensorPanelMixin',
+    'SignalIntegrationPanelMixin',
     'SpectrumPanelMixin',
     'StatusLoggingMixin',
 ]

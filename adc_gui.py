@@ -51,6 +51,7 @@ from gui import (
     DisplayPanelsMixin,
     FilePanelsMixin,
     SensorPanelMixin,
+    SignalIntegrationPanelMixin,
     SpectrumPanelMixin,
     StatusLoggingMixin,
 )
@@ -76,6 +77,7 @@ class ADCStreamerGUI(
     DisplayPanelsMixin,     # ✅ Display panel UI
     FilePanelsMixin,        # ✅ File panel UI
     SensorPanelMixin,       # ✅ Sensor panel UI
+    SignalIntegrationPanelMixin,  # Step 1 integrated piezo signal evaluation
     SpectrumPanelMixin,     # ✅ Spectrum panel UI
     ConfigurationMixin,     # ✅ Configuration management
     DataProcessorMixin,     # ✅ Data processing
@@ -101,6 +103,7 @@ class ADCStreamerGUI(
         self._init_config_state()
         self._init_ui_state()
         self.init_sensor_config_state()
+        self._init_signal_integration_state()
         self._init_spectrum_state()
         self._init_timers()
 
@@ -355,6 +358,9 @@ class ADCStreamerGUI(
             self.trigger_plot_update()
             self.update_force_plot()
 
+        if current_tab == "Signal Integration":
+            self.update_signal_integration_plot()
+
     def get_current_visualization_tab_name(self) -> str:
         """Return the current visualization tab title."""
         if not hasattr(self, "visualization_tabs") or self.visualization_tabs is None:
@@ -375,6 +381,10 @@ class ADCStreamerGUI(
     def should_update_live_timeseries_display(self) -> bool:
         """Return True when live ADC/force plot redraws should run."""
         return self.get_current_visualization_tab_name() == "Time Series"
+
+    def should_update_signal_integration_display(self) -> bool:
+        """Return True when the signal integration tab is the visible tab."""
+        return self.get_current_visualization_tab_name() == "Signal Integration"
 
     def start_spectrum_updates(self):
         """Start spectrum updates."""

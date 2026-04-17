@@ -13,10 +13,12 @@ from serial_communication.serial_parser import SerialParserMixin
 from data_processing.binary_processor import BinaryProcessorMixin
 from data_processing.filter_processor import FilterProcessorMixin
 from data_processing.force_processor import ForceProcessorMixin
+from data_processing.signal_integration_processor import SignalIntegrationProcessorMixin
 
 
 class DataProcessorMixin(
     ForceOverlayMixin,
+    SignalIntegrationProcessorMixin,
     CaptureCacheMixin,
     TimingDisplayMixin,
     ADCPlottingMixin,

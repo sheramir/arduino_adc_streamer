@@ -19,6 +19,8 @@ from data_processing.capture_lifecycle import CaptureLifecycleMixin
 from data_processing.filter_processor import FilterProcessorMixin
 from data_processing.force_overlay import ForceOverlayMixin
 from data_processing.force_processor import ForceProcessorMixin
+from data_processing.signal_integrator import SignalIntegrator
+from data_processing.signal_integration_processor import SignalIntegrationProcessorMixin
 from data_processing.timing_display import TimingDisplayMixin
 from data_processing.spectrum_processor import SpectrumProcessorMixin
 from data_processing.processing_stack import DataProcessorMixin
@@ -32,6 +34,8 @@ __all__ = [
     'FilterProcessorMixin',
     'ForceOverlayMixin',
     'ForceProcessorMixin',
+    'SignalIntegrator',
+    'SignalIntegrationProcessorMixin',
     'TimingDisplayMixin',
     'SpectrumProcessorMixin',
 ]

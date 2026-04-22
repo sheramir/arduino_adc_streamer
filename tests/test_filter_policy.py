@@ -4,6 +4,7 @@ import numpy as np
 
 from data_processing.adc_filter_engine import ADCFilterEngine, SCIPY_FILTERS_AVAILABLE
 from data_processing.filter_processor import FilterProcessorMixin
+from constants.ui import TIME_SERIES_TAB_NAME
 from gui.spectrum_panel import SpectrumPanelMixin
 
 
@@ -55,7 +56,7 @@ class SimpleCheck(SimpleWidget):
 
 
 class FilterPolicyHarness(FilterProcessorMixin):
-    def __init__(self, device_mode, *, is_capturing=False, current_tab="Time Series"):
+    def __init__(self, device_mode, *, is_capturing=False, current_tab=TIME_SERIES_TAB_NAME):
         self.device_mode = device_mode
         self.filtering_enabled = True
         self.filter_settings = self.get_default_filter_settings()
@@ -80,7 +81,7 @@ class FilterPolicyHarness(FilterProcessorMixin):
         self._full_view_filter_cache_timestamps = None
 
     def should_update_live_timeseries_display(self):
-        return self.current_tab == "Time Series"
+        return self.current_tab == TIME_SERIES_TAB_NAME
 
 
 class SpectrumFilterAvailabilityHarness(SpectrumPanelMixin):
@@ -162,7 +163,7 @@ class FilterPolicyTests(unittest.TestCase):
         self.assertFalse(harness.should_filter_adc_data())
 
     def test_live_adc_filtering_uses_raw_buffer_for_timeseries_capture(self):
-        harness = FilterPolicyHarness(device_mode="adc", is_capturing=True, current_tab="Time Series")
+        harness = FilterPolicyHarness(device_mode="adc", is_capturing=True, current_tab=TIME_SERIES_TAB_NAME)
 
         active = harness.get_active_data_buffer()
 

@@ -19,6 +19,8 @@ from data_processing.capture_lifecycle import CaptureLifecycleMixin
 from data_processing.filter_processor import FilterProcessorMixin
 from data_processing.force_overlay import ForceOverlayMixin
 from data_processing.force_processor import ForceProcessorMixin
+from data_processing.normal_force_calculator import NormalForceCalculator, NormalForceResult
+from data_processing.pressure_map_generator import PressureMapGenerator, PressureMapResult, PressurePeak
 from data_processing.shear_detector import ShearDetector, ShearResult
 from data_processing.signal_integrator import SignalIntegrator
 from data_processing.signal_integration_processor import SignalIntegrationProcessorMixin
@@ -35,6 +37,11 @@ __all__ = [
     'FilterProcessorMixin',
     'ForceOverlayMixin',
     'ForceProcessorMixin',
+    'NormalForceCalculator',
+    'NormalForceResult',
+    'PressureMapGenerator',
+    'PressureMapResult',
+    'PressurePeak',
     'ShearDetector',
     'ShearResult',
     'SignalIntegrator',

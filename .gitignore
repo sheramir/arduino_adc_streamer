@@ -36,6 +36,9 @@ ENV/
 .codex_pytest_tmp/
 .pytest_cache/
 
+# Local sandboxes
+/excel_tests.c
+
 # OS
 .DS_Store
 Thumbs.db

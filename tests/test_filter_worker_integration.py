@@ -3,6 +3,7 @@ import unittest
 
 import numpy as np
 
+from constants.ui import SPECTRUM_TAB_NAME, TIME_SERIES_TAB_NAME
 from data_processing.adc_filter_engine import ADCFilterEngine
 from data_processing.filter_processor import FilterProcessorMixin
 
@@ -33,7 +34,7 @@ class FilterWorkerHarness(FilterProcessorMixin):
         self.sweep_count = 4
         self.plot_updates = 0
         self.spectrum_updates = 0
-        self.current_tab = "Time Series"
+        self.current_tab = TIME_SERIES_TAB_NAME
         self.filter_last_error = None
         self.logged = []
         self._live_filtered_start_abs = 0
@@ -56,7 +57,7 @@ class FilterWorkerHarness(FilterProcessorMixin):
         )()
 
     def should_update_live_timeseries_display(self):
-        return self.current_tab == "Time Series"
+        return self.current_tab == TIME_SERIES_TAB_NAME
 
     def get_current_visualization_tab_name(self):
         return self.current_tab
@@ -247,7 +248,7 @@ class FilterWorkerIntegrationTests(unittest.TestCase):
 
     def test_spectrum_source_state_uses_raw_buffer_on_spectrum_tab(self):
         harness = FilterWorkerHarness()
-        harness.current_tab = "Spectrum"
+        harness.current_tab = SPECTRUM_TAB_NAME
         harness._live_filtered_start_abs = 10
         harness._live_filtered_ready_abs = 14
 

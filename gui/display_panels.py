@@ -16,6 +16,10 @@ import types
 from constants.ui import (
     CHANNEL_SCROLL_HEIGHT,
     DEFAULT_WINDOW_SIZE,
+    PRESSURE_MAP_TAB_NAME,
+    SENSOR_TAB_NAME,
+    SPECTRUM_TAB_NAME,
+    TIME_SERIES_TAB_NAME,
     WINDOW_SIZE_MAX,
     WINDOW_SIZE_MIN,
 )
@@ -35,22 +39,22 @@ class DisplayPanelsMixin:
         
         # Create time-series tab
         timeseries_tab = self.create_timeseries_tab()
-        self.visualization_tabs.addTab(timeseries_tab, "Time Series")
+        self.visualization_tabs.addTab(timeseries_tab, TIME_SERIES_TAB_NAME)
         self.timeseries_tab_index = 0
 
-        # Create signal integration evaluation tab (from SignalIntegrationPanelMixin)
+        # Create pressure map tab (from SignalIntegrationPanelMixin)
         signal_integration_tab = self.create_signal_integration_tab()
-        self.visualization_tabs.addTab(signal_integration_tab, "Signal Integration")
+        self.visualization_tabs.addTab(signal_integration_tab, PRESSURE_MAP_TAB_NAME)
         self.signal_integration_tab_index = 1
 
         # Create spectrum tab (from SpectrumPanelMixin)
         spectrum_tab = self.create_spectrum_tab()
-        self.visualization_tabs.addTab(spectrum_tab, "Spectrum")
+        self.visualization_tabs.addTab(spectrum_tab, SPECTRUM_TAB_NAME)
         self.spectrum_tab_index = 2
 
         # Create sensor tab last (from SensorPanelMixin)
         sensor_tab = self.create_sensor_tab()
-        self.visualization_tabs.addTab(sensor_tab, "Sensor")
+        self.visualization_tabs.addTab(sensor_tab, SENSOR_TAB_NAME)
         self.sensor_tab_index = 3
         
         return self.visualization_tabs

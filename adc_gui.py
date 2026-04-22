@@ -37,8 +37,11 @@ from constants.ui import (
     CONTROL_PANEL_STRETCH,
     FORCE_PLOT_DEBOUNCE_MS,
     MAIN_PANEL_LAYOUT_SPACING,
+    PRESSURE_MAP_TAB_NAME,
     SPECTRUM_UPDATE_INTERVAL_MS,
     STATUS_SEPARATOR_WIDTH,
+    SPECTRUM_TAB_NAME,
+    TIME_SERIES_TAB_NAME,
     VISUALIZATION_PANEL_STRETCH,
     WINDOW_HEIGHT,
     WINDOW_MIN_FIT_HEIGHT,
@@ -357,12 +360,12 @@ class ADCStreamerGUI(
         """Handle tab changes for time-series and spectrum refresh behavior."""
         current_tab = self.visualization_tabs.tabText(index)
 
-        if current_tab == "Spectrum":
+        if current_tab == SPECTRUM_TAB_NAME:
             self.start_spectrum_updates()
         else:
             self.stop_spectrum_updates()
 
-        if current_tab == "Time Series":
+        if current_tab == TIME_SERIES_TAB_NAME:
             if hasattr(self, 'spectrum_busy'):
                 self.spectrum_busy = False
             if (
@@ -374,7 +377,7 @@ class ADCStreamerGUI(
             self.trigger_plot_update()
             self.update_force_plot()
 
-        if current_tab == "Signal Integration":
+        if current_tab == PRESSURE_MAP_TAB_NAME:
             self.update_signal_integration_plot()
 
     def get_current_visualization_tab_name(self) -> str:
@@ -396,11 +399,11 @@ class ADCStreamerGUI(
 
     def should_update_live_timeseries_display(self) -> bool:
         """Return True when live ADC/force plot redraws should run."""
-        return self.get_current_visualization_tab_name() == "Time Series"
+        return self.get_current_visualization_tab_name() == TIME_SERIES_TAB_NAME
 
     def should_update_signal_integration_display(self) -> bool:
-        """Return True when the signal integration tab is the visible tab."""
-        return self.get_current_visualization_tab_name() == "Signal Integration"
+        """Return True when the pressure map tab is the visible tab."""
+        return self.get_current_visualization_tab_name() == PRESSURE_MAP_TAB_NAME
 
     def start_spectrum_updates(self):
         """Start spectrum updates."""

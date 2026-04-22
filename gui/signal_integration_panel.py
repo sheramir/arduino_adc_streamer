@@ -41,6 +41,7 @@ from constants.plotting import (
     MAX_PLOT_SWEEPS,
     PLOT_COLORS,
 )
+from constants.ui import PRESSURE_MAP_TAB_NAME
 from constants.signal_integration import (
     DEFAULT_DISPLAY_WINDOW_SEC,
     DEFAULT_HPF_CUTOFF_HZ,
@@ -79,8 +80,48 @@ from constants.shear import (
     DEFAULT_ARROW_MAX_LENGTH_PX,
     DEFAULT_ARROW_MIN_THRESHOLD,
     DEFAULT_ARROW_WIDTH_SCALES,
+    DEFAULT_CIRCLE_DIAMETER_MM,
+    DEFAULT_NORMAL_FORCE_SENSOR_SPACING_MM,
+    DEFAULT_PRESSURE_DECAY_RATE,
+    DEFAULT_PRESSURE_DECAY_REF_DISTANCE_MM,
+    DEFAULT_PRESSURE_GRID_MARGIN,
+    DEFAULT_PRESSURE_GRID_RESOLUTION,
+    DEFAULT_PRESSURE_IDW_POWER,
+    DEFAULT_PRESSURE_PEAK_KERNEL_RADIUS_MM,
+    DEFAULT_PRESSURE_SENSOR_SPACING_MM,
     DEFAULT_SHEAR_CALIBRATION_GAIN,
     DEFAULT_SHEAR_NOISE_THRESHOLD,
+    PRESSURE_CIRCLE_DIAMETER_DECIMALS,
+    PRESSURE_CIRCLE_DIAMETER_MAX_MM,
+    PRESSURE_CIRCLE_DIAMETER_MIN_MM,
+    PRESSURE_CIRCLE_DIAMETER_STEP_MM,
+    PRESSURE_DECAY_RATE_DECIMALS,
+    PRESSURE_DECAY_RATE_MAX,
+    PRESSURE_DECAY_RATE_MIN,
+    PRESSURE_DECAY_RATE_STEP,
+    PRESSURE_DECAY_REF_DISTANCE_DECIMALS,
+    PRESSURE_DECAY_REF_DISTANCE_MAX_MM,
+    PRESSURE_DECAY_REF_DISTANCE_MIN_MM,
+    PRESSURE_DECAY_REF_DISTANCE_STEP_MM,
+    PRESSURE_GRID_MARGIN_MAX,
+    PRESSURE_GRID_MARGIN_STEP,
+    PRESSURE_GRID_MIN_MARGIN,
+    PRESSURE_GRID_RESOLUTION_MAX,
+    PRESSURE_GRID_RESOLUTION_MIN,
+    PRESSURE_GRID_RESOLUTION_STEP,
+    PRESSURE_IDW_POWER_DECIMALS,
+    PRESSURE_IDW_POWER_MAX,
+    PRESSURE_IDW_POWER_MIN,
+    PRESSURE_IDW_POWER_STEP,
+    PRESSURE_KERNEL_RADIUS_DECIMALS,
+    PRESSURE_KERNEL_RADIUS_MAX_MM,
+    PRESSURE_KERNEL_RADIUS_MIN_MM,
+    PRESSURE_KERNEL_RADIUS_STEP_MM,
+    PRESSURE_MAP_STRETCH,
+    PRESSURE_SENSOR_SPACING_DECIMALS,
+    PRESSURE_SENSOR_SPACING_MAX_MM,
+    PRESSURE_SENSOR_SPACING_MIN_MM,
+    PRESSURE_SENSOR_SPACING_STEP_MM,
     SHEAR_ARROW_BASE_WIDTH_DECIMALS,
     SHEAR_ARROW_BASE_WIDTH_MAX_PX,
     SHEAR_ARROW_BASE_WIDTH_MIN_PX,
@@ -122,13 +163,16 @@ from constants.shear import (
     SHEAR_VISUALIZATION_STRETCH,
 )
 from data_processing.adc_filter_engine import ADCFilterEngine, SCIPY_FILTERS_AVAILABLE
+from data_processing.normal_force_calculator import NormalForceCalculator, NormalForceResult
+from data_processing.pressure_map_generator import PressureMapGenerator, PressureMapResult
 from data_processing.shear_detector import ShearDetector, ShearResult
 from file_operations.settings_persistence import load_settings_payload, save_settings_payload
+from gui.pressure_map_widget import PressureMapWidget
 from gui.shear_visualization_widget import ShearVisualizationWidget
 
 
 class SignalIntegrationPanelMixin:
-    """Create and refresh an integrated voltage preview for the integration tab.
+    """Create and refresh the pressure-map pipeline preview tab.
 
     The tab mirrors the Time Series buffering and curve update path while using
     its own PlotWidget and channel checkboxes. It converts ADC counts to volts
@@ -137,18 +181,19 @@ class SignalIntegrationPanelMixin:
 
     Usage example:
         tab = self.create_signal_integration_tab()
-        self.visualization_tabs.addTab(tab, "Signal Integration")
+        self.visualization_tabs.addTab(tab, PRESSURE_MAP_TAB_NAME)
     """
 
     def create_signal_integration_tab(self) -> QWidget:
-        """Create the Signal Integration tab with integrated voltage plotting.
+        """Create the Pressure Map tab with integrated voltage plotting.
 
         Args:
             None.
 
         Returns:
             QWidget containing HPF controls, integration controls, display
-            controls, the integrated voltage plot, and the shear visualization.
+            controls, the integrated voltage plot, shear visualization, and
+            pressure map visualization.
 
         Raises:
             None.
@@ -231,13 +276,20 @@ class SignalIntegrationPanelMixin:
         root_layout.addWidget(self.signal_integration_status_label)
 
         self.shear_detector = ShearDetector()
+        self.normal_force_calculator = NormalForceCalculator()
+        self.pressure_map_generator = PressureMapGenerator()
         self.shear_visualization_widget = ShearVisualizationWidget()
         root_layout.addWidget(self.shear_visualization_widget, stretch=SHEAR_VISUALIZATION_STRETCH)
+        self.pressure_map_widget = PressureMapWidget()
+        root_layout.addWidget(self.pressure_map_widget, stretch=PRESSURE_MAP_STRETCH)
         root_layout.addWidget(self._create_shear_visualization_settings_group())
+        root_layout.addWidget(self._create_pressure_map_settings_group())
 
         self.signal_integration_curves: dict[Hashable, object] = {}
         self._latest_signal_integration_values_by_position: dict[str, float] = {}
         self._latest_shear_result: ShearResult | None = None
+        self._latest_normal_force_result: NormalForceResult | None = None
+        self._latest_pressure_map_result: PressureMapResult | None = None
         self._signal_integration_filter_engine = ADCFilterEngine()
         self._signal_integration_filter_warning = ""
         self._signal_integration_updating_plot = False
@@ -352,6 +404,111 @@ class SignalIntegrationPanelMixin:
 
         return group
 
+    def _create_pressure_map_settings_group(self) -> QGroupBox:
+        group = QGroupBox("Pressure Map Settings")
+        layout = QGridLayout(group)
+        layout.setHorizontalSpacing(SHEAR_SETTINGS_HORIZONTAL_SPACING_PX)
+        layout.setVerticalSpacing(SHEAR_SETTINGS_VERTICAL_SPACING_PX)
+
+        layout.addWidget(QLabel("Sensor spacing:"), 0, 0)
+        self.pressure_sensor_spacing_spin = QDoubleSpinBox()
+        self.pressure_sensor_spacing_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
+        self.pressure_sensor_spacing_spin.setRange(
+            PRESSURE_SENSOR_SPACING_MIN_MM,
+            PRESSURE_SENSOR_SPACING_MAX_MM,
+        )
+        self.pressure_sensor_spacing_spin.setDecimals(PRESSURE_SENSOR_SPACING_DECIMALS)
+        self.pressure_sensor_spacing_spin.setSingleStep(PRESSURE_SENSOR_SPACING_STEP_MM)
+        self.pressure_sensor_spacing_spin.setSuffix(" mm")
+        self.pressure_sensor_spacing_spin.setValue(DEFAULT_PRESSURE_SENSOR_SPACING_MM)
+        self.pressure_sensor_spacing_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_sensor_spacing_spin, 0, 1)
+
+        layout.addWidget(QLabel("Circle diameter:"), 0, 2)
+        self.pressure_circle_diameter_spin = QDoubleSpinBox()
+        self.pressure_circle_diameter_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
+        self.pressure_circle_diameter_spin.setRange(
+            PRESSURE_CIRCLE_DIAMETER_MIN_MM,
+            PRESSURE_CIRCLE_DIAMETER_MAX_MM,
+        )
+        self.pressure_circle_diameter_spin.setDecimals(PRESSURE_CIRCLE_DIAMETER_DECIMALS)
+        self.pressure_circle_diameter_spin.setSingleStep(PRESSURE_CIRCLE_DIAMETER_STEP_MM)
+        self.pressure_circle_diameter_spin.setSuffix(" mm")
+        self.pressure_circle_diameter_spin.setValue(DEFAULT_CIRCLE_DIAMETER_MM)
+        self.pressure_circle_diameter_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_circle_diameter_spin, 0, 3)
+
+        layout.addWidget(QLabel("Grid:"), 0, 4)
+        self.pressure_grid_resolution_spin = QSpinBox()
+        self.pressure_grid_resolution_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
+        self.pressure_grid_resolution_spin.setRange(
+            PRESSURE_GRID_RESOLUTION_MIN,
+            PRESSURE_GRID_RESOLUTION_MAX,
+        )
+        self.pressure_grid_resolution_spin.setSingleStep(PRESSURE_GRID_RESOLUTION_STEP)
+        self.pressure_grid_resolution_spin.setValue(DEFAULT_PRESSURE_GRID_RESOLUTION)
+        self.pressure_grid_resolution_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_grid_resolution_spin, 0, 5)
+
+        layout.addWidget(QLabel("Margin:"), 0, 6)
+        self.pressure_grid_margin_spin = QSpinBox()
+        self.pressure_grid_margin_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
+        self.pressure_grid_margin_spin.setRange(PRESSURE_GRID_MIN_MARGIN, PRESSURE_GRID_MARGIN_MAX)
+        self.pressure_grid_margin_spin.setSingleStep(PRESSURE_GRID_MARGIN_STEP)
+        self.pressure_grid_margin_spin.setValue(DEFAULT_PRESSURE_GRID_MARGIN)
+        self.pressure_grid_margin_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_grid_margin_spin, 0, 7)
+
+        layout.addWidget(QLabel("IDW power:"), 1, 0)
+        self.pressure_idw_power_spin = QDoubleSpinBox()
+        self.pressure_idw_power_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
+        self.pressure_idw_power_spin.setRange(PRESSURE_IDW_POWER_MIN, PRESSURE_IDW_POWER_MAX)
+        self.pressure_idw_power_spin.setDecimals(PRESSURE_IDW_POWER_DECIMALS)
+        self.pressure_idw_power_spin.setSingleStep(PRESSURE_IDW_POWER_STEP)
+        self.pressure_idw_power_spin.setValue(DEFAULT_PRESSURE_IDW_POWER)
+        self.pressure_idw_power_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_idw_power_spin, 1, 1)
+
+        layout.addWidget(QLabel("Decay rate:"), 1, 2)
+        self.pressure_decay_rate_spin = QDoubleSpinBox()
+        self.pressure_decay_rate_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
+        self.pressure_decay_rate_spin.setRange(PRESSURE_DECAY_RATE_MIN, PRESSURE_DECAY_RATE_MAX)
+        self.pressure_decay_rate_spin.setDecimals(PRESSURE_DECAY_RATE_DECIMALS)
+        self.pressure_decay_rate_spin.setSingleStep(PRESSURE_DECAY_RATE_STEP)
+        self.pressure_decay_rate_spin.setValue(DEFAULT_PRESSURE_DECAY_RATE)
+        self.pressure_decay_rate_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_decay_rate_spin, 1, 3)
+
+        layout.addWidget(QLabel("Decay ref:"), 1, 4)
+        self.pressure_decay_ref_distance_spin = QDoubleSpinBox()
+        self.pressure_decay_ref_distance_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
+        self.pressure_decay_ref_distance_spin.setRange(
+            PRESSURE_DECAY_REF_DISTANCE_MIN_MM,
+            PRESSURE_DECAY_REF_DISTANCE_MAX_MM,
+        )
+        self.pressure_decay_ref_distance_spin.setDecimals(PRESSURE_DECAY_REF_DISTANCE_DECIMALS)
+        self.pressure_decay_ref_distance_spin.setSingleStep(PRESSURE_DECAY_REF_DISTANCE_STEP_MM)
+        self.pressure_decay_ref_distance_spin.setSuffix(" mm")
+        self.pressure_decay_ref_distance_spin.setValue(DEFAULT_PRESSURE_DECAY_REF_DISTANCE_MM)
+        self.pressure_decay_ref_distance_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_decay_ref_distance_spin, 1, 5)
+
+        layout.addWidget(QLabel("Kernel radius:"), 1, 6)
+        self.pressure_kernel_radius_spin = QDoubleSpinBox()
+        self.pressure_kernel_radius_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
+        self.pressure_kernel_radius_spin.setRange(
+            PRESSURE_KERNEL_RADIUS_MIN_MM,
+            PRESSURE_KERNEL_RADIUS_MAX_MM,
+        )
+        self.pressure_kernel_radius_spin.setDecimals(PRESSURE_KERNEL_RADIUS_DECIMALS)
+        self.pressure_kernel_radius_spin.setSingleStep(PRESSURE_KERNEL_RADIUS_STEP_MM)
+        self.pressure_kernel_radius_spin.setSuffix(" mm")
+        self.pressure_kernel_radius_spin.setValue(DEFAULT_PRESSURE_PEAK_KERNEL_RADIUS_MM)
+        self.pressure_kernel_radius_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_kernel_radius_spin, 1, 7)
+
+        return group
+
     def _get_last_shear_settings_path(self) -> Path:
         return (
             Path.home()
@@ -421,6 +578,34 @@ class SignalIntegrationPanelMixin:
                 "arrow_width_scales": self._check_bool(
                     "shear_arrow_width_scales_check",
                     DEFAULT_ARROW_WIDTH_SCALES,
+                ),
+            },
+            "pressure_map": {
+                "sensor_spacing_mm": self._spin_float(
+                    "pressure_sensor_spacing_spin",
+                    DEFAULT_PRESSURE_SENSOR_SPACING_MM,
+                ),
+                "circle_diameter_mm": self._spin_float(
+                    "pressure_circle_diameter_spin",
+                    DEFAULT_CIRCLE_DIAMETER_MM,
+                ),
+                "grid_resolution": self._spin_int(
+                    "pressure_grid_resolution_spin",
+                    DEFAULT_PRESSURE_GRID_RESOLUTION,
+                ),
+                "grid_margin": self._spin_int(
+                    "pressure_grid_margin_spin",
+                    DEFAULT_PRESSURE_GRID_MARGIN,
+                ),
+                "idw_power": self._spin_float("pressure_idw_power_spin", DEFAULT_PRESSURE_IDW_POWER),
+                "decay_rate": self._spin_float("pressure_decay_rate_spin", DEFAULT_PRESSURE_DECAY_RATE),
+                "decay_ref_distance_mm": self._spin_float(
+                    "pressure_decay_ref_distance_spin",
+                    DEFAULT_PRESSURE_DECAY_REF_DISTANCE_MM,
+                ),
+                "peak_kernel_radius_mm": self._spin_float(
+                    "pressure_kernel_radius_spin",
+                    DEFAULT_PRESSURE_PEAK_KERNEL_RADIUS_MM,
                 ),
             },
         }
@@ -584,6 +769,7 @@ class SignalIntegrationPanelMixin:
         signal_integration = self._settings_section(settings, "signal_integration")
         processing = self._settings_section(settings, "processing")
         visualization = self._settings_section(settings, "visualization")
+        pressure_map = self._settings_section(settings, "pressure_map")
         changed = False
 
         changed |= self._set_spin_value("signal_integration_hpf_spin", signal_integration, "hpf_cutoff_hz", float)
@@ -633,11 +819,30 @@ class SignalIntegrationPanelMixin:
             visualization,
             "arrow_width_scales",
         )
+        changed |= self._set_spin_value("pressure_sensor_spacing_spin", pressure_map, "sensor_spacing_mm", float)
+        changed |= self._set_spin_value("pressure_circle_diameter_spin", pressure_map, "circle_diameter_mm", float)
+        changed |= self._set_spin_value("pressure_grid_resolution_spin", pressure_map, "grid_resolution", int)
+        changed |= self._set_spin_value("pressure_grid_margin_spin", pressure_map, "grid_margin", int)
+        changed |= self._set_spin_value("pressure_idw_power_spin", pressure_map, "idw_power", float)
+        changed |= self._set_spin_value("pressure_decay_rate_spin", pressure_map, "decay_rate", float)
+        changed |= self._set_spin_value(
+            "pressure_decay_ref_distance_spin",
+            pressure_map,
+            "decay_ref_distance_mm",
+            float,
+        )
+        changed |= self._set_spin_value(
+            "pressure_kernel_radius_spin",
+            pressure_map,
+            "peak_kernel_radius_mm",
+            float,
+        )
 
         if changed:
             self.on_signal_integration_settings_changed()
             self.on_shear_processing_settings_changed()
             self.on_shear_visualization_settings_changed()
+            self.on_pressure_map_settings_changed()
         return changed
 
     def _settings_section(self, settings: dict, section_name: str) -> dict:
@@ -738,6 +943,53 @@ class SignalIntegrationPanelMixin:
         )
         self.shear_visualization_widget.update_display(self._latest_shear_result)
         self.save_last_shear_settings()
+
+    def on_pressure_map_settings_changed(self, _value: object | None = None) -> None:
+        """Rebuild pressure-map processors after map parameter changes.
+
+        Args:
+            _value: Qt signal payload from the changed control.
+
+        Returns:
+            None.
+
+        Raises:
+            None. Invalid settings are logged and leave the previous processors
+            in place.
+        """
+        try:
+            sensor_spacing_mm = self._spin_float(
+                "pressure_sensor_spacing_spin",
+                DEFAULT_PRESSURE_SENSOR_SPACING_MM,
+            )
+            self.normal_force_calculator = NormalForceCalculator(sensor_spacing_mm=sensor_spacing_mm)
+            self.pressure_map_generator = PressureMapGenerator(
+                circle_diameter_mm=self._spin_float(
+                    "pressure_circle_diameter_spin",
+                    DEFAULT_CIRCLE_DIAMETER_MM,
+                ),
+                sensor_spacing_mm=sensor_spacing_mm,
+                grid_margin=self._spin_int("pressure_grid_margin_spin", DEFAULT_PRESSURE_GRID_MARGIN),
+                grid_resolution=self._spin_int(
+                    "pressure_grid_resolution_spin",
+                    DEFAULT_PRESSURE_GRID_RESOLUTION,
+                ),
+                idw_power=self._spin_float("pressure_idw_power_spin", DEFAULT_PRESSURE_IDW_POWER),
+                decay_rate=self._spin_float("pressure_decay_rate_spin", DEFAULT_PRESSURE_DECAY_RATE),
+                decay_ref_distance_mm=self._spin_float(
+                    "pressure_decay_ref_distance_spin",
+                    DEFAULT_PRESSURE_DECAY_REF_DISTANCE_MM,
+                ),
+                peak_kernel_radius_mm=self._spin_float(
+                    "pressure_kernel_radius_spin",
+                    DEFAULT_PRESSURE_PEAK_KERNEL_RADIUS_MM,
+                ),
+            )
+            self._update_pressure_map_from_latest()
+            self.save_last_shear_settings()
+        except Exception as exc:
+            if hasattr(self, "log_status"):
+                self.log_status(f"ERROR updating Pressure Map settings: {exc}")
 
     def on_signal_integration_reset_clicked(self) -> None:
         """Reset the integrated voltage preview to the latest display window.
@@ -881,7 +1133,7 @@ class SignalIntegrationPanelMixin:
         if hasattr(self, "should_update_signal_integration_display"):
             return bool(self.should_update_signal_integration_display())
         if hasattr(self, "get_current_visualization_tab_name"):
-            return self.get_current_visualization_tab_name() == "Signal Integration"
+            return self.get_current_visualization_tab_name() == PRESSURE_MAP_TAB_NAME
         return True
 
     def _hide_all_signal_integration_curves(self) -> None:
@@ -891,8 +1143,12 @@ class SignalIntegrationPanelMixin:
     def _clear_shear_visualization(self) -> None:
         self._latest_signal_integration_values_by_position = {}
         self._latest_shear_result = None
+        self._latest_normal_force_result = None
+        self._latest_pressure_map_result = None
         if hasattr(self, "shear_visualization_widget"):
             self.shear_visualization_widget.update_display(None)
+        if hasattr(self, "pressure_map_widget"):
+            self.pressure_map_widget.update_display(None, None)
 
     def _update_shear_visualization_from_latest(self) -> None:
         if not hasattr(self, "shear_visualization_widget"):
@@ -902,11 +1158,40 @@ class SignalIntegrationPanelMixin:
         if not all(position in latest_values for position in SHEAR_SENSOR_POSITIONS):
             self._latest_shear_result = None
             self.shear_visualization_widget.update_display(None)
+            self._update_pressure_map_from_latest()
             return
 
         calibrated_values = self._calibrate_signal_integration_values_for_shear(latest_values)
         self._latest_shear_result = self.shear_detector.detect(calibrated_values)
         self.shear_visualization_widget.update_display(self._latest_shear_result)
+        self._update_pressure_map_from_latest()
+
+    def _update_pressure_map_from_latest(self) -> None:
+        if not hasattr(self, "pressure_map_widget"):
+            return
+        if self._latest_shear_result is None:
+            self._latest_normal_force_result = None
+            self._latest_pressure_map_result = None
+            self.pressure_map_widget.update_display(None, None)
+            return
+
+        try:
+            self._latest_normal_force_result = self.normal_force_calculator.compute(
+                self._latest_shear_result.residual,
+            )
+            self._latest_pressure_map_result = self.pressure_map_generator.generate(
+                self._latest_normal_force_result.normalized,
+            )
+            self.pressure_map_widget.update_display(
+                self._latest_normal_force_result,
+                self._latest_pressure_map_result,
+            )
+        except Exception as exc:
+            self._latest_normal_force_result = None
+            self._latest_pressure_map_result = None
+            self.pressure_map_widget.update_display(None, None)
+            if hasattr(self, "log_status"):
+                self.log_status(f"ERROR updating Pressure Map visualization: {exc}")
 
     def _calibrate_signal_integration_values_for_shear(
         self,

@@ -93,7 +93,7 @@ class ArchiveLoaderMixin:
                 else:
                     self.log_status("Waiting for archive save to finish before loading full view...")
 
-            final_snapshot = writer.stop()
+            final_snapshot = writer.stop(timeout=None)
             if final_snapshot.get("state") == "failed":
                 error_text = final_snapshot.get("last_error") or "unknown archive writer failure"
                 self.log_status(f"WARNING: Archive writer failed before full-view load: {error_text}")

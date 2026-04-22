@@ -210,6 +210,43 @@ class DataExporterTests(unittest.TestCase):
             self.assertTrue(any(kind == "update" and "Writing CSV data" in text for kind, text in harness.save_notice_updates))
             self.assertTrue(any(kind == "update" and "Writing metadata" in text for kind, text in harness.save_notice_updates))
 
+    def test_save_data_streams_archive_beyond_display_buffer_limit(self):
+        with workspace_tempdir("data_exporter_archive_stream") as tmpdir:
+            harness = ExportHarness(tmpdir)
+            harness.filtering_enabled = False
+            harness.raw_data = []
+            harness.sweep_timestamps = []
+            harness.sweep_count = 50005
+            archive_path = tmpdir / "capture_cache.jsonl"
+            with archive_path.open("w", encoding="utf-8") as handle:
+                handle.write(json.dumps({"metadata": {"channels": [0], "repeat": 1}}) + "\n")
+                for idx in range(harness.sweep_count):
+                    handle.write(json.dumps({"timestamp_s": idx / 1000.0, "samples": [idx]}) + "\n")
+            harness._archive_path = str(archive_path)
+            harness._count_archive_sweeps = lambda path: (_ for _ in ()).throw(
+                AssertionError("full archive export should stream without a count pass")
+            )
+
+            with patch("file_operations.data_exporter.QMessageBox.information"), patch(
+                "file_operations.data_exporter.QMessageBox.warning"
+            ), patch("file_operations.data_exporter.QMessageBox.critical"):
+                harness.save_data()
+
+            csv_files = sorted(path for path in tmpdir.glob("capture_*.csv") if "metadata" not in path.name)
+            metadata_files = sorted(tmpdir.glob("capture_*_metadata.json"))
+
+            self.assertEqual(len(csv_files), 1)
+            with csv_files[0].open("r", encoding="utf-8", newline="") as handle:
+                rows = list(csv.reader(handle))
+
+            self.assertEqual(len(rows), harness.sweep_count + 1)
+            self.assertEqual(rows[1][0], "0.0")
+            self.assertEqual(rows[-1][0], str(float(harness.sweep_count - 1)))
+
+            metadata = json.loads(metadata_files[0].read_text(encoding="utf-8"))
+            self.assertEqual(metadata["export_source"], "archive")
+            self.assertEqual(metadata["saved_sweeps"], harness.sweep_count)
+
 
 if __name__ == "__main__":
     unittest.main()

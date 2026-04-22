@@ -165,6 +165,145 @@ class DataExporterMixin:
             'buffer',
         ))
         return self._choose_best_export_source(candidates)
+
+    def _parse_archive_sweep_record(self, line: str):
+        """Parse one archive line and return ``(samples, timestamp_s)`` or ``None``."""
+        try:
+            sweep_data = json.loads(line)
+        except json.JSONDecodeError:
+            return None
+
+        if isinstance(sweep_data, dict) and 'samples' in sweep_data:
+            samples = sweep_data.get('samples')
+            if not isinstance(samples, list):
+                return None
+            ts_val = sweep_data.get('timestamp_s')
+            timestamp_s = float(ts_val) if isinstance(ts_val, (int, float)) else None
+            return samples, timestamp_s
+
+        if isinstance(sweep_data, list):
+            return sweep_data, None
+
+        return None
+
+    def _iter_archive_sweep_records(self, archive_path: Path):
+        """Yield archived sweeps without materializing the full capture in memory."""
+        with archive_path.open('r', encoding='utf-8') as handle:
+            handle.readline()  # metadata
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                parsed = self._parse_archive_sweep_record(line)
+                if parsed is not None:
+                    yield parsed
+
+    def _count_archive_sweeps(self, archive_path: Path) -> int:
+        """Count valid sweep records in the archive without loading sample arrays."""
+        count = 0
+        for _samples, _timestamp_s in self._iter_archive_sweep_records(archive_path):
+            count += 1
+        return count
+
+    def _archive_has_sweeps(self, archive_path: Path) -> bool:
+        """Return True when the archive contains at least one valid sweep record."""
+        for _samples, _timestamp_s in self._iter_archive_sweep_records(archive_path):
+            return True
+        return False
+
+    def _archive_row_time(self, timestamp_s, saved_index: int, saved_total: int, capture_duration_s):
+        if timestamp_s is not None:
+            return float(timestamp_s)
+        if capture_duration_s is None or saved_total <= 1:
+            return None
+        return float(capture_duration_s) * (float(saved_index) / float(saved_total - 1))
+
+    def _write_archive_csv_rows(
+        self,
+        *,
+        writer,
+        archive_path: Path,
+        save_min: int,
+        save_max: int | None,
+        saved_total: int,
+        is_555_mode: bool,
+        force_series,
+        capture_duration_s,
+        apply_filter: bool,
+    ):
+        """Stream archived sweeps to CSV, optionally filtering in bounded chunks."""
+        chunk_size = 4096
+        chunk_sweeps = []
+        chunk_row_times = []
+        saved_index = 0
+        first_sweep_len = 0
+        filter_runtime = None
+        total_fs_hz = 0.0
+
+        if apply_filter:
+            total_fs_hz = float(self._get_filter_total_sample_rate_hz())
+            if total_fs_hz <= 0:
+                raise ValueError('Sample rate unavailable for ADC filtering.')
+
+        def flush_chunk():
+            nonlocal chunk_sweeps, chunk_row_times, saved_index, first_sweep_len, filter_runtime
+            if not chunk_sweeps:
+                return
+
+            data = np.asarray(chunk_sweeps, dtype=np.float32)
+            if first_sweep_len <= 0 and data.ndim == 2 and len(data) > 0:
+                first_sweep_len = int(data.shape[1])
+
+            if apply_filter:
+                timestamp_array = None
+                if all(row_time is not None for row_time in chunk_row_times):
+                    timestamp_array = np.asarray(chunk_row_times, dtype=np.float64)
+
+                if filter_runtime is None:
+                    channels = list(self.config.get('channels', []))
+                    repeat_count = max(1, int(self.config.get('repeat', 1)))
+                    channel_rates = self._estimate_filter_channel_rates(
+                        total_fs_hz,
+                        sweep_timestamps_sec=timestamp_array,
+                    )
+                    filter_runtime = self.adc_filter_engine.build_runtime_plan(
+                        self._copy_filter_settings_snapshot(),
+                        total_fs_hz,
+                        channels,
+                        repeat_count,
+                        sweep_timestamps_sec=timestamp_array,
+                        channel_fs_by_channel=channel_rates,
+                    )
+                    self.adc_filter_engine.reset_runtime_states(filter_runtime)
+
+                data = self.adc_filter_engine.filter_block(filter_runtime, data.astype(np.float32, copy=True))
+
+            for sweep, row_time in zip(data, chunk_row_times):
+                row = np.asarray(sweep).tolist()
+                if is_555_mode:
+                    row.insert(0, float(row_time if row_time is not None else 0.0))
+                row.extend(list(get_nearest_force_values(force_series, row_time)))
+                writer.writerow(row)
+                saved_index += 1
+
+            chunk_sweeps = []
+            chunk_row_times = []
+
+        for global_index, (samples, timestamp_s) in enumerate(self._iter_archive_sweep_records(archive_path)):
+            if global_index < save_min:
+                continue
+            if save_max is not None and global_index >= save_max:
+                break
+
+            row_time = self._archive_row_time(timestamp_s, saved_index, saved_total, capture_duration_s)
+            chunk_sweeps.append(samples)
+            chunk_row_times.append(row_time)
+
+            if len(chunk_sweeps) >= chunk_size:
+                flush_chunk()
+
+        flush_chunk()
+        return saved_index, first_sweep_len
     
     def save_data(self):
         """Save captured data to CSV file with metadata."""
@@ -189,19 +328,54 @@ class DataExporterMixin:
         notice_visible = True
 
         try:
-            source_sweeps, source_timestamps, export_source = self._load_export_source_data(archive_path)
-            if not self._has_exportable_sweeps(source_sweeps):
+            range_export_enabled = bool(self.use_range_check.isChecked())
+            archive_total_sweeps = None
+            if archive_path is not None:
+                if hasattr(self, '_finalize_archive_if_active'):
+                    self._update_save_data_notice("Finalizing complete archive before export...")
+                    self._finalize_archive_if_active()
+                if range_export_enabled:
+                    self._update_save_data_notice("Counting archived sweeps for range validation...")
+                    archive_total_sweeps = self._count_archive_sweeps(archive_path)
+
+            source_sweeps, source_timestamps, memory_export_source = self._load_export_source_data(None)
+            memory_total_sweeps = len(source_sweeps) if self._has_exportable_sweeps(source_sweeps) else 0
+            export_source = None
+            captured_sweeps = int(getattr(self, 'sweep_count', 0) or 0)
+            estimated_total_sweeps = max(captured_sweeps, memory_total_sweeps)
+            total_sweeps = (
+                max(archive_total_sweeps, memory_total_sweeps)
+                if archive_total_sweeps is not None
+                else estimated_total_sweeps
+            )
+
+            archive_has_sweeps = (
+                archive_total_sweeps > 0
+                if archive_total_sweeps is not None
+                else archive_path is not None and self._archive_has_sweeps(archive_path)
+            )
+
+            if archive_path is not None and archive_has_sweeps:
+                export_source = 'archive'
+                if archive_total_sweeps is not None and archive_total_sweeps < captured_sweeps:
+                    self.log_status(
+                        "WARNING: Archive contains fewer sweeps than capture counter "
+                        f"({archive_total_sweeps} of {captured_sweeps}); exporting archived sweeps only"
+                    )
+            else:
+                export_source = memory_export_source
+
+            if export_source != 'archive' and not self._has_exportable_sweeps(source_sweeps):
                 hide_notice()
                 QMessageBox.warning(self, "No Data", "No data to save.")
                 return
 
-            total_sweeps = len(source_sweeps)
             sweep_range_text = "All"
 
             # Check if range is enabled (range refers to the global sweep index across archive+memory)
             save_min = 0
-            save_max = total_sweeps  # exclusive
-            if self.use_range_check.isChecked():
+            save_max = total_sweeps if range_export_enabled else None  # exclusive; None means all archive rows
+            if range_export_enabled:
                 min_sweep = self.min_sweep_spin.value()
                 max_sweep = self.max_sweep_spin.value()
 
@@ -264,14 +438,19 @@ class DataExporterMixin:
             has_force_x = bool(force_series is not None and np.any(force_series.x_force != 0.0))
             has_force_z = bool(force_series is not None and np.any(force_series.z_force != 0.0))
 
-            selected_sweeps = np.asarray(source_sweeps[save_min:save_max], dtype=np.float32).copy()
+            selected_sweeps = None
             selected_timestamps = None
-            if source_timestamps is not None and len(source_timestamps) >= save_max:
-                selected_timestamps = np.asarray(source_timestamps[save_min:save_max], dtype=np.float64).copy()
+            if export_source != 'archive':
+                selected_sweeps = np.asarray(source_sweeps[save_min:save_max], dtype=np.float32).copy()
+                selected_end = len(source_sweeps) if save_max is None else save_max
+                if source_timestamps is not None and len(source_timestamps) >= selected_end:
+                    selected_timestamps = np.asarray(source_timestamps[save_min:selected_end], dtype=np.float64).copy()
 
             applied_filter_to_csv = False
             if hasattr(self, 'should_filter_adc_data') and self.should_filter_adc_data():
-                if not is_555_mode and hasattr(self, 'filter_dataset_copy'):
+                if not is_555_mode and export_source == 'archive':
+                    applied_filter_to_csv = True
+                elif not is_555_mode and hasattr(self, 'filter_dataset_copy'):
                     self._update_save_data_notice("Applying ADC filter for export...")
                     selected_sweeps = self.filter_dataset_copy(
                         selected_sweeps,
@@ -281,8 +460,12 @@ class DataExporterMixin:
                 elif is_555_mode:
                     applied_filter_to_csv = False
 
-            first_sweep_len = int(selected_sweeps.shape[1]) if selected_sweeps.ndim == 2 and len(selected_sweeps) > 0 else 0
-            saved_total = int(len(selected_sweeps))
+            saved_total = int((save_max - save_min) if save_max is not None else max(total_sweeps - save_min, 0))
+            first_sweep_len = (
+                int(selected_sweeps.shape[1])
+                if selected_sweeps is not None and selected_sweeps.ndim == 2 and len(selected_sweeps) > 0
+                else 0
+            )
 
             # Save CSV data with force columns from the selected ordered dataset.
             self._update_save_data_notice("Writing CSV data...")
@@ -296,32 +479,45 @@ class DataExporterMixin:
                 header.extend(["Force_X", "Force_Z"])
                 writer.writerow(header)
 
-                # Determine how many sweeps will be saved (respecting range selection)
-                saved_index = 0  # index among saved sweeps (0..saved_total-1)
-
                 # Precompute capture duration for approximate timestamp mapping
                 capture_duration = None
                 if self.timing_state.capture_start_time and self.timing_state.capture_end_time:
                     capture_duration = self.timing_state.capture_end_time - self.timing_state.capture_start_time
 
-                row_timestamps = build_export_row_timestamps(
-                    selected_timestamps=selected_timestamps,
-                    saved_total=saved_total,
-                    capture_duration_s=capture_duration,
-                )
+                if export_source == 'archive':
+                    saved_index, first_sweep_len = self._write_archive_csv_rows(
+                        writer=writer,
+                        archive_path=archive_path,
+                        save_min=save_min,
+                        save_max=save_max,
+                        saved_total=saved_total,
+                        is_555_mode=is_555_mode,
+                        force_series=force_series,
+                        capture_duration_s=capture_duration,
+                        apply_filter=bool(applied_filter_to_csv),
+                    )
+                else:
+                    # Determine how many sweeps will be saved (respecting range selection)
+                    saved_index = 0  # index among saved sweeps (0..saved_total-1)
 
-                for saved_index, sweep in enumerate(selected_sweeps):
-                    row_time = None
-                    if row_timestamps is not None and saved_index < len(row_timestamps):
-                        row_time = float(row_timestamps[saved_index])
-                    row = np.asarray(sweep).tolist()
-                    if is_555_mode:
-                        timestamp_to_write = row_time if row_time is not None else 0.0
-                        row.insert(0, float(timestamp_to_write))
-                    row.extend(list(get_nearest_force_values(force_series, row_time)))
-                    writer.writerow(row)
+                    row_timestamps = build_export_row_timestamps(
+                        selected_timestamps=selected_timestamps,
+                        saved_total=saved_total,
+                        capture_duration_s=capture_duration,
+                    )
 
-                saved_index = saved_total
+                    for saved_index, sweep in enumerate(selected_sweeps):
+                        row_time = None
+                        if row_timestamps is not None and saved_index < len(row_timestamps):
+                            row_time = float(row_timestamps[saved_index])
+                        row = np.asarray(sweep).tolist()
+                        if is_555_mode:
+                            timestamp_to_write = row_time if row_time is not None else 0.0
+                            row.insert(0, float(timestamp_to_write))
+                        row.extend(list(get_nearest_force_values(force_series, row_time)))
+                        writer.writerow(row)
+
+                    saved_index = saved_total
 
             # Prepare metadata dictionary
             capture_duration_s = None
@@ -368,7 +564,13 @@ class DataExporterMixin:
                 "row_timestamp": {
                     "included_in_csv": bool(is_555_mode),
                     "column_name": "Timestamp_s" if is_555_mode else None,
-                    "source": "selected_sweep_timestamps_with_linear_fallback" if selected_timestamps is not None else "capture_duration_linear_fallback"
+                    "source": (
+                        "archive_sweep_timestamps_with_linear_fallback"
+                        if export_source == "archive"
+                        else "selected_sweep_timestamps_with_linear_fallback"
+                        if selected_timestamps is not None
+                        else "capture_duration_linear_fallback"
+                    )
                 },
                 "export_source": export_source,
             }

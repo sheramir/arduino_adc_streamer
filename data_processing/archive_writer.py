@@ -31,9 +31,11 @@ class ArchiveWriterThread(threading.Thread):
       ``dtype`` should be ``uint16`` so that ``row.tolist()`` yields integer values
       matching the original binary protocol format.
 
-    GIL note: ``json.dumps()`` is pure-Python and holds the GIL. After processing
-    each queue item the thread sleeps briefly (``_GIL_YIELD_SEC``) so the main/GUI
-    thread gets consistent GIL time even when the queue is never empty.
+    GIL note: ``json.dumps()`` is pure-Python and holds the GIL. During live
+    capture, the thread sleeps briefly after each queue item so the main/GUI
+    thread gets consistent GIL time even when the queue is never empty. Once
+    capture stops, draining skips that delay so final save/export can finish
+    quickly without dropping queued data.
     """
 
     STATE_OPENING = "opening"
@@ -139,7 +141,8 @@ class ArchiveWriterThread(threading.Thread):
                         handle.flush()
 
                     self.queue.task_done()
-                    time.sleep(self._GIL_YIELD_SEC)
+                    if not self._stop_event.is_set():
+                        time.sleep(self._GIL_YIELD_SEC)
 
                 handle.flush()
 
@@ -179,7 +182,7 @@ class ArchiveWriterThread(threading.Thread):
         self._transition_state(self.STATE_DRAINING)
         return self.get_status_snapshot()
 
-    def stop(self, timeout: float = 15.0):
+    def stop(self, timeout: float | None = 15.0):
         """Signal the writer to finish and wait for it to close."""
         self.stop_nowait()
         self.join(timeout=timeout)

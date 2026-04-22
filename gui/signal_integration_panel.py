@@ -41,6 +41,10 @@ from constants.plotting import (
     MAX_PLOT_SWEEPS,
     PLOT_COLORS,
 )
+from constants.sensor_config import (
+    SENSOR_POLARITY_NORMAL_MULTIPLIER,
+    SENSOR_POLARITY_REVERSED_MULTIPLIER,
+)
 from constants.ui import PRESSURE_MAP_TAB_NAME
 from constants.signal_integration import (
     DEFAULT_DISPLAY_WINDOW_SEC,
@@ -1322,6 +1326,7 @@ class SignalIntegrationPanelMixin:
         channel_data = self._convert_signal_integration_counts_to_voltage(channel_counts)
         channel_data = self._remove_signal_integration_dc_bias(channel_data, channel_times)
         channel_data = self._integrate_signal_integration_voltage_samples(channel_data)
+        channel_data = self._apply_signal_integration_sensor_polarity(channel_data)
 
         if visible_start_time_sec is not None:
             visible_mask = channel_times >= float(visible_start_time_sec)
@@ -1340,6 +1345,27 @@ class SignalIntegrationPanelMixin:
     def _convert_signal_integration_counts_to_voltage(self, adc_counts: np.ndarray) -> np.ndarray:
         max_adc_value = float((2 ** IADC_RESOLUTION_BITS) - 1)
         return (np.asarray(adc_counts, dtype=np.float64) / max_adc_value) * float(self.get_vref_voltage())
+
+    def _apply_signal_integration_sensor_polarity(self, integrated_samples: np.ndarray) -> np.ndarray:
+        """Apply the active sensor package polarity before shear/pressure use.
+
+        Args:
+            integrated_samples: One-dimensional integrated voltage samples for
+                a sensor-position trace.
+
+        Returns:
+            Integrated samples multiplied by -1 when the active sensor
+            configuration is marked as reverse polarity; otherwise a float64
+            copy of the original samples.
+
+        Raises:
+            None.
+        """
+        samples = np.asarray(integrated_samples, dtype=np.float64)
+        multiplier = SENSOR_POLARITY_NORMAL_MULTIPLIER
+        if hasattr(self, "is_active_sensor_reverse_polarity") and self.is_active_sensor_reverse_polarity():
+            multiplier = SENSOR_POLARITY_REVERSED_MULTIPLIER
+        return samples * multiplier
 
     def _remove_signal_integration_dc_bias(
         self,

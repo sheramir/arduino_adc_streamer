@@ -1,5 +1,9 @@
 """
-Sensor configuration helpers and persistence for editable 5-channel layouts and array layouts.
+Sensor configuration helpers and persistence for editable 5-channel layouts.
+
+The module normalizes named sensor-package channel maps, optional array-layout
+attachments, and the package-level reverse-polarity flag used by pressure-map
+processing. It depends on the schema defaults in ``constants.sensor_config``.
 """
 
 from __future__ import annotations
@@ -12,6 +16,7 @@ from typing import Dict, List, Tuple
 from constants.sensor_config import (
     DEFAULT_SENSOR_CONFIGURATION,
     DEFAULT_SENSOR_CONFIGURATION_NAME,
+    DEFAULT_SENSOR_REVERSE_POLARITY,
     SENSOR_CONFIG_ARRAY_CELL_CHANNELS_MAX,
     SENSOR_CONFIG_ARRAY_COLS,
     SENSOR_CONFIG_ARRAY_ROWS,
@@ -22,6 +27,7 @@ from constants.sensor_config import (
     SENSOR_CONFIG_JSON_INDENT,
     SENSOR_CONFIG_MUX_MAX,
     SENSOR_CONFIG_MUX_MIN,
+    SENSOR_CONFIG_REVERSE_POLARITY_KEY,
     SENSOR_LOCATION_CODES,
 )
 
@@ -44,6 +50,12 @@ def default_sensor_configuration() -> Dict[str, object]:
     return {
         "name": str(DEFAULT_SENSOR_CONFIGURATION.get("name", DEFAULT_SENSOR_CONFIGURATION_NAME)),
         "channel_sensor_map": list(DEFAULT_SENSOR_CONFIGURATION.get("channel_sensor_map", [])),
+        SENSOR_CONFIG_REVERSE_POLARITY_KEY: bool(
+            DEFAULT_SENSOR_CONFIGURATION.get(
+                SENSOR_CONFIG_REVERSE_POLARITY_KEY,
+                DEFAULT_SENSOR_REVERSE_POLARITY,
+            )
+        ),
         "is_bundled": False,
     }
 
@@ -78,6 +90,9 @@ def normalize_sensor_config(config: Dict[str, object]) -> Dict[str, object] | No
     return {
         "name": name,
         "channel_sensor_map": channel_sensor_map,
+        SENSOR_CONFIG_REVERSE_POLARITY_KEY: bool(
+            config.get(SENSOR_CONFIG_REVERSE_POLARITY_KEY, DEFAULT_SENSOR_REVERSE_POLARITY)
+        ),
     }
 
 
@@ -328,6 +343,9 @@ def normalize_array_config(config: Dict[str, object]) -> Dict[str, object] | Non
     return {
         "name": name,
         "type": "array_layout",
+        SENSOR_CONFIG_REVERSE_POLARITY_KEY: bool(
+            config.get(SENSOR_CONFIG_REVERSE_POLARITY_KEY, DEFAULT_SENSOR_REVERSE_POLARITY)
+        ),
         "array_layout": array_layout,
         "mux_mapping": mux_mapping,
         "channel_layout": {"channels_per_sensor": channels_per_sensor},
@@ -405,6 +423,9 @@ def normalize_combined_sensor_config(config: Dict[str, object]) -> Dict[str, obj
         "name": name,
         "channel_sensor_map": channel_sensor_map,
         "type": "array_layout" if array_attachment else "channel_layout",
+        SENSOR_CONFIG_REVERSE_POLARITY_KEY: bool(
+            config.get(SENSOR_CONFIG_REVERSE_POLARITY_KEY, DEFAULT_SENSOR_REVERSE_POLARITY)
+        ),
     }
     normalized.update(array_attachment)
     return normalized

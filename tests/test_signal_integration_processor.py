@@ -25,6 +25,7 @@ class SignalIntegrationProcessorHarness(SignalIntegrationProcessorMixin):
             "channels": list(self.CHANNELS),
             "repeat": self.REPEAT_COUNT,
         }
+        self.active_sensor_reverse_polarity = False
         self.plot_update_count = 0
         self.log_messages = []
         self._init_signal_integration_state()
@@ -42,6 +43,9 @@ class SignalIntegrationProcessorHarness(SignalIntegrationProcessorMixin):
 
     def is_array_pzt1_mode(self):
         return False
+
+    def is_active_sensor_reverse_polarity(self):
+        return self.active_sensor_reverse_polarity
 
     def update_signal_integration_plot(self):
         self.plot_update_count += 1
@@ -129,6 +133,19 @@ class SignalIntegrationProcessorTests(unittest.TestCase):
         self.assertGreater(harness.signal_integration_display_decimation, 1)
         for buffers in harness.signal_integration_display_buffers.values():
             self.assertLess(len(buffers["time"]), high_rate_sweeps)
+
+    def test_reverse_polarity_flips_display_buffer_values(self):
+        normal_harness = SignalIntegrationProcessorHarness()
+        reverse_harness = SignalIntegrationProcessorHarness()
+        reverse_harness.active_sensor_reverse_polarity = True
+
+        self._process_block(normal_harness, sweep_count=5)
+        self._process_block(reverse_harness, sweep_count=5)
+
+        normal_values = normal_harness.get_signal_integration_display_snapshot(labels={"R"})["R"][1]
+        reverse_values = reverse_harness.get_signal_integration_display_snapshot(labels={"R"})["R"][1]
+
+        np.testing.assert_allclose(reverse_values, -normal_values, rtol=1e-6, atol=1e-6)
 
 
 if __name__ == "__main__":

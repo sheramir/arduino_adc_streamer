@@ -59,9 +59,13 @@ class SignalIntegrationPanelHarness(SignalIntegrationPanelMixin):
         self._shear_autosave_enabled = False
         self._latest_shear_result = None
         self.log_messages = []
+        self.active_sensor_reverse_polarity = False
 
     def get_vref_voltage(self):
         return self.VREF_VOLTS
+
+    def is_active_sensor_reverse_polarity(self):
+        return self.active_sensor_reverse_polarity
 
     def log_status(self, message):
         self.log_messages.append(message)
@@ -159,6 +163,34 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         ])
         np.testing.assert_allclose(integrated_data, expected_integrated, rtol=1e-6, atol=1e-6)
         np.testing.assert_allclose(integrated_times, timestamps)
+        self.assertAlmostEqual(latest_value, expected_integrated[-1])
+
+    def test_prepare_integrated_series_applies_reverse_polarity_after_integration(self):
+        harness = SignalIntegrationPanelHarness()
+        harness.active_sensor_reverse_polarity = True
+        harness.signal_integration_window_samples = 2
+        max_adc_value = (2 ** IADC_RESOLUTION_BITS) - 1
+        data = np.asarray(
+            [[0.0], [max_adc_value / 4.0], [max_adc_value / 2.0]],
+            dtype=np.float32,
+        )
+        timestamps = np.asarray([0.0, 0.001, 0.002], dtype=np.float64)
+
+        integrated_data, _integrated_times, latest_value = harness._prepare_signal_integration_integrated_series(
+            {"sample_indices": [0]},
+            data,
+            timestamps,
+            avg_sample_time_sec=0.001,
+            max_samples_per_series=self.SAMPLE_COUNT,
+        )
+
+        expected_voltage = np.asarray([0.0, harness.VREF_VOLTS / 4.0, harness.VREF_VOLTS / 2.0])
+        expected_integrated = -np.asarray([
+            expected_voltage[0],
+            expected_voltage[0] + expected_voltage[1],
+            expected_voltage[1] + expected_voltage[2],
+        ])
+        np.testing.assert_allclose(integrated_data, expected_integrated, rtol=1e-6, atol=1e-6)
         self.assertAlmostEqual(latest_value, expected_integrated[-1])
 
     def test_prepare_integrated_series_uses_history_before_visible_start(self):

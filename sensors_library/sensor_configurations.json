@@ -12,7 +12,8 @@
         "L",
         "T"
       ],
-      "type": "channel_layout"
+      "type": "channel_layout",
+      "reverse_polarity": false
     },
     {
       "name": "OCTO",
@@ -23,7 +24,8 @@
         "L",
         "T"
       ],
-      "type": "channel_layout"
+      "type": "channel_layout",
+      "reverse_polarity": false
     },
     {
       "name": "ARRAY_v1_R",
@@ -34,7 +36,8 @@
         "L",
         "T"
       ],
-      "type": "channel_layout"
+      "type": "channel_layout",
+      "reverse_polarity": false
     },
     {
       "name": "ARRAY_v1",
@@ -45,7 +48,8 @@
         "L",
         "B"
       ],
-      "type": "channel_layout"
+      "type": "channel_layout",
+      "reverse_polarity": false
     },
     {
       "name": "Array_V2",
@@ -57,6 +61,7 @@
         "L"
       ],
       "type": "array_layout",
+      "reverse_polarity": false,
       "array_layout": {
         "cells": [
           [
@@ -161,7 +166,8 @@
         "R",
         "T"
       ],
-      "type": "channel_layout"
+      "type": "channel_layout",
+      "reverse_polarity": true
     }
   ]
 }

@@ -23,6 +23,10 @@ import numpy as np
 
 from config.channel_utils import unique_channels_in_order
 from constants.plotting import MICROSECONDS_PER_SECOND
+from constants.sensor_config import (
+    SENSOR_POLARITY_NORMAL_MULTIPLIER,
+    SENSOR_POLARITY_REVERSED_MULTIPLIER,
+)
 from constants.signal_integration import (
     DEFAULT_DISPLAY_WINDOW_SEC,
     DEFAULT_HPF_CUTOFF_HZ,
@@ -394,6 +398,7 @@ class SignalIntegrationProcessorMixin:
             int(group.get("mux", 1)),
             int(repeat_count),
             bool(self._is_signal_integration_pzt1_mode()),
+            bool(self._is_signal_integration_reverse_polarity()),
         )
 
         return {
@@ -511,6 +516,20 @@ class SignalIntegrationProcessorMixin:
             return bool(self.is_array_pzt1_mode())
         return False
 
+    def _is_signal_integration_reverse_polarity(self) -> bool:
+        if hasattr(self, "is_active_sensor_reverse_polarity"):
+            return bool(self.is_active_sensor_reverse_polarity())
+        return False
+
+    def _apply_signal_integration_polarity(self, values: np.ndarray) -> np.ndarray:
+        samples = np.asarray(values, dtype=np.float64)
+        multiplier = (
+            SENSOR_POLARITY_REVERSED_MULTIPLIER
+            if self._is_signal_integration_reverse_polarity()
+            else SENSOR_POLARITY_NORMAL_MULTIPLIER
+        )
+        return samples * multiplier
+
     def _append_signal_integration_outputs(
         self,
         integrated_outputs: dict[Hashable, np.ndarray],
@@ -524,6 +543,7 @@ class SignalIntegrationProcessorMixin:
                 continue
 
             value_array = np.asarray(values, dtype=np.float64).reshape(-1)
+            value_array = self._apply_signal_integration_polarity(value_array)
             time_array = np.asarray(sample_times, dtype=np.float64).reshape(-1)
             sample_count = min(value_array.size, time_array.size)
             if sample_count <= 0:

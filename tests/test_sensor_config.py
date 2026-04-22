@@ -8,6 +8,10 @@ from config.sensor_config import (
     position_channels_to_mapping,
 )
 from config.channel_utils import unique_channels_in_order
+from constants.sensor_config import (
+    DEFAULT_SENSOR_REVERSE_POLARITY,
+    SENSOR_CONFIG_REVERSE_POLARITY_KEY,
+)
 
 
 def test_position_channel_round_trip():
@@ -61,6 +65,44 @@ def test_store_loads_bundled_and_local_configs(tmp_path: Path):
 
     assert selected_name == "Custom1"
     assert {config["name"] for config in configs} == {"PLUS", "ARRAY_v1", "Custom1"}
+
+
+def test_reverse_polarity_is_backward_compatible_and_persisted(tmp_path: Path):
+    bundled_file = tmp_path / "sensor_configurations.json"
+    bundled_file.write_text(json.dumps({
+        "configurations": [
+            {"name": "Legacy", "channel_sensor_map": ["R", "B", "C", "L", "T"]},
+        ]
+    }), encoding="utf-8")
+
+    local_file = tmp_path / "user_sensor_configurations.json"
+    local_file.write_text(json.dumps({
+        "selected_name": "Reverse",
+        "configurations": [
+            {
+                "name": "Reverse",
+                "channel_sensor_map": ["C", "R", "B", "L", "T"],
+                SENSOR_CONFIG_REVERSE_POLARITY_KEY: True,
+            },
+        ]
+    }), encoding="utf-8")
+
+    store = SensorConfigStore(file_path=local_file, bundled_file_path=bundled_file)
+    configs, selected_name = store.load()
+
+    configs_by_name = {str(config["name"]): config for config in configs}
+    assert selected_name == "Reverse"
+    assert configs_by_name["Legacy"][SENSOR_CONFIG_REVERSE_POLARITY_KEY] == DEFAULT_SENSOR_REVERSE_POLARITY
+    assert configs_by_name["Reverse"][SENSOR_CONFIG_REVERSE_POLARITY_KEY] is True
+
+    store.save(configs, selected_name)
+
+    saved_payload = json.loads(local_file.read_text(encoding="utf-8"))
+    saved_by_name = {
+        str(config["name"]): config
+        for config in saved_payload["configurations"]
+    }
+    assert saved_by_name["Reverse"][SENSOR_CONFIG_REVERSE_POLARITY_KEY] is True
 
 
 def test_unique_channels_in_order_preserves_first_occurrence():

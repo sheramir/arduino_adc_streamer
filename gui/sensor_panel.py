@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QFormLayout,
     QGridLayout,
@@ -41,6 +42,11 @@ from config.sensor_config import (
     normalize_sensor_config,
     position_channels_to_mapping,
 )
+from constants.sensor_config import (
+    DEFAULT_SENSOR_REVERSE_POLARITY,
+    SENSOR_CONFIG_REVERSE_POLARITY_KEY,
+    SENSOR_REVERSE_POLARITY_LABEL,
+)
 
 
 class SensorPanelMixin:
@@ -73,6 +79,23 @@ class SensorPanelMixin:
     def get_active_channel_sensor_map(self):
         config = self.get_active_sensor_configuration()
         return list(config.get("channel_sensor_map", ["T", "R", "C", "L", "B"]))
+
+    def is_active_sensor_reverse_polarity(self) -> bool:
+        """Return whether the active sensor package should invert piezo polarity.
+
+        Args:
+            None.
+
+        Returns:
+            True when the selected sensor configuration marks compression as
+            negative raw piezo response and pressure-map processing should
+            multiply the integrated signal by -1.
+
+        Raises:
+            None.
+        """
+        config = self.get_active_sensor_configuration()
+        return bool(config.get(SENSOR_CONFIG_REVERSE_POLARITY_KEY, DEFAULT_SENSOR_REVERSE_POLARITY))
 
     def get_active_array_layout(self) -> dict | None:
         """Get the active sensor config if it has a configured array attachment."""
@@ -117,6 +140,10 @@ class SensorPanelMixin:
         self.sensor_type_combo.addItem("Array Layout", "array_layout")
         self.sensor_type_combo.currentIndexChanged.connect(self.on_sensor_type_changed)
         type_layout.addRow("Type:", self.sensor_type_combo)
+
+        self.sensor_reverse_polarity_check = QCheckBox(SENSOR_REVERSE_POLARITY_LABEL)
+        self.sensor_reverse_polarity_check.toggled.connect(self.on_sensor_reverse_polarity_changed)
+        type_layout.addRow("", self.sensor_reverse_polarity_check)
         selector_layout.addLayout(type_layout)
 
         actions_layout = QHBoxLayout()
@@ -318,6 +345,13 @@ class SensorPanelMixin:
 
         config = self.get_active_sensor_configuration()
         self.sensor_name_edit.setText(str(config["name"]))
+
+        if hasattr(self, "sensor_reverse_polarity_check"):
+            self.sensor_reverse_polarity_check.blockSignals(True)
+            self.sensor_reverse_polarity_check.setChecked(
+                bool(config.get(SENSOR_CONFIG_REVERSE_POLARITY_KEY, DEFAULT_SENSOR_REVERSE_POLARITY))
+            )
+            self.sensor_reverse_polarity_check.blockSignals(False)
         
         # Load both editors for every config. Array is optional.
         current_tab_index = self.sensor_editor_tabs.currentIndex() if hasattr(self, "sensor_editor_tabs") else 0
@@ -633,6 +667,7 @@ class SensorPanelMixin:
         name=None,
         config_type=None,
         channel_sensor_map=None,
+        reverse_polarity=None,
         array_layout=None,
         mux_mapping=None,
         channel_layout=None,
@@ -648,6 +683,11 @@ class SensorPanelMixin:
                 channel_sensor_map
                 if channel_sensor_map is not None
                 else current_config.get("channel_sensor_map", ["T", "R", "C", "L", "B"])
+            ),
+            SENSOR_CONFIG_REVERSE_POLARITY_KEY: bool(
+                reverse_polarity
+                if reverse_polarity is not None
+                else current_config.get(SENSOR_CONFIG_REVERSE_POLARITY_KEY, DEFAULT_SENSOR_REVERSE_POLARITY)
             ),
             "array_layout": dict(
                 array_layout
@@ -757,6 +797,30 @@ class SensorPanelMixin:
         # current configuration when switching tabs.
         self.log_status(f"New sensor type default set to: {self.sensor_type_combo.currentText()}")
 
+    def on_sensor_reverse_polarity_changed(self, checked: bool) -> None:
+        """Persist the active sensor polarity and reset dependent processing.
+
+        Args:
+            checked: True when the active sensor package should be treated as
+                reverse-polarity for pressure-map signal processing.
+
+        Returns:
+            None.
+
+        Raises:
+            None.
+        """
+        if self._sensor_config_ui_loading:
+            return
+
+        updated_config = self._build_sensor_config_update(reverse_polarity=bool(checked))
+        self._replace_active_sensor_config(updated_config)
+        self.sensor_status_label.setText("")
+        self.save_sensor_configurations()
+        self.refresh_sensor_mapping_usage()
+        polarity_label = "reverse" if checked else "normal"
+        self.log_status(f"Updated sensor polarity: {self.active_sensor_config_name} is {polarity_label}")
+
     def on_sensor_editor_tab_changed(self, index: int):
         """Use the visible tab as the default type for Add New only."""
         if self._sensor_config_ui_loading:
@@ -798,6 +862,11 @@ class SensorPanelMixin:
         cells, mux_mapping, channels_per_sensor = self._collect_array_layout_editor_data()
         updated_config = self._build_sensor_config_update(
             channel_sensor_map=position_channels_to_mapping(self._current_position_channels()),
+            reverse_polarity=(
+                self.sensor_reverse_polarity_check.isChecked()
+                if hasattr(self, "sensor_reverse_polarity_check")
+                else DEFAULT_SENSOR_REVERSE_POLARITY
+            ),
             array_layout={"cells": cells},
             mux_mapping=mux_mapping,
             channel_layout={"channels_per_sensor": channels_per_sensor},

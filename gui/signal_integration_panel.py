@@ -215,7 +215,11 @@ class SignalIntegrationPanelMixin:
         controls_group = QGroupBox("Signal Integration Controls")
         controls_layout = QGridLayout(controls_group)
 
-        controls_layout.addWidget(QLabel("HPF cutoff:"), 0, 0)
+        hpf_tooltip = (
+            "Display-only high-pass cutoff applied before integration to remove DC bias. "
+            "Lower values keep slower drift; 0 disables the HPF."
+        )
+        controls_layout.addWidget(self._create_tooltip_label("HPF cutoff:", hpf_tooltip), 0, 0)
         self.signal_integration_hpf_spin = QDoubleSpinBox()
         self.signal_integration_hpf_spin.setRange(
             SIGNAL_INTEGRATION_HPF_CUTOFF_MIN_HZ,
@@ -227,10 +231,19 @@ class SignalIntegrationPanelMixin:
         self.signal_integration_hpf_spin.setValue(
             float(getattr(self, "signal_integration_hpf_cutoff_hz", DEFAULT_HPF_CUTOFF_HZ))
         )
+        self.signal_integration_hpf_spin.setToolTip(hpf_tooltip)
         self.signal_integration_hpf_spin.valueChanged.connect(self.on_signal_integration_settings_changed)
         controls_layout.addWidget(self.signal_integration_hpf_spin, 0, 1)
 
-        controls_layout.addWidget(QLabel("Integration window:"), 0, 2)
+        integration_window_tooltip = (
+            "Number of recent high-pass-filtered samples summed at each point. "
+            "Larger windows smooth more and emphasize slower buildup."
+        )
+        controls_layout.addWidget(
+            self._create_tooltip_label("Integration window:", integration_window_tooltip),
+            0,
+            2,
+        )
         self.signal_integration_window_spin = QSpinBox()
         self.signal_integration_window_spin.setRange(
             SIGNAL_INTEGRATION_WINDOW_MIN_SAMPLES,
@@ -240,10 +253,18 @@ class SignalIntegrationPanelMixin:
         self.signal_integration_window_spin.setValue(
             int(getattr(self, "signal_integration_window_samples", DEFAULT_INTEGRATION_WINDOW_SAMPLES))
         )
+        self.signal_integration_window_spin.setToolTip(integration_window_tooltip)
         self.signal_integration_window_spin.valueChanged.connect(self.on_signal_integration_settings_changed)
         controls_layout.addWidget(self.signal_integration_window_spin, 0, 3)
 
-        controls_layout.addWidget(QLabel("Display window:"), 0, 4)
+        display_window_tooltip = (
+            "How much recent history the Pressure Map tab shows and uses for the live preview."
+        )
+        controls_layout.addWidget(
+            self._create_tooltip_label("Display window:", display_window_tooltip),
+            0,
+            4,
+        )
         self.signal_integration_display_window_spin = QDoubleSpinBox()
         self.signal_integration_display_window_spin.setRange(
             SIGNAL_INTEGRATION_DISPLAY_WINDOW_MIN_SEC,
@@ -255,10 +276,14 @@ class SignalIntegrationPanelMixin:
         self.signal_integration_display_window_spin.setValue(
             float(getattr(self, "signal_integration_display_window_sec", DEFAULT_DISPLAY_WINDOW_SEC))
         )
+        self.signal_integration_display_window_spin.setToolTip(display_window_tooltip)
         self.signal_integration_display_window_spin.valueChanged.connect(self.on_signal_integration_settings_changed)
         controls_layout.addWidget(self.signal_integration_display_window_spin, 0, 5)
 
         self.signal_integration_reset_btn = QPushButton("Reset View")
+        self.signal_integration_reset_btn.setToolTip(
+            "Refresh the integrated preview using the current settings and latest buffered data."
+        )
         self.signal_integration_reset_btn.clicked.connect(self.on_signal_integration_reset_clicked)
         controls_layout.addWidget(self.signal_integration_reset_btn, 0, 6)
         root_layout.addWidget(controls_group)
@@ -300,22 +325,37 @@ class SignalIntegrationPanelMixin:
 
         return tab
 
+    def _create_tooltip_label(
+        self,
+        text: str,
+        tooltip: str,
+        *,
+        maximum_width: int | None = None,
+    ) -> QLabel:
+        """Build a label that exposes the same tooltip as its paired control."""
+        label = QLabel(text)
+        if maximum_width is not None:
+            label.setMaximumWidth(maximum_width)
+        label.setToolTip(tooltip)
+        return label
+
     def _create_shear_visualization_settings_group(self) -> QGroupBox:
         group = QGroupBox("Shear Visualization Settings")
         layout = QGridLayout(group)
         layout.setHorizontalSpacing(SHEAR_SETTINGS_HORIZONTAL_SPACING_PX)
         layout.setVerticalSpacing(SHEAR_SETTINGS_VERTICAL_SPACING_PX)
 
-        layout.addWidget(QLabel("Noise threshold:"), 0, 0)
+        noise_threshold_tooltip = (
+            "Zeros each integrated channel before gain and shear detection when its magnitude is below this value."
+        )
+        layout.addWidget(self._create_tooltip_label("Noise threshold:", noise_threshold_tooltip), 0, 0)
         self.shear_noise_threshold_spin = QDoubleSpinBox()
         self.shear_noise_threshold_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
         self.shear_noise_threshold_spin.setRange(SHEAR_NOISE_THRESHOLD_MIN, SHEAR_NOISE_THRESHOLD_MAX)
         self.shear_noise_threshold_spin.setDecimals(SHEAR_NOISE_THRESHOLD_DECIMALS)
         self.shear_noise_threshold_spin.setSingleStep(SHEAR_NOISE_THRESHOLD_STEP)
         self.shear_noise_threshold_spin.setValue(DEFAULT_SHEAR_NOISE_THRESHOLD)
-        self.shear_noise_threshold_spin.setToolTip(
-            "Zeros each integrated channel before gain and shear detection when its magnitude is below this value."
-        )
+        self.shear_noise_threshold_spin.setToolTip(noise_threshold_tooltip)
         self.shear_noise_threshold_spin.valueChanged.connect(self.on_shear_processing_settings_changed)
         layout.addWidget(self.shear_noise_threshold_spin, 0, 1)
 
@@ -323,8 +363,15 @@ class SignalIntegrationPanelMixin:
         for index, position in enumerate(SHEAR_SENSOR_POSITIONS):
             row = 1 + (index // SHEAR_SETTINGS_GRID_COLUMNS)
             col = (index % SHEAR_SETTINGS_GRID_COLUMNS) * 2
-            gain_label = QLabel(f"{position} gain:")
-            gain_label.setMaximumWidth(SHEAR_GAIN_LABEL_MAX_WIDTH_PX)
+            gain_tooltip = (
+                f"Calibration multiplier for the {position} integrated channel. "
+                "Negative values flip that channel's polarity."
+            )
+            gain_label = self._create_tooltip_label(
+                f"{position} gain:",
+                gain_tooltip,
+                maximum_width=SHEAR_GAIN_LABEL_MAX_WIDTH_PX,
+            )
             layout.addWidget(gain_label, row, col)
             gain_spin = QDoubleSpinBox()
             gain_spin.setMaximumWidth(SHEAR_GAIN_SPIN_WIDTH_PX)
@@ -332,23 +379,31 @@ class SignalIntegrationPanelMixin:
             gain_spin.setDecimals(SHEAR_CALIBRATION_GAIN_DECIMALS)
             gain_spin.setSingleStep(SHEAR_CALIBRATION_GAIN_STEP)
             gain_spin.setValue(DEFAULT_SHEAR_CALIBRATION_GAIN)
-            gain_spin.setToolTip(f"Calibration multiplier for the {position} integrated channel.")
+            gain_spin.setToolTip(gain_tooltip)
             gain_spin.valueChanged.connect(self.on_shear_processing_settings_changed)
             layout.addWidget(gain_spin, row, col + 1)
             self.shear_gain_spins[position] = gain_spin
 
         arrow_row = 2
-        layout.addWidget(QLabel("Arrow gain:"), arrow_row, 0)
+        arrow_gain_tooltip = (
+            "Scales detected shear magnitude into displayed arrow length. "
+            "Higher values make the arrow longer for the same shear."
+        )
+        layout.addWidget(self._create_tooltip_label("Arrow gain:", arrow_gain_tooltip), arrow_row, 0)
         self.shear_arrow_gain_spin = QDoubleSpinBox()
         self.shear_arrow_gain_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
         self.shear_arrow_gain_spin.setRange(SHEAR_ARROW_GAIN_MIN, SHEAR_ARROW_GAIN_MAX)
         self.shear_arrow_gain_spin.setDecimals(SHEAR_ARROW_GAIN_DECIMALS)
         self.shear_arrow_gain_spin.setSingleStep(SHEAR_ARROW_GAIN_STEP)
         self.shear_arrow_gain_spin.setValue(DEFAULT_ARROW_GAIN)
+        self.shear_arrow_gain_spin.setToolTip(arrow_gain_tooltip)
         self.shear_arrow_gain_spin.valueChanged.connect(self.on_shear_visualization_settings_changed)
         layout.addWidget(self.shear_arrow_gain_spin, arrow_row, 1)
 
-        layout.addWidget(QLabel("Arrow threshold:"), arrow_row, 2)
+        arrow_threshold_tooltip = (
+            "Hides only the displayed arrow when detected shear magnitude is below this value."
+        )
+        layout.addWidget(self._create_tooltip_label("Arrow threshold:", arrow_threshold_tooltip), arrow_row, 2)
         self.shear_arrow_threshold_spin = QDoubleSpinBox()
         self.shear_arrow_threshold_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
         self.shear_arrow_threshold_spin.setRange(
@@ -358,13 +413,15 @@ class SignalIntegrationPanelMixin:
         self.shear_arrow_threshold_spin.setDecimals(SHEAR_ARROW_MIN_THRESHOLD_DECIMALS)
         self.shear_arrow_threshold_spin.setSingleStep(SHEAR_ARROW_MIN_THRESHOLD_STEP)
         self.shear_arrow_threshold_spin.setValue(DEFAULT_ARROW_MIN_THRESHOLD)
-        self.shear_arrow_threshold_spin.setToolTip(
-            "Hides only the displayed arrow when detected shear magnitude is below this value."
-        )
+        self.shear_arrow_threshold_spin.setToolTip(arrow_threshold_tooltip)
         self.shear_arrow_threshold_spin.valueChanged.connect(self.on_shear_visualization_settings_changed)
         layout.addWidget(self.shear_arrow_threshold_spin, arrow_row, 3)
 
-        layout.addWidget(QLabel("Arrow max radius:"), arrow_row, 4)
+        arrow_max_radius_tooltip = (
+            "Caps arrow length as a multiple of the visualization circle radius. "
+            "A value of 1.0 reaches the circle edge."
+        )
+        layout.addWidget(self._create_tooltip_label("Arrow max radius:", arrow_max_radius_tooltip), arrow_row, 4)
         self.shear_arrow_max_length_spin = QDoubleSpinBox()
         self.shear_arrow_max_length_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
         self.shear_arrow_max_length_spin.setRange(
@@ -374,10 +431,15 @@ class SignalIntegrationPanelMixin:
         self.shear_arrow_max_length_spin.setDecimals(SHEAR_ARROW_MAX_LENGTH_DECIMALS)
         self.shear_arrow_max_length_spin.setSingleStep(SHEAR_ARROW_MAX_LENGTH_STEP)
         self.shear_arrow_max_length_spin.setValue(DEFAULT_ARROW_MAX_LENGTH_PX)
+        self.shear_arrow_max_length_spin.setToolTip(arrow_max_radius_tooltip)
         self.shear_arrow_max_length_spin.valueChanged.connect(self.on_shear_visualization_settings_changed)
         layout.addWidget(self.shear_arrow_max_length_spin, arrow_row, 5)
 
-        layout.addWidget(QLabel("Arrow width:"), arrow_row, 6)
+        arrow_width_tooltip = (
+            "Base shaft width in screen pixels. With Scale width enabled, "
+            "this becomes the minimum width before magnitude-based widening."
+        )
+        layout.addWidget(self._create_tooltip_label("Arrow width:", arrow_width_tooltip), arrow_row, 6)
         self.shear_arrow_base_width_spin = QDoubleSpinBox()
         self.shear_arrow_base_width_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
         self.shear_arrow_base_width_spin.setRange(
@@ -387,6 +449,7 @@ class SignalIntegrationPanelMixin:
         self.shear_arrow_base_width_spin.setDecimals(SHEAR_ARROW_BASE_WIDTH_DECIMALS)
         self.shear_arrow_base_width_spin.setSingleStep(SHEAR_ARROW_BASE_WIDTH_STEP_PX)
         self.shear_arrow_base_width_spin.setValue(DEFAULT_ARROW_BASE_WIDTH_PX)
+        self.shear_arrow_base_width_spin.setToolTip(arrow_width_tooltip)
         self.shear_arrow_base_width_spin.valueChanged.connect(self.on_shear_visualization_settings_changed)
         layout.addWidget(self.shear_arrow_base_width_spin, arrow_row, 7)
 
@@ -399,10 +462,16 @@ class SignalIntegrationPanelMixin:
         layout.addWidget(self.shear_arrow_width_scales_check, arrow_row + 1, 0)
 
         self.shear_save_settings_btn = QPushButton("Save Settings...")
+        self.shear_save_settings_btn.setToolTip(
+            "Save the current Pressure Map tab settings to a JSON file."
+        )
         self.shear_save_settings_btn.clicked.connect(self.on_save_shear_settings_clicked)
         layout.addWidget(self.shear_save_settings_btn, arrow_row + 1, 1)
 
         self.shear_load_settings_btn = QPushButton("Load Settings...")
+        self.shear_load_settings_btn.setToolTip(
+            "Load Pressure Map tab settings from a JSON file and apply them immediately."
+        )
         self.shear_load_settings_btn.clicked.connect(self.on_load_shear_settings_clicked)
         layout.addWidget(self.shear_load_settings_btn, arrow_row + 1, 2)
 
@@ -414,7 +483,11 @@ class SignalIntegrationPanelMixin:
         layout.setHorizontalSpacing(SHEAR_SETTINGS_HORIZONTAL_SPACING_PX)
         layout.setVerticalSpacing(SHEAR_SETTINGS_VERTICAL_SPACING_PX)
 
-        layout.addWidget(QLabel("Sensor spacing:"), 0, 0)
+        sensor_spacing_tooltip = (
+            "Center-to-outer sensor spacing in millimeters. "
+            "Used for centroid math and pressure-peak placement."
+        )
+        layout.addWidget(self._create_tooltip_label("Sensor spacing:", sensor_spacing_tooltip), 0, 0)
         self.pressure_sensor_spacing_spin = QDoubleSpinBox()
         self.pressure_sensor_spacing_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
         self.pressure_sensor_spacing_spin.setRange(
@@ -425,10 +498,15 @@ class SignalIntegrationPanelMixin:
         self.pressure_sensor_spacing_spin.setSingleStep(PRESSURE_SENSOR_SPACING_STEP_MM)
         self.pressure_sensor_spacing_spin.setSuffix(" mm")
         self.pressure_sensor_spacing_spin.setValue(DEFAULT_PRESSURE_SENSOR_SPACING_MM)
+        self.pressure_sensor_spacing_spin.setToolTip(sensor_spacing_tooltip)
         self.pressure_sensor_spacing_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
         layout.addWidget(self.pressure_sensor_spacing_spin, 0, 1)
 
-        layout.addWidget(QLabel("Circle diameter:"), 0, 2)
+        circle_diameter_tooltip = (
+            "Diameter of the circular pressure footprint in millimeters. "
+            "Also sets grid cell size for a given grid resolution."
+        )
+        layout.addWidget(self._create_tooltip_label("Circle diameter:", circle_diameter_tooltip), 0, 2)
         self.pressure_circle_diameter_spin = QDoubleSpinBox()
         self.pressure_circle_diameter_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
         self.pressure_circle_diameter_spin.setRange(
@@ -439,10 +517,15 @@ class SignalIntegrationPanelMixin:
         self.pressure_circle_diameter_spin.setSingleStep(PRESSURE_CIRCLE_DIAMETER_STEP_MM)
         self.pressure_circle_diameter_spin.setSuffix(" mm")
         self.pressure_circle_diameter_spin.setValue(DEFAULT_CIRCLE_DIAMETER_MM)
+        self.pressure_circle_diameter_spin.setToolTip(circle_diameter_tooltip)
         self.pressure_circle_diameter_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
         layout.addWidget(self.pressure_circle_diameter_spin, 0, 3)
 
-        layout.addWidget(QLabel("Grid:"), 0, 4)
+        grid_resolution_tooltip = (
+            "Number of grid cells across the pressure-circle diameter before margin cells are added. "
+            "Higher values increase detail and computation."
+        )
+        layout.addWidget(self._create_tooltip_label("Grid:", grid_resolution_tooltip), 0, 4)
         self.pressure_grid_resolution_spin = QSpinBox()
         self.pressure_grid_resolution_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
         self.pressure_grid_resolution_spin.setRange(
@@ -451,39 +534,57 @@ class SignalIntegrationPanelMixin:
         )
         self.pressure_grid_resolution_spin.setSingleStep(PRESSURE_GRID_RESOLUTION_STEP)
         self.pressure_grid_resolution_spin.setValue(DEFAULT_PRESSURE_GRID_RESOLUTION)
+        self.pressure_grid_resolution_spin.setToolTip(grid_resolution_tooltip)
         self.pressure_grid_resolution_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
         layout.addWidget(self.pressure_grid_resolution_spin, 0, 5)
 
-        layout.addWidget(QLabel("Margin:"), 0, 6)
+        grid_margin_tooltip = (
+            "Extra grid cells added beyond the circle on each side so edge peaks have room to decay."
+        )
+        layout.addWidget(self._create_tooltip_label("Margin:", grid_margin_tooltip), 0, 6)
         self.pressure_grid_margin_spin = QSpinBox()
         self.pressure_grid_margin_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
         self.pressure_grid_margin_spin.setRange(PRESSURE_GRID_MIN_MARGIN, PRESSURE_GRID_MARGIN_MAX)
         self.pressure_grid_margin_spin.setSingleStep(PRESSURE_GRID_MARGIN_STEP)
         self.pressure_grid_margin_spin.setValue(DEFAULT_PRESSURE_GRID_MARGIN)
+        self.pressure_grid_margin_spin.setToolTip(grid_margin_tooltip)
         self.pressure_grid_margin_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
         layout.addWidget(self.pressure_grid_margin_spin, 0, 7)
 
-        layout.addWidget(QLabel("IDW power:"), 1, 0)
+        idw_power_tooltip = (
+            "Exponent used for inverse-distance weighting and kernel falloff. "
+            "Higher values make peaks more localized."
+        )
+        layout.addWidget(self._create_tooltip_label("IDW power:", idw_power_tooltip), 1, 0)
         self.pressure_idw_power_spin = QDoubleSpinBox()
         self.pressure_idw_power_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
         self.pressure_idw_power_spin.setRange(PRESSURE_IDW_POWER_MIN, PRESSURE_IDW_POWER_MAX)
         self.pressure_idw_power_spin.setDecimals(PRESSURE_IDW_POWER_DECIMALS)
         self.pressure_idw_power_spin.setSingleStep(PRESSURE_IDW_POWER_STEP)
         self.pressure_idw_power_spin.setValue(DEFAULT_PRESSURE_IDW_POWER)
+        self.pressure_idw_power_spin.setToolTip(idw_power_tooltip)
         self.pressure_idw_power_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
         layout.addWidget(self.pressure_idw_power_spin, 1, 1)
 
-        layout.addWidget(QLabel("Decay rate:"), 1, 2)
+        decay_rate_tooltip = (
+            "Signal decay factor used when extrapolating quadrant peak height from the sensor values."
+        )
+        layout.addWidget(self._create_tooltip_label("Decay rate:", decay_rate_tooltip), 1, 2)
         self.pressure_decay_rate_spin = QDoubleSpinBox()
         self.pressure_decay_rate_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
         self.pressure_decay_rate_spin.setRange(PRESSURE_DECAY_RATE_MIN, PRESSURE_DECAY_RATE_MAX)
         self.pressure_decay_rate_spin.setDecimals(PRESSURE_DECAY_RATE_DECIMALS)
         self.pressure_decay_rate_spin.setSingleStep(PRESSURE_DECAY_RATE_STEP)
         self.pressure_decay_rate_spin.setValue(DEFAULT_PRESSURE_DECAY_RATE)
+        self.pressure_decay_rate_spin.setToolTip(decay_rate_tooltip)
         self.pressure_decay_rate_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
         layout.addWidget(self.pressure_decay_rate_spin, 1, 3)
 
-        layout.addWidget(QLabel("Decay ref:"), 1, 4)
+        decay_ref_tooltip = (
+            "Reference distance in millimeters for the decay-rate extrapolation. "
+            "Larger values make that adjustment change more gradually with distance."
+        )
+        layout.addWidget(self._create_tooltip_label("Decay ref:", decay_ref_tooltip), 1, 4)
         self.pressure_decay_ref_distance_spin = QDoubleSpinBox()
         self.pressure_decay_ref_distance_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
         self.pressure_decay_ref_distance_spin.setRange(
@@ -494,10 +595,15 @@ class SignalIntegrationPanelMixin:
         self.pressure_decay_ref_distance_spin.setSingleStep(PRESSURE_DECAY_REF_DISTANCE_STEP_MM)
         self.pressure_decay_ref_distance_spin.setSuffix(" mm")
         self.pressure_decay_ref_distance_spin.setValue(DEFAULT_PRESSURE_DECAY_REF_DISTANCE_MM)
+        self.pressure_decay_ref_distance_spin.setToolTip(decay_ref_tooltip)
         self.pressure_decay_ref_distance_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
         layout.addWidget(self.pressure_decay_ref_distance_spin, 1, 5)
 
-        layout.addWidget(QLabel("Kernel radius:"), 1, 6)
+        kernel_radius_tooltip = (
+            "Base radius of each additive pressure kernel in millimeters. "
+            "Larger values spread each peak over a wider area."
+        )
+        layout.addWidget(self._create_tooltip_label("Kernel radius:", kernel_radius_tooltip), 1, 6)
         self.pressure_kernel_radius_spin = QDoubleSpinBox()
         self.pressure_kernel_radius_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
         self.pressure_kernel_radius_spin.setRange(
@@ -508,6 +614,7 @@ class SignalIntegrationPanelMixin:
         self.pressure_kernel_radius_spin.setSingleStep(PRESSURE_KERNEL_RADIUS_STEP_MM)
         self.pressure_kernel_radius_spin.setSuffix(" mm")
         self.pressure_kernel_radius_spin.setValue(DEFAULT_PRESSURE_PEAK_KERNEL_RADIUS_MM)
+        self.pressure_kernel_radius_spin.setToolTip(kernel_radius_tooltip)
         self.pressure_kernel_radius_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
         layout.addWidget(self.pressure_kernel_radius_spin, 1, 7)
 

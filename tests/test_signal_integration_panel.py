@@ -1,11 +1,16 @@
 """Tests for the Signal Integration tab's voltage HPF display helpers."""
 
+import os
 import json
 import tempfile
 import unittest
 from pathlib import Path
 
 import numpy as np
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from PyQt6.QtWidgets import QApplication
 
 from constants.plotting import IADC_RESOLUTION_BITS
 from constants.signal_integration import (
@@ -80,6 +85,10 @@ class SignalIntegrationPanelTests(unittest.TestCase):
     SAMPLE_RATE_HZ = 1000.0
     SAMPLE_COUNT = 500
     INTEGRATION_WINDOW_SAMPLES = 3
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
 
     def _install_shear_setting_widgets(self, harness):
         harness.signal_integration_hpf_spin = DummySpinBox(12.5)
@@ -277,6 +286,47 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             self.assertEqual(harness.pressure_grid_resolution_spin.value(), 25)
             self.assertEqual(harness.pressure_grid_margin_spin.value(), 3)
             self.assertEqual(harness.pressure_idw_power_spin.value(), 2.5)
+
+    def test_pressure_map_tab_controls_expose_tooltips(self):
+        harness = SignalIntegrationPanelHarness()
+
+        tab = harness.create_signal_integration_tab()
+        try:
+            expected_tooltips = {
+                "signal_integration_hpf_spin": "high-pass cutoff",
+                "signal_integration_window_spin": "recent high-pass-filtered samples",
+                "signal_integration_display_window_spin": "recent history",
+                "signal_integration_reset_btn": "refresh the integrated preview",
+                "shear_noise_threshold_spin": "zeros each integrated channel",
+                "shear_arrow_gain_spin": "displayed arrow length",
+                "shear_arrow_threshold_spin": "hides only the displayed arrow",
+                "shear_arrow_max_length_spin": "circle radius",
+                "shear_arrow_base_width_spin": "base shaft width",
+                "shear_arrow_width_scales_check": "shaft becomes wider",
+                "shear_save_settings_btn": "save the current pressure map tab settings",
+                "shear_load_settings_btn": "load pressure map tab settings",
+                "pressure_sensor_spacing_spin": "sensor spacing",
+                "pressure_circle_diameter_spin": "pressure footprint",
+                "pressure_grid_resolution_spin": "grid cells across the pressure-circle diameter",
+                "pressure_grid_margin_spin": "extra grid cells",
+                "pressure_idw_power_spin": "inverse-distance weighting",
+                "pressure_decay_rate_spin": "quadrant peak height",
+                "pressure_decay_ref_distance_spin": "reference distance",
+                "pressure_kernel_radius_spin": "additive pressure kernel",
+            }
+
+            for widget_name, expected_text in expected_tooltips.items():
+                widget = getattr(harness, widget_name)
+                self.assertIn(expected_text, widget.toolTip().lower(), msg=widget_name)
+
+            for position, gain_spin in harness.shear_gain_spins.items():
+                self.assertIn(
+                    f"calibration multiplier for the {position.lower()} integrated channel",
+                    gain_spin.toolTip().lower(),
+                    msg=position,
+                )
+        finally:
+            tab.close()
 
 
 if __name__ == "__main__":

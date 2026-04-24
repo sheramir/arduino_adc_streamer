@@ -12,7 +12,7 @@ from constants.shear import PRESSURE_MAP_BACKGROUND_COLOR, PRESSURE_MAP_OVERLAY_
 from data_processing.normal_force_calculator import NormalForceCalculator
 from data_processing.pressure_map_generator import PressureMapGenerator
 from data_processing.shear_detector import ShearDetector
-from gui.pressure_map_widget import PressureMapWidget
+from gui.pressure_map_widget import PressureMapPackageDisplay, PressureMapWidget
 
 
 class PressureMapWidgetTests(unittest.TestCase):
@@ -73,6 +73,102 @@ class PressureMapWidgetTests(unittest.TestCase):
         self.assertTrue(self.widget.last_arrow_geometry.visible)
         self.assertTrue(self.widget.arrow_line_item.isVisible())
         self.assertIn("Shear:", self.widget.readout_label.text())
+
+    def test_multiple_package_displays_use_grid_positions_and_distinct_colors(self):
+        first_shear = self.detector.detect({"C": 0.0, "L": -1.0, "R": 1.0, "T": 0.0, "B": 0.0})
+        second_shear = self.detector.detect({"C": 0.0, "L": 0.0, "R": 0.0, "T": 1.0, "B": -1.0})
+        first_normal = self.calculator.compute(first_shear.residual)
+        second_normal = self.calculator.compute(second_shear.residual)
+        first_pressure = self.generator.generate(first_normal.normalized)
+        second_pressure = self.generator.generate(second_normal.normalized)
+        first_color = self.widget.package_color_for_index(0)
+        second_color = self.widget.package_color_for_index(1)
+
+        self.widget.update_package_displays([
+            PressureMapPackageDisplay(
+                sensor_id="PZT3",
+                normal_force_result=first_normal,
+                pressure_result=first_pressure,
+                shear_result=first_shear,
+                grid_position=(0, 0),
+                color=first_color,
+            ),
+            PressureMapPackageDisplay(
+                sensor_id="PZT5",
+                normal_force_result=second_normal,
+                pressure_result=second_pressure,
+                shear_result=second_shear,
+                grid_position=(0, 1),
+                color=second_color,
+            ),
+        ])
+
+        self.assertEqual(len(self.widget.last_package_displays), 2)
+        self.assertTrue(self.widget.package_circle_items[0].isVisible())
+        self.assertTrue(self.widget.package_circle_items[1].isVisible())
+        self.assertNotEqual(
+            self.widget.package_circle_items[0].rect().center().x(),
+            self.widget.package_circle_items[1].rect().center().x(),
+        )
+        self.assertEqual(
+            self.widget.package_circle_items[0].pen().color().name().lower(),
+            first_color.lower(),
+        )
+        self.assertEqual(
+            self.widget.package_sensor_marker_items[1].points()[0].brush().color().name().lower(),
+            second_color.lower(),
+        )
+        self.assertTrue(self.widget.package_arrow_items[0][0].isVisible())
+        self.assertTrue(self.widget.package_arrow_items[1][0].isVisible())
+        self.assertTrue(self.widget.package_label_items[0].isVisible())
+        self.assertTrue(self.widget.package_label_items[1].isVisible())
+        self.assertEqual(self.widget.package_label_items[0].toPlainText(), "PZT3")
+        self.assertEqual(self.widget.package_label_items[1].toPlainText(), "PZT5")
+        self.assertIn("PZT3", self.widget.readout_label.text())
+        self.assertIn("PZT5", self.widget.readout_label.text())
+
+    def test_multiple_package_display_range_contains_full_circles(self):
+        first_shear = self.detector.detect({"C": 0.0, "L": -1.0, "R": 1.0, "T": 0.0, "B": 0.0})
+        second_shear = self.detector.detect({"C": 0.0, "L": 0.0, "R": 0.0, "T": 1.0, "B": -1.0})
+        first_normal = self.calculator.compute(first_shear.residual)
+        second_normal = self.calculator.compute(second_shear.residual)
+        first_pressure = self.generator.generate(first_normal.normalized)
+        second_pressure = self.generator.generate(second_normal.normalized)
+
+        self.widget.update_package_displays([
+            PressureMapPackageDisplay(
+                sensor_id="PZT3",
+                normal_force_result=first_normal,
+                pressure_result=first_pressure,
+                shear_result=first_shear,
+                grid_position=(0, 0),
+                color=self.widget.package_color_for_index(0),
+            ),
+            PressureMapPackageDisplay(
+                sensor_id="PZT5",
+                normal_force_result=second_normal,
+                pressure_result=second_pressure,
+                shear_result=second_shear,
+                grid_position=(0, 2),
+                color=self.widget.package_color_for_index(1),
+            ),
+            PressureMapPackageDisplay(
+                sensor_id="PZT7",
+                normal_force_result=second_normal,
+                pressure_result=second_pressure,
+                shear_result=second_shear,
+                grid_position=(1, 1),
+                color=self.widget.package_color_for_index(2),
+            ),
+        ])
+
+        (x_min, x_max), (y_min, y_max) = self.widget.plot_widget.viewRange()
+        for circle_item in self.widget.package_circle_items[:3]:
+            circle_rect = circle_item.rect()
+            self.assertGreaterEqual(circle_rect.left(), x_min)
+            self.assertLessEqual(circle_rect.right(), x_max)
+            self.assertGreaterEqual(circle_rect.top(), y_min)
+            self.assertLessEqual(circle_rect.bottom(), y_max)
 
     def test_grayscale_lookup_table_runs_from_black_to_white(self):
         lookup_table = self.widget._grayscale_lookup_table()

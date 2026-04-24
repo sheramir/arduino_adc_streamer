@@ -150,7 +150,7 @@ from data_processing.normal_force_calculator import NormalForceCalculator, Norma
 from data_processing.pressure_map_generator import PressureMapGenerator, PressureMapResult
 from data_processing.shear_detector import ShearDetector, ShearResult
 from file_operations.settings_persistence import load_settings_payload, save_settings_payload
-from gui.pressure_map_widget import PressureMapWidget
+from gui.pressure_map_widget import PressureMapPackageDisplay, PressureMapWidget
 
 
 class SignalIntegrationPanelMixin:
@@ -1063,11 +1063,12 @@ class SignalIntegrationPanelMixin:
             for spec_index, spec in enumerate(display_specs):
                 should_plot = spec["key"] in selected_channels
                 shear_position = self._get_shear_position_for_display_spec(spec, spec_index)
+                should_collect_package = shear_position in SHEAR_SENSOR_POSITIONS
                 should_collect_shear = (
-                    shear_position in SHEAR_SENSOR_POSITIONS
+                    should_collect_package
                     and shear_position not in latest_integrated_by_position
                 )
-                if not should_plot and not should_collect_shear:
+                if not should_plot and not should_collect_package:
                     continue
 
                 color = PLOT_COLORS[spec["color_slot"] % len(PLOT_COLORS)]
@@ -1083,8 +1084,7 @@ class SignalIntegrationPanelMixin:
                     continue
 
                 channel_data, channel_times, latest_value = prepared_series
-                if should_collect_shear and latest_value is not None:
-                    latest_integrated_by_position[str(shear_position)] = float(latest_value)
+                if should_collect_package and latest_value is not None:
                     self._record_signal_integration_package_value(
                         latest_integrated_by_package,
                         spec,
@@ -1092,6 +1092,8 @@ class SignalIntegrationPanelMixin:
                         str(shear_position),
                         float(latest_value),
                     )
+                    if should_collect_shear:
+                        latest_integrated_by_position[str(shear_position)] = float(latest_value)
 
                 if not should_plot:
                     continue
@@ -1268,6 +1270,15 @@ class SignalIntegrationPanelMixin:
             return
 
         try:
+            package_displays = self._build_pressure_map_package_displays()
+            if len(package_displays) > 1:
+                first_package = package_displays[0]
+                self._latest_shear_result = first_package.shear_result
+                self._latest_normal_force_result = first_package.normal_force_result
+                self._latest_pressure_map_result = first_package.pressure_result
+                self.pressure_map_widget.update_package_displays(package_displays)
+                return
+
             self._latest_normal_force_result = self.normal_force_calculator.compute(
                 self._latest_shear_result.residual,
             )
@@ -1285,6 +1296,38 @@ class SignalIntegrationPanelMixin:
             self.pressure_map_widget.update_display(None, None, None)
             if hasattr(self, "log_status"):
                 self.log_status(f"ERROR updating Pressure Map visualization: {exc}")
+
+    def _build_pressure_map_package_displays(self) -> list[PressureMapPackageDisplay]:
+        values_by_package = getattr(self, "_latest_signal_integration_values_by_package", {})
+        layout_by_sensor_id = {
+            str(item.get("sensor_id", "")).upper(): item
+            for item in getattr(self, "_latest_signal_integration_package_layout", [])
+            if item.get("sensor_id")
+        }
+        package_displays: list[PressureMapPackageDisplay] = []
+
+        for fallback_index, (sensor_id, package_values) in enumerate(values_by_package.items()):
+            if not all(position in package_values for position in SHEAR_SENSOR_POSITIONS):
+                continue
+
+            calibrated_values = self._calibrate_signal_integration_values_for_shear(package_values)
+            shear_result = self.shear_detector.detect(calibrated_values)
+            normal_force_result = self.normal_force_calculator.compute(shear_result.residual)
+            pressure_result = self.pressure_map_generator.generate(normal_force_result.normalized)
+            layout_item = layout_by_sensor_id.get(str(sensor_id).upper(), {})
+            color_slot = int(layout_item.get("color_slot", fallback_index))
+            package_displays.append(
+                PressureMapPackageDisplay(
+                    sensor_id=str(sensor_id),
+                    normal_force_result=normal_force_result,
+                    pressure_result=pressure_result,
+                    shear_result=shear_result,
+                    grid_position=layout_item.get("grid_position"),
+                    color=self.pressure_map_widget.package_color_for_index(color_slot),
+                )
+            )
+
+        return package_displays
 
     def _calibrate_signal_integration_values_for_shear(
         self,

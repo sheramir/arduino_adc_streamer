@@ -20,6 +20,10 @@ from constants.signal_integration import (
 )
 from constants.shear import SHEAR_SENSOR_POSITIONS
 from data_processing.adc_filter_engine import ADCFilterEngine
+from data_processing.normal_force_calculator import NormalForceCalculator
+from data_processing.pressure_map_generator import PressureMapGenerator
+from data_processing.shear_detector import ShearDetector
+from gui.pressure_map_widget import PressureMapWidget
 from gui.signal_integration_panel import SignalIntegrationPanelMixin
 
 
@@ -306,6 +310,35 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         self.assertEqual(layout[1]["grid_position"], (1, 0))
         self.assertEqual(layout[2]["sensor_id"], "PZT7")
         self.assertEqual(layout[2]["grid_position"], (2, 2))
+
+    def test_array_package_displays_are_built_per_complete_sensor_package(self):
+        harness = SignalIntegrationPanelHarness()
+        harness.pressure_map_widget = PressureMapWidget()
+        self.addCleanup(harness.pressure_map_widget.close)
+        harness.shear_detector = ShearDetector()
+        harness.normal_force_calculator = NormalForceCalculator()
+        harness.pressure_map_generator = PressureMapGenerator()
+        harness.shear_noise_threshold_spin = DummySpinBox(0.0)
+        harness.shear_gain_spins = {
+            position: DummySpinBox(1.0)
+            for position in SHEAR_SENSOR_POSITIONS
+        }
+        harness._latest_signal_integration_values_by_package = {
+            "PZT3": {"C": 0.0, "L": -1.0, "R": 1.0, "T": 0.0, "B": 0.0},
+            "PZT5": {"C": 0.0, "L": 0.0, "R": 0.0, "T": 1.0, "B": -1.0},
+        }
+        harness._latest_signal_integration_package_layout = [
+            {"sensor_id": "PZT3", "grid_position": (0, 1), "color_slot": 0},
+            {"sensor_id": "PZT5", "grid_position": (1, 0), "color_slot": 1},
+        ]
+
+        packages = harness._build_pressure_map_package_displays()
+
+        self.assertEqual([package.sensor_id for package in packages], ["PZT3", "PZT5"])
+        self.assertEqual(packages[0].grid_position, (0, 1))
+        self.assertEqual(packages[1].grid_position, (1, 0))
+        self.assertNotEqual(packages[0].color, packages[1].color)
+        self.assertTrue(packages[0].shear_result.has_shear)
 
     def test_shear_settings_save_and_load_round_trip(self):
         harness = SignalIntegrationPanelHarness()

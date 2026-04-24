@@ -108,6 +108,39 @@ class ADCConfigurationServiceTests(unittest.TestCase):
         self.assertEqual(result.arduino_status.channels, [1, 2])
         self.assertIn("Configuration matches: [1, 2]", result.messages)
 
+    def test_array_pzt_buffer_is_limited_by_mux_pair_capacity(self):
+        commands = []
+
+        def send_command(command, expected):
+            commands.append((command, expected))
+            responses = {
+                "osr 4": (True, "4"),
+                "gain 2": (True, "2"),
+                "channels 0,1,2,3,4,5,6,7,8,9": (True, "0,1,2,3,4,5,6,7,8,9"),
+                "repeat 1": (True, "1"),
+                "ground false": (True, "false"),
+                "buffer 800": (True, "800"),
+            }
+            return responses[command]
+
+        service = ADCConfigurationService(send_command)
+        request = build_request(
+            current_mcu="Array_PZT_PZR1",
+            channels=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4],
+            channels_to_send=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+            repeat=1,
+            buffer_size=1000,
+            is_array_mcu=True,
+            is_array_sensor_selection_mode=True,
+            effective_channel_multiplier=2,
+        )
+
+        result = service.send_config_with_verification(request)
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.normalized_buffer_size, 800)
+        self.assertIn(("buffer 800", "800"), commands)
+
 
 if __name__ == "__main__":
     unittest.main()

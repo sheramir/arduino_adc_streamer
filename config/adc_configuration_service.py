@@ -13,6 +13,7 @@ from typing import Callable
 from config.channel_utils import unique_channels_in_order
 from config.buffer_utils import validate_and_limit_sweeps_per_block
 from constants.serial import INTER_COMMAND_DELAY
+from constants.serial import ARRAY_PZT_MAX_MUX_PAIRS_PER_BLOCK
 from serial_communication.adc_connection_state import ArduinoStatus, build_default_arduino_status
 
 
@@ -327,4 +328,10 @@ class ADCConfigurationService:
         buffer_size = int(request.buffer_size)
         if buffer_size <= 0:
             return 128
-        return validate_and_limit_sweeps_per_block(buffer_size, channel_count, request.repeat)
+        normalized = validate_and_limit_sweeps_per_block(buffer_size, channel_count, request.repeat)
+        if request.is_array_mcu and int(request.effective_channel_multiplier) == 2:
+            mux_pair_count = len(request.channels_to_send) * max(1, int(request.repeat))
+            if mux_pair_count > 0:
+                max_sweeps_by_pair_buffer = ARRAY_PZT_MAX_MUX_PAIRS_PER_BLOCK // mux_pair_count
+                normalized = min(normalized, max(1, max_sweeps_by_pair_buffer))
+        return normalized

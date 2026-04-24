@@ -49,6 +49,13 @@ def maybe_update_force_capture_status(owner, *, force_sample_count: int) -> None
 
 def schedule_force_plot_refresh(owner) -> None:
     """Debounce a force-only plot refresh when fresh force samples arrive."""
+    if hasattr(owner, "should_update_live_timeseries_display"):
+        try:
+            if not owner.should_update_live_timeseries_display():
+                return
+        except Exception:
+            return
+
     try:
         if not owner.force_plot_timer.isActive():
             owner.force_plot_timer.start(owner.force_plot_debounce_ms)

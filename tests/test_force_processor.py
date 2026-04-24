@@ -95,6 +95,19 @@ class ForceProcessorTests(unittest.TestCase):
         self.assertAlmostEqual(z_force, 20.0)
         self.assertEqual(harness.force_plot_timer.started, [25])
 
+    def test_force_samples_buffer_without_redraw_when_timeseries_hidden(self):
+        harness = ForceProcessorHarness()
+        harness.force_calibration_offset = {'x': 1.0, 'z': 2.0}
+        harness.is_capturing = True
+        harness.force_start_time = 5.0
+        harness.should_update_live_timeseries_display = lambda: False
+
+        with patch("data_processing.force_processor.time.time", return_value=12.0):
+            harness.process_force_data(11.0, 22.0)
+
+        self.assertEqual(len(harness.force_data), 1)
+        self.assertEqual(harness.force_plot_timer.started, [])
+
     def test_force_status_label_updates_on_interval_boundary(self):
         harness = ForceProcessorHarness()
         harness.force_calibration_offset = {'x': 0.0, 'z': 0.0}

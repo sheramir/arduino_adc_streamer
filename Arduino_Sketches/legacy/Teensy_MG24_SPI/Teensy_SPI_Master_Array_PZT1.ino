@@ -79,15 +79,15 @@ static const uint32_t MUX_SETTLE_US         = 30;
 // Approximate IADC conversion time for one 12-bit sample at 10 MHz ADC clock.
 // OSR 2x ≈ 2 µs,  4x ≈ 4 µs,  8x ≈ 8 µs.
 // One pair = 2 samples (MUX1 + MUX2), so multiply by 2 in blockDelayMs().
-static const uint32_t IADC_CONV_US_OSR2     = 2;
-static const uint32_t IADC_CONV_US_OSR4     = 4;
-static const uint32_t IADC_CONV_US_OSR8     = 8;
+static const uint32_t IADC_CONV_US_OSR2     = 25;
+static const uint32_t IADC_CONV_US_OSR4     = 35;
+static const uint32_t IADC_CONV_US_OSR8     = 60;
 
 // ── Timing: safety margins ────────────────────────────────────────────
 // Extra ms added to block delay to cover jitter, interrupt latency, etc.
-static const uint32_t BLOCK_DELAY_MARGIN_MS = 5; // was 15
+static const uint32_t BLOCK_DELAY_MARGIN_MS = 25;
 // Extra ms added to warmup delay.
-static const uint32_t WARMUP_DELAY_MARGIN_MS = 10;
+static const uint32_t WARMUP_DELAY_MARGIN_MS = 20;
 
 // ── Warmup sweeps (must match MG24 WARMUP_SWEEPS) ─────────────────────
 // Used only for timing estimation on the Teensy side.
@@ -513,11 +513,11 @@ static void handleRun(const String &args) {
   uint32_t rBytes = blockResponseBytes();
 
   if (!spiRecvStreamingResponse(rxBuf, (uint16_t)min(rBytes, (uint32_t)sizeof(rxBuf)))) {
-    hostAck(false, args); return;
+    hostAck(false, F("first block timeout")); return;
   }
 
   if (rxBuf[0] != BLOCK_MAGIC1 || rxBuf[1] != BLOCK_MAGIC2) {
-    hostAck(false, args); return;
+    hostAck(false, F("first block bad magic")); return;
   }
 
   cfg.running = true;

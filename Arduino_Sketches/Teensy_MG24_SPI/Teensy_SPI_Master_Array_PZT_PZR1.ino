@@ -1,7 +1,7 @@
 /*
  * Teensy_SPI_Master_Array_PZT_PZR1.ino
  * Teensy 4.0 — Combined PZT (SPI/MG24) and PZR (555 Timer) Streamer
- * ==================================================================
+ * ================================================================== 
  *
  * Exposes a unified serial API (same as README) with an additional
  * mode-switch command:
@@ -50,7 +50,11 @@
  *   - Baud rate is 460800 for both modes.
  *
  * Change log:
- *   v1.0  Initial combined sketch.
+ *   v1.0  Initial combined sketch. Used with PCB Octoplus_Reader_Ver1.0
+ *         Currently only PZR or Rosette are being read (not both) according to the interrupt pin
+ *   4.23.26: Updated PZR Pins according to PCB board Octoplus_Reader_Ver1.5
+ *            At this point only PZR MUX is used.
+ *            Added new DRDY pin for PCB ver1.5 (provision for, not implemented yet).
  */
 
 #include <Arduino.h>
@@ -84,9 +88,10 @@ static const uint8_t BLOCK_MAGIC2  = 0x55;
 
 // ── SPI ───────────────────────────────────────────────────────────────
 static const uint8_t  PZT_CS_PIN             = 10;
-static const uint32_t PZT_SPI_BITRATE        = 4000000UL;   // 4 MHz
+static const uint32_t PZT_SPI_BITRATE        = 4000000UL;   // 4000000UL = 4 MHz
 static const uint32_t PZT_CS_SETUP_US        = 10;
 static const bool     PZT_DEBUG_TEXT_STREAM  = false;
+static const uint8_t  PZT_DRDY_PIN           = 0;  // Get Data-Ready signal from MG24 (not implemented yet)
 
 // ── Protocol frame sizes (must match MG24 sketch) ─────────────────────
 static const uint8_t  PZT_CMD_FRAME_LEN      = 20;
@@ -98,7 +103,7 @@ static const uint8_t  PZT_ACK_STATUS_OK      = 0x00;
 // ── Timing ────────────────────────────────────────────────────────────
 static const uint32_t PZT_CONFIG_ACK_DELAY_MS    = 20;
 static const uint32_t PZT_INTER_BLOCK_DELAY_MS   = 1;
-static const uint32_t PZT_MUX_SETTLE_US          = 30;
+static const uint32_t PZT_MUX_SETTLE_US          = 30; // <<========= was 30
 static const uint32_t PZT_IADC_CONV_US_OSR2      = 4;   // was 2 for faster IADC clock
 static const uint32_t PZT_IADC_CONV_US_OSR4      = 8;   // was 4 for faster IADC clock
 static const uint32_t PZT_IADC_CONV_US_OSR8      = 16;  // was 8 for faster IADC clock
@@ -150,13 +155,23 @@ struct PZTConfig {
 // =====================================================================
 // ── PZR MODE — CONSTANTS ─────────────────────────────────────────────
 // =====================================================================
+// In PCB_ver1.5 each 555 MUX is controlled separately, so need to define different set for 555-PZR MUX and 555-Rosette MUX
 
-static const int PZR_ICP_PIN    = 22;  // 22 - PZR MUX. 15 - Rosette MUX
-static const int PZR_MUX_A0_PIN = 20;
-static const int PZR_MUX_A1_PIN = 19;
-static const int PZR_MUX_A2_PIN = 18;
-static const int PZR_MUX_A3_PIN = 17;
+// 555-PZR MUX pins
+static const int PZR_ICP_PIN    = 23;  // PCB_ver1.5: 23-PZR MUX. 14-Rosette MUX // PCB_ver1.0: 22 , 15
+static const int PZR_MUX_A0_PIN = 20;  // PCB_ver1.5: For PZR: 22 // PCB_ver1.0: 20 (shared mux address)
+static const int PZR_MUX_A1_PIN = 19;  // PCB_ver1.5: For PZR: 21 // PCB_ver1.0: 19 (shared mux address)
+static const int PZR_MUX_A2_PIN = 18;  // PCB_ver1.5: For PZR: 20 // PCB_ver1.0: 18 (shared mux address)
+static const int PZR_MUX_A3_PIN = 17;  // PCB_ver1.5: For PZR: 19 // PCB_ver1.0: 17 (shared mux address)
 static const int PZR_MUX_EN_PIN = -1;   // -1 = not connected / tied to VDD
+
+// 555-Rosette MUX pins
+static const int RS_ICP_PIN    = 14;  
+static const int RS_MUX_A0_PIN = 18;  
+static const int RS_MUX_A1_PIN = 17;  
+static const int RS_MUX_A2_PIN = 16;  
+static const int RS_MUX_A3_PIN = 15;  
+static const int RS_MUX_EN_PIN = -1;   // -1 = not connected / tied to VDD
 
 static constexpr bool     PZR_MUX_EN_ACTIVE_LOW          = false;
 static constexpr uint32_t PZR_MUX_SETTLE_NS              = 100;
@@ -726,10 +741,10 @@ static void pzt_handleRun(const String &args) {
   uint32_t rBytes = pzt_blockResponseBytes();
 
   if (!pzt_spiRecvStreamingResponse(rxBuf, (uint16_t)min(rBytes, (uint32_t)sizeof(rxBuf)))) {
-    hostAck(false, args); return;
+    hostAck(false, F("first block timeout")); return; // <=== changed from hostAck(false, args)
   }
   if (rxBuf[0] != BLOCK_MAGIC1 || rxBuf[1] != BLOCK_MAGIC2) {
-    hostAck(false, args); return;
+    hostAck(false, F("first block bad magic")); return;  // <=== changed from hostAck(false, args)
   }
 
   pzt.running = true;
@@ -1218,6 +1233,8 @@ void setup() {
   pinMode(PZT_CS_PIN, OUTPUT);
   digitalWrite(PZT_CS_PIN, HIGH);
 
+  pinMode(PZT_DRDY_PIN, INPUT);  // In case we use DRDY to receive signal from MG24 that data is ready
+
   // ── PZR (555 + MUX) ──────────────────────────────────────────────
   pinMode(PZR_ICP_PIN, INPUT);
   pinMode(PZR_MUX_A0_PIN, OUTPUT);
@@ -1226,6 +1243,17 @@ void setup() {
   pinMode(PZR_MUX_A3_PIN, OUTPUT);
   if (PZR_MUX_EN_PIN >= 0) {
     pinMode(PZR_MUX_EN_PIN, OUTPUT);
+    pzr_muxEnable(true);
+  }
+  
+  // ── Rossette (555 + MUX, for PCB ver1.5. These poins are not defined in PCB ver1.0) ───────
+  pinMode(RS_ICP_PIN, INPUT);
+  pinMode(RS_MUX_A0_PIN, OUTPUT);
+  pinMode(RS_MUX_A1_PIN, OUTPUT);
+  pinMode(RS_MUX_A2_PIN, OUTPUT);
+  pinMode(RS_MUX_A3_PIN, OUTPUT);
+  if (RS_MUX_EN_PIN >= 0) {
+    pinMode(RS_MUX_EN_PIN, OUTPUT);
     pzr_muxEnable(true);
   }
 

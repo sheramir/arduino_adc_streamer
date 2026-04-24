@@ -13,16 +13,17 @@
  *   The Teensy waits a computed delay between the two phases.
  *
  * ── Pin assignments ──────────────────────────────────────────────────
- *   D0  (PC0) ← CS    (from Teensy, same as test3)
+ *   D0  (PC0) ← CS    (from Teensy)
  *   D1        ← ADC input for MUX1 COM
  *   D2        ← ADC input for MUX2 COM
  *   D3        → MUX A0  (shared, both MUXes)
  *   D4        → MUX A1
  *   D5        → MUX A2
  *   D6        → MUX A3
- *   D8  (PA3) ← SCK   (same as test3)
- *   D9  (PA4) → MISO  (same as test3)
- *   D10 (PA5) ← MOSI  (same as test3)
+ *   D7        → DRDY (Signal Teensy Signal-Ready. New in PCB_Ver1.5. Not implemented yet)
+ *   D8  (PA3) ← SCK   
+ *   D9  (PA4) → MISO  
+ *   D10 (PA5) ← MOSI 
  *
  * ── SPI settings (identical to SPI_Slave_test3_Claude) ───────────────
  *   Peripheral : EUSART1
@@ -90,9 +91,10 @@ static const int PIN_MUX_A0   = D3;   // ADG1206 address bit 0 (both MUXes)
 static const int PIN_MUX_A1   = D4;   // ADG1206 address bit 1
 static const int PIN_MUX_A2   = D5;   // ADG1206 address bit 2
 static const int PIN_MUX_A3   = D6;   // ADG1206 address bit 3
+static const int PIN_DRDY     = D7;   // Data-Ready signal to Teensy (not implemented yet)
 
 // ── SPI transport ─────────────────────────────────────────────────────
-static const uint32_t SPI_BITRATE         = 4000000UL; // 4 MHz
+static const uint32_t SPI_BITRATE         = 4000000UL; // 4000000UL = 4 MHz
 
 // ── SPIDRV EUSART1 GPIO routing (must match PCB; same as test3) ───────
 // These are raw Silicon Labs port/pin numbers, NOT Arduino Dx numbers.
@@ -109,7 +111,7 @@ static const uint8_t        SPI_PIN_CS    = 0;
 // Time to wait after switching the ADG1206 address lines before sampling.
 // ADG1206 worst-case tON is 150 ns; we use a generous µs value to also
 // allow the connected circuitry (buffer op-amp, RC filter) to settle.
-static const uint32_t MUX_SETTLE_US      = 30;
+static const uint32_t MUX_SETTLE_US      = 15; // <<========= was 30
 
 // ── IADC clock targets ────────────────────────────────────────────────
 // Faster ADC clock → higher throughput, more noise.

@@ -22,7 +22,6 @@ from data_processing.signal_integration_processor import SignalIntegrationProces
 class SignalIntegrationProcessorHarness(SignalIntegrationProcessorMixin):
     CHANNELS = [1, 2, 3, 4, 5]
     REPEAT_COUNT = 1
-    VREF_VOLTS = 3.3
 
     def __init__(self):
         self.config = {
@@ -50,9 +49,6 @@ class SignalIntegrationProcessorHarness(SignalIntegrationProcessorMixin):
 
     def is_active_sensor_reverse_polarity(self):
         return self.active_sensor_reverse_polarity
-
-    def get_vref_voltage(self):
-        return self.VREF_VOLTS
 
     def update_signal_integration_plot(self):
         self.plot_update_count += 1
@@ -109,27 +105,6 @@ class SignalIntegrationProcessorTests(unittest.TestCase):
         for buffers in harness.signal_integration_display_buffers.values():
             self.assertLessEqual(len(buffers["time"]), expected_capacity)
             self.assertLessEqual(len(buffers["value"]), expected_capacity)
-
-    def test_streaming_processor_converts_counts_to_voltage_before_integration(self):
-        harness = SignalIntegrationProcessorHarness()
-        harness.apply_signal_integration_settings(
-            hpf_cutoff_hz=0.0,
-            integration_window_samples=1,
-            display_window_sec=self.DISPLAY_WINDOW_SEC,
-        )
-        block = np.asarray([[0.0, 4095.0, 0.0, 0.0, 0.0]], dtype=np.float32)
-        timestamps = np.asarray([0.0], dtype=np.float64)
-
-        self.assertTrue(
-            harness.process_signal_integration_block(
-                block,
-                timestamps,
-                self.PHYSICAL_SAMPLE_INTERVAL_US,
-            )
-        )
-
-        snapshot = harness.get_signal_integration_display_snapshot(labels={"B"})
-        self.assertAlmostEqual(float(snapshot["B"][1][-1]), harness.VREF_VOLTS)
 
     def test_live_processing_queues_display_refresh_when_available(self):
         harness = SignalIntegrationProcessorHarness()

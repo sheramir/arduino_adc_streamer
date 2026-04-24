@@ -45,6 +45,7 @@ from constants.sensor_config import (
     SENSOR_POLARITY_NORMAL_MULTIPLIER,
     SENSOR_POLARITY_REVERSED_MULTIPLIER,
 )
+from config.sensor_config import normalize_array_cell
 from constants.ui import PRESSURE_MAP_TAB_NAME
 from constants.signal_integration import (
     DEFAULT_DISPLAY_WINDOW_SEC,
@@ -291,6 +292,8 @@ class SignalIntegrationPanelMixin:
 
         self.signal_integration_curves: dict[Hashable, object] = {}
         self._latest_signal_integration_values_by_position: dict[str, float] = {}
+        self._latest_signal_integration_values_by_package: dict[str, dict[str, float]] = {}
+        self._latest_signal_integration_package_layout: list[dict[str, object]] = []
         self._latest_shear_result: ShearResult | None = None
         self._latest_normal_force_result: NormalForceResult | None = None
         self._latest_pressure_map_result: PressureMapResult | None = None
@@ -1048,6 +1051,7 @@ class SignalIntegrationPanelMixin:
 
             desired_curve_keys = set()
             latest_integrated_by_position: dict[str, float] = {}
+            latest_integrated_by_package: dict[str, dict[str, float]] = {}
             visible_series_count = max(1, len(selected_channels))
             max_samples_per_series = max(
                 SIGNAL_INTEGRATION_MIN_POINTS_PER_VISIBLE_CHANNEL,
@@ -1081,6 +1085,13 @@ class SignalIntegrationPanelMixin:
                 channel_data, channel_times, latest_value = prepared_series
                 if should_collect_shear and latest_value is not None:
                     latest_integrated_by_position[str(shear_position)] = float(latest_value)
+                    self._record_signal_integration_package_value(
+                        latest_integrated_by_package,
+                        spec,
+                        spec_index,
+                        str(shear_position),
+                        float(latest_value),
+                    )
 
                 if not should_plot:
                     continue
@@ -1109,7 +1120,12 @@ class SignalIntegrationPanelMixin:
                     curve.setVisible(False)
 
             self._apply_signal_integration_axis_settings()
-            self._latest_signal_integration_values_by_position = latest_integrated_by_position
+            self._latest_signal_integration_values_by_package = latest_integrated_by_package
+            self._latest_signal_integration_package_layout = self._get_signal_integration_package_layout()
+            self._latest_signal_integration_values_by_position = (
+                self._first_complete_signal_integration_package_values(latest_integrated_by_package)
+                or latest_integrated_by_position
+            )
             self._update_shear_visualization_from_latest()
             self.signal_integration_status_label.setText("")
 
@@ -1132,11 +1148,101 @@ class SignalIntegrationPanelMixin:
 
     def _clear_shear_visualization(self) -> None:
         self._latest_signal_integration_values_by_position = {}
+        self._latest_signal_integration_values_by_package = {}
+        self._latest_signal_integration_package_layout = []
         self._latest_shear_result = None
         self._latest_normal_force_result = None
         self._latest_pressure_map_result = None
         if hasattr(self, "pressure_map_widget"):
             self.pressure_map_widget.update_display(None, None, None)
+
+    def _record_signal_integration_package_value(
+        self,
+        values_by_package: dict[str, dict[str, float]],
+        spec: dict,
+        spec_index: int,
+        position: str,
+        value: float,
+    ) -> None:
+        package_id = self._get_signal_integration_package_id_for_display_spec(spec, spec_index)
+        package_values = values_by_package.setdefault(package_id, {})
+        package_values[str(position)] = float(value)
+
+    def _get_signal_integration_package_id_for_display_spec(self, spec: dict, spec_index: int) -> str:
+        key = spec.get("key")
+        if isinstance(key, tuple) and len(key) >= 2 and key[0] == "sensor":
+            sensor_id = str(key[1]).strip().upper()
+            if sensor_id:
+                return sensor_id
+
+        label = str(spec.get("label", "")).strip().upper()
+        if "_" in label:
+            sensor_id = label.split("_", 1)[0]
+            if sensor_id:
+                return sensor_id
+
+        channel_count = max(1, len(SIGNAL_INTEGRATION_POSITION_ORDER))
+        package_index = int(spec_index) // channel_count
+        return f"PACKAGE{package_index + 1}"
+
+    def _first_complete_signal_integration_package_values(
+        self,
+        values_by_package: dict[str, dict[str, float]],
+    ) -> dict[str, float] | None:
+        for package_values in values_by_package.values():
+            if all(position in package_values for position in SHEAR_SENSOR_POSITIONS):
+                return dict(package_values)
+        return None
+
+    def _get_array_sensor_grid_positions(self) -> dict[str, tuple[int, int]]:
+        active_config = self.get_active_sensor_configuration() if hasattr(self, "get_active_sensor_configuration") else {}
+        array_layout = active_config.get("array_layout", {}) if isinstance(active_config, dict) else {}
+        cells = array_layout.get("cells", []) if isinstance(array_layout, dict) else []
+
+        positions: dict[str, tuple[int, int]] = {}
+        for row_index, row_cells in enumerate(cells):
+            if not isinstance(row_cells, list):
+                continue
+            for col_index, cell_value in enumerate(row_cells):
+                sensor_id = normalize_array_cell(cell_value)
+                if sensor_id:
+                    positions[sensor_id] = (int(row_index), int(col_index))
+        return positions
+
+    def _get_signal_integration_package_layout(self) -> list[dict[str, object]]:
+        grid_positions = self._get_array_sensor_grid_positions()
+        selected_sensors = list(self.config.get("selected_array_sensors", []))
+        layout: list[dict[str, object]] = []
+
+        if hasattr(self, "is_array_sensor_selection_mode") and self.is_array_sensor_selection_mode():
+            if hasattr(self, "get_sensor_package_groups"):
+                sensor_groups = self.get_sensor_package_groups(len(SHEAR_SENSOR_POSITIONS))
+            else:
+                sensor_groups = []
+
+            for index, group in enumerate(sensor_groups):
+                fallback_id = selected_sensors[index] if index < len(selected_sensors) else f"PACKAGE{index + 1}"
+                sensor_id = str(group.get("sensor_id") or fallback_id).strip().upper()
+                layout.append({
+                    "sensor_id": sensor_id,
+                    "grid_position": grid_positions.get(sensor_id),
+                    "color_slot": index,
+                    "channels": list(group.get("channels", [])),
+                    "mux": int(group.get("mux", 1)),
+                })
+            return layout
+
+        values_by_package = getattr(self, "_latest_signal_integration_values_by_package", {})
+        package_ids = list(values_by_package.keys()) or ["PACKAGE1"]
+        for index, package_id in enumerate(package_ids):
+            layout.append({
+                "sensor_id": package_id,
+                "grid_position": None,
+                "color_slot": index,
+                "channels": [],
+                "mux": 1,
+            })
+        return layout
 
     def _update_shear_visualization_from_latest(self) -> None:
         if not hasattr(self, "pressure_map_widget"):

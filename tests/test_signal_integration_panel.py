@@ -55,6 +55,10 @@ class SignalIntegrationPanelHarness(SignalIntegrationPanelMixin):
     VREF_VOLTS = 3.3
 
     def __init__(self):
+        self.config = {
+            "channel_selection_source": "manual",
+            "selected_array_sensors": [],
+        }
         self.signal_integration_hpf_cutoff_hz = SIGNAL_INTEGRATION_DISABLED_HPF_CUTOFF_HZ
         self.signal_integration_window_samples = DEFAULT_INTEGRATION_WINDOW_SAMPLES
         self.signal_integration_display_window_sec = 1.0
@@ -65,6 +69,8 @@ class SignalIntegrationPanelHarness(SignalIntegrationPanelMixin):
         self._latest_shear_result = None
         self.log_messages = []
         self.active_sensor_reverse_polarity = False
+        self.sensor_package_groups = []
+        self.active_sensor_configuration = {"array_layout": {"cells": []}}
 
     def get_vref_voltage(self):
         return self.VREF_VOLTS
@@ -77,6 +83,15 @@ class SignalIntegrationPanelHarness(SignalIntegrationPanelMixin):
 
     def _get_last_shear_settings_path(self):
         return self._last_shear_settings_path
+
+    def is_array_sensor_selection_mode(self):
+        return str(self.config.get("channel_selection_source", "")).lower() == "array"
+
+    def get_sensor_package_groups(self, required_channels, channels=None):
+        return list(self.sensor_package_groups)
+
+    def get_active_sensor_configuration(self):
+        return dict(self.active_sensor_configuration)
 
 
 class SignalIntegrationPanelTests(unittest.TestCase):
@@ -240,6 +255,57 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         self.assertEqual(calibrated["R"], 1.4)
         self.assertEqual(calibrated["T"], 0.0)
         self.assertEqual(calibrated["B"], 0.8)
+
+    def test_array_package_plumbing_tracks_values_and_grid_positions(self):
+        harness = SignalIntegrationPanelHarness()
+        harness.config = {
+            "channel_selection_source": "array",
+            "selected_array_sensors": ["PZT3", "PZT5", "PZT7"],
+        }
+        harness.sensor_package_groups = [
+            {"sensor_id": "PZT3", "mux": 1, "channels": [0, 1, 2, 3, 4]},
+            {"sensor_id": "PZT5", "mux": 1, "channels": [5, 6, 7, 8, 9]},
+            {"sensor_id": "PZT7", "mux": 2, "channels": [0, 1, 2, 3, 4]},
+        ]
+        harness.active_sensor_configuration = {
+            "array_layout": {
+                "cells": [
+                    [None, "PZT3", None],
+                    ["PZT5", None, None],
+                    [None, None, "PZT7"],
+                ]
+            }
+        }
+        values_by_package = {}
+
+        for index, position in enumerate(SHEAR_SENSOR_POSITIONS):
+            spec = {"key": ("sensor", "PZT3", position, index), "label": f"PZT3_{position}"}
+            harness._record_signal_integration_package_value(
+                values_by_package,
+                spec,
+                index,
+                position,
+                float(index + 1),
+            )
+        harness._record_signal_integration_package_value(
+            values_by_package,
+            {"key": ("sensor", "PZT5", "C", 5), "label": "PZT5_C"},
+            5,
+            "C",
+            10.0,
+        )
+
+        first_complete = harness._first_complete_signal_integration_package_values(values_by_package)
+        layout = harness._get_signal_integration_package_layout()
+
+        self.assertEqual(set(values_by_package), {"PZT3", "PZT5"})
+        self.assertEqual(first_complete, values_by_package["PZT3"])
+        self.assertEqual(layout[0]["sensor_id"], "PZT3")
+        self.assertEqual(layout[0]["grid_position"], (0, 1))
+        self.assertEqual(layout[1]["sensor_id"], "PZT5")
+        self.assertEqual(layout[1]["grid_position"], (1, 0))
+        self.assertEqual(layout[2]["sensor_id"], "PZT7")
+        self.assertEqual(layout[2]["grid_position"], (2, 2))
 
     def test_shear_settings_save_and_load_round_trip(self):
         harness = SignalIntegrationPanelHarness()

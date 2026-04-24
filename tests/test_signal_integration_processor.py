@@ -16,7 +16,10 @@ from constants.signal_integration import (
     SIGNAL_INTEGRATION_PLOT_UPDATE_INTERVAL_SEC,
     SIGNAL_INTEGRATION_POSITION_ORDER,
 )
-from data_processing.signal_integration_processor import SignalIntegrationProcessorMixin
+from data_processing.signal_integration_processor import (
+    SIGNAL_INTEGRATION_SAMPLE_RATE_TOLERANCE_FRACTION,
+    SignalIntegrationProcessorMixin,
+)
 
 
 class SignalIntegrationProcessorHarness(SignalIntegrationProcessorMixin):
@@ -195,6 +198,32 @@ class SignalIntegrationProcessorTests(unittest.TestCase):
         reverse_values = reverse_harness.get_signal_integration_display_snapshot(labels={"R"})["R"][1]
 
         np.testing.assert_allclose(reverse_values, -normal_values, rtol=1e-6, atol=1e-6)
+
+    def test_current_display_values_apply_reverse_polarity(self):
+        harness = SignalIntegrationProcessorHarness()
+        harness.active_sensor_reverse_polarity = True
+        harness.apply_signal_integration_settings(
+            hpf_cutoff_hz=0.0,
+            integration_window_samples=1,
+            display_window_sec=self.DISPLAY_WINDOW_SEC,
+        )
+        self._process_block(harness, sweep_count=5)
+
+        current_values = harness.get_signal_integration_current_values()
+        display_values = harness.get_signal_integration_current_display_values()
+
+        self.assertAlmostEqual(display_values["R"], -current_values["R"])
+
+    def test_sample_rate_jitter_reuses_stable_rate(self):
+        harness = SignalIntegrationProcessorHarness()
+
+        first_rate = 1000.0
+        jittered_rate = first_rate * (1.0 + (SIGNAL_INTEGRATION_SAMPLE_RATE_TOLERANCE_FRACTION / 2.0))
+        self.assertEqual(harness._stable_signal_integration_sample_rate(first_rate), first_rate)
+        self.assertEqual(harness._stable_signal_integration_sample_rate(jittered_rate), first_rate)
+
+        shifted_rate = first_rate * (1.0 + (SIGNAL_INTEGRATION_SAMPLE_RATE_TOLERANCE_FRACTION * 2.0))
+        self.assertEqual(harness._stable_signal_integration_sample_rate(shifted_rate), shifted_rate)
 
 
 if __name__ == "__main__":

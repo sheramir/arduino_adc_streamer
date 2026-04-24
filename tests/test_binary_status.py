@@ -98,16 +98,6 @@ class BinaryStatusHarness(BinaryProcessorMixin):
         self.logged.append(message)
 
 
-class StreamingBinaryStatusHarness(BinaryStatusHarness):
-    def __init__(self):
-        super().__init__()
-        self.signal_stream_count = 0
-
-    def process_signal_integration_block(self, block_samples_array, sweep_timestamps_sec, avg_sample_time_us):
-        self.signal_stream_count += 1
-        return True
-
-
 class BinaryStatusTests(unittest.TestCase):
     def test_runtime_status_uses_true_sweep_count_for_total_samples(self):
         harness = BinaryStatusHarness()
@@ -129,19 +119,6 @@ class BinaryStatusTests(unittest.TestCase):
             harness.process_binary_sweep(samples, avg_sample_time_us=100, block_start_us=1000, block_end_us=1900)
 
         self.assertEqual(harness.signal_trigger_count, 1)
-        self.assertEqual(harness.signal_update_count, 0)
-
-    def test_binary_handler_streams_pressure_map_without_duplicate_refresh(self):
-        harness = StreamingBinaryStatusHarness()
-        harness.should_update_live_timeseries_display = lambda: False
-        harness.should_update_signal_integration_display = lambda: True
-        samples = np.arange(10, dtype=np.uint16)
-
-        with patch("data_processing.binary_processor.time.time", return_value=10.0):
-            harness.process_binary_sweep(samples, avg_sample_time_us=100, block_start_us=1000, block_end_us=1900)
-
-        self.assertEqual(harness.signal_stream_count, 1)
-        self.assertEqual(harness.signal_trigger_count, 0)
         self.assertEqual(harness.signal_update_count, 0)
 
 

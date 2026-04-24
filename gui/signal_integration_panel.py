@@ -900,12 +900,6 @@ class SignalIntegrationPanelMixin:
         self.signal_integration_hpf_cutoff_hz = float(self.signal_integration_hpf_spin.value())
         self.signal_integration_window_samples = int(self.signal_integration_window_spin.value())
         self.signal_integration_display_window_sec = float(self.signal_integration_display_window_spin.value())
-        if hasattr(self, "apply_signal_integration_settings"):
-            self.apply_signal_integration_settings(
-                hpf_cutoff_hz=self.signal_integration_hpf_cutoff_hz,
-                integration_window_samples=self.signal_integration_window_samples,
-                display_window_sec=self.signal_integration_display_window_sec,
-            )
         self._signal_integration_filter_warning = ""
         self.update_signal_integration_plot()
         self.save_last_shear_settings()
@@ -1038,12 +1032,6 @@ class SignalIntegrationPanelMixin:
                 self.signal_integration_status_label.setText("No integrated channels available")
                 return
 
-            if (
-                self._signal_integration_stream_matches_latest_raw()
-                and self._update_signal_integration_plot_from_streaming(display_specs)
-            ):
-                return
-
             plot_snapshot = self._get_signal_integration_raw_snapshot()
             if plot_snapshot is None:
                 self._hide_all_signal_integration_curves()
@@ -1130,97 +1118,6 @@ class SignalIntegrationPanelMixin:
                 self.log_status(f"ERROR updating Signal Integration integrated preview: {exc}")
         finally:
             self._signal_integration_updating_plot = False
-
-    def _update_signal_integration_plot_from_streaming(self, display_specs: list[dict]) -> bool:
-        if not hasattr(self, "get_signal_integration_display_snapshot"):
-            return False
-
-        display_entries: list[tuple[int, dict, str]] = []
-        requested_labels: set[str] = set()
-        for spec_index, spec in enumerate(display_specs):
-            position = self._get_shear_position_for_display_spec(spec, spec_index)
-            if position not in SHEAR_SENSOR_POSITIONS:
-                continue
-            position_text = str(position)
-            display_entries.append((spec_index, spec, position_text))
-            requested_labels.add(position_text)
-
-        if not requested_labels:
-            return False
-
-        snapshot = self.get_signal_integration_display_snapshot(labels=requested_labels)
-        has_streaming_data = any(values.size > 0 for _times, values in snapshot.values())
-        if not has_streaming_data:
-            return False
-
-        desired_curve_keys = set()
-        latest_integrated_by_position: dict[str, float] = {}
-
-        for _spec_index, spec, position in display_entries:
-            series = snapshot.get(position)
-            if series is None:
-                continue
-
-            channel_times, channel_data = series
-            if channel_times.size == 0 or channel_data.size == 0:
-                continue
-
-            sample_count = min(channel_times.size, channel_data.size)
-            channel_times = channel_times[-sample_count:]
-            channel_data = channel_data[-sample_count:]
-            latest_integrated_by_position[position] = float(channel_data[-1])
-
-            color = PLOT_COLORS[spec["color_slot"] % len(PLOT_COLORS)]
-            pen = pg.mkPen(color=color, width=SIGNAL_INTEGRATION_PLOT_LINE_WIDTH)
-            curve_key = ("signal_integration_stream", spec["key"], position)
-            desired_curve_keys.add(curve_key)
-            self._set_signal_integration_curve_data(
-                curve_key,
-                spec["label"],
-                pen,
-                channel_times,
-                channel_data,
-            )
-
-        if not latest_integrated_by_position:
-            return False
-
-        for key, curve in self.signal_integration_curves.items():
-            if key not in desired_curve_keys:
-                curve.setVisible(False)
-
-        self._apply_signal_integration_axis_settings()
-        self._latest_signal_integration_values_by_position = latest_integrated_by_position
-        self._update_shear_visualization_from_latest()
-        self.signal_integration_status_label.setText("")
-        return True
-
-    def _signal_integration_stream_matches_latest_raw(self) -> bool:
-        latest_stream_time = getattr(self, "_signal_integration_latest_sweep_time_sec", None)
-        if latest_stream_time is None:
-            return False
-        sweep_timestamps_buffer = getattr(self, "sweep_timestamps_buffer", None)
-        if sweep_timestamps_buffer is None:
-            return True
-
-        with self.buffer_lock:
-            current_sweep_count = int(getattr(self, "sweep_count", 0) or 0)
-            current_write_index = int(getattr(self, "buffer_write_index", 0) or 0)
-            actual_sweeps = min(current_sweep_count, self.MAX_SWEEPS_BUFFER)
-            if actual_sweeps <= 0:
-                return True
-            if actual_sweeps < self.MAX_SWEEPS_BUFFER:
-                newest_index = actual_sweeps - 1
-            else:
-                newest_index = (current_write_index - 1) % self.MAX_SWEEPS_BUFFER
-            latest_raw_time = float(sweep_timestamps_buffer[newest_index])
-
-        tolerance_sec = max(
-            1e-9,
-            float(getattr(self, "_cached_avg_sample_time_sec", 0.0) or 0.0)
-            * max(1, int(getattr(self, "samples_per_sweep", 1) or 1)),
-        )
-        return float(latest_stream_time) >= latest_raw_time - tolerance_sec
 
     def _should_refresh_signal_integration_plot(self) -> bool:
         if hasattr(self, "should_update_signal_integration_display"):

@@ -225,7 +225,10 @@ class BinaryProcessorMixin:
                         >= SIGNAL_INTEGRATION_PLOT_UPDATE_INTERVAL_SEC
                     ):
                         self._last_signal_integration_plot_update_time = now
-                        self.update_signal_integration_plot()
+                        if hasattr(self, 'trigger_signal_integration_update'):
+                            self.trigger_signal_integration_update()
+                        else:
+                            self.update_signal_integration_plot()
                     # Always update the info label
                     total_samples = int(self.sweep_count) * samples_per_sweep
                     force_samples = len(force_state.data)

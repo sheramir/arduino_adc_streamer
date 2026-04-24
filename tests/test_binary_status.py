@@ -1,5 +1,6 @@
-﻿import threading
+import threading
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
@@ -45,6 +46,8 @@ class BinaryStatusHarness(BinaryProcessorMixin):
         self._cached_avg_sample_time_sec = 0.0
         self._block_timing_file = None
         self._archive_writer = None
+        self.signal_trigger_count = 0
+        self.signal_update_count = 0
         self.logged = []
         self._timing_state = type('TimingStateObj', (), {
             'buffer_receipt_times': [],
@@ -82,6 +85,12 @@ class BinaryStatusHarness(BinaryProcessorMixin):
     def update_force_plot(self):
         return None
 
+    def trigger_signal_integration_update(self):
+        self.signal_trigger_count += 1
+
+    def update_signal_integration_plot(self):
+        self.signal_update_count += 1
+
     def update_timing_display(self):
         return None
 
@@ -99,6 +108,18 @@ class BinaryStatusTests(unittest.TestCase):
         self.assertIn('ADC - Sweeps: 60002', harness.plot_info_label.text)
         self.assertIn('Samples: 300010', harness.plot_info_label.text)
         self.assertIn('(showing last 2000)', harness.plot_info_label.text)
+
+    def test_pressure_map_refresh_is_queued_from_binary_handler(self):
+        harness = BinaryStatusHarness()
+        harness.should_update_live_timeseries_display = lambda: False
+        harness.should_update_signal_integration_display = lambda: True
+        samples = np.arange(10, dtype=np.uint16)
+
+        with patch("data_processing.binary_processor.time.time", return_value=10.0):
+            harness.process_binary_sweep(samples, avg_sample_time_us=100, block_start_us=1000, block_end_us=1900)
+
+        self.assertEqual(harness.signal_trigger_count, 1)
+        self.assertEqual(harness.signal_update_count, 0)
 
 
 if __name__ == '__main__':

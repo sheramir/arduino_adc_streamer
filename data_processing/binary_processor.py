@@ -14,6 +14,7 @@ from constants.plotting import (
     PLOT_UPDATE_INTERVAL_SEC,
 )
 from constants.runtime import MAX_TIMING_SAMPLES
+from constants.signal_integration import SIGNAL_INTEGRATION_PLOT_UPDATE_INTERVAL_SEC
 from data_processing.force_state import get_force_runtime_state
 
 
@@ -200,20 +201,31 @@ class BinaryProcessorMixin:
                     # Pass uint16 block so row.tolist() produces integers matching original format.
                     self._archive_writer.enqueue(sweep_timestamps_sec, block_u16)
 
-                # Rate-limit plot updates to ~5 FPS using wall-clock time.
+                # Rate-limit plot updates using wall-clock time.
                 # The old sweep_count % N check broke when sweep_count jumps by
                 # sweeps_in_block (the remainder may never land on zero).
                 # Direct call is safe because process_binary_sweep runs on the
                 # GUI thread (queued Qt signal connection).
                 if store_capture_data:
                     now = time.time()
-                    if now - getattr(self, '_last_plot_update_time', 0.0) >= PLOT_UPDATE_INTERVAL_SEC:
+                    if (
+                        (
+                            not hasattr(self, 'should_update_live_timeseries_display')
+                            or self.should_update_live_timeseries_display()
+                        )
+                        and now - getattr(self, '_last_plot_update_time', 0.0) >= PLOT_UPDATE_INTERVAL_SEC
+                    ):
                         self._last_plot_update_time = now
-                        if not hasattr(self, 'should_update_live_timeseries_display') or self.should_update_live_timeseries_display():
-                            self.update_plot()
-                            self.update_force_plot()
-                        elif hasattr(self, 'should_update_signal_integration_display') and self.should_update_signal_integration_display():
-                            self.update_signal_integration_plot()
+                        self.update_plot()
+                        self.update_force_plot()
+                    elif (
+                        hasattr(self, 'should_update_signal_integration_display')
+                        and self.should_update_signal_integration_display()
+                        and now - getattr(self, '_last_signal_integration_plot_update_time', 0.0)
+                        >= SIGNAL_INTEGRATION_PLOT_UPDATE_INTERVAL_SEC
+                    ):
+                        self._last_signal_integration_plot_update_time = now
+                        self.update_signal_integration_plot()
                     # Always update the info label
                     total_samples = int(self.sweep_count) * samples_per_sweep
                     force_samples = len(force_state.data)

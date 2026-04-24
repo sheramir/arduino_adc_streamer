@@ -11,6 +11,8 @@ from constants.signal_integration import (
     SIGNAL_INTEGRATION_CHANNEL_COUNT,
     SIGNAL_INTEGRATION_DISPLAY_BUFFER_MARGIN_SAMPLES,
     SIGNAL_INTEGRATION_MAX_TOTAL_POINTS_TO_DISPLAY,
+    SIGNAL_INTEGRATION_PLOT_UPDATE_FPS,
+    SIGNAL_INTEGRATION_PLOT_UPDATE_INTERVAL_SEC,
     SIGNAL_INTEGRATION_POSITION_ORDER,
 )
 from data_processing.signal_integration_processor import SignalIntegrationProcessorMixin
@@ -59,6 +61,10 @@ class SignalIntegrationProcessorTests(unittest.TestCase):
     PHYSICAL_SAMPLE_INTERVAL_US = 1000.0
     SWEEP_COUNT = 30
     SAMPLES_PER_SWEEP = 5
+
+    def test_signal_integration_refresh_rate_is_configured_for_pressure_map_tab(self):
+        self.assertEqual(SIGNAL_INTEGRATION_PLOT_UPDATE_FPS, 15.0)
+        self.assertAlmostEqual(SIGNAL_INTEGRATION_PLOT_UPDATE_INTERVAL_SEC, 1.0 / 15.0)
 
     def _process_block(
         self,

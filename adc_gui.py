@@ -222,6 +222,10 @@ class ADCStreamerGUI(
         # ADC buffer updates, so this timer refreshes just the force plot without
         # waiting for the next ADC-driven redraw.
         self.force_plot_timer.timeout.connect(self.update_force_plot)
+
+        self.signal_integration_update_timer = QTimer()
+        self.signal_integration_update_timer.setSingleShot(True)
+        self.signal_integration_update_timer.timeout.connect(self.update_signal_integration_plot)
         
         self.config_check_timer = QTimer()
         self.config_check_timer.timeout.connect(self.check_config_completion)
@@ -404,6 +408,13 @@ class ADCStreamerGUI(
     def should_update_signal_integration_display(self) -> bool:
         """Return True when the pressure map tab is the visible tab."""
         return self.get_current_visualization_tab_name() == PRESSURE_MAP_TAB_NAME
+
+    def trigger_signal_integration_update(self):
+        """Queue a pressure-map refresh outside the ADC block handler."""
+        if not self.should_update_signal_integration_display():
+            return
+        if not self.signal_integration_update_timer.isActive():
+            self.signal_integration_update_timer.start(0)
 
     def start_spectrum_updates(self):
         """Start spectrum updates."""

@@ -76,6 +76,14 @@ class ForceOverlayTests(unittest.TestCase):
 
         self.assertIsNone(harness._get_force_plot_time_window())
 
+    def test_update_force_plot_returns_before_work_when_timeseries_hidden(self):
+        harness = ForceOverlayHarness()
+        harness.should_update_live_timeseries_display = lambda: False
+
+        harness.update_force_plot()
+
+        self.assertEqual(harness.sweep_count, 0)
+
     def test_plot_zero_threshold_flattens_small_force_jiggle(self):
         values = np.asarray([-0.025, -0.020, -0.005, 0.0, 0.019, 0.020, 0.030], dtype=np.float64)
 

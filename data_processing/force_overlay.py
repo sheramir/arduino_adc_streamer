@@ -80,6 +80,13 @@ class ForceOverlayMixin:
 
     def update_force_plot(self):
         """Update the force measurement plot with time-based alignment to ADC data."""
+        if hasattr(self, "should_update_live_timeseries_display"):
+            try:
+                if not self.should_update_live_timeseries_display():
+                    return
+            except Exception:
+                return
+
         state = get_force_runtime_state(self)
         show_x_force = self.force_x_checkbox and self.force_x_checkbox.isChecked()
         show_z_force = self.force_z_checkbox and self.force_z_checkbox.isChecked()

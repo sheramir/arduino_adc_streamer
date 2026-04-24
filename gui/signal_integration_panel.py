@@ -143,7 +143,6 @@ from constants.shear import (
     SHEAR_SETTINGS_SUBDIR,
     SHEAR_SETTINGS_VERTICAL_SPACING_PX,
     SHEAR_SETTINGS_VERSION,
-    SHEAR_VISUALIZATION_STRETCH,
 )
 from data_processing.adc_filter_engine import ADCFilterEngine, SCIPY_FILTERS_AVAILABLE
 from data_processing.normal_force_calculator import NormalForceCalculator, NormalForceResult
@@ -151,7 +150,6 @@ from data_processing.pressure_map_generator import PressureMapGenerator, Pressur
 from data_processing.shear_detector import ShearDetector, ShearResult
 from file_operations.settings_persistence import load_settings_payload, save_settings_payload
 from gui.pressure_map_widget import PressureMapWidget
-from gui.shear_visualization_widget import ShearVisualizationWidget
 
 
 class SignalIntegrationPanelMixin:
@@ -286,8 +284,6 @@ class SignalIntegrationPanelMixin:
         self.shear_detector = ShearDetector()
         self.normal_force_calculator = NormalForceCalculator()
         self.pressure_map_generator = PressureMapGenerator()
-        self.shear_visualization_widget = ShearVisualizationWidget()
-        root_layout.addWidget(self.shear_visualization_widget, stretch=SHEAR_VISUALIZATION_STRETCH)
         self.pressure_map_widget = PressureMapWidget()
         root_layout.addWidget(self.pressure_map_widget, stretch=PRESSURE_MAP_STRETCH)
         root_layout.addWidget(self._create_shear_visualization_settings_group())
@@ -931,17 +927,21 @@ class SignalIntegrationPanelMixin:
         Raises:
             None.
         """
-        if not hasattr(self, "shear_visualization_widget"):
+        if not hasattr(self, "pressure_map_widget"):
             return
 
-        self.shear_visualization_widget.configure(
+        self.pressure_map_widget.configure_arrow(
             arrow_gain=float(self.shear_arrow_gain_spin.value()),
             arrow_max_length_fraction=float(self.shear_arrow_max_length_spin.value()),
             arrow_min_threshold=float(self.shear_arrow_threshold_spin.value()),
             arrow_width_scales=bool(self.shear_arrow_width_scales_check.isChecked()),
             arrow_base_width_px=float(self.shear_arrow_base_width_spin.value()),
         )
-        self.shear_visualization_widget.update_display(self._latest_shear_result)
+        self.pressure_map_widget.update_display(
+            self._latest_normal_force_result,
+            self._latest_pressure_map_result,
+            self._latest_shear_result,
+        )
         self.save_last_shear_settings()
 
     def on_pressure_map_settings_changed(self, _value: object | None = None) -> None:
@@ -1135,25 +1135,21 @@ class SignalIntegrationPanelMixin:
         self._latest_shear_result = None
         self._latest_normal_force_result = None
         self._latest_pressure_map_result = None
-        if hasattr(self, "shear_visualization_widget"):
-            self.shear_visualization_widget.update_display(None)
         if hasattr(self, "pressure_map_widget"):
-            self.pressure_map_widget.update_display(None, None)
+            self.pressure_map_widget.update_display(None, None, None)
 
     def _update_shear_visualization_from_latest(self) -> None:
-        if not hasattr(self, "shear_visualization_widget"):
+        if not hasattr(self, "pressure_map_widget"):
             return
 
         latest_values = getattr(self, "_latest_signal_integration_values_by_position", {})
         if not all(position in latest_values for position in SHEAR_SENSOR_POSITIONS):
             self._latest_shear_result = None
-            self.shear_visualization_widget.update_display(None)
             self._update_pressure_map_from_latest()
             return
 
         calibrated_values = self._calibrate_signal_integration_values_for_shear(latest_values)
         self._latest_shear_result = self.shear_detector.detect(calibrated_values)
-        self.shear_visualization_widget.update_display(self._latest_shear_result)
         self._update_pressure_map_from_latest()
 
     def _update_pressure_map_from_latest(self) -> None:
@@ -1162,7 +1158,7 @@ class SignalIntegrationPanelMixin:
         if self._latest_shear_result is None:
             self._latest_normal_force_result = None
             self._latest_pressure_map_result = None
-            self.pressure_map_widget.update_display(None, None)
+            self.pressure_map_widget.update_display(None, None, None)
             return
 
         try:
@@ -1175,11 +1171,12 @@ class SignalIntegrationPanelMixin:
             self.pressure_map_widget.update_display(
                 self._latest_normal_force_result,
                 self._latest_pressure_map_result,
+                self._latest_shear_result,
             )
         except Exception as exc:
             self._latest_normal_force_result = None
             self._latest_pressure_map_result = None
-            self.pressure_map_widget.update_display(None, None)
+            self.pressure_map_widget.update_display(None, None, None)
             if hasattr(self, "log_status"):
                 self.log_status(f"ERROR updating Pressure Map visualization: {exc}")
 

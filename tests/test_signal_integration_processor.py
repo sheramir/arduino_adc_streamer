@@ -1,6 +1,7 @@
 """Tests for the live signal integration display-buffer adapter."""
 
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
@@ -81,7 +82,7 @@ class SignalIntegrationProcessorTests(unittest.TestCase):
             np.arange(self.SAMPLES_PER_SWEEP, dtype=np.float64),
             (sweep_count, 1),
         )
-        harness.process_signal_integration_block(
+        return harness.process_signal_integration_block(
             block,
             timestamps,
             physical_sample_interval_us,
@@ -104,6 +105,23 @@ class SignalIntegrationProcessorTests(unittest.TestCase):
         for buffers in harness.signal_integration_display_buffers.values():
             self.assertLessEqual(len(buffers["time"]), expected_capacity)
             self.assertLessEqual(len(buffers["value"]), expected_capacity)
+
+    def test_live_processing_queues_display_refresh_when_available(self):
+        harness = SignalIntegrationProcessorHarness()
+        trigger_count = 0
+
+        def trigger_update():
+            nonlocal trigger_count
+            trigger_count += 1
+
+        harness.trigger_signal_integration_update = trigger_update
+
+        with patch("data_processing.signal_integration_processor.time.time", return_value=1.0):
+            processed = self._process_block(harness)
+
+        self.assertTrue(processed)
+        self.assertEqual(trigger_count, 1)
+        self.assertEqual(harness.plot_update_count, 0)
 
     def test_display_snapshot_can_copy_only_requested_visible_labels(self):
         harness = SignalIntegrationProcessorHarness()

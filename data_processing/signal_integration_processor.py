@@ -1,11 +1,10 @@
 """
-Dormant signal integration processor for future ADC acquisition blocks.
+Streaming signal integration processor for live ADC acquisition blocks.
 
 This mixin keeps the standalone ``SignalIntegrator`` wired into the application
-state, but the live capture loop does not call it yet. The current Signal
-Integration tab deliberately reads the same raw ADC circular buffers as the
-Time Series tab so we can validate UI responsiveness before reintroducing HPF
-processing and then moving-sum integration.
+state so live pressure-map refreshes can consume small rolling display buffers
+instead of rebuilding the integrated window from the raw ADC ring on every
+frame.
 
 Dependencies:
     numpy, config channel utilities, constants modules, and
@@ -71,6 +70,7 @@ class SignalIntegrationProcessorMixin:
         self._signal_integration_display_buffer_capacity = self._calculate_signal_integration_display_capacity()
         self._signal_integration_data_signature = None
         self._signal_integration_last_error = ""
+        self._signal_integration_latest_sweep_time_sec: float | None = None
         self._last_signal_integration_plot_update_time = 0.0
         self.reset_signal_integration_state(clear_display=True)
 
@@ -96,6 +96,7 @@ class SignalIntegrationProcessorMixin:
         )
         self._signal_integration_data_signature = None
         self._signal_integration_last_error = ""
+        self._signal_integration_latest_sweep_time_sec = None
 
         if clear_display:
             self._clear_signal_integration_display_buffers()
@@ -147,7 +148,7 @@ class SignalIntegrationProcessorMixin:
         block_samples_array: np.ndarray,
         sweep_timestamps_sec: np.ndarray,
         avg_sample_time_us: float,
-    ) -> None:
+    ) -> bool:
         """Process one incoming ADC block through the SignalIntegrator.
 
         Args:
@@ -159,7 +160,8 @@ class SignalIntegrationProcessorMixin:
                 the MCU in microseconds.
 
         Returns:
-            None.
+            ``True`` when a valid signal-integration batch was processed;
+            otherwise ``False``.
 
         Raises:
             None. Recoverable extraction and filtering errors are logged through
@@ -172,7 +174,7 @@ class SignalIntegrationProcessorMixin:
                 avg_sample_time_us,
             )
             if batch is None:
-                return
+                return False
 
             signature = batch["signature"]
             if signature != self._signal_integration_data_signature:
@@ -196,14 +198,17 @@ class SignalIntegrationProcessorMixin:
                 batch["times_by_channel"],
                 channel_map,
             )
+            self._signal_integration_latest_sweep_time_sec = float(np.max(sweep_timestamps_sec))
             self._signal_integration_last_error = ""
             self._maybe_update_signal_integration_plot()
+            return True
         except Exception as exc:
             message = f"Signal integration unavailable: {exc}"
             if message != self._signal_integration_last_error:
                 self._signal_integration_last_error = message
                 if hasattr(self, "log_status"):
                     self.log_status(message)
+            return False
 
     def get_signal_integration_display_snapshot(
         self,
@@ -619,4 +624,7 @@ class SignalIntegrationProcessorMixin:
             return
 
         self._last_signal_integration_plot_update_time = now
-        self.update_signal_integration_plot()
+        if hasattr(self, "trigger_signal_integration_update"):
+            self.trigger_signal_integration_update()
+        else:
+            self.update_signal_integration_plot()

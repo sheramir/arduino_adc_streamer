@@ -195,6 +195,19 @@ class BinaryProcessorMixin:
                 self._cached_avg_sample_time_sec = (
                     avg_sample_time_us / 1_000_000.0 if avg_sample_time_us > 0 else 0.0
                 )
+                signal_integration_processed = False
+                if (
+                    hasattr(self, 'process_signal_integration_block')
+                    and hasattr(self, 'should_update_signal_integration_display')
+                    and self.should_update_signal_integration_display()
+                ):
+                    signal_integration_processed = bool(
+                        self.process_signal_integration_block(
+                            block_samples_array,
+                            sweep_timestamps_sec,
+                            avg_sample_time_us,
+                        )
+                    )
 
                 # --- Enqueue archive write (handled by background ArchiveWriterThread) ---
                 if store_capture_data and getattr(self, '_archive_writer', None):
@@ -219,7 +232,8 @@ class BinaryProcessorMixin:
                         self.update_plot()
                         self.update_force_plot()
                     elif (
-                        hasattr(self, 'should_update_signal_integration_display')
+                        not signal_integration_processed
+                        and hasattr(self, 'should_update_signal_integration_display')
                         and self.should_update_signal_integration_display()
                         and now - getattr(self, '_last_signal_integration_plot_update_time', 0.0)
                         >= SIGNAL_INTEGRATION_PLOT_UPDATE_INTERVAL_SEC

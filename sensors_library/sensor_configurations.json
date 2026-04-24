@@ -54,11 +54,11 @@
     {
       "name": "Array_V2",
       "channel_sensor_map": [
-        "T",
-        "R",
-        "C",
         "B",
-        "L"
+        "L",
+        "C",
+        "R",
+        "T"
       ],
       "type": "array_layout",
       "reverse_polarity": false,

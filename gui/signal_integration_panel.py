@@ -1155,9 +1155,6 @@ class SignalIntegrationPanelMixin:
 
         desired_curve_keys = set()
         latest_integrated_by_position: dict[str, float] = {}
-        current_values = {}
-        if hasattr(self, "get_signal_integration_current_display_values"):
-            current_values = self.get_signal_integration_current_display_values()
 
         for _spec_index, spec, position in display_entries:
             series = snapshot.get(position)
@@ -1171,10 +1168,7 @@ class SignalIntegrationPanelMixin:
             sample_count = min(channel_times.size, channel_data.size)
             channel_times = channel_times[-sample_count:]
             channel_data = channel_data[-sample_count:]
-            if position in current_values:
-                latest_integrated_by_position[position] = float(current_values[position])
-            else:
-                latest_integrated_by_position[position] = float(channel_data[-1])
+            latest_integrated_by_position[position] = float(channel_data[-1])
 
             color = PLOT_COLORS[spec["color_slot"] % len(PLOT_COLORS)]
             pen = pg.mkPen(color=color, width=SIGNAL_INTEGRATION_PLOT_LINE_WIDTH)

@@ -44,9 +44,6 @@ from constants.signal_integration import (
 from data_processing.signal_integrator import SignalIntegrator
 
 
-SIGNAL_INTEGRATION_SAMPLE_RATE_TOLERANCE_FRACTION = 0.005
-
-
 class SignalIntegrationProcessorMixin:
     """Own dormant integration state for the first 5-channel sensor package.
 
@@ -74,7 +71,6 @@ class SignalIntegrationProcessorMixin:
         self._signal_integration_data_signature = None
         self._signal_integration_last_error = ""
         self._signal_integration_latest_sweep_time_sec: float | None = None
-        self._signal_integration_stable_sample_rate_hz: float | None = None
         self._last_signal_integration_plot_update_time = 0.0
         self.reset_signal_integration_state(clear_display=True)
 
@@ -101,7 +97,6 @@ class SignalIntegrationProcessorMixin:
         self._signal_integration_data_signature = None
         self._signal_integration_last_error = ""
         self._signal_integration_latest_sweep_time_sec = None
-        self._signal_integration_stable_sample_rate_hz = None
 
         if clear_display:
             self._clear_signal_integration_display_buffers()
@@ -190,7 +185,7 @@ class SignalIntegrationProcessorMixin:
                 self.reset_signal_integration_state(clear_display=True)
 
             channel_map = batch["channel_map"]
-            sample_rate_hz = self._stable_signal_integration_sample_rate(float(batch["sample_rate_hz"]))
+            sample_rate_hz = float(batch["sample_rate_hz"])
             self._refresh_signal_integration_display_buffer_shape(sample_rate_hz=sample_rate_hz)
             self.signal_integrator.update_parameters(channel_map=channel_map)
             integrated_outputs = self.signal_integrator.process(
@@ -260,28 +255,6 @@ class SignalIntegrationProcessorMixin:
         if self.signal_integrator is None:
             return {}
         return self.signal_integrator.get_current_values()
-
-    def get_signal_integration_current_display_values(self) -> dict[Hashable, float]:
-        """Return latest integrated values after display polarity is applied."""
-        current_values = self.get_signal_integration_current_values()
-        return {
-            label: float(self._apply_signal_integration_polarity(np.asarray([value], dtype=np.float64))[0])
-            for label, value in current_values.items()
-        }
-
-    def _stable_signal_integration_sample_rate(self, sample_rate_hz: float) -> float:
-        sample_rate = float(sample_rate_hz)
-        previous = self._signal_integration_stable_sample_rate_hz
-        if previous is None or previous <= 0.0:
-            self._signal_integration_stable_sample_rate_hz = sample_rate
-            return sample_rate
-
-        relative_change = abs(sample_rate - previous) / max(abs(previous), 1e-12)
-        if relative_change <= SIGNAL_INTEGRATION_SAMPLE_RATE_TOLERANCE_FRACTION:
-            return float(previous)
-
-        self._signal_integration_stable_sample_rate_hz = sample_rate
-        return sample_rate
 
     def _build_signal_integration_channel_map(self) -> dict[int, Hashable]:
         if hasattr(self, "get_active_channel_sensor_map"):

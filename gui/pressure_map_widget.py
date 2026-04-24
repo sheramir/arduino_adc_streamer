@@ -20,11 +20,15 @@ from PyQt6.QtGui import QColor, QPen
 from PyQt6.QtWidgets import QGraphicsEllipseItem, QLabel, QVBoxLayout, QWidget
 
 from constants.shear import (
+    NORMAL_FORCE_SENSOR_COUNT,
     PRESSURE_MAP_CIRCLE_Z,
-    PRESSURE_MAP_COLORMAP_NAME,
+    PRESSURE_MAP_COLORMAP_MAX_COLOR,
+    PRESSURE_MAP_COLORMAP_MIN_COLOR,
     PRESSURE_MAP_COLORMAP_POINTS,
     PRESSURE_MAP_IMAGE_Z,
     PRESSURE_MAP_LEVEL_EPSILON,
+    PRESSURE_MAP_LEVEL_SCALE_ALL_SENSORS,
+    PRESSURE_MAP_LEVEL_SCALE_SINGLE_SENSOR,
     PRESSURE_MAP_PLOT_MIN_HEIGHT_PX,
     PRESSURE_MAP_SENSOR_MARKER_BRUSH_COLOR,
     PRESSURE_MAP_SENSOR_MARKER_PEN_COLOR,
@@ -86,8 +90,7 @@ class PressureMapWidget(QWidget):
 
         self.image_item = pg.ImageItem()
         self.image_item.setZValue(PRESSURE_MAP_IMAGE_Z)
-        color_map = pg.colormap.get(PRESSURE_MAP_COLORMAP_NAME)
-        self.image_item.setLookupTable(color_map.getLookupTable(nPts=PRESSURE_MAP_COLORMAP_POINTS))
+        self.image_item.setLookupTable(self._grayscale_lookup_table())
         self.plot_widget.addItem(self.image_item)
 
         self.circle_item: QGraphicsEllipseItem | None = None
@@ -124,7 +127,7 @@ class PressureMapWidget(QWidget):
             self.plot_widget.getPlotItem().getViewBox().update()
             return
 
-        self._update_image(pressure_result)
+        self._update_image(normal_force_result, pressure_result)
         self._update_boundary(pressure_result)
         self._update_sensor_markers(pressure_result)
         self._update_readout(normal_force_result, pressure_result)
@@ -139,8 +142,12 @@ class PressureMapWidget(QWidget):
         )
         self.sensor_marker_item.setData([])
 
-    def _update_image(self, pressure_result: PressureMapResult) -> None:
-        levels = self._pressure_levels(pressure_result.pressure_grid)
+    def _update_image(
+        self,
+        normal_force_result: NormalForceResult,
+        pressure_result: PressureMapResult,
+    ) -> None:
+        levels = self._pressure_levels(normal_force_result, pressure_result.pressure_grid)
         self.image_item.setImage(
             pressure_result.pressure_grid.T,
             autoLevels=False,
@@ -152,15 +159,44 @@ class PressureMapWidget(QWidget):
         self.plot_widget.setXRange(-half_extent, half_extent, padding=SHEAR_ZERO_VALUE)
         self.plot_widget.setYRange(-half_extent, half_extent, padding=SHEAR_ZERO_VALUE)
 
-    def _pressure_levels(self, pressure_grid: np.ndarray) -> tuple[float, float]:
+    def _pressure_levels(
+        self,
+        normal_force_result: NormalForceResult,
+        pressure_grid: np.ndarray,
+    ) -> tuple[float, float]:
         finite_values = np.asarray(pressure_grid[np.isfinite(pressure_grid)], dtype=np.float64)
         if finite_values.size == 0:
             return (PRESSURE_MAP_ZERO_LEVEL_MIN, PRESSURE_MAP_ZERO_LEVEL_MAX)
-        min_value = float(np.min(finite_values))
-        max_value = float(np.max(finite_values))
-        if abs(max_value - min_value) <= PRESSURE_MAP_LEVEL_EPSILON:
-            return (PRESSURE_MAP_ZERO_LEVEL_MIN, max(PRESSURE_MAP_ZERO_LEVEL_MAX, max_value))
-        return (min_value, max_value)
+        positive_max = max(PRESSURE_MAP_ZERO_LEVEL_MIN, float(np.max(finite_values)))
+        if positive_max <= PRESSURE_MAP_LEVEL_EPSILON:
+            return (PRESSURE_MAP_ZERO_LEVEL_MIN, PRESSURE_MAP_ZERO_LEVEL_MAX)
+        active_sensor_count = self._active_sensor_count(normal_force_result)
+        level_scale = self._level_scale_for_active_sensors(active_sensor_count)
+        return (PRESSURE_MAP_ZERO_LEVEL_MIN, positive_max * level_scale)
+
+    def _grayscale_lookup_table(self) -> np.ndarray:
+        color_map = pg.ColorMap(
+            [PRESSURE_MAP_ZERO_LEVEL_MIN, PRESSURE_MAP_ZERO_LEVEL_MAX],
+            [PRESSURE_MAP_COLORMAP_MIN_COLOR, PRESSURE_MAP_COLORMAP_MAX_COLOR],
+        )
+        return color_map.getLookupTable(nPts=PRESSURE_MAP_COLORMAP_POINTS)
+
+    def _active_sensor_count(self, normal_force_result: NormalForceResult) -> int:
+        return sum(
+            1
+            for value in normal_force_result.residual.values()
+            if abs(value) > PRESSURE_MAP_LEVEL_EPSILON
+        )
+
+    def _level_scale_for_active_sensors(self, active_sensor_count: int) -> float:
+        if NORMAL_FORCE_SENSOR_COUNT <= 1:
+            return PRESSURE_MAP_LEVEL_SCALE_SINGLE_SENSOR
+        clamped_count = max(1, min(NORMAL_FORCE_SENSOR_COUNT, int(active_sensor_count)))
+        sensor_fraction = (clamped_count - 1) / float(NORMAL_FORCE_SENSOR_COUNT - 1)
+        return PRESSURE_MAP_LEVEL_SCALE_SINGLE_SENSOR + (
+            sensor_fraction
+            * (PRESSURE_MAP_LEVEL_SCALE_ALL_SENSORS - PRESSURE_MAP_LEVEL_SCALE_SINGLE_SENSOR)
+        )
 
     def _update_boundary(self, pressure_result: PressureMapResult) -> None:
         radius = float(pressure_result.total_extent_mm) / PRESSURE_GRID_MARGIN_SIDE_COUNT

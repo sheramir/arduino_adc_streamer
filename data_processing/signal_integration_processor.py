@@ -21,7 +21,7 @@ from typing import Hashable, Iterable
 import numpy as np
 
 from config.channel_utils import unique_channels_in_order
-from constants.plotting import MICROSECONDS_PER_SECOND
+from constants.plotting import IADC_RESOLUTION_BITS, MICROSECONDS_PER_SECOND
 from constants.sensor_config import (
     SENSOR_POLARITY_NORMAL_MULTIPLIER,
     SENSOR_POLARITY_REVERSED_MULTIPLIER,
@@ -381,7 +381,9 @@ class SignalIntegrationProcessorMixin:
             if index_array.size == 0 or np.max(index_array) >= block.shape[1]:
                 return None
 
-            samples_by_channel[channel_index] = block[:, index_array].reshape(-1)
+            samples_by_channel[channel_index] = self._convert_signal_integration_counts_to_voltage(
+                block[:, index_array].reshape(-1)
+            )
             time_matrix = timestamps.reshape(-1, 1) + (
                 index_array.astype(np.float64).reshape(1, -1) * sample_interval_sec
             )
@@ -413,6 +415,14 @@ class SignalIntegrationProcessorMixin:
             "channel_map": channel_map,
             "signature": signature,
         }
+
+    def _convert_signal_integration_counts_to_voltage(self, adc_counts: np.ndarray) -> np.ndarray:
+        max_adc_value = float((2 ** IADC_RESOLUTION_BITS) - 1)
+        if hasattr(self, "get_vref_voltage"):
+            vref = float(self.get_vref_voltage())
+        else:
+            vref = 1.0
+        return (np.asarray(adc_counts, dtype=np.float64) / max_adc_value) * vref
 
     def _get_first_signal_integration_group(self, channels: list[int]) -> dict[str, object] | None:
         if hasattr(self, "get_sensor_package_groups"):

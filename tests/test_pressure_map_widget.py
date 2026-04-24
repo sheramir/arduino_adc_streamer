@@ -63,6 +63,14 @@ class PressureMapWidgetTests(unittest.TestCase):
         self.assertEqual(single_levels, (0.0, 6.0))
         self.assertEqual(all_levels, (0.0, 12.0))
 
+    def test_pressure_levels_use_tension_magnitude(self):
+        pressure_grid = np.array([[-4.0, 0.0], [-2.0, -1.0]], dtype=np.float64)
+        tension_result = self.calculator.compute({"C": -4.0, "R": 0.0, "T": 0.0, "L": 0.0, "B": 0.0})
+
+        levels = self.widget._pressure_levels(tension_result, pressure_grid)
+
+        self.assertEqual(levels, (0.0, 4.0))
+
 
 if __name__ == "__main__":
     unittest.main()

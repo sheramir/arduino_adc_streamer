@@ -149,7 +149,7 @@ class PressureMapWidget(QWidget):
     ) -> None:
         levels = self._pressure_levels(normal_force_result, pressure_result.pressure_grid)
         self.image_item.setImage(
-            pressure_result.pressure_grid.T,
+            np.abs(pressure_result.pressure_grid).T,
             autoLevels=False,
             levels=levels,
         )
@@ -167,12 +167,12 @@ class PressureMapWidget(QWidget):
         finite_values = np.asarray(pressure_grid[np.isfinite(pressure_grid)], dtype=np.float64)
         if finite_values.size == 0:
             return (PRESSURE_MAP_ZERO_LEVEL_MIN, PRESSURE_MAP_ZERO_LEVEL_MAX)
-        positive_max = max(PRESSURE_MAP_ZERO_LEVEL_MIN, float(np.max(finite_values)))
-        if positive_max <= PRESSURE_MAP_LEVEL_EPSILON:
+        magnitude_max = max(PRESSURE_MAP_ZERO_LEVEL_MIN, float(np.max(np.abs(finite_values))))
+        if magnitude_max <= PRESSURE_MAP_LEVEL_EPSILON:
             return (PRESSURE_MAP_ZERO_LEVEL_MIN, PRESSURE_MAP_ZERO_LEVEL_MAX)
         active_sensor_count = self._active_sensor_count(normal_force_result)
         level_scale = self._level_scale_for_active_sensors(active_sensor_count)
-        return (PRESSURE_MAP_ZERO_LEVEL_MIN, positive_max * level_scale)
+        return (PRESSURE_MAP_ZERO_LEVEL_MIN, magnitude_max * level_scale)
 
     def _grayscale_lookup_table(self) -> np.ndarray:
         color_map = pg.ColorMap(

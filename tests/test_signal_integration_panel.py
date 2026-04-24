@@ -108,10 +108,6 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         harness.pressure_circle_diameter_spin = DummySpinBox(5.5)
         harness.pressure_grid_resolution_spin = DummySpinBox(25)
         harness.pressure_grid_margin_spin = DummySpinBox(3)
-        harness.pressure_idw_power_spin = DummySpinBox(2.5)
-        harness.pressure_decay_rate_spin = DummySpinBox(0.9)
-        harness.pressure_decay_ref_distance_spin = DummySpinBox(1.6)
-        harness.pressure_kernel_radius_spin = DummySpinBox(0.8)
 
     def test_counts_to_voltage_ignores_time_series_units(self):
         harness = SignalIntegrationPanelHarness()
@@ -262,18 +258,20 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             self.assertEqual(settings["processing"]["noise_threshold"], 0.75)
             self.assertEqual(settings["processing"]["sensor_gains"]["C"], 1.25)
             self.assertFalse(settings["visualization"]["arrow_width_scales"])
+            self.assertEqual(settings["pressure_map"]["sensor_spacing_mm"], 1.75)
+            self.assertEqual(settings["pressure_map"]["circle_diameter_mm"], 5.5)
             self.assertEqual(settings["pressure_map"]["grid_resolution"], 25)
             self.assertEqual(settings["pressure_map"]["grid_margin"], 3)
-            self.assertEqual(settings["pressure_map"]["idw_power"], 2.5)
 
             harness.signal_integration_hpf_spin.setValue(1.0)
             harness.signal_integration_window_spin.setValue(2)
             harness.shear_noise_threshold_spin.setValue(3.0)
             harness.shear_gain_spins["C"].setValue(4.0)
             harness.shear_arrow_width_scales_check.setChecked(True)
+            harness.pressure_sensor_spacing_spin.setValue(2.0)
+            harness.pressure_circle_diameter_spin.setValue(6.0)
             harness.pressure_grid_resolution_spin.setValue(21)
             harness.pressure_grid_margin_spin.setValue(1)
-            harness.pressure_idw_power_spin.setValue(1.0)
 
             applied = harness.load_shear_settings_from_path(settings_path, log_message=True)
 
@@ -283,9 +281,10 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             self.assertEqual(harness.shear_noise_threshold_spin.value(), 0.75)
             self.assertEqual(harness.shear_gain_spins["C"].value(), 1.25)
             self.assertFalse(harness.shear_arrow_width_scales_check.isChecked())
+            self.assertEqual(harness.pressure_sensor_spacing_spin.value(), 1.75)
+            self.assertEqual(harness.pressure_circle_diameter_spin.value(), 5.5)
             self.assertEqual(harness.pressure_grid_resolution_spin.value(), 25)
             self.assertEqual(harness.pressure_grid_margin_spin.value(), 3)
-            self.assertEqual(harness.pressure_idw_power_spin.value(), 2.5)
 
     def test_pressure_map_tab_controls_expose_tooltips(self):
         harness = SignalIntegrationPanelHarness()
@@ -309,10 +308,6 @@ class SignalIntegrationPanelTests(unittest.TestCase):
                 "pressure_circle_diameter_spin": "pressure footprint",
                 "pressure_grid_resolution_spin": "grid cells across the pressure-circle diameter",
                 "pressure_grid_margin_spin": "extra grid cells",
-                "pressure_idw_power_spin": "inverse-distance weighting",
-                "pressure_decay_rate_spin": "quadrant peak height",
-                "pressure_decay_ref_distance_spin": "reference distance",
-                "pressure_kernel_radius_spin": "additive pressure kernel",
             }
 
             for widget_name, expected_text in expected_tooltips.items():

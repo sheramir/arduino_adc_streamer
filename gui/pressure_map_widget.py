@@ -2,9 +2,9 @@
 Pressure-map visualization widget for the five-sensor piezo package.
 
 The widget renders the Step 6 backend pressure grid as a heatmap with static
-sensor markers, the extended circular map boundary, optional active peak
-markers, and a numeric normal-force readout. It is designed to live inside the
-Pressure Map tab below the shear-arrow visualization.
+sensor markers, the extended circular map boundary, and a numeric normal-force
+readout. It is designed to live inside the Pressure Map tab below the shear
+arrow visualization.
 
 Dependencies:
     PyQt6, pyqtgraph, constants.shear, data_processing.normal_force_calculator,
@@ -25,11 +25,6 @@ from constants.shear import (
     PRESSURE_MAP_COLORMAP_POINTS,
     PRESSURE_MAP_IMAGE_Z,
     PRESSURE_MAP_LEVEL_EPSILON,
-    PRESSURE_MAP_PEAK_MARKER_BRUSH_COLOR,
-    PRESSURE_MAP_PEAK_MARKER_PEN_COLOR,
-    PRESSURE_MAP_PEAK_MARKER_PEN_WIDTH_PX,
-    PRESSURE_MAP_PEAK_MARKER_SIZE_PX,
-    PRESSURE_MAP_PEAK_MARKER_SYMBOL,
     PRESSURE_MAP_PLOT_MIN_HEIGHT_PX,
     PRESSURE_MAP_SENSOR_MARKER_BRUSH_COLOR,
     PRESSURE_MAP_SENSOR_MARKER_PEN_COLOR,
@@ -37,7 +32,6 @@ from constants.shear import (
     PRESSURE_MAP_SENSOR_MARKER_SIZE_PX,
     PRESSURE_MAP_SENSOR_MARKER_SYMBOL,
     PRESSURE_MAP_SENSOR_Z,
-    PRESSURE_MAP_PEAK_Z,
     PRESSURE_MAP_WIDGET_MIN_HEIGHT_PX,
     PRESSURE_MAP_ZERO_LEVEL_MAX,
     PRESSURE_MAP_ZERO_LEVEL_MIN,
@@ -101,10 +95,6 @@ class PressureMapWidget(QWidget):
         self.sensor_marker_item.setZValue(PRESSURE_MAP_SENSOR_Z)
         self.plot_widget.addItem(self.sensor_marker_item)
 
-        self.peak_marker_item = pg.ScatterPlotItem()
-        self.peak_marker_item.setZValue(PRESSURE_MAP_PEAK_Z)
-        self.plot_widget.addItem(self.peak_marker_item)
-
         self.update_display(None, None)
 
     def update_display(
@@ -137,7 +127,6 @@ class PressureMapWidget(QWidget):
         self._update_image(pressure_result)
         self._update_boundary(pressure_result)
         self._update_sensor_markers(pressure_result)
-        self._update_peak_markers(pressure_result)
         self._update_readout(normal_force_result, pressure_result)
         self.plot_widget.getPlotItem().getViewBox().update()
 
@@ -149,7 +138,6 @@ class PressureMapWidget(QWidget):
             levels=(PRESSURE_MAP_ZERO_LEVEL_MIN, PRESSURE_MAP_ZERO_LEVEL_MAX),
         )
         self.sensor_marker_item.setData([])
-        self.peak_marker_item.setData([])
 
     def _update_image(self, pressure_result: PressureMapResult) -> None:
         levels = self._pressure_levels(pressure_result.pressure_grid)
@@ -207,23 +195,6 @@ class PressureMapWidget(QWidget):
     def _sensor_positions_from_result(self, pressure_result: PressureMapResult) -> dict[str, tuple[float, float]]:
         return dict(pressure_result.sensor_positions)
 
-    def _update_peak_markers(self, pressure_result: PressureMapResult) -> None:
-        spots = [
-            {
-                "pos": (peak.x_mm, peak.y_mm),
-                "data": peak.source,
-                "symbol": PRESSURE_MAP_PEAK_MARKER_SYMBOL,
-                "size": PRESSURE_MAP_PEAK_MARKER_SIZE_PX,
-                "pen": pg.mkPen(
-                    PRESSURE_MAP_PEAK_MARKER_PEN_COLOR,
-                    width=PRESSURE_MAP_PEAK_MARKER_PEN_WIDTH_PX,
-                ),
-                "brush": pg.mkBrush(PRESSURE_MAP_PEAK_MARKER_BRUSH_COLOR),
-            }
-            for peak in pressure_result.peaks
-        ]
-        self.peak_marker_item.setData(spots)
-
     def _update_readout(
         self,
         normal_force_result: NormalForceResult,
@@ -234,5 +205,5 @@ class PressureMapWidget(QWidget):
         y_coord = f"{normal_force_result.y_mm:.{SHEAR_COMPONENT_DECIMALS}f}"
         self.readout_label.setText(
             f"Normal: {normal_force_result.force_type} {total_force} | "
-            f"Pos: ({x_coord}, {y_coord}) mm | Peaks: {len(pressure_result.peaks)}"
+            f"Pos: ({x_coord}, {y_coord}) mm | Quadrants: {len(pressure_result.active_quadrants)}"
         )

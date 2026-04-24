@@ -31,18 +31,18 @@ class PressureMapWidgetTests(unittest.TestCase):
         self.widget.update_display(None, None)
 
         self.assertEqual(self.widget.readout_label.text(), "No Data")
-        self.assertEqual(len(self.widget.peak_marker_item.points()), 0)
+        self.assertEqual(len(self.widget.sensor_marker_item.points()), 0)
 
-    def test_update_display_shows_force_readout_and_peak_marker(self):
+    def test_update_display_shows_force_readout_and_sensor_markers(self):
         normal_result = self.calculator.compute({"C": 0.0, "R": 5.0, "T": 0.0, "L": 0.0, "B": 0.0})
         pressure_result = self.generator.generate(normal_result.normalized)
 
         self.widget.update_display(normal_result, pressure_result)
 
         self.assertIn("Normal:", self.widget.readout_label.text())
-        self.assertIn("Peaks:", self.widget.readout_label.text())
+        self.assertIn("Quadrants:", self.widget.readout_label.text())
         self.assertEqual(self.widget.last_pressure_result, pressure_result)
-        self.assertEqual(len(self.widget.peak_marker_item.points()), len(pressure_result.peaks))
+        self.assertEqual(len(self.widget.sensor_marker_item.points()), len(pressure_result.sensor_positions))
         self.assertTrue(self.widget.circle_item.isVisible())
 
 

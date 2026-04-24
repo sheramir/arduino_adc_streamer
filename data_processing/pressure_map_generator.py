@@ -1,43 +1,36 @@
 """
 Pressure-grid generation from normalized five-sensor piezo signals.
 
-This module implements Step 6 of the Shear & Pressure Map pipeline. It accepts
-the normalized signals produced by ``NormalForceCalculator``, identifies active
-quadrant peaks and isolated sensor fallback peaks, and renders an additive
-decay-kernel pressure grid. The circular grid coordinates and mask are
-precomputed at initialization so per-frame work stays small.
+This module implements the revised Step 6 backend using one linear plane per
+quadrant instead of point peaks with radial decay kernels. Each active
+quadrant fits an exact plane through its three sensor values and evaluates that
+plane only inside the quadrant's spatial region. The circular grid geometry
+and quadrant masks are precomputed at initialization so per-frame work stays
+small.
 
 Dependencies:
-    Python math utilities, dataclasses, numpy, and constants.shear.
+    dataclasses, numpy, and constants.shear.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-import math
 
 import numpy as np
 
 from constants.shear import (
     DEFAULT_CIRCLE_DIAMETER_MM,
-    DEFAULT_PRESSURE_DECAY_RATE,
-    DEFAULT_PRESSURE_DECAY_REF_DISTANCE_MM,
     DEFAULT_PRESSURE_GRID_MARGIN,
     DEFAULT_PRESSURE_GRID_RESOLUTION,
-    DEFAULT_PRESSURE_IDW_POWER,
     DEFAULT_PRESSURE_SENSOR_SPACING_MM,
+    PRESSURE_ACTIVE_QUADRANTS,
     PRESSURE_AXIS_NEGATIVE_DIRECTION,
     PRESSURE_AXIS_POSITIVE_DIRECTION,
-    PRESSURE_DISTANCE_EPSILON_MM,
     PRESSURE_GRID_MARGIN_SIDE_COUNT,
     PRESSURE_GRID_MIN_MARGIN,
     PRESSURE_GRID_MIN_RESOLUTION,
-    PRESSURE_KERNEL_CAP,
-    PRESSURE_KERNEL_RADIUS_SENSOR_SPACING_DIVISOR,
     PRESSURE_OUTSIDE_MASK_VALUE,
-    PRESSURE_PEAK_KIND_FALLBACK,
-    PRESSURE_PEAK_KIND_QUADRANT,
     PRESSURE_QUADRANT_BOTTOM_LEFT,
     PRESSURE_QUADRANT_BOTTOM_RIGHT,
     PRESSURE_QUADRANT_TOP_LEFT,
@@ -53,29 +46,30 @@ from constants.shear import (
 
 
 @dataclass(frozen=True, slots=True)
-class PressurePeak:
-    """Peak source used by the additive pressure-map kernel.
+class PressureQuadrantPlane:
+    """Plane coefficients for one active pressure-map quadrant.
 
     Args:
-        source: Quadrant label (``TR``, ``TL``, ``BL``, ``BR``) or sensor
-            position label (``C``, ``L``, ``R``, ``T``, ``B``).
-        kind: ``quadrant`` for ratio-estimated peaks or ``fallback`` for
-            isolated single-sensor peaks.
-        x_mm: Peak x coordinate in millimeters.
-        y_mm: Peak y coordinate in millimeters.
-        height: Signed peak height in force-like signal units.
-        sensors: Sensor positions that contributed to this peak.
+        label: Quadrant label such as ``TR`` or ``BL``.
+        a: Plane x coefficient in ``z = a*x + b*y + c``.
+        b: Plane y coefficient in ``z = a*x + b*y + c``.
+        c: Plane offset, equal to the center sensor value.
+        sign: Dominant sign of the nonzero quadrant sensors. Positive means
+            compression-like values should be clamped at zero from below;
+            negative means tension-like values should be clamped at zero from
+            above.
+        sensors: The three sensor positions used to fit the plane.
 
     Usage example:
-        peak = PressurePeak("TR", "quadrant", 1.0, 1.0, 5.0, ("C", "R", "T"))
-        assert peak.x_mm > 0.0
+        plane = PressureQuadrantPlane("TR", 1.0, 2.0, 3.0, 1.0, ("C", "R", "T"))
+        assert plane.c == 3.0
     """
 
-    source: str
-    kind: str
-    x_mm: float
-    y_mm: float
-    height: float
+    label: str
+    a: float
+    b: float
+    c: float
+    sign: float
     sensors: tuple[str, ...]
 
 
@@ -87,9 +81,8 @@ class PressureMapResult:
         pressure_grid: 2D pressure values with shape
             ``(total_grid_side, total_grid_side)``.
         circle_mask: Boolean mask for cells inside the extended circular map.
-        peaks: Active quadrant and fallback peaks used to build the grid.
-        active_quadrants: Quadrant labels that were active before fallback
-            peaks were added.
+        active_quadrants: Quadrant labels that were active for this sample.
+        quadrant_planes: Plane coefficients for the active quadrants.
         x_coordinates_mm: 1D grid x coordinates in millimeters.
         y_coordinates_mm: 1D grid y coordinates in millimeters.
         x_grid_mm: 2D x-coordinate mesh in millimeters.
@@ -99,14 +92,14 @@ class PressureMapResult:
         total_extent_mm: Diameter of the extended circular grid.
 
     Usage example:
-        result = PressureMapGenerator().generate({"C": 0, "R": 5, "T": 5, "L": 0, "B": 0})
-        assert result.peaks
+        result = PressureMapGenerator().generate({"C": 10, "R": 5, "T": 3, "L": 0, "B": 0})
+        assert result.active_quadrants
     """
 
     pressure_grid: np.ndarray
     circle_mask: np.ndarray
-    peaks: tuple[PressurePeak, ...]
     active_quadrants: tuple[str, ...]
+    quadrant_planes: tuple[PressureQuadrantPlane, ...]
     x_coordinates_mm: np.ndarray
     y_coordinates_mm: np.ndarray
     x_grid_mm: np.ndarray
@@ -123,21 +116,17 @@ class _QuadrantDefinition:
     vertical_sensor: str
     horizontal_sign: float
     vertical_sign: float
+    sensors: tuple[str, ...]
 
 
 class PressureMapGenerator:
-    """Generate additive decay-kernel pressure maps from normalized signals.
+    """Generate piecewise-linear pressure maps from normalized signals.
 
     Args:
         circle_diameter_mm: Diameter of the sensor footprint circle.
         sensor_spacing_mm: Center-to-outer sensor spacing in millimeters.
         grid_margin: Extra cells beyond the sensor circle on each side.
         grid_resolution: Cells per side across the sensor circle diameter.
-        idw_power: Exponent used for peak-height IDW and kernel decay.
-        decay_rate: Signal decay factor used when extrapolating peak height.
-        decay_ref_distance_mm: Reference distance for peak-height decay.
-        peak_kernel_radius_mm: Kernel radius ``r0``. When ``None``, defaults to
-            ``sensor_spacing_mm / 2``.
 
     Usage example:
         generator = PressureMapGenerator(grid_resolution=21, grid_margin=2)
@@ -151,23 +140,11 @@ class PressureMapGenerator:
         sensor_spacing_mm: float = DEFAULT_PRESSURE_SENSOR_SPACING_MM,
         grid_margin: int = DEFAULT_PRESSURE_GRID_MARGIN,
         grid_resolution: int = DEFAULT_PRESSURE_GRID_RESOLUTION,
-        idw_power: float = DEFAULT_PRESSURE_IDW_POWER,
-        decay_rate: float = DEFAULT_PRESSURE_DECAY_RATE,
-        decay_ref_distance_mm: float = DEFAULT_PRESSURE_DECAY_REF_DISTANCE_MM,
-        peak_kernel_radius_mm: float | None = None,
     ) -> None:
         self.circle_diameter_mm = float(circle_diameter_mm)
         self.sensor_spacing_mm = float(sensor_spacing_mm)
         self.grid_margin = int(grid_margin)
         self.grid_resolution = int(grid_resolution)
-        self.idw_power = float(idw_power)
-        self.decay_rate = float(decay_rate)
-        self.decay_ref_distance_mm = float(decay_ref_distance_mm)
-        self.peak_kernel_radius_mm = (
-            float(peak_kernel_radius_mm)
-            if peak_kernel_radius_mm is not None
-            else self.sensor_spacing_mm / PRESSURE_KERNEL_RADIUS_SENSOR_SPACING_DIVISOR
-        )
 
         self._validate_parameters()
         self.sensor_positions = self._build_sensor_positions()
@@ -199,6 +176,7 @@ class PressureMapGenerator:
             np.hypot(self.x_grid_mm, self.y_grid_mm)
             <= self.total_extent_mm / PRESSURE_GRID_MARGIN_SIDE_COUNT
         )
+        self.quadrant_region_masks = self._build_quadrant_region_masks()
 
     def generate(self, normalized_signals: Mapping[str, float]) -> PressureMapResult:
         """Generate a pressure map from one normalized five-sensor sample.
@@ -208,21 +186,20 @@ class PressureMapGenerator:
                 ``B``. Missing positions are treated as zero.
 
         Returns:
-            PressureMapResult containing the pressure grid, mask, active peaks,
-            active quadrants, and grid coordinate metadata.
+            PressureMapResult containing the pressure grid, mask, active
+            quadrant labels, active plane coefficients, and grid metadata.
 
         Raises:
             TypeError: If a supplied signal value cannot be converted to float.
         """
         signals = self._normalize_signals(normalized_signals)
-        quadrant_peaks, active_quadrants = self._build_quadrant_peaks(signals)
-        peaks = tuple(quadrant_peaks + self._build_fallback_peaks(signals, active_quadrants))
-        pressure_grid = self._build_pressure_grid(peaks)
+        quadrant_planes = self._build_active_quadrant_planes(signals)
+        pressure_grid = self._build_pressure_grid(quadrant_planes)
         return PressureMapResult(
             pressure_grid=pressure_grid,
             circle_mask=self.circle_mask.copy(),
-            peaks=peaks,
-            active_quadrants=tuple(active_quadrants),
+            active_quadrants=tuple(plane.label for plane in quadrant_planes),
+            quadrant_planes=quadrant_planes,
             x_coordinates_mm=self.x_coordinates_mm.copy(),
             y_coordinates_mm=self.y_coordinates_mm.copy(),
             x_grid_mm=self.x_grid_mm.copy(),
@@ -241,12 +218,6 @@ class PressureMapGenerator:
             raise ValueError("circle_diameter_mm must be positive")
         if self.sensor_spacing_mm <= SHEAR_ZERO_VALUE:
             raise ValueError("sensor_spacing_mm must be positive")
-        if self.idw_power <= SHEAR_ZERO_VALUE:
-            raise ValueError("idw_power must be positive")
-        if self.decay_ref_distance_mm <= SHEAR_ZERO_VALUE:
-            raise ValueError("decay_ref_distance_mm must be positive")
-        if self.peak_kernel_radius_mm <= SHEAR_ZERO_VALUE:
-            raise ValueError("peak_kernel_radius_mm must be positive")
 
     def _build_sensor_positions(self) -> dict[str, tuple[float, float]]:
         spacing = self.sensor_spacing_mm
@@ -266,6 +237,7 @@ class PressureMapGenerator:
                 SHEAR_POSITION_TOP,
                 PRESSURE_AXIS_POSITIVE_DIRECTION,
                 PRESSURE_AXIS_POSITIVE_DIRECTION,
+                (SHEAR_POSITION_CENTER, SHEAR_POSITION_RIGHT, SHEAR_POSITION_TOP),
             ),
             _QuadrantDefinition(
                 PRESSURE_QUADRANT_TOP_LEFT,
@@ -273,6 +245,7 @@ class PressureMapGenerator:
                 SHEAR_POSITION_TOP,
                 PRESSURE_AXIS_NEGATIVE_DIRECTION,
                 PRESSURE_AXIS_POSITIVE_DIRECTION,
+                (SHEAR_POSITION_CENTER, SHEAR_POSITION_LEFT, SHEAR_POSITION_TOP),
             ),
             _QuadrantDefinition(
                 PRESSURE_QUADRANT_BOTTOM_LEFT,
@@ -280,6 +253,7 @@ class PressureMapGenerator:
                 SHEAR_POSITION_BOTTOM,
                 PRESSURE_AXIS_NEGATIVE_DIRECTION,
                 PRESSURE_AXIS_NEGATIVE_DIRECTION,
+                (SHEAR_POSITION_CENTER, SHEAR_POSITION_LEFT, SHEAR_POSITION_BOTTOM),
             ),
             _QuadrantDefinition(
                 PRESSURE_QUADRANT_BOTTOM_RIGHT,
@@ -287,8 +261,37 @@ class PressureMapGenerator:
                 SHEAR_POSITION_BOTTOM,
                 PRESSURE_AXIS_POSITIVE_DIRECTION,
                 PRESSURE_AXIS_NEGATIVE_DIRECTION,
+                (SHEAR_POSITION_CENTER, SHEAR_POSITION_RIGHT, SHEAR_POSITION_BOTTOM),
             ),
         )
+
+    def _build_quadrant_region_masks(self) -> dict[str, np.ndarray]:
+        # The axis lines are intentionally shared between adjacent quadrants.
+        # When both adjacent planes are active they evaluate to the same value
+        # on the boundary; when only one is active, the shared masks let that
+        # surviving plane fill the axis instead of leaving a zero-valued seam.
+        return {
+            PRESSURE_QUADRANT_TOP_RIGHT: (
+                self.circle_mask
+                & (self.x_grid_mm >= SHEAR_ZERO_VALUE)
+                & (self.y_grid_mm >= SHEAR_ZERO_VALUE)
+            ),
+            PRESSURE_QUADRANT_TOP_LEFT: (
+                self.circle_mask
+                & (self.x_grid_mm <= SHEAR_ZERO_VALUE)
+                & (self.y_grid_mm >= SHEAR_ZERO_VALUE)
+            ),
+            PRESSURE_QUADRANT_BOTTOM_LEFT: (
+                self.circle_mask
+                & (self.x_grid_mm <= SHEAR_ZERO_VALUE)
+                & (self.y_grid_mm <= SHEAR_ZERO_VALUE)
+            ),
+            PRESSURE_QUADRANT_BOTTOM_RIGHT: (
+                self.circle_mask
+                & (self.x_grid_mm >= SHEAR_ZERO_VALUE)
+                & (self.y_grid_mm <= SHEAR_ZERO_VALUE)
+            ),
+        }
 
     def _normalize_signals(self, normalized_signals: Mapping[str, float]) -> dict[str, float]:
         return {
@@ -296,152 +299,97 @@ class PressureMapGenerator:
             for position in SHEAR_SENSOR_POSITIONS
         }
 
-    def _build_quadrant_peaks(
+    def _build_active_quadrant_planes(
         self,
         signals: Mapping[str, float],
-    ) -> tuple[list[PressurePeak], list[str]]:
-        peaks: list[PressurePeak] = []
-        active_quadrants: list[str] = []
+    ) -> tuple[PressureQuadrantPlane, ...]:
+        planes: list[PressureQuadrantPlane] = []
         for quadrant in self.quadrants:
             if not self._quadrant_is_active(signals, quadrant):
                 continue
-            peak = self._build_quadrant_peak(signals, quadrant)
-            peaks.append(peak)
-            active_quadrants.append(quadrant.label)
-        return peaks, active_quadrants
+            planes.append(self._build_quadrant_plane(signals, quadrant))
+        return tuple(planes)
 
     def _quadrant_is_active(self, signals: Mapping[str, float], quadrant: _QuadrantDefinition) -> bool:
-        horizontal_value = signals[quadrant.horizontal_sensor]
-        vertical_value = signals[quadrant.vertical_sensor]
-        center_value = signals[SHEAR_POSITION_CENTER]
-        if not self._same_nonzero_sign(horizontal_value, vertical_value):
+        values = [signals[sensor] for sensor in quadrant.sensors]
+        nonzero_values = [value for value in values if value != SHEAR_ZERO_VALUE]
+        if not nonzero_values:
             return False
-        if center_value == SHEAR_ZERO_VALUE:
-            return True
-        return self._same_sign(center_value, horizontal_value)
+        # Zero means "no detected pressure here", so only nonzero sign conflicts
+        # should suppress a plane fit for the quadrant.
+        reference_sign = self._value_sign(nonzero_values[0])
+        return all(self._value_sign(value) == reference_sign for value in nonzero_values[1:])
 
-    def _same_nonzero_sign(self, first_value: float, second_value: float) -> bool:
-        return (
-            first_value != SHEAR_ZERO_VALUE
-            and second_value != SHEAR_ZERO_VALUE
-            and self._same_sign(first_value, second_value)
-        )
-
-    def _same_sign(self, first_value: float, second_value: float) -> bool:
-        return (
-            (first_value > SHEAR_ZERO_VALUE and second_value > SHEAR_ZERO_VALUE)
-            or (first_value < SHEAR_ZERO_VALUE and second_value < SHEAR_ZERO_VALUE)
-        )
-
-    def _build_quadrant_peak(
+    def _build_quadrant_plane(
         self,
         signals: Mapping[str, float],
         quadrant: _QuadrantDefinition,
-    ) -> PressurePeak:
+    ) -> PressureQuadrantPlane:
         center_value = signals[SHEAR_POSITION_CENTER]
         horizontal_value = signals[quadrant.horizontal_sensor]
         vertical_value = signals[quadrant.vertical_sensor]
-        x_peak = quadrant.horizontal_sign * self._axis_peak_offset(horizontal_value, center_value)
-        y_peak = quadrant.vertical_sign * self._axis_peak_offset(vertical_value, center_value)
-        contributing_sensors = (
-            SHEAR_POSITION_CENTER,
-            quadrant.horizontal_sensor,
-            quadrant.vertical_sensor,
-        )
-        peak_height = self._estimate_peak_height(
-            signals,
-            contributing_sensors,
-            x_peak,
-            y_peak,
-        )
-        return PressurePeak(
-            source=quadrant.label,
-            kind=PRESSURE_PEAK_KIND_QUADRANT,
-            x_mm=x_peak,
-            y_mm=y_peak,
-            height=peak_height,
-            sensors=contributing_sensors,
+        spacing = self.sensor_spacing_mm
+        # Because the center sensor sits at the origin, the plane coefficients
+        # reduce to simple sensor-to-center slopes along the x and y axes.
+        a = quadrant.horizontal_sign * (horizontal_value - center_value) / spacing
+        b = quadrant.vertical_sign * (vertical_value - center_value) / spacing
+        sign = self._quadrant_sign(center_value, horizontal_value, vertical_value)
+        return PressureQuadrantPlane(
+            label=quadrant.label,
+            a=float(a),
+            b=float(b),
+            c=float(center_value),
+            sign=sign,
+            sensors=quadrant.sensors,
         )
 
-    def _axis_peak_offset(self, outer_value: float, center_value: float) -> float:
-        denominator = outer_value + center_value
-        if denominator == SHEAR_ZERO_VALUE:
-            return SHEAR_ZERO_VALUE
-        return self.sensor_spacing_mm * outer_value / denominator
+    def _quadrant_sign(self, *values: float) -> float:
+        for value in values:
+            sign = self._value_sign(value)
+            if sign != SHEAR_ZERO_VALUE:
+                return sign
+        return SHEAR_ZERO_VALUE
 
-    def _estimate_peak_height(
+    def _value_sign(self, value: float) -> float:
+        if value > SHEAR_ZERO_VALUE:
+            return PRESSURE_AXIS_POSITIVE_DIRECTION
+        if value < SHEAR_ZERO_VALUE:
+            return PRESSURE_AXIS_NEGATIVE_DIRECTION
+        return SHEAR_ZERO_VALUE
+
+    def _build_pressure_grid(
         self,
-        signals: Mapping[str, float],
-        sensors: tuple[str, ...],
-        x_peak: float,
-        y_peak: float,
-    ) -> float:
-        weighted_sum = SHEAR_ZERO_VALUE
-        weight_total = SHEAR_ZERO_VALUE
-        for sensor in sensors:
-            sensor_x, sensor_y = self.sensor_positions[sensor]
-            distance = math.hypot(x_peak - sensor_x, y_peak - sensor_y)
-            estimate = signals[sensor] * (
-                PRESSURE_KERNEL_CAP
-                + (self.decay_rate * distance / self.decay_ref_distance_mm)
-            )
-            weight = PRESSURE_KERNEL_CAP / (
-                max(PRESSURE_DISTANCE_EPSILON_MM, distance) ** self.idw_power
-            )
-            weighted_sum += estimate * weight
-            weight_total += weight
-        if weight_total == SHEAR_ZERO_VALUE:
-            return SHEAR_ZERO_VALUE
-        return weighted_sum / weight_total
+        quadrant_planes: tuple[PressureQuadrantPlane, ...],
+    ) -> np.ndarray:
+        pressure_grid = np.full_like(self.x_grid_mm, PRESSURE_OUTSIDE_MASK_VALUE, dtype=np.float64)
+        if not quadrant_planes:
+            return pressure_grid
 
-    def _build_fallback_peaks(
-        self,
-        signals: Mapping[str, float],
-        active_quadrants: list[str],
-    ) -> list[PressurePeak]:
-        covered_sensors = self._covered_sensors(active_quadrants)
-        peaks: list[PressurePeak] = []
-        for sensor in SHEAR_SENSOR_POSITIONS:
-            sensor_value = signals[sensor]
-            if sensor_value == SHEAR_ZERO_VALUE or sensor in covered_sensors:
+        plane_by_label = {plane.label: plane for plane in quadrant_planes}
+        filled_mask = np.zeros_like(self.circle_mask, dtype=bool)
+        for quadrant_label in PRESSURE_ACTIVE_QUADRANTS:
+            plane = plane_by_label.get(quadrant_label)
+            if plane is None:
                 continue
-            sensor_x, sensor_y = self.sensor_positions[sensor]
-            peaks.append(
-                PressurePeak(
-                    source=sensor,
-                    kind=PRESSURE_PEAK_KIND_FALLBACK,
-                    x_mm=sensor_x,
-                    y_mm=sensor_y,
-                    height=sensor_value,
-                    sensors=(sensor,),
-                )
+            region_mask = self.quadrant_region_masks[quadrant_label] & ~filled_mask
+            if not np.any(region_mask):
+                continue
+            pressure_grid[region_mask] = self._evaluate_plane_for_region(
+                plane,
+                self.x_grid_mm[region_mask],
+                self.y_grid_mm[region_mask],
             )
-        return peaks
+            filled_mask[region_mask] = True
 
-    def _covered_sensors(self, active_quadrants: list[str]) -> set[str]:
-        covered: set[str] = set()
-        if active_quadrants:
-            covered.add(SHEAR_POSITION_CENTER)
-        if PRESSURE_QUADRANT_TOP_LEFT in active_quadrants or PRESSURE_QUADRANT_BOTTOM_LEFT in active_quadrants:
-            covered.add(SHEAR_POSITION_LEFT)
-        if PRESSURE_QUADRANT_TOP_RIGHT in active_quadrants or PRESSURE_QUADRANT_BOTTOM_RIGHT in active_quadrants:
-            covered.add(SHEAR_POSITION_RIGHT)
-        if PRESSURE_QUADRANT_TOP_RIGHT in active_quadrants or PRESSURE_QUADRANT_TOP_LEFT in active_quadrants:
-            covered.add(SHEAR_POSITION_TOP)
-        if PRESSURE_QUADRANT_BOTTOM_LEFT in active_quadrants or PRESSURE_QUADRANT_BOTTOM_RIGHT in active_quadrants:
-            covered.add(SHEAR_POSITION_BOTTOM)
-        return covered
+        return pressure_grid
 
-    def _build_pressure_grid(self, peaks: tuple[PressurePeak, ...]) -> np.ndarray:
-        pressure_grid = np.zeros_like(self.x_grid_mm, dtype=np.float64)
-        for peak in peaks:
-            distance = np.hypot(self.x_grid_mm - peak.x_mm, self.y_grid_mm - peak.y_mm)
-            kernel = np.minimum(
-                PRESSURE_KERNEL_CAP,
-                (
-                    self.peak_kernel_radius_mm
-                    / np.maximum(PRESSURE_DISTANCE_EPSILON_MM, distance)
-                ) ** self.idw_power,
-            )
-            pressure_grid += float(peak.height) * kernel
-        return np.where(self.circle_mask, pressure_grid, PRESSURE_OUTSIDE_MASK_VALUE)
+    def _evaluate_plane_for_region(
+        self,
+        plane: PressureQuadrantPlane,
+        x_values_mm: np.ndarray,
+        y_values_mm: np.ndarray,
+    ) -> np.ndarray:
+        plane_values = (plane.a * x_values_mm) + (plane.b * y_values_mm) + plane.c
+        if plane.sign < SHEAR_ZERO_VALUE:
+            return np.minimum(SHEAR_ZERO_VALUE, plane_values)
+        return np.maximum(SHEAR_ZERO_VALUE, plane_values)

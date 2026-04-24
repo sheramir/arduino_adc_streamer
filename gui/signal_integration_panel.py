@@ -85,13 +85,8 @@ from constants.shear import (
     DEFAULT_ARROW_MIN_THRESHOLD,
     DEFAULT_ARROW_WIDTH_SCALES,
     DEFAULT_CIRCLE_DIAMETER_MM,
-    DEFAULT_NORMAL_FORCE_SENSOR_SPACING_MM,
-    DEFAULT_PRESSURE_DECAY_RATE,
-    DEFAULT_PRESSURE_DECAY_REF_DISTANCE_MM,
     DEFAULT_PRESSURE_GRID_MARGIN,
     DEFAULT_PRESSURE_GRID_RESOLUTION,
-    DEFAULT_PRESSURE_IDW_POWER,
-    DEFAULT_PRESSURE_PEAK_KERNEL_RADIUS_MM,
     DEFAULT_PRESSURE_SENSOR_SPACING_MM,
     DEFAULT_SHEAR_CALIBRATION_GAIN,
     DEFAULT_SHEAR_NOISE_THRESHOLD,
@@ -99,28 +94,12 @@ from constants.shear import (
     PRESSURE_CIRCLE_DIAMETER_MAX_MM,
     PRESSURE_CIRCLE_DIAMETER_MIN_MM,
     PRESSURE_CIRCLE_DIAMETER_STEP_MM,
-    PRESSURE_DECAY_RATE_DECIMALS,
-    PRESSURE_DECAY_RATE_MAX,
-    PRESSURE_DECAY_RATE_MIN,
-    PRESSURE_DECAY_RATE_STEP,
-    PRESSURE_DECAY_REF_DISTANCE_DECIMALS,
-    PRESSURE_DECAY_REF_DISTANCE_MAX_MM,
-    PRESSURE_DECAY_REF_DISTANCE_MIN_MM,
-    PRESSURE_DECAY_REF_DISTANCE_STEP_MM,
     PRESSURE_GRID_MARGIN_MAX,
     PRESSURE_GRID_MARGIN_STEP,
     PRESSURE_GRID_MIN_MARGIN,
     PRESSURE_GRID_RESOLUTION_MAX,
     PRESSURE_GRID_RESOLUTION_MIN,
     PRESSURE_GRID_RESOLUTION_STEP,
-    PRESSURE_IDW_POWER_DECIMALS,
-    PRESSURE_IDW_POWER_MAX,
-    PRESSURE_IDW_POWER_MIN,
-    PRESSURE_IDW_POWER_STEP,
-    PRESSURE_KERNEL_RADIUS_DECIMALS,
-    PRESSURE_KERNEL_RADIUS_MAX_MM,
-    PRESSURE_KERNEL_RADIUS_MIN_MM,
-    PRESSURE_KERNEL_RADIUS_STEP_MM,
     PRESSURE_MAP_STRETCH,
     PRESSURE_SENSOR_SPACING_DECIMALS,
     PRESSURE_SENSOR_SPACING_MAX_MM,
@@ -485,7 +464,7 @@ class SignalIntegrationPanelMixin:
 
         sensor_spacing_tooltip = (
             "Center-to-outer sensor spacing in millimeters. "
-            "Used for centroid math and pressure-peak placement."
+            "Used for the normal-force centroid and the quadrant plane fit."
         )
         layout.addWidget(self._create_tooltip_label("Sensor spacing:", sensor_spacing_tooltip), 0, 0)
         self.pressure_sensor_spacing_spin = QDoubleSpinBox()
@@ -539,7 +518,8 @@ class SignalIntegrationPanelMixin:
         layout.addWidget(self.pressure_grid_resolution_spin, 0, 5)
 
         grid_margin_tooltip = (
-            "Extra grid cells added beyond the circle on each side so edge peaks have room to decay."
+            "Extra grid cells added beyond the circle on each side so the pressure planes "
+            "can extrapolate smoothly into the PDMS overhang region."
         )
         layout.addWidget(self._create_tooltip_label("Margin:", grid_margin_tooltip), 0, 6)
         self.pressure_grid_margin_spin = QSpinBox()
@@ -550,73 +530,6 @@ class SignalIntegrationPanelMixin:
         self.pressure_grid_margin_spin.setToolTip(grid_margin_tooltip)
         self.pressure_grid_margin_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
         layout.addWidget(self.pressure_grid_margin_spin, 0, 7)
-
-        idw_power_tooltip = (
-            "Exponent used for inverse-distance weighting and kernel falloff. "
-            "Higher values make peaks more localized."
-        )
-        layout.addWidget(self._create_tooltip_label("IDW power:", idw_power_tooltip), 1, 0)
-        self.pressure_idw_power_spin = QDoubleSpinBox()
-        self.pressure_idw_power_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
-        self.pressure_idw_power_spin.setRange(PRESSURE_IDW_POWER_MIN, PRESSURE_IDW_POWER_MAX)
-        self.pressure_idw_power_spin.setDecimals(PRESSURE_IDW_POWER_DECIMALS)
-        self.pressure_idw_power_spin.setSingleStep(PRESSURE_IDW_POWER_STEP)
-        self.pressure_idw_power_spin.setValue(DEFAULT_PRESSURE_IDW_POWER)
-        self.pressure_idw_power_spin.setToolTip(idw_power_tooltip)
-        self.pressure_idw_power_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
-        layout.addWidget(self.pressure_idw_power_spin, 1, 1)
-
-        decay_rate_tooltip = (
-            "Signal decay factor used when extrapolating quadrant peak height from the sensor values."
-        )
-        layout.addWidget(self._create_tooltip_label("Decay rate:", decay_rate_tooltip), 1, 2)
-        self.pressure_decay_rate_spin = QDoubleSpinBox()
-        self.pressure_decay_rate_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
-        self.pressure_decay_rate_spin.setRange(PRESSURE_DECAY_RATE_MIN, PRESSURE_DECAY_RATE_MAX)
-        self.pressure_decay_rate_spin.setDecimals(PRESSURE_DECAY_RATE_DECIMALS)
-        self.pressure_decay_rate_spin.setSingleStep(PRESSURE_DECAY_RATE_STEP)
-        self.pressure_decay_rate_spin.setValue(DEFAULT_PRESSURE_DECAY_RATE)
-        self.pressure_decay_rate_spin.setToolTip(decay_rate_tooltip)
-        self.pressure_decay_rate_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
-        layout.addWidget(self.pressure_decay_rate_spin, 1, 3)
-
-        decay_ref_tooltip = (
-            "Reference distance in millimeters for the decay-rate extrapolation. "
-            "Larger values make that adjustment change more gradually with distance."
-        )
-        layout.addWidget(self._create_tooltip_label("Decay ref:", decay_ref_tooltip), 1, 4)
-        self.pressure_decay_ref_distance_spin = QDoubleSpinBox()
-        self.pressure_decay_ref_distance_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
-        self.pressure_decay_ref_distance_spin.setRange(
-            PRESSURE_DECAY_REF_DISTANCE_MIN_MM,
-            PRESSURE_DECAY_REF_DISTANCE_MAX_MM,
-        )
-        self.pressure_decay_ref_distance_spin.setDecimals(PRESSURE_DECAY_REF_DISTANCE_DECIMALS)
-        self.pressure_decay_ref_distance_spin.setSingleStep(PRESSURE_DECAY_REF_DISTANCE_STEP_MM)
-        self.pressure_decay_ref_distance_spin.setSuffix(" mm")
-        self.pressure_decay_ref_distance_spin.setValue(DEFAULT_PRESSURE_DECAY_REF_DISTANCE_MM)
-        self.pressure_decay_ref_distance_spin.setToolTip(decay_ref_tooltip)
-        self.pressure_decay_ref_distance_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
-        layout.addWidget(self.pressure_decay_ref_distance_spin, 1, 5)
-
-        kernel_radius_tooltip = (
-            "Base radius of each additive pressure kernel in millimeters. "
-            "Larger values spread each peak over a wider area."
-        )
-        layout.addWidget(self._create_tooltip_label("Kernel radius:", kernel_radius_tooltip), 1, 6)
-        self.pressure_kernel_radius_spin = QDoubleSpinBox()
-        self.pressure_kernel_radius_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
-        self.pressure_kernel_radius_spin.setRange(
-            PRESSURE_KERNEL_RADIUS_MIN_MM,
-            PRESSURE_KERNEL_RADIUS_MAX_MM,
-        )
-        self.pressure_kernel_radius_spin.setDecimals(PRESSURE_KERNEL_RADIUS_DECIMALS)
-        self.pressure_kernel_radius_spin.setSingleStep(PRESSURE_KERNEL_RADIUS_STEP_MM)
-        self.pressure_kernel_radius_spin.setSuffix(" mm")
-        self.pressure_kernel_radius_spin.setValue(DEFAULT_PRESSURE_PEAK_KERNEL_RADIUS_MM)
-        self.pressure_kernel_radius_spin.setToolTip(kernel_radius_tooltip)
-        self.pressure_kernel_radius_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
-        layout.addWidget(self.pressure_kernel_radius_spin, 1, 7)
 
         return group
 
@@ -707,16 +620,6 @@ class SignalIntegrationPanelMixin:
                 "grid_margin": self._spin_int(
                     "pressure_grid_margin_spin",
                     DEFAULT_PRESSURE_GRID_MARGIN,
-                ),
-                "idw_power": self._spin_float("pressure_idw_power_spin", DEFAULT_PRESSURE_IDW_POWER),
-                "decay_rate": self._spin_float("pressure_decay_rate_spin", DEFAULT_PRESSURE_DECAY_RATE),
-                "decay_ref_distance_mm": self._spin_float(
-                    "pressure_decay_ref_distance_spin",
-                    DEFAULT_PRESSURE_DECAY_REF_DISTANCE_MM,
-                ),
-                "peak_kernel_radius_mm": self._spin_float(
-                    "pressure_kernel_radius_spin",
-                    DEFAULT_PRESSURE_PEAK_KERNEL_RADIUS_MM,
                 ),
             },
         }
@@ -934,20 +837,6 @@ class SignalIntegrationPanelMixin:
         changed |= self._set_spin_value("pressure_circle_diameter_spin", pressure_map, "circle_diameter_mm", float)
         changed |= self._set_spin_value("pressure_grid_resolution_spin", pressure_map, "grid_resolution", int)
         changed |= self._set_spin_value("pressure_grid_margin_spin", pressure_map, "grid_margin", int)
-        changed |= self._set_spin_value("pressure_idw_power_spin", pressure_map, "idw_power", float)
-        changed |= self._set_spin_value("pressure_decay_rate_spin", pressure_map, "decay_rate", float)
-        changed |= self._set_spin_value(
-            "pressure_decay_ref_distance_spin",
-            pressure_map,
-            "decay_ref_distance_mm",
-            float,
-        )
-        changed |= self._set_spin_value(
-            "pressure_kernel_radius_spin",
-            pressure_map,
-            "peak_kernel_radius_mm",
-            float,
-        )
 
         if changed:
             self.on_signal_integration_settings_changed()
@@ -1084,16 +973,6 @@ class SignalIntegrationPanelMixin:
                 grid_resolution=self._spin_int(
                     "pressure_grid_resolution_spin",
                     DEFAULT_PRESSURE_GRID_RESOLUTION,
-                ),
-                idw_power=self._spin_float("pressure_idw_power_spin", DEFAULT_PRESSURE_IDW_POWER),
-                decay_rate=self._spin_float("pressure_decay_rate_spin", DEFAULT_PRESSURE_DECAY_RATE),
-                decay_ref_distance_mm=self._spin_float(
-                    "pressure_decay_ref_distance_spin",
-                    DEFAULT_PRESSURE_DECAY_REF_DISTANCE_MM,
-                ),
-                peak_kernel_radius_mm=self._spin_float(
-                    "pressure_kernel_radius_spin",
-                    DEFAULT_PRESSURE_PEAK_KERNEL_RADIUS_MM,
                 ),
             )
             self._update_pressure_map_from_latest()

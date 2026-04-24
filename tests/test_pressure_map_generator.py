@@ -1,4 +1,4 @@
-"""Tests for Step 6 pressure-map peak generation and additive kernels."""
+"""Tests for Step 6 pressure-map quadrant planes and piecewise evaluation."""
 
 import unittest
 
@@ -8,20 +8,19 @@ from constants.shear import (
     DEFAULT_PRESSURE_GRID_MARGIN,
     DEFAULT_PRESSURE_GRID_RESOLUTION,
     DEFAULT_PRESSURE_SENSOR_SPACING_MM,
+    PRESSURE_ACTIVE_QUADRANTS,
     PRESSURE_GRID_MARGIN_SIDE_COUNT,
-    PRESSURE_PEAK_KIND_FALLBACK,
-    PRESSURE_PEAK_KIND_QUADRANT,
     PRESSURE_QUADRANT_BOTTOM_LEFT,
     PRESSURE_QUADRANT_BOTTOM_RIGHT,
     PRESSURE_QUADRANT_TOP_LEFT,
     PRESSURE_QUADRANT_TOP_RIGHT,
     SHEAR_SENSOR_POSITIONS,
 )
-from data_processing.pressure_map_generator import PressureMapGenerator
+from data_processing.pressure_map_generator import PressureMapGenerator, PressureQuadrantPlane
 
 
 class PressureMapGeneratorTests(unittest.TestCase):
-    """Verify pressure-grid shape, quadrant peaks, fallbacks, and kernels."""
+    """Verify pressure-grid shape, plane coefficients, and clamping."""
 
     def setUp(self):
         self.generator = PressureMapGenerator()
@@ -31,115 +30,134 @@ class PressureMapGeneratorTests(unittest.TestCase):
         col = int(np.argmin(np.abs(result.x_coordinates_mm - x_mm)))
         return float(result.pressure_grid[row, col])
 
-    def _peak_sources(self, result):
-        return {peak.source for peak in result.peaks}
+    def _planes_by_label(self, result):
+        return {plane.label: plane for plane in result.quadrant_planes}
 
-    def test_equal_sensors_activate_all_quadrants_and_symmetric_map(self):
+    def _plane_value(self, plane: PressureQuadrantPlane, x_mm: float, y_mm: float) -> float:
+        value = (plane.a * x_mm) + (plane.b * y_mm) + plane.c
+        if plane.sign < 0.0:
+            return min(0.0, value)
+        return max(0.0, value)
+
+    def test_equal_sensors_produce_uniform_map_inside_circle(self):
         result = self.generator.generate({position: 5.0 for position in SHEAR_SENSOR_POSITIONS})
+        planes = self._planes_by_label(result)
 
-        self.assertEqual(set(result.active_quadrants), {
-            PRESSURE_QUADRANT_TOP_RIGHT,
-            PRESSURE_QUADRANT_TOP_LEFT,
-            PRESSURE_QUADRANT_BOTTOM_LEFT,
-            PRESSURE_QUADRANT_BOTTOM_RIGHT,
-        })
-        self.assertEqual(len(result.peaks), 4)
-        self.assertTrue(all(peak.kind == PRESSURE_PEAK_KIND_QUADRANT for peak in result.peaks))
-        np.testing.assert_allclose(result.pressure_grid, np.flipud(result.pressure_grid), rtol=1e-6, atol=1e-6)
-        np.testing.assert_allclose(result.pressure_grid, np.fliplr(result.pressure_grid), rtol=1e-6, atol=1e-6)
+        self.assertEqual(set(result.active_quadrants), set(PRESSURE_ACTIVE_QUADRANTS))
+        for plane in planes.values():
+            self.assertAlmostEqual(plane.a, 0.0)
+            self.assertAlmostEqual(plane.b, 0.0)
+            self.assertAlmostEqual(plane.c, 5.0)
+        np.testing.assert_allclose(result.pressure_grid[result.circle_mask], 5.0, rtol=1e-6, atol=1e-6)
 
-    def test_single_quadrant_active_creates_upper_right_peak(self):
-        result = self.generator.generate({"C": 10.0, "R": 5.0, "T": 3.0, "L": 0.0, "B": 0.0})
-        peak = result.peaks[0]
+    def test_positive_center_with_tr_outers_keeps_other_quadrants_active_via_zero_decay(self):
+        signals = {"C": 10.0, "R": 5.0, "T": 3.0, "L": 0.0, "B": 0.0}
+        result = self.generator.generate(signals)
+        planes = self._planes_by_label(result)
 
-        self.assertEqual(result.active_quadrants, (PRESSURE_QUADRANT_TOP_RIGHT,))
-        self.assertEqual(peak.source, PRESSURE_QUADRANT_TOP_RIGHT)
-        self.assertGreater(peak.x_mm, 0.0)
-        self.assertGreater(peak.y_mm, 0.0)
-        self.assertGreater(
-            self._grid_value(result, peak.x_mm, peak.y_mm),
-            self._grid_value(result, -DEFAULT_PRESSURE_SENSOR_SPACING_MM, -DEFAULT_PRESSURE_SENSOR_SPACING_MM),
+        self.assertEqual(set(result.active_quadrants), set(PRESSURE_ACTIVE_QUADRANTS))
+        self.assertAlmostEqual(self._plane_value(planes[PRESSURE_QUADRANT_TOP_RIGHT], 0.0, 0.0), 10.0)
+        self.assertAlmostEqual(
+            self._plane_value(planes[PRESSURE_QUADRANT_TOP_RIGHT], DEFAULT_PRESSURE_SENSOR_SPACING_MM, 0.0),
+            5.0,
+        )
+        self.assertAlmostEqual(
+            self._plane_value(planes[PRESSURE_QUADRANT_TOP_RIGHT], 0.0, DEFAULT_PRESSURE_SENSOR_SPACING_MM),
+            3.0,
+        )
+        self.assertAlmostEqual(
+            self._plane_value(planes[PRESSURE_QUADRANT_TOP_LEFT], -DEFAULT_PRESSURE_SENSOR_SPACING_MM, 0.0),
+            0.0,
+        )
+        self.assertAlmostEqual(
+            self._plane_value(planes[PRESSURE_QUADRANT_BOTTOM_RIGHT], 0.0, -DEFAULT_PRESSURE_SENSOR_SPACING_MM),
+            0.0,
         )
 
-    def test_two_opposing_quadrants_create_two_separate_peaks(self):
-        result = self.generator.generate({"C": 0.0, "R": 5.0, "T": 5.0, "L": -4.0, "B": -4.0})
+    def test_two_opposing_quadrants_with_conflicts_leave_other_regions_zero(self):
+        signals = {"C": 0.0, "R": 5.0, "T": 5.0, "L": -4.0, "B": -4.0}
+        result = self.generator.generate(signals)
 
         self.assertEqual(set(result.active_quadrants), {
             PRESSURE_QUADRANT_TOP_RIGHT,
             PRESSURE_QUADRANT_BOTTOM_LEFT,
         })
-        self.assertEqual(len(result.peaks), 2)
+        self.assertGreater(self._grid_value(result, 1.0, 1.0), 0.0)
+        self.assertLess(self._grid_value(result, -1.0, -1.0), 0.0)
+        self.assertEqual(self._grid_value(result, -1.0, 1.0), 0.0)
+        self.assertEqual(self._grid_value(result, 1.0, -1.0), 0.0)
+        self.assertGreater(self._grid_value(result, 0.0, 1.0), 0.0)
+        self.assertLess(self._grid_value(result, 0.0, -1.0), 0.0)
 
     def test_all_zero_inputs_produce_empty_zero_map(self):
         result = self.generator.generate({"C": 0.0, "R": 0.0, "T": 0.0, "L": 0.0, "B": 0.0})
 
         self.assertEqual(result.active_quadrants, ())
-        self.assertEqual(result.peaks, ())
+        self.assertEqual(result.quadrant_planes, ())
         self.assertTrue(np.all(result.pressure_grid == 0.0))
 
-    def test_zero_outer_sensor_deactivates_quadrant(self):
-        result = self.generator.generate({"C": 5.0, "R": 10.0, "T": 0.0, "L": 0.0, "B": 0.0})
-
-        self.assertNotIn(PRESSURE_QUADRANT_TOP_RIGHT, result.active_quadrants)
-        self.assertIn("R", self._peak_sources(result))
-        self.assertTrue(all(peak.source != PRESSURE_QUADRANT_TOP_RIGHT for peak in result.peaks))
-
-    def test_center_zero_allows_outer_only_quadrant_peak_at_corner(self):
+    def test_center_zero_and_positive_tr_triplet_produce_expected_tr_plane(self):
         result = self.generator.generate({"C": 0.0, "R": 8.0, "T": 6.0, "L": 0.0, "B": 0.0})
-        peak = result.peaks[0]
+        planes = self._planes_by_label(result)
+        tr_plane = planes[PRESSURE_QUADRANT_TOP_RIGHT]
 
-        self.assertEqual(result.active_quadrants, (PRESSURE_QUADRANT_TOP_RIGHT,))
-        self.assertAlmostEqual(peak.x_mm, DEFAULT_PRESSURE_SENSOR_SPACING_MM)
-        self.assertAlmostEqual(peak.y_mm, DEFAULT_PRESSURE_SENSOR_SPACING_MM)
-
-    def test_additive_stacking_exceeds_either_individual_map(self):
-        tr_result = self.generator.generate({"C": 5.0, "R": 8.0, "T": 6.0, "L": 0.0, "B": 0.0})
-        br_result = self.generator.generate({"C": 5.0, "R": 8.0, "T": 0.0, "L": 0.0, "B": 6.0})
-        combined = self.generator.generate({"C": 5.0, "R": 8.0, "T": 6.0, "L": 0.0, "B": 6.0})
-
-        combined_value = self._grid_value(combined, DEFAULT_PRESSURE_SENSOR_SPACING_MM, 0.0)
-        individual_value = max(
-            self._grid_value(tr_result, DEFAULT_PRESSURE_SENSOR_SPACING_MM, 0.0),
-            self._grid_value(br_result, DEFAULT_PRESSURE_SENSOR_SPACING_MM, 0.0),
+        self.assertIn(PRESSURE_QUADRANT_TOP_RIGHT, result.active_quadrants)
+        self.assertAlmostEqual(tr_plane.a, 8.0 / DEFAULT_PRESSURE_SENSOR_SPACING_MM)
+        self.assertAlmostEqual(tr_plane.b, 6.0 / DEFAULT_PRESSURE_SENSOR_SPACING_MM)
+        self.assertAlmostEqual(tr_plane.c, 0.0)
+        self.assertAlmostEqual(self._plane_value(tr_plane, 0.0, 0.0), 0.0)
+        self.assertAlmostEqual(
+            self._plane_value(tr_plane, DEFAULT_PRESSURE_SENSOR_SPACING_MM, 0.0),
+            8.0,
         )
-        self.assertGreater(combined_value, individual_value)
+        self.assertAlmostEqual(
+            self._plane_value(tr_plane, 0.0, DEFAULT_PRESSURE_SENSOR_SPACING_MM),
+            6.0,
+        )
 
-    def test_single_sensor_fallback_fires_at_sensor_position(self):
-        result = self.generator.generate({"C": 0.0, "R": 5.0, "T": 0.0, "L": 0.0, "B": 0.0})
-        peak = result.peaks[0]
+    def test_boundary_continuity_matches_on_shared_axis(self):
+        signals = {"C": 10.0, "R": 5.0, "T": 3.0, "L": 0.0, "B": 0.0}
+        result = self.generator.generate(signals)
+        planes = self._planes_by_label(result)
+        y_coord = DEFAULT_PRESSURE_SENSOR_SPACING_MM / 2.0
 
-        self.assertEqual(result.active_quadrants, ())
-        self.assertEqual(len(result.peaks), 1)
-        self.assertEqual(peak.kind, PRESSURE_PEAK_KIND_FALLBACK)
-        self.assertEqual(peak.source, "R")
-        self.assertAlmostEqual(peak.x_mm, DEFAULT_PRESSURE_SENSOR_SPACING_MM)
-        self.assertAlmostEqual(peak.y_mm, 0.0)
+        tr_value = self._plane_value(planes[PRESSURE_QUADRANT_TOP_RIGHT], 0.0, y_coord)
+        tl_value = self._plane_value(planes[PRESSURE_QUADRANT_TOP_LEFT], 0.0, y_coord)
 
-    def test_fallback_does_not_fire_when_sensor_is_covered(self):
-        result = self.generator.generate({"C": 5.0, "R": 8.0, "T": 6.0, "L": 0.0, "B": 0.0})
+        self.assertAlmostEqual(tr_value, tl_value)
 
-        self.assertEqual(result.active_quadrants, (PRESSURE_QUADRANT_TOP_RIGHT,))
-        self.assertEqual(len(result.peaks), 1)
-        self.assertEqual(result.peaks[0].source, PRESSURE_QUADRANT_TOP_RIGHT)
+    def test_positive_plane_values_are_clamped_at_zero_when_extrapolation_crosses_below_zero(self):
+        signals = {"C": 10.0, "R": 5.0, "T": 3.0, "L": 0.0, "B": 0.0}
+        result = self.generator.generate(signals)
+        tr_plane = self._planes_by_label(result)[PRESSURE_QUADRANT_TOP_RIGHT]
 
-    def test_mixed_quadrant_has_only_covered_quadrant_peak(self):
-        result = self.generator.generate({"C": 5.0, "R": 8.0, "T": 0.0, "L": 0.0, "B": 3.0})
+        self.assertEqual(self._plane_value(tr_plane, 2.5, 2.5), 0.0)
 
-        self.assertEqual(result.active_quadrants, (PRESSURE_QUADRANT_BOTTOM_RIGHT,))
-        self.assertEqual(len(result.peaks), 1)
-        self.assertEqual(result.peaks[0].source, PRESSURE_QUADRANT_BOTTOM_RIGHT)
+    def test_tension_planes_remain_nonpositive_after_clamping(self):
+        signals = {"C": -6.0, "L": -3.0, "R": -2.5, "T": -2.0, "B": -3.0}
+        result = self.generator.generate(signals)
 
-    def test_smaller_kernel_radius_produces_sharper_peak(self):
-        narrow = PressureMapGenerator(peak_kernel_radius_mm=DEFAULT_PRESSURE_SENSOR_SPACING_MM / 4.0)
-        broad = PressureMapGenerator(peak_kernel_radius_mm=DEFAULT_PRESSURE_SENSOR_SPACING_MM)
-        signals = {"C": 0.0, "R": 5.0, "T": 0.0, "L": 0.0, "B": 0.0}
+        self.assertEqual(set(result.active_quadrants), set(PRESSURE_ACTIVE_QUADRANTS))
+        self.assertLessEqual(float(np.max(result.pressure_grid[result.circle_mask])), 0.0)
 
-        narrow_result = narrow.generate(signals)
-        broad_result = broad.generate(signals)
-        narrow_high_cells = np.count_nonzero(narrow_result.pressure_grid > np.max(narrow_result.pressure_grid) / 2.0)
-        broad_high_cells = np.count_nonzero(broad_result.pressure_grid > np.max(broad_result.pressure_grid) / 2.0)
+    def test_exact_sensor_values_match_plane_coefficients(self):
+        signals = {"C": 7.0, "R": 2.0, "T": 5.0, "L": 9.0, "B": 3.0}
+        result = self.generator.generate(signals)
+        planes = self._planes_by_label(result)
 
-        self.assertGreater(broad_high_cells, narrow_high_cells)
+        self.assertAlmostEqual(self._plane_value(planes[PRESSURE_QUADRANT_TOP_RIGHT], 0.0, 0.0), 7.0)
+        self.assertAlmostEqual(
+            self._plane_value(planes[PRESSURE_QUADRANT_TOP_RIGHT], DEFAULT_PRESSURE_SENSOR_SPACING_MM, 0.0),
+            2.0,
+        )
+        self.assertAlmostEqual(
+            self._plane_value(planes[PRESSURE_QUADRANT_TOP_LEFT], -DEFAULT_PRESSURE_SENSOR_SPACING_MM, 0.0),
+            9.0,
+        )
+        self.assertAlmostEqual(
+            self._plane_value(planes[PRESSURE_QUADRANT_BOTTOM_RIGHT], 0.0, -DEFAULT_PRESSURE_SENSOR_SPACING_MM),
+            3.0,
+        )
 
     def test_output_shape_includes_margin_cells(self):
         result = self.generator.generate({"C": 0.0, "R": 0.0, "T": 0.0, "L": 0.0, "B": 0.0})
@@ -154,15 +172,18 @@ class PressureMapGeneratorTests(unittest.TestCase):
         generator = PressureMapGenerator(grid_margin=0)
         result = generator.generate({"C": 0.0, "R": 0.0, "T": 0.0, "L": 0.0, "B": 0.0})
 
-        self.assertEqual(result.pressure_grid.shape, (DEFAULT_PRESSURE_GRID_RESOLUTION, DEFAULT_PRESSURE_GRID_RESOLUTION))
+        self.assertEqual(
+            result.pressure_grid.shape,
+            (DEFAULT_PRESSURE_GRID_RESOLUTION, DEFAULT_PRESSURE_GRID_RESOLUTION),
+        )
 
-    def test_margin_area_receives_low_nonzero_kernel_tail(self):
+    def test_margin_area_contains_extrapolated_plane_values(self):
         generator = PressureMapGenerator(grid_margin=2)
-        result = generator.generate({"C": 0.0, "R": 5.0, "T": 0.0, "L": 0.0, "B": 0.0})
+        result = generator.generate({"C": 10.0, "R": 5.0, "T": 3.0, "L": 0.0, "B": 0.0})
         edge_value = self._grid_value(result, result.x_coordinates_mm[-1], 0.0)
 
-        self.assertGreater(edge_value, 0.0)
-        self.assertLess(edge_value, 5.0)
+        self.assertGreaterEqual(edge_value, 0.0)
+        self.assertLess(edge_value, 10.0)
 
 
 if __name__ == "__main__":

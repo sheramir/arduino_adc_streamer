@@ -379,14 +379,23 @@ static uint32_t pzt_usPerPair() {
   return PZT_MUX_SETTLE_US + conv * 2u;
 }
 
+static uint32_t pzt_entriesPerSweep() {
+  uint32_t entries = (uint32_t)pzt.channelCount * pzt.repeatCount;
+  // MG24 inserts one ground conversion before each new channel when enabled.
+  if (pzt.groundEnable) {
+    entries += (uint32_t)pzt.channelCount;
+  }
+  return entries;
+}
+
 static uint32_t pzt_blockDelayMs() {
-  uint32_t pairs = (uint32_t)pzt.channelCount * pzt.repeatCount * pzt.sweepsPerBlock;
-  return (pairs * pzt_usPerPair()) / 1000u + PZT_BLOCK_DELAY_MARGIN_MS;
+  uint32_t entries = pzt_entriesPerSweep() * pzt.sweepsPerBlock;
+  return (entries * pzt_usPerPair()) / 1000u + PZT_BLOCK_DELAY_MARGIN_MS;
 }
 
 static uint32_t pzt_warmupDelayMs() {
-  uint32_t pairs = (uint32_t)PZT_WARMUP_SWEEPS * pzt.channelCount;
-  return (pairs * pzt_usPerPair()) / 1000u + PZT_WARMUP_DELAY_MARGIN_MS;
+  uint32_t entries = (uint32_t)PZT_WARMUP_SWEEPS * pzt_entriesPerSweep();
+  return (entries * pzt_usPerPair()) / 1000u + PZT_WARMUP_DELAY_MARGIN_MS;
 }
 
 static uint32_t pzt_blockResponseBytes() {
@@ -394,6 +403,11 @@ static uint32_t pzt_blockResponseBytes() {
   uint32_t samples = (uint32_t)pzt.channelCount * pzt.repeatCount
                    * pzt.sweepsPerBlock * 2u;
   return (uint32_t)PZT_ACK_FRAME_LEN + samples * 2u + PZT_BLOCK_TRAILER_LEN;
+}
+
+static uint32_t pzt_firstBlockWaitMs() {
+  // Extra guard window for SPI response arming jitter under higher load.
+  return pzt_warmupDelayMs() + pzt_blockDelayMs() + 120u;
 }
 
 // =====================================================================
@@ -733,14 +747,22 @@ static void pzt_handleRun(const String &args) {
   }
   pzt_spiSend(frame, PZT_CMD_FRAME_LEN);
 
-  // Wait for MG24 warmup + first block capture
-  delay(pzt_warmupDelayMs() + pzt_blockDelayMs());
-
   // Static RX buffer (avoids large stack allocation)
   static uint8_t rxBuf[PZT_MAX_BLOCK_BYTES];
   uint32_t rBytes = pzt_blockResponseBytes();
 
-  if (!pzt_spiRecvStreamingResponse(rxBuf, (uint16_t)min(rBytes, (uint32_t)sizeof(rxBuf)))) {
+  // Poll for the first block within a bounded timing window.
+  bool gotFirstBlock = false;
+  uint32_t firstBlockDeadline = millis() + pzt_firstBlockWaitMs();
+  while ((int32_t)(millis() - firstBlockDeadline) < 0) {
+    if (pzt_spiRecvStreamingResponse(rxBuf, (uint16_t)min(rBytes, (uint32_t)sizeof(rxBuf)))) {
+      gotFirstBlock = true;
+      break;
+    }
+    delay(1);
+  }
+
+  if (!gotFirstBlock) {
     hostAck(false, F("first block timeout")); return; // <=== changed from hostAck(false, args)
   }
   if (rxBuf[0] != BLOCK_MAGIC1 || rxBuf[1] != BLOCK_MAGIC2) {

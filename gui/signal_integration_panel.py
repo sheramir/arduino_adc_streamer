@@ -24,6 +24,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QCheckBox,
     QDoubleSpinBox,
+    QHBoxLayout,
     QGridLayout,
     QGroupBox,
     QLabel,
@@ -289,6 +290,7 @@ class SignalIntegrationPanelMixin:
         root_layout.addWidget(self.pressure_map_widget, stretch=PRESSURE_MAP_STRETCH)
         root_layout.addWidget(self._create_shear_visualization_settings_group())
         root_layout.addWidget(self._create_pressure_map_settings_group())
+        root_layout.addWidget(self._create_pressure_package_gain_settings_group())
 
         self.signal_integration_curves: dict[Hashable, object] = {}
         self._latest_signal_integration_values_by_position: dict[str, float] = {}
@@ -532,6 +534,94 @@ class SignalIntegrationPanelMixin:
         layout.addWidget(self.pressure_grid_margin_spin, 0, 7)
 
         return group
+
+    def _create_pressure_package_gain_settings_group(self) -> QGroupBox:
+        group = QGroupBox("Per-Package Gain Calibration")
+        self.pressure_package_gain_group = group
+        self.pressure_package_gain_root_layout = QVBoxLayout(group)
+        self.pressure_package_gain_root_layout.setContentsMargins(0, 0, 0, 0)
+        self.pressure_package_gain_root_layout.setSpacing(SHEAR_SETTINGS_VERTICAL_SPACING_PX)
+        self.pressure_package_gain_spins: dict[str, dict[str, QDoubleSpinBox]] = {}
+        self._refresh_pressure_package_gain_controls([])
+        return group
+
+    def _refresh_pressure_package_gain_controls(
+        self,
+        package_layout: list[dict[str, object]] | None = None,
+    ) -> None:
+        if not hasattr(self, "pressure_package_gain_root_layout"):
+            return
+
+        while self.pressure_package_gain_root_layout.count() > 0:
+            item = self.pressure_package_gain_root_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+        if package_layout is None:
+            package_layout = self._get_signal_integration_package_layout()
+
+        package_ids = [
+            str(item.get("sensor_id", "")).strip().upper()
+            for item in package_layout
+            if str(item.get("sensor_id", "")).strip()
+        ]
+        package_ids = list(dict.fromkeys(package_ids))
+
+        show_controls = bool(
+            package_ids
+            and hasattr(self, "is_array_sensor_selection_mode")
+            and self.is_array_sensor_selection_mode()
+        )
+        self.pressure_package_gain_group.setVisible(show_controls)
+
+        if not show_controls:
+            self.pressure_package_gain_spins = {}
+            self.pressure_package_gain_root_layout.addWidget(
+                QLabel("Array package-specific gains appear here when sensors are selected.")
+            )
+            return
+
+        self.pressure_package_gain_spins = {}
+        for package_id in package_ids:
+            package_box = QGroupBox(f"{package_id} gains")
+            package_row = QHBoxLayout(package_box)
+            package_row.setContentsMargins(6, 6, 6, 6)
+            package_row.setSpacing(SHEAR_SETTINGS_HORIZONTAL_SPACING_PX)
+
+            package_gains = self._pressure_sensor_gains_for_package(package_id)
+            package_spin_map: dict[str, QDoubleSpinBox] = {}
+            for position in SHEAR_SENSOR_POSITIONS:
+                package_row.addWidget(QLabel(f"{position}:"))
+                spin = QDoubleSpinBox()
+                spin.setMaximumWidth(SHEAR_GAIN_SPIN_WIDTH_PX)
+                spin.setRange(SHEAR_CALIBRATION_GAIN_MIN, SHEAR_CALIBRATION_GAIN_MAX)
+                spin.setDecimals(SHEAR_CALIBRATION_GAIN_DECIMALS)
+                spin.setSingleStep(SHEAR_CALIBRATION_GAIN_STEP)
+                spin.setValue(float(package_gains.get(position, DEFAULT_SHEAR_CALIBRATION_GAIN)))
+                spin.valueChanged.connect(
+                    lambda value, sid=package_id, pos=position: self._on_pressure_package_gain_changed(
+                        sid,
+                        pos,
+                        value,
+                    )
+                )
+                package_row.addWidget(spin)
+                package_spin_map[position] = spin
+
+            package_row.addStretch()
+            self.pressure_package_gain_spins[package_id] = package_spin_map
+            self.pressure_package_gain_root_layout.addWidget(package_box)
+
+    def _on_pressure_package_gain_changed(self, package_id: str, position: str, value: float) -> None:
+        normalized_package_id = self._normalize_pressure_package_id(package_id)
+        if normalized_package_id is None or position not in SHEAR_SENSOR_POSITIONS:
+            return
+
+        package_gains = self._pressure_package_sensor_gains.setdefault(normalized_package_id, {})
+        package_gains[position] = float(value)
+        self._update_shear_visualization_from_latest()
+        self.save_last_shear_settings()
 
     def _get_last_shear_settings_path(self) -> Path:
         return (
@@ -856,6 +946,7 @@ class SignalIntegrationPanelMixin:
         changed |= self._set_spin_value("pressure_grid_margin_spin", pressure_map, "grid_margin", int)
 
         if changed:
+            self._refresh_pressure_package_gain_controls()
             self.on_signal_integration_settings_changed()
             self.on_shear_processing_settings_changed()
             self.on_shear_visualization_settings_changed()
@@ -951,9 +1042,7 @@ class SignalIntegrationPanelMixin:
         package_gain_map = getattr(self, "_pressure_package_sensor_gains", {})
         package_gains = package_gain_map.get(normalized_package_id)
         if package_gains is None:
-            package_gains = dict(defaults)
-            package_gain_map[normalized_package_id] = package_gains
-            self._pressure_package_sensor_gains = package_gain_map
+            return defaults
 
         effective = dict(defaults)
         for position, value in package_gains.items():
@@ -978,6 +1067,9 @@ class SignalIntegrationPanelMixin:
         self.signal_integration_display_window_sec = float(self.signal_integration_display_window_spin.value())
         self._signal_integration_filter_warning = ""
         self.update_signal_integration_plot()
+        self._refresh_pressure_package_gain_controls(
+            getattr(self, "_latest_signal_integration_package_layout", None)
+        )
         self.save_last_shear_settings()
 
     def on_shear_processing_settings_changed(self, _value: object | None = None) -> None:
@@ -1138,6 +1230,7 @@ class SignalIntegrationPanelMixin:
             avg_sample_time_sec = getattr(self, "_cached_avg_sample_time_sec", 0.0)
             repeat_count = max(1, int(self.config.get("repeat", 1)))
             package_layout = self._get_signal_integration_package_layout()
+            self._refresh_pressure_package_gain_controls(package_layout)
             multi_package_force_mode = self._is_multi_package_force_mode(package_layout)
 
             for spec_index, spec in enumerate(display_specs):

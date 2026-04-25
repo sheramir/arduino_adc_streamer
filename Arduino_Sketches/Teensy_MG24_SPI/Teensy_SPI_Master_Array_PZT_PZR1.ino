@@ -130,7 +130,7 @@ static const uint8_t PZT_CMD_RUN          = 0x07;
 static const uint8_t PZT_CMD_STOP         = 0x08;
 static const uint8_t PZT_CMD_GROUND_PIN   = 0x0B;
 static const uint8_t PZT_CMD_GROUND_EN    = 0x0C;
-static const uint8_t PZT_STREAM_NOP       = 0x00;
+static const uint8_t PZT_STREAM_CONTINUE  = 0x0D;  // matches MG24 CMD_CONTINUE
 
 // =====================================================================
 // ── PZT MODE — STATE ─────────────────────────────────────────────────
@@ -283,7 +283,7 @@ static inline void pzt_spiRecv(uint8_t *buf, uint16_t len) {
 // Attempt to read a streaming response (block or ACK).
 // The first byte sent carries a control token for MG24's state machine.
 static bool pzt_spiRecvStreamingResponse(uint8_t *buf, uint16_t len,
-                                          uint8_t controlByte = PZT_STREAM_NOP,
+                                          uint8_t controlByte = PZT_STREAM_CONTINUE,
                                           uint8_t maxAttempts = 4) {
   for (uint8_t attempt = 0; attempt < maxAttempts; ++attempt) {
     pztSPI.beginTransaction(PZT_SPI_CFG);
@@ -296,9 +296,24 @@ static bool pzt_spiRecvStreamingResponse(uint8_t *buf, uint16_t len,
     digitalWrite(PZT_CS_PIN, HIGH);
     pztSPI.endTransaction();
 
-    if (buf[0] == PZT_ACK_MAGIC)                             return true;
+    if (buf[0] == PZT_ACK_MAGIC &&
+        (buf[1] == PZT_ACK_STATUS_OK || buf[1] == 0x01))    return true;
     if (buf[0] == BLOCK_MAGIC1 && buf[1] == BLOCK_MAGIC2)   return true;
-    delayMicroseconds(250 + (uint32_t)attempt * 250);
+    delayMicroseconds(250);
+  }
+  return false;
+}
+
+static bool pzt_waitStreamingResponse(uint8_t *buf,
+                                      uint16_t len,
+                                      uint8_t controlByte,
+                                      uint32_t timeoutMs) {
+  uint32_t deadline = millis() + timeoutMs;
+  while ((int32_t)(millis() - deadline) < 0) {
+    if (pzt_spiRecvStreamingResponse(buf, len, controlByte, 1)) {
+      return true;
+    }
+    yield();
   }
   return false;
 }
@@ -408,6 +423,17 @@ static uint32_t pzt_blockResponseBytes() {
 static uint32_t pzt_firstBlockWaitMs() {
   // Extra guard window for SPI response arming jitter under higher load.
   return pzt_warmupDelayMs() + pzt_blockDelayMs() + 120u;
+}
+
+static uint32_t pzt_streamBlockWaitMs() {
+  // Per-block timeout for the continuous stream loop.
+  // Includes dynamic block timing plus extra guard for occasional jitter.
+  return pzt_blockDelayMs() + 80u;
+}
+
+static bool pzt_isValidAckFrame(const uint8_t *buf) {
+  return buf[0] == PZT_ACK_MAGIC &&
+         (buf[1] == PZT_ACK_STATUS_OK || buf[1] == 0x01);
 }
 
 // =====================================================================
@@ -799,13 +825,16 @@ static void pzt_handleRun(const String &args) {
       break;
     }
 
-    if (!pzt_spiRecvStreamingResponse(rxBuf,
-                                       (uint16_t)min(rBytes, (uint32_t)sizeof(rxBuf)),
-                                       PZT_STREAM_NOP, 2)) {
+    if (!pzt_waitStreamingResponse(rxBuf,
+                                   (uint16_t)min(rBytes, (uint32_t)sizeof(rxBuf)),
+                                   PZT_STREAM_CONTINUE,
+                                   pzt_streamBlockWaitMs())) {
       // Timeout — stop cleanly
-      pzt_spiRecvStreamingResponse(rxBuf,
-                                    (uint16_t)min(rBytes, (uint32_t)sizeof(rxBuf)),
-                                    PZT_CMD_STOP, 2);
+      Serial.println(F("# WARN: PZT stream block timeout; sending stop"));
+      pzt_waitStreamingResponse(rxBuf,
+                                (uint16_t)min(rBytes, (uint32_t)sizeof(rxBuf)),
+                                PZT_CMD_STOP,
+                                pzt_streamBlockWaitMs());
       uint8_t ack[PZT_ACK_FRAME_LEN];
       pzt_spiRecvAck(ack, 4);
       delay(PZT_INTER_BLOCK_DELAY_MS);
@@ -813,16 +842,29 @@ static void pzt_handleRun(const String &args) {
     }
 
     // MG24 returned an ACK (e.g. timed-run expired on its side) — done
-    if (rxBuf[0] == PZT_ACK_MAGIC) {
+    if (pzt_isValidAckFrame(rxBuf)) {
+      if (!timed || rxBuf[1] != PZT_ACK_STATUS_OK) {
+        Serial.print(F("# WARN: PZT stream ended with ACK status="));
+        Serial.println(rxBuf[1]);
+      }
       delay(PZT_INTER_BLOCK_DELAY_MS);
       pzt.running = false; break;
     }
 
+    if (rxBuf[0] == PZT_ACK_MAGIC) {
+      Serial.print(F("# WARN: ignoring malformed ACK status="));
+      Serial.println(rxBuf[1]);
+      delay(PZT_INTER_BLOCK_DELAY_MS);
+      continue;
+    }
+
     // Unexpected bytes — stop cleanly
     if (rxBuf[0] != BLOCK_MAGIC1 || rxBuf[1] != BLOCK_MAGIC2) {
-      pzt_spiRecvStreamingResponse(rxBuf,
-                                    (uint16_t)min(rBytes, (uint32_t)sizeof(rxBuf)),
-                                    PZT_CMD_STOP, 2);
+      Serial.println(F("# WARN: PZT stream bad magic; sending stop"));
+      pzt_waitStreamingResponse(rxBuf,
+                                (uint16_t)min(rBytes, (uint32_t)sizeof(rxBuf)),
+                                PZT_CMD_STOP,
+                                pzt_streamBlockWaitMs());
       uint8_t ack[PZT_ACK_FRAME_LEN];
       pzt_spiRecvAck(ack, 4);
       delay(PZT_INTER_BLOCK_DELAY_MS);

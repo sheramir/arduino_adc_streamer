@@ -99,7 +99,8 @@ class ADCConfigurationService:
         if resolved_device_mode == "555":
             command_success, normalized_buffer_size = self._send_555_config(request, arduino_status, messages)
         else:
-            command_success, normalized_buffer_size = self._send_adc_config(request, arduino_status)
+            command_success, normalized_buffer_size, command_messages = self._send_adc_config(request, arduino_status)
+            messages.extend(command_messages)
 
         messages.extend(self._verify_configuration(request, arduino_status, resolved_device_mode))
         verify_success = not any(message.startswith("MISMATCH:") or message == "No status data received yet" for message in messages)
@@ -123,8 +124,9 @@ class ADCConfigurationService:
         success = not any(message.startswith("MISMATCH:") or message == "No status data received yet" for message in messages)
         return ADCCommandResult(success, messages=messages)
 
-    def _send_adc_config(self, request: ADCConfigurationRequest, arduino_status: ArduinoStatus) -> tuple[bool, int]:
+    def _send_adc_config(self, request: ADCConfigurationRequest, arduino_status: ArduinoStatus) -> tuple[bool, int, list[str]]:
         all_success = True
+        messages: list[str] = []
         is_teensy = bool(request.current_mcu and "Teensy" in request.current_mcu)
 
         if not is_teensy and not request.is_array_mcu:
@@ -190,11 +192,22 @@ class ADCConfigurationService:
             all_success = False
         time.sleep(0.05)
 
-        if request.use_ground:
-            ground_pin_text = str(request.ground_pin)
+        effective_use_ground = bool(request.use_ground)
+        effective_ground_pin = int(request.ground_pin)
+        if effective_use_ground and request.is_array_mcu and int(request.effective_channel_multiplier) == 2:
+            active_channels = {int(channel) for channel in request.channels_to_send}
+            if effective_ground_pin in active_channels:
+                effective_use_ground = False
+                messages.append(
+                    "Ground sampling disabled: ground pin "
+                    f"{effective_ground_pin} overlaps active channels in Array dual-mux mode and can stall streaming"
+                )
+
+        if effective_use_ground:
+            ground_pin_text = str(effective_ground_pin)
             success, received = self._send_command_and_wait_ack(f"ground {ground_pin_text}", ground_pin_text)
             if success:
-                arduino_status.ground_pin = int(received) if received not in (None, "") else request.ground_pin
+                arduino_status.ground_pin = int(received) if received not in (None, "") else effective_ground_pin
                 arduino_status.use_ground = True
             else:
                 all_success = False
@@ -214,7 +227,7 @@ class ADCConfigurationService:
         else:
             all_success = False
 
-        return all_success, normalized_buffer_size
+        return all_success, normalized_buffer_size, messages
 
     def _send_555_config(self, request: ADCConfigurationRequest, arduino_status: ArduinoStatus, messages: list[str]) -> tuple[bool, int]:
         all_success = True

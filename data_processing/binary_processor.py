@@ -20,6 +20,9 @@ from data_processing.force_state import get_force_runtime_state
 
 class BinaryProcessorMixin:
     """Mixin for binary ADC data processing."""
+
+    _SLOW_TIMESERIES_UPDATE_MS = 120.0
+    _SLOW_TIMESERIES_LOG_INTERVAL_SEC = 2.0
     
     def process_binary_sweep(self, samples: np.ndarray, avg_sample_time_us: int, block_start_us: int, block_end_us: int):
         """Process incoming binary block data containing one or more sweeps.
@@ -216,8 +219,18 @@ class BinaryProcessorMixin:
                         and now - getattr(self, '_last_plot_update_time', 0.0) >= PLOT_UPDATE_INTERVAL_SEC
                     ):
                         self._last_plot_update_time = now
+                        redraw_start = time.perf_counter()
                         self.update_plot()
+                        after_main_plot = time.perf_counter()
                         self.update_force_plot()
+                        redraw_end = time.perf_counter()
+                        self._maybe_log_slow_timeseries_redraw(
+                            main_plot_ms=(after_main_plot - redraw_start) * 1000.0,
+                            force_plot_ms=(redraw_end - after_main_plot) * 1000.0,
+                            total_ms=(redraw_end - redraw_start) * 1000.0,
+                            sweeps_in_block=int(sweeps_in_block),
+                            samples_per_sweep=int(samples_per_sweep),
+                        )
                     elif (
                         hasattr(self, 'should_update_signal_integration_display')
                         and self.should_update_signal_integration_display()
@@ -263,3 +276,31 @@ class BinaryProcessorMixin:
 
             except Exception as e:
                 self.log_status(f"ERROR: Failed to process binary block - {e}")
+
+    def _maybe_log_slow_timeseries_redraw(
+        self,
+        *,
+        main_plot_ms: float,
+        force_plot_ms: float,
+        total_ms: float,
+        sweeps_in_block: int,
+        samples_per_sweep: int,
+    ) -> None:
+        """Emit sparse diagnostics when live Time Series redraw gets slow."""
+        if total_ms < self._SLOW_TIMESERIES_UPDATE_MS:
+            return
+        if not hasattr(self, "log_status"):
+            return
+
+        now = time.time()
+        last_log = getattr(self, "_last_slow_timeseries_log_time", 0.0)
+        if (now - last_log) < self._SLOW_TIMESERIES_LOG_INTERVAL_SEC:
+            return
+        self._last_slow_timeseries_log_time = now
+
+        self.log_status(
+            "TimeSeries redraw slow: "
+            f"main={main_plot_ms:.1f}ms, force={force_plot_ms:.1f}ms, total={total_ms:.1f}ms, "
+            f"block_sweeps={sweeps_in_block}, samples_per_sweep={samples_per_sweep}, "
+            f"sweep_count={int(getattr(self, 'sweep_count', 0))}"
+        )

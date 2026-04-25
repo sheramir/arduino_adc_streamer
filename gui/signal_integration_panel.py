@@ -294,6 +294,7 @@ class SignalIntegrationPanelMixin:
         self._latest_signal_integration_values_by_position: dict[str, float] = {}
         self._latest_signal_integration_values_by_package: dict[str, dict[str, float]] = {}
         self._latest_signal_integration_package_layout: list[dict[str, object]] = []
+        self._pressure_package_sensor_gains: dict[str, dict[str, float]] = {}
         self._latest_shear_result: ShearResult | None = None
         self._latest_normal_force_result: NormalForceResult | None = None
         self._latest_pressure_map_result: PressureMapResult | None = None
@@ -583,6 +584,15 @@ class SignalIntegrationPanelMixin:
                     position: float(spin.value())
                     for position, spin in getattr(self, "shear_gain_spins", {}).items()
                 },
+                "package_sensor_gains": {
+                    package_id: {
+                        position: float(value)
+                        for position, value in package_gains.items()
+                        if position in SHEAR_SENSOR_POSITIONS
+                    }
+                    for package_id, package_gains in getattr(self, "_pressure_package_sensor_gains", {}).items()
+                    if str(package_id).strip()
+                },
             },
             "visualization": {
                 "arrow_gain": self._spin_float("shear_arrow_gain_spin", DEFAULT_ARROW_GAIN),
@@ -808,6 +818,14 @@ class SignalIntegrationPanelMixin:
                     spin.setValue(float(value))
                     changed = True
 
+        raw_package_gains = processing.get("package_sensor_gains", settings.get("package_sensor_gains", {}))
+        if not raw_package_gains:
+            raw_package_gains = processing.get("sensor_package_gains", settings.get("sensor_package_gains", {}))
+        normalized_package_gains = self._normalize_pressure_package_sensor_gains(raw_package_gains)
+        if normalized_package_gains:
+            self._pressure_package_sensor_gains = normalized_package_gains
+            changed = True
+
         changed |= self._set_spin_value("shear_arrow_gain_spin", visualization, "arrow_gain", float)
         changed |= self._set_spin_value(
             "shear_arrow_threshold_spin",
@@ -883,6 +901,65 @@ class SignalIntegrationPanelMixin:
             return False
         widget.setChecked(bool(settings[key]))
         return True
+
+    def _normalize_pressure_package_id(self, package_id: str | None) -> str | None:
+        if package_id is None:
+            return None
+        normalized = str(package_id).strip().upper()
+        return normalized or None
+
+    def _default_pressure_sensor_gains(self) -> dict[str, float]:
+        gains: dict[str, float] = {}
+        gain_spins = getattr(self, "shear_gain_spins", {})
+        for position in SHEAR_SENSOR_POSITIONS:
+            gain_spin = gain_spins.get(position)
+            gain = float(gain_spin.value()) if gain_spin is not None else DEFAULT_SHEAR_CALIBRATION_GAIN
+            gains[position] = gain
+        return gains
+
+    def _normalize_pressure_package_sensor_gains(
+        self,
+        raw: object,
+    ) -> dict[str, dict[str, float]]:
+        if not isinstance(raw, dict):
+            return {}
+
+        normalized: dict[str, dict[str, float]] = {}
+        for package_id, package_gains in raw.items():
+            normalized_package_id = self._normalize_pressure_package_id(str(package_id))
+            if normalized_package_id is None or not isinstance(package_gains, dict):
+                continue
+
+            normalized_gains: dict[str, float] = {}
+            for position in SHEAR_SENSOR_POSITIONS:
+                if position in package_gains:
+                    try:
+                        normalized_gains[position] = float(package_gains[position])
+                    except (TypeError, ValueError):
+                        continue
+            if normalized_gains:
+                normalized[normalized_package_id] = normalized_gains
+
+        return normalized
+
+    def _pressure_sensor_gains_for_package(self, package_id: str | None) -> dict[str, float]:
+        defaults = self._default_pressure_sensor_gains()
+        normalized_package_id = self._normalize_pressure_package_id(package_id)
+        if normalized_package_id is None:
+            return defaults
+
+        package_gain_map = getattr(self, "_pressure_package_sensor_gains", {})
+        package_gains = package_gain_map.get(normalized_package_id)
+        if package_gains is None:
+            package_gains = dict(defaults)
+            package_gain_map[normalized_package_id] = package_gains
+            self._pressure_package_sensor_gains = package_gain_map
+
+        effective = dict(defaults)
+        for position, value in package_gains.items():
+            if position in SHEAR_SENSOR_POSITIONS:
+                effective[position] = float(value)
+        return effective
 
     def on_signal_integration_settings_changed(self, _value: object | None = None) -> None:
         """Apply HPF, integration, and display-window changes.
@@ -1052,6 +1129,7 @@ class SignalIntegrationPanelMixin:
             desired_curve_keys = set()
             latest_integrated_by_position: dict[str, float] = {}
             latest_integrated_by_package: dict[str, dict[str, float]] = {}
+            package_series_by_position: dict[str, dict[str, tuple[np.ndarray, np.ndarray]]] = {}
             visible_series_count = max(1, len(selected_channels))
             max_samples_per_series = max(
                 SIGNAL_INTEGRATION_MIN_POINTS_PER_VISIBLE_CHANNEL,
@@ -1059,9 +1137,11 @@ class SignalIntegrationPanelMixin:
             )
             avg_sample_time_sec = getattr(self, "_cached_avg_sample_time_sec", 0.0)
             repeat_count = max(1, int(self.config.get("repeat", 1)))
+            package_layout = self._get_signal_integration_package_layout()
+            multi_package_force_mode = self._is_multi_package_force_mode(package_layout)
 
             for spec_index, spec in enumerate(display_specs):
-                should_plot = spec["key"] in selected_channels
+                should_plot = (spec["key"] in selected_channels) and not multi_package_force_mode
                 shear_position = self._get_shear_position_for_display_spec(spec, spec_index)
                 should_collect_package = shear_position in SHEAR_SENSOR_POSITIONS
                 should_collect_shear = (
@@ -1094,6 +1174,9 @@ class SignalIntegrationPanelMixin:
                     )
                     if should_collect_shear:
                         latest_integrated_by_position[str(shear_position)] = float(latest_value)
+                    package_id = self._get_signal_integration_package_id_for_display_spec(spec, spec_index)
+                    package_series = package_series_by_position.setdefault(package_id, {})
+                    package_series[str(shear_position)] = (channel_data, channel_times)
 
                 if not should_plot:
                     continue
@@ -1117,13 +1200,20 @@ class SignalIntegrationPanelMixin:
                         desired_curve_keys,
                     )
 
+            if multi_package_force_mode:
+                self._plot_signal_integration_package_force_series(
+                    package_series_by_position,
+                    package_layout,
+                    desired_curve_keys,
+                )
+
             for key, curve in self.signal_integration_curves.items():
                 if key not in desired_curve_keys:
                     curve.setVisible(False)
 
-            self._apply_signal_integration_axis_settings()
+            self._apply_signal_integration_axis_settings(is_package_force_mode=multi_package_force_mode)
             self._latest_signal_integration_values_by_package = latest_integrated_by_package
-            self._latest_signal_integration_package_layout = self._get_signal_integration_package_layout()
+            self._latest_signal_integration_package_layout = package_layout
             self._latest_signal_integration_values_by_position = (
                 self._first_complete_signal_integration_package_values(latest_integrated_by_package)
                 or latest_integrated_by_position
@@ -1246,17 +1336,118 @@ class SignalIntegrationPanelMixin:
             })
         return layout
 
+    def _is_multi_package_force_mode(self, package_layout: list[dict[str, object]]) -> bool:
+        if not (hasattr(self, "is_array_sensor_selection_mode") and self.is_array_sensor_selection_mode()):
+            return False
+        package_ids = [
+            str(item.get("sensor_id", "")).strip().upper()
+            for item in package_layout
+            if str(item.get("sensor_id", "")).strip()
+        ]
+        return len(package_ids) > 1
+
+    def _plot_signal_integration_package_force_series(
+        self,
+        package_series_by_position: dict[str, dict[str, tuple[np.ndarray, np.ndarray]]],
+        package_layout: list[dict[str, object]],
+        desired_curve_keys: set,
+    ) -> None:
+        layout_by_sensor_id = {
+            str(item.get("sensor_id", "")).strip().upper(): item
+            for item in package_layout
+            if str(item.get("sensor_id", "")).strip()
+        }
+
+        for fallback_slot, (package_id, position_series) in enumerate(package_series_by_position.items()):
+            if not all(position in position_series for position in SHEAR_SENSOR_POSITIONS):
+                continue
+
+            times, total_force_series = self._compute_package_total_force_series(position_series, package_id)
+            if times.size == 0 or total_force_series.size == 0:
+                continue
+
+            layout_item = layout_by_sensor_id.get(str(package_id).strip().upper(), {})
+            color_slot = int(layout_item.get("color_slot", fallback_slot))
+            if hasattr(self, "pressure_map_widget"):
+                color = self.pressure_map_widget.package_color_for_index(color_slot)
+            else:
+                fallback_color = PLOT_COLORS[color_slot % len(PLOT_COLORS)]
+                color = tuple(int(component) for component in fallback_color)
+
+            curve_key = ("signal_integration_package_force", str(package_id).strip().upper())
+            desired_curve_keys.add(curve_key)
+            self._set_signal_integration_curve_data(
+                curve_key,
+                f"{package_id} total force",
+                pg.mkPen(color=color, width=SIGNAL_INTEGRATION_PLOT_LINE_WIDTH),
+                times,
+                total_force_series,
+            )
+
+    def _compute_package_total_force_series(
+        self,
+        position_series: dict[str, tuple[np.ndarray, np.ndarray]],
+        package_id: str | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        if not all(position in position_series for position in SHEAR_SENSOR_POSITIONS):
+            return np.asarray([], dtype=np.float64), np.asarray([], dtype=np.float64)
+
+        lengths = [
+            len(np.asarray(position_series[position][0], dtype=np.float64))
+            for position in SHEAR_SENSOR_POSITIONS
+        ]
+        if not lengths:
+            return np.asarray([], dtype=np.float64), np.asarray([], dtype=np.float64)
+        sample_count = min(lengths)
+        if sample_count <= 0:
+            return np.asarray([], dtype=np.float64), np.asarray([], dtype=np.float64)
+
+        threshold = float(self.shear_noise_threshold_spin.value())
+        package_gains = self._pressure_sensor_gains_for_package(package_id)
+        calibrated_series: dict[str, np.ndarray] = {}
+        reference_times: np.ndarray | None = None
+
+        for position in SHEAR_SENSOR_POSITIONS:
+            data_samples, time_samples = position_series[position]
+            data_array = np.asarray(data_samples, dtype=np.float64).reshape(-1)[-sample_count:]
+            time_array = np.asarray(time_samples, dtype=np.float64).reshape(-1)[-sample_count:]
+            if reference_times is None:
+                reference_times = time_array
+            gain = float(package_gains.get(position, DEFAULT_SHEAR_CALIBRATION_GAIN))
+            thresholded = np.where(np.abs(data_array) < threshold, 0.0, data_array)
+            calibrated_series[position] = thresholded * gain
+
+        if reference_times is None:
+            return np.asarray([], dtype=np.float64), np.asarray([], dtype=np.float64)
+
+        # Total normal force is invariant to the shear-removal and baseline-offset
+        # steps used downstream, so it can be computed as the calibrated channel sum.
+        total_force_series = np.zeros(sample_count, dtype=np.float64)
+        for position in SHEAR_SENSOR_POSITIONS:
+            total_force_series += calibrated_series[position]
+
+        return reference_times, total_force_series
+
     def _update_shear_visualization_from_latest(self) -> None:
         if not hasattr(self, "pressure_map_widget"):
             return
 
         latest_values = getattr(self, "_latest_signal_integration_values_by_position", {})
+        package_values = getattr(self, "_latest_signal_integration_values_by_package", {})
+        package_id: str | None = None
+        if isinstance(package_values, dict):
+            for candidate_id, candidate_values in package_values.items():
+                if all(position in candidate_values for position in SHEAR_SENSOR_POSITIONS):
+                    package_id = str(candidate_id)
+                    latest_values = dict(candidate_values)
+                    break
+
         if not all(position in latest_values for position in SHEAR_SENSOR_POSITIONS):
             self._latest_shear_result = None
             self._update_pressure_map_from_latest()
             return
 
-        calibrated_values = self._calibrate_signal_integration_values_for_shear(latest_values)
+        calibrated_values = self._calibrate_signal_integration_values_for_shear(latest_values, package_id)
         self._latest_shear_result = self.shear_detector.detect(calibrated_values)
         self._update_pressure_map_from_latest()
 
@@ -1310,7 +1501,7 @@ class SignalIntegrationPanelMixin:
             if not all(position in package_values for position in SHEAR_SENSOR_POSITIONS):
                 continue
 
-            calibrated_values = self._calibrate_signal_integration_values_for_shear(package_values)
+            calibrated_values = self._calibrate_signal_integration_values_for_shear(package_values, str(sensor_id))
             shear_result = self.shear_detector.detect(calibrated_values)
             normal_force_result = self.normal_force_calculator.compute(shear_result.residual)
             pressure_result = self.pressure_map_generator.generate(normal_force_result.normalized)
@@ -1332,15 +1523,16 @@ class SignalIntegrationPanelMixin:
     def _calibrate_signal_integration_values_for_shear(
         self,
         latest_values: dict[str, float],
+        package_id: str | None = None,
     ) -> dict[str, float]:
         threshold = float(self.shear_noise_threshold_spin.value())
+        package_gains = self._pressure_sensor_gains_for_package(package_id)
         calibrated: dict[str, float] = {}
         for position in SHEAR_SENSOR_POSITIONS:
             value = float(latest_values.get(position, 0.0))
             if abs(value) < threshold:
                 value = 0.0
-            gain_spin = self.shear_gain_spins.get(position)
-            gain = float(gain_spin.value()) if gain_spin is not None else DEFAULT_SHEAR_CALIBRATION_GAIN
+            gain = float(package_gains.get(position, DEFAULT_SHEAR_CALIBRATION_GAIN))
             calibrated[position] = value * gain
         return calibrated
 
@@ -1708,7 +1900,10 @@ class SignalIntegrationPanelMixin:
         self._set_signal_integration_curve_data(curve_key, name, pen, channel_times, channel_data)
         return True
 
-    def _apply_signal_integration_axis_settings(self) -> None:
-        self.signal_integration_plot_widget.setLabel("left", "Integrated HPF Voltage", units="V samples")
+    def _apply_signal_integration_axis_settings(self, *, is_package_force_mode: bool = False) -> None:
+        if is_package_force_mode:
+            self.signal_integration_plot_widget.setLabel("left", "Total Normal Force")
+        else:
+            self.signal_integration_plot_widget.setLabel("left", "Integrated HPF Voltage", units="V samples")
         self.signal_integration_plot_widget.enableAutoRange(axis="y")
         self.signal_integration_plot_widget.setLabel("bottom", "Time", units="s")

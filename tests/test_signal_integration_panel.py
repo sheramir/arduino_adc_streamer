@@ -70,6 +70,7 @@ class SignalIntegrationPanelHarness(SignalIntegrationPanelMixin):
         self._signal_integration_filter_warning = ""
         self._shear_settings_loading = False
         self._shear_autosave_enabled = False
+        self._pressure_package_sensor_gains = {}
         self._latest_shear_result = None
         self.log_messages = []
         self.active_sensor_reverse_polarity = False
@@ -260,6 +261,29 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         self.assertEqual(calibrated["T"], 0.0)
         self.assertEqual(calibrated["B"], 0.8)
 
+    def test_package_specific_gains_override_global_processing_gains(self):
+        harness = SignalIntegrationPanelHarness()
+        harness.shear_noise_threshold_spin = DummySpinBox(0.0)
+        harness.shear_gain_spins = {
+            position: DummySpinBox(1.0)
+            for position in SHEAR_SENSOR_POSITIONS
+        }
+        harness._pressure_package_sensor_gains = {
+            "PZT3": {
+                "R": 2.0,
+                "L": 0.5,
+            }
+        }
+        latest_values = {"C": 0.0, "L": -1.0, "R": 1.0, "T": 0.0, "B": 0.0}
+
+        calibrated_pzt3 = harness._calibrate_signal_integration_values_for_shear(latest_values, "pzt3")
+        calibrated_other = harness._calibrate_signal_integration_values_for_shear(latest_values, "PZT5")
+
+        self.assertEqual(calibrated_pzt3["R"], 2.0)
+        self.assertEqual(calibrated_pzt3["L"], -0.5)
+        self.assertEqual(calibrated_other["R"], 1.0)
+        self.assertEqual(calibrated_other["L"], -1.0)
+
     def test_array_package_plumbing_tracks_values_and_grid_positions(self):
         harness = SignalIntegrationPanelHarness()
         harness.config = {
@@ -340,6 +364,79 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         self.assertNotEqual(packages[0].color, packages[1].color)
         self.assertTrue(packages[0].shear_result.has_shear)
 
+    def test_multi_package_force_mode_enabled_only_for_multiple_array_packages(self):
+        harness = SignalIntegrationPanelHarness()
+        harness.config = {"channel_selection_source": "array", "selected_array_sensors": ["PZT3", "PZT5"]}
+
+        enabled = harness._is_multi_package_force_mode([
+            {"sensor_id": "PZT3"},
+            {"sensor_id": "PZT5"},
+        ])
+        disabled = harness._is_multi_package_force_mode([{"sensor_id": "PZT3"}])
+
+        self.assertTrue(enabled)
+        self.assertFalse(disabled)
+
+    def test_compute_package_total_force_series_returns_one_force_trace(self):
+        harness = SignalIntegrationPanelHarness()
+        harness.shear_detector = ShearDetector()
+        harness.normal_force_calculator = NormalForceCalculator()
+        harness.shear_noise_threshold_spin = DummySpinBox(0.0)
+        harness.shear_gain_spins = {
+            position: DummySpinBox(1.0)
+            for position in SHEAR_SENSOR_POSITIONS
+        }
+
+        times = np.asarray([0.0, 0.01, 0.02], dtype=np.float64)
+        position_series = {
+            "C": (np.asarray([1.0, 0.8, 0.6], dtype=np.float64), times),
+            "L": (np.asarray([-1.0, -0.5, -0.25], dtype=np.float64), times),
+            "R": (np.asarray([1.0, 0.5, 0.25], dtype=np.float64), times),
+            "T": (np.asarray([0.0, 0.0, 0.0], dtype=np.float64), times),
+            "B": (np.asarray([0.0, 0.0, 0.0], dtype=np.float64), times),
+        }
+
+        computed_times, total_force = harness._compute_package_total_force_series(position_series)
+
+        self.assertEqual(computed_times.shape, times.shape)
+        np.testing.assert_allclose(computed_times, times)
+        self.assertEqual(total_force.shape, times.shape)
+        self.assertTrue(np.all(total_force >= 0.0))
+        self.assertGreater(float(np.max(total_force)), 0.0)
+
+    def test_compute_package_total_force_series_matches_pipeline_total_force(self):
+        harness = SignalIntegrationPanelHarness()
+        harness.shear_detector = ShearDetector()
+        harness.normal_force_calculator = NormalForceCalculator()
+        harness.shear_noise_threshold_spin = DummySpinBox(0.0)
+        harness.shear_gain_spins = {
+            position: DummySpinBox(1.0)
+            for position in SHEAR_SENSOR_POSITIONS
+        }
+
+        times = np.asarray([0.0, 0.01, 0.02, 0.03], dtype=np.float64)
+        position_series = {
+            "C": (np.asarray([0.2, 0.1, 0.0, -0.1], dtype=np.float64), times),
+            "L": (np.asarray([-1.0, -0.6, -0.4, -0.2], dtype=np.float64), times),
+            "R": (np.asarray([1.2, 0.9, 0.5, 0.3], dtype=np.float64), times),
+            "T": (np.asarray([0.7, 0.4, 0.1, -0.1], dtype=np.float64), times),
+            "B": (np.asarray([-0.5, -0.2, 0.0, 0.2], dtype=np.float64), times),
+        }
+
+        _computed_times, total_force = harness._compute_package_total_force_series(position_series)
+
+        expected = np.zeros_like(total_force)
+        for idx in range(len(total_force)):
+            sample_values = {
+                position: float(position_series[position][0][idx])
+                for position in SHEAR_SENSOR_POSITIONS
+            }
+            shear_result = harness.shear_detector.detect(sample_values)
+            normal_force_result = harness.normal_force_calculator.compute(shear_result.residual)
+            expected[idx] = float(normal_force_result.total_force)
+
+        np.testing.assert_allclose(total_force, expected, rtol=1e-7, atol=1e-7)
+
     def test_shear_settings_save_and_load_round_trip(self):
         harness = SignalIntegrationPanelHarness()
         self._install_shear_setting_widgets(harness)
@@ -356,11 +453,17 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             self.assertEqual(settings["signal_integration"]["integration_window_samples"], 44)
             self.assertEqual(settings["processing"]["noise_threshold"], 0.75)
             self.assertEqual(settings["processing"]["sensor_gains"]["C"], 1.25)
+            self.assertEqual(settings["processing"]["package_sensor_gains"], {})
             self.assertFalse(settings["visualization"]["arrow_width_scales"])
             self.assertEqual(settings["pressure_map"]["sensor_spacing_mm"], 1.75)
             self.assertEqual(settings["pressure_map"]["circle_diameter_mm"], 5.5)
             self.assertEqual(settings["pressure_map"]["grid_resolution"], 25)
             self.assertEqual(settings["pressure_map"]["grid_margin"], 3)
+
+            settings["processing"]["package_sensor_gains"] = {
+                "PZT3": {"R": 2.5, "L": 0.25}
+            }
+            settings_path.write_text(json.dumps(payload), encoding="utf-8")
 
             harness.signal_integration_hpf_spin.setValue(1.0)
             harness.signal_integration_window_spin.setValue(2)
@@ -384,6 +487,8 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             self.assertEqual(harness.pressure_circle_diameter_spin.value(), 5.5)
             self.assertEqual(harness.pressure_grid_resolution_spin.value(), 25)
             self.assertEqual(harness.pressure_grid_margin_spin.value(), 3)
+            self.assertEqual(harness._pressure_package_sensor_gains["PZT3"]["R"], 2.5)
+            self.assertEqual(harness._pressure_package_sensor_gains["PZT3"]["L"], 0.25)
 
     def test_pressure_map_tab_controls_expose_tooltips(self):
         harness = SignalIntegrationPanelHarness()

@@ -5,6 +5,7 @@ Background threads for reading serial data without blocking the GUI.
 """
 
 import re
+import time
 
 import numpy as np
 from PyQt6.QtCore import QThread, pyqtSignal
@@ -12,8 +13,14 @@ from PyQt6.QtCore import QThread, pyqtSignal
 from constants.serial import (
     FORCE_READER_IDLE_MS,
     SERIAL_PACKET_AVG_SAMPLE_TIME_BYTES,
+    SERIAL_PACKET_AVG_SAMPLE_TIME_MAX_US,
+    SERIAL_PACKET_AVG_SAMPLE_TIME_MIN_US,
     SERIAL_PACKET_BLOCK_TIMESTAMP_BYTES,
     SERIAL_PACKET_HEADER_BYTES,
+    SERIAL_PACKET_SAMPLE_COUNT_MAX,
+    SERIAL_PACKET_SPAN_MAX_FACTOR,
+    SERIAL_PACKET_SPAN_MIN_FACTOR,
+    SERIAL_PACKET_SPAN_TOLERANCE_US,
     SERIAL_READER_DEBUG_LOG_LIMIT,
     SERIAL_READER_IDLE_MS,
 )
@@ -74,19 +81,29 @@ class SerialReaderThread(QThread):
         self.binary_buffer = bytearray()
         self._debug_binary_packets_seen = 0
         self._debug_binary_rejections = 0
+        self._accepted_packets_total = 0
+        self._rejected_packets_total = 0
+        self._last_data_time = time.monotonic()
+        self._last_idle_log_time = 0.0
 
     def run(self):
         """Continuously read from serial port and emit signals."""
         while self.running:
             try:
                 if self.serial_port and self.serial_port.is_open:
-                    if self.serial_port.in_waiting > 0:
-                        data = self.serial_port.read(self.serial_port.in_waiting)
+                    bytes_waiting = self.serial_port.in_waiting
+                    if bytes_waiting > 0:
+                        data = self.serial_port.read(bytes_waiting)
+                        self._last_data_time = time.monotonic()
                         
                         # Always process as binary buffer to handle mixed binary/ASCII data
                         # This prevents "Unexpected ASCII" errors when MCU sends binary packets
                         self.binary_buffer.extend(data)
                         self.binary_buffer = self.process_binary_data(self.binary_buffer)
+                        # Data was available, keep draining aggressively without artificial delay.
+                        continue
+
+                    self._maybe_emit_capture_idle_debug()
                 else:
                     break
 
@@ -134,8 +151,19 @@ class SerialReaderThread(QThread):
                     buf_start += 1
                     continue
 
+                if sample_count > SERIAL_PACKET_SAMPLE_COUNT_MAX:
+                    self._rejected_packets_total += 1
+                    if self.is_capturing and self._debug_binary_rejections < SERIAL_READER_DEBUG_LOG_LIMIT:
+                        self._debug_binary_rejections += 1
+                        self.error_occurred.emit(
+                            f"Binary packet rejected: sample_count={sample_count} exceeds max={SERIAL_PACKET_SAMPLE_COUNT_MAX}"
+                        )
+                    buf_start += 1
+                    continue
+
                 if expected and sample_count % expected != 0:
                     # False header match or desynced stream.
+                    self._rejected_packets_total += 1
                     if self.is_capturing and self._debug_binary_rejections < SERIAL_READER_DEBUG_LOG_LIMIT:
                         self._debug_binary_rejections += 1
                         self.error_occurred.emit(
@@ -156,6 +184,7 @@ class SerialReaderThread(QThread):
                     break  # Need more data for complete packet
 
                 if self.is_capturing:
+                    self._accepted_packets_total += 1
                     if self._debug_binary_packets_seen < SERIAL_READER_DEBUG_LOG_LIMIT:
                         self._debug_binary_packets_seen += 1
                         self.error_occurred.emit(
@@ -187,6 +216,23 @@ class SerialReaderThread(QThread):
                     block_end_us = int.from_bytes(
                         buffer[ts_offset + 4:ts_offset + 8], 'little'
                     )
+
+                    if not self._is_packet_timing_sane(
+                        sample_count=sample_count,
+                        avg_sample_time_us=avg_sample_time_us,
+                        block_start_us=block_start_us,
+                        block_end_us=block_end_us,
+                    ):
+                        self._rejected_packets_total += 1
+                        if self._debug_binary_rejections < SERIAL_READER_DEBUG_LOG_LIMIT:
+                            self._debug_binary_rejections += 1
+                            self.error_occurred.emit(
+                                "Binary packet rejected: timing sanity check failed "
+                                f"(sample_count={sample_count}, avg_dt_us={avg_sample_time_us}, "
+                                f"start={block_start_us}, end={block_end_us})"
+                            )
+                        buf_start += 1
+                        continue
 
                     self.binary_sweep_received.emit(
                         samples, avg_sample_time_us, block_start_us, block_end_us
@@ -229,9 +275,54 @@ class SerialReaderThread(QThread):
         if capturing:
             self._debug_binary_packets_seen = 0
             self._debug_binary_rejections = 0
+            self._accepted_packets_total = 0
+            self._rejected_packets_total = 0
+            self._last_data_time = time.monotonic()
+            self._last_idle_log_time = 0.0
         if not capturing:
             # Drop any partial/queued binary data between captures so timestamps restart clean
             self.binary_buffer.clear()
+
+    def _maybe_emit_capture_idle_debug(self) -> None:
+        if not self.is_capturing:
+            return
+        now = time.monotonic()
+        idle_for_sec = now - self._last_data_time
+        if idle_for_sec < 0.25:
+            return
+        if (now - self._last_idle_log_time) < 1.0:
+            return
+        self._last_idle_log_time = now
+
+        expected = self.expected_samples_per_sweep
+        self.error_occurred.emit(
+            "Serial reader idle during capture: "
+            f"idle_ms={idle_for_sec * 1000.0:.1f}, expected_samples_per_sweep={expected}, "
+            f"accepted_packets={self._accepted_packets_total}, rejected_packets={self._rejected_packets_total}, "
+            f"buffer_len={len(self.binary_buffer)}"
+        )
+
+    def _is_packet_timing_sane(
+        self,
+        *,
+        sample_count: int,
+        avg_sample_time_us: int,
+        block_start_us: int,
+        block_end_us: int,
+    ) -> bool:
+        if avg_sample_time_us < SERIAL_PACKET_AVG_SAMPLE_TIME_MIN_US:
+            return False
+        if avg_sample_time_us > SERIAL_PACKET_AVG_SAMPLE_TIME_MAX_US:
+            return False
+
+        expected_span_us = max(0, int(sample_count - 1) * int(avg_sample_time_us))
+        actual_span_us = int((int(block_end_us) - int(block_start_us)) & 0xFFFFFFFF)
+
+        min_span_us = int(expected_span_us * SERIAL_PACKET_SPAN_MIN_FACTOR) - SERIAL_PACKET_SPAN_TOLERANCE_US
+        max_span_us = int(expected_span_us * SERIAL_PACKET_SPAN_MAX_FACTOR) + SERIAL_PACKET_SPAN_TOLERANCE_US
+        if min_span_us < 0:
+            min_span_us = 0
+        return min_span_us <= actual_span_us <= max_span_us
 
     def clear_buffer(self):
         """Explicitly clear the internal binary buffer."""

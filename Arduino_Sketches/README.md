@@ -7,7 +7,8 @@ This folder contains the firmware variants used by the desktop ADC Streamer GUI.
 - `MG24/`: MG24 standalone ADC streamer variants
 - `legacy/`: archived sketches that are no longer part of the default GUI workflow
 - `Teensy/`: Teensy ADC and 555-resistance streamer variants
-- `Teensy_MG24_SPI/`: specialized multi-board SPI array experiments
+- `PCB1.0_SPI/`: Teensy+MG24 SPI array firmware for PCB v1.0
+- `PCB1.5_SPI/`: Teensy+MG24 SPI array firmware for PCB v1.5 (DRDY-enabled path)
 
 ## Current Sketch Map
 
@@ -17,8 +18,8 @@ This folder contains the firmware variants used by the desktop ADC Streamer GUI.
 | MG24 | ADC streamer with ADG1206 MUX | `MG24/ADC_Streamer_binary_scan_with_ADG1206_mux/ADC_Streamer_binary_scan_with_ADG1206_mux.ino` | MG24 capture with external MUX and optional charge-reset control | `# MG24_MUX` |
 | Teensy | Standard ADC streamer | `Teensy/ADC_Streamer_binary_scan2/ADC_Streamer_binary_scan2.ino` | Main Teensy ADC acquisition path used by the GUI | `# TEENSY40` |
 | Teensy | 555 resistance / displacement streamer | `Teensy/Teensy555_streamer/Teensy555_streamer.ino` | 555-based resistance timing measurements used with the GUI `555` mode | `# Teensy555` |
-| Teensy + MG24 SPI | PZT array master | `Teensy_MG24_SPI/Teensy_SPI_Master_Array_PZT1.ino` | Specialized array experiment | `# Array_PZT1` |
-| Teensy + MG24 SPI | Mixed PZT/PZR array master | `Teensy_MG24_SPI/Teensy_SPI_Master_Array_PZT_PZR1.ino` | Specialized mixed array experiment | `# Array_PZT_PZR1` |
+| Teensy + MG24 SPI (PCB1.0) | Mixed PZT/PZR array pair | `PCB1.0_SPI/Teensy_SPI_Master_Array_PZT_PZR1.ino` + `PCB1.0_SPI/MG24_Dual_MUX_SPI_Slave.ino` | Legacy board revision v1.0 | `# Array_PZT_PZR1` |
+| Teensy + MG24 SPI (PCB1.5) | Mixed PZT/PZR array pair with DRDY | `PCB1.5_SPI/Teensy_SPI_Master_Array_PZT_PZR1.5_DRDY.ino` + `PCB1.5_SPI/MG24_Dual_MUX_SPI_Slave1.5_DRDY.ino` | Current board revision v1.5, DRDY-synchronized streaming | `# Array_PZT_PZR1` |
 
 ## Which Sketch Should You Flash
 
@@ -26,7 +27,19 @@ This folder contains the firmware variants used by the desktop ADC Streamer GUI.
 - Use `MG24/ADC_Streamer_binary_scan_with_ADG1206_mux/` when the hardware includes the external ADG1206 MUX path.
 - Use `Teensy/ADC_Streamer_binary_scan2/` for normal Teensy ADC capture.
 - Use `Teensy/Teensy555_streamer/` when the GUI is being used in 555 / displacement mode.
-- Treat `Teensy_MG24_SPI/` as specialized firmware rather than the default GUI path.
+- Use `PCB1.5_SPI/` for the current Teensy+MG24 dual-board array hardware (recommended).
+- Use `PCB1.0_SPI/` only for legacy PCB v1.0 hardware.
+
+## Teensy+MG24 Pairing Notes
+
+For `PCB1.0_SPI/` and `PCB1.5_SPI/`, flash both boards with the matching pair:
+
+- Teensy: `Teensy_SPI_Master_Array_PZT_PZR1...`
+- MG24: `MG24_Dual_MUX_SPI_Slave...`
+
+Do not mix a Teensy sketch from one PCB folder with an MG24 sketch from the other folder.
+
+On PCB1.5, DRDY is used as the primary stream synchronization signal from MG24 to Teensy. The Teensy firmware still includes a guarded fallback polling path for safety if DRDY stalls.
 
 ## Shared Serial Protocol
 

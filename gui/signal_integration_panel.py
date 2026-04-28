@@ -23,7 +23,6 @@ import pyqtgraph as pg
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QCheckBox,
-    QDoubleSpinBox,
     QHBoxLayout,
     QGridLayout,
     QGroupBox,
@@ -31,10 +30,10 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QPushButton,
     QScrollArea,
-    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
+from gui.custom_widgets import NonScrollableDoubleSpinBox as QDoubleSpinBox, NonScrollableSpinBox as QSpinBox
 
 from constants.filtering_defaults import FILTER_DEFAULT_LOW_CUTOFF_HZ
 from constants.plotting import (

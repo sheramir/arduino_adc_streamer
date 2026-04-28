@@ -184,7 +184,9 @@ class PressureMapPanelMixin:
         tab = QScrollArea()
         tab.setWidgetResizable(True)
         tab.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        tab.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         content_widget = QWidget()
+        content_widget.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         root_layout = QVBoxLayout(content_widget)
         tab.setWidget(content_widget)
 
@@ -509,6 +511,7 @@ class PressureMapPanelMixin:
 
     def _create_pressure_package_gain_settings_group(self) -> QGroupBox:
         group = QGroupBox("Per-Package Gain Calibration")
+        group.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.pressure_package_gain_group = group
         self.pressure_package_gain_root_layout = QVBoxLayout(group)
         self.pressure_package_gain_root_layout.setContentsMargins(0, 0, 0, 0)
@@ -523,12 +526,6 @@ class PressureMapPanelMixin:
     ) -> None:
         if not hasattr(self, "pressure_package_gain_root_layout"):
             return
-
-        while self.pressure_package_gain_root_layout.count() > 0:
-            item = self.pressure_package_gain_root_layout.takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                widget.deleteLater()
 
         if package_layout is None:
             package_layout = self._get_signal_integration_package_layout()
@@ -547,6 +544,26 @@ class PressureMapPanelMixin:
         )
         self.pressure_package_gain_group.setVisible(show_controls)
 
+        # If the set of packages hasn't changed, update spin values in-place so
+        # any spinbox that has keyboard focus is not destroyed mid-edit.
+        existing_spins: dict[str, dict[str, QDoubleSpinBox]] = getattr(self, "pressure_package_gain_spins", {})
+        if show_controls and list(existing_spins.keys()) == package_ids:
+            for package_id in package_ids:
+                package_gains = self._pressure_sensor_gains_for_package(package_id)
+                for position, spin in existing_spins[package_id].items():
+                    if not spin.hasFocus():
+                        spin.blockSignals(True)
+                        spin.setValue(float(package_gains.get(position, DEFAULT_SHEAR_CALIBRATION_GAIN)))
+                        spin.blockSignals(False)
+            return
+
+        # Package list changed — full rebuild.
+        while self.pressure_package_gain_root_layout.count() > 0:
+            item = self.pressure_package_gain_root_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
         if not show_controls:
             self.pressure_package_gain_spins = {}
             self.pressure_package_gain_root_layout.addWidget(
@@ -557,6 +574,7 @@ class PressureMapPanelMixin:
         self.pressure_package_gain_spins = {}
         for package_id in package_ids:
             package_box = QGroupBox(f"{package_id} gains")
+            package_box.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             package_row = QHBoxLayout(package_box)
             package_row.setContentsMargins(6, 6, 6, 6)
             package_row.setSpacing(SHEAR_SETTINGS_HORIZONTAL_SPACING_PX)

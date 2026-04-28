@@ -13,7 +13,7 @@ Usage:
     outputs = integrator.process({0: samples_t, 1: samples_b})
 
 Dependencies:
-    numpy, scipy.signal when available, and constants.signal_integration for defaults.
+    numpy, scipy.signal when available, and constants.pressure_map for defaults.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from typing import Hashable, Mapping, Sequence
 
 import numpy as np
 
-from constants.signal_integration import (
+from constants.pressure_map import (
     DEFAULT_HPF_CUTOFF_HZ,
     DEFAULT_INTEGRATION_SCALE_BY_DT,
     DEFAULT_INTEGRATION_WINDOW_SAMPLES,
@@ -444,3 +444,4 @@ class SignalIntegrator:
                 state.integration_history = state.integration_history[-keep_count:].copy()
             else:
                 state.integration_history = np.empty(0, dtype=np.float64)
+

@@ -5,7 +5,7 @@ import unittest
 import numpy as np
 
 from constants.plotting import MICROSECONDS_PER_SECOND
-from constants.signal_integration import (
+from constants.pressure_map import (
     DEFAULT_HPF_CUTOFF_HZ,
     DEFAULT_INTEGRATION_WINDOW_SAMPLES,
     SIGNAL_INTEGRATION_CHANNEL_COUNT,
@@ -156,3 +156,4 @@ class SignalIntegrationProcessorTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

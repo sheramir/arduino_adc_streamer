@@ -27,7 +27,7 @@ from constants.sensor_config import (
     SENSOR_POLARITY_NORMAL_MULTIPLIER,
     SENSOR_POLARITY_REVERSED_MULTIPLIER,
 )
-from constants.signal_integration import (
+from constants.pressure_map import (
     DEFAULT_DISPLAY_WINDOW_SEC,
     DEFAULT_HPF_CUTOFF_HZ,
     DEFAULT_INTEGRATION_SCALE_BY_DT,
@@ -620,3 +620,4 @@ class SignalIntegrationProcessorMixin:
 
         self._last_signal_integration_plot_update_time = now
         self.update_signal_integration_plot()
+

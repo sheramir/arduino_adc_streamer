@@ -1,5 +1,5 @@
 """
-Integrated voltage preview tab for the future shear/pressure pipeline.
+Pressure Map tab pipeline and controls.
 
 This tab reads the same recent ADC circular-buffer window used by the Time
 Series view, converts the selected traces to voltage independently of the Time
@@ -48,7 +48,7 @@ from constants.sensor_config import (
 )
 from config.sensor_config import normalize_array_cell
 from constants.ui import PRESSURE_MAP_TAB_NAME
-from constants.signal_integration import (
+from constants.pressure_map import (
     DEFAULT_DISPLAY_WINDOW_SEC,
     DEFAULT_HPF_CUTOFF_HZ,
     DEFAULT_INTEGRATION_WINDOW_SAMPLES,
@@ -132,13 +132,11 @@ from constants.shear import (
     SHEAR_NOISE_THRESHOLD_MIN,
     SHEAR_NOISE_THRESHOLD_STEP,
     SHEAR_CONTROL_SPIN_WIDTH_PX,
-    SHEAR_GAIN_LABEL_MAX_WIDTH_PX,
     SHEAR_GAIN_SPIN_WIDTH_PX,
     SHEAR_SENSOR_POSITIONS,
     SHEAR_SETTINGS_APP_DIRNAME,
     SHEAR_SETTINGS_DEFAULT_FILENAME,
     SHEAR_SETTINGS_FILE_FILTER,
-    SHEAR_SETTINGS_GRID_COLUMNS,
     SHEAR_SETTINGS_HORIZONTAL_SPACING_PX,
     SHEAR_SETTINGS_LAST_FILENAME,
     SHEAR_SETTINGS_PAYLOAD_KEY,
@@ -154,8 +152,8 @@ from file_operations.settings_persistence import load_settings_payload, save_set
 from gui.pressure_map_widget import PressureMapPackageDisplay, PressureMapWidget
 
 
-class SignalIntegrationPanelMixin:
-    """Create and refresh the pressure-map pipeline preview tab.
+class PressureMapPanelMixin:
+    """Create and refresh the Pressure Map tab pipeline preview.
 
     The tab mirrors the Time Series buffering and curve update path while using
     its own PlotWidget and channel checkboxes. It converts ADC counts to volts
@@ -340,32 +338,7 @@ class SignalIntegrationPanelMixin:
         self.shear_noise_threshold_spin.valueChanged.connect(self.on_shear_processing_settings_changed)
         layout.addWidget(self.shear_noise_threshold_spin, 0, 1)
 
-        self.shear_gain_spins: dict[str, QDoubleSpinBox] = {}
-        for index, position in enumerate(SHEAR_SENSOR_POSITIONS):
-            row = 1 + (index // SHEAR_SETTINGS_GRID_COLUMNS)
-            col = (index % SHEAR_SETTINGS_GRID_COLUMNS) * 2
-            gain_tooltip = (
-                f"Calibration multiplier for the {position} integrated channel. "
-                "Negative values flip that channel's polarity."
-            )
-            gain_label = self._create_tooltip_label(
-                f"{position} gain:",
-                gain_tooltip,
-                maximum_width=SHEAR_GAIN_LABEL_MAX_WIDTH_PX,
-            )
-            layout.addWidget(gain_label, row, col)
-            gain_spin = QDoubleSpinBox()
-            gain_spin.setMaximumWidth(SHEAR_GAIN_SPIN_WIDTH_PX)
-            gain_spin.setRange(SHEAR_CALIBRATION_GAIN_MIN, SHEAR_CALIBRATION_GAIN_MAX)
-            gain_spin.setDecimals(SHEAR_CALIBRATION_GAIN_DECIMALS)
-            gain_spin.setSingleStep(SHEAR_CALIBRATION_GAIN_STEP)
-            gain_spin.setValue(DEFAULT_SHEAR_CALIBRATION_GAIN)
-            gain_spin.setToolTip(gain_tooltip)
-            gain_spin.valueChanged.connect(self.on_shear_processing_settings_changed)
-            layout.addWidget(gain_spin, row, col + 1)
-            self.shear_gain_spins[position] = gain_spin
-
-        arrow_row = 2
+        arrow_row = 1
         arrow_gain_tooltip = (
             "Scales detected shear magnitude into displayed arrow length. "
             "Higher values make the arrow longer for the same shear."
@@ -670,10 +643,6 @@ class SignalIntegrationPanelMixin:
                     "shear_noise_threshold_spin",
                     DEFAULT_SHEAR_NOISE_THRESHOLD,
                 ),
-                "sensor_gains": {
-                    position: float(spin.value())
-                    for position, spin in getattr(self, "shear_gain_spins", {}).items()
-                },
                 "package_sensor_gains": {
                     package_id: {
                         position: float(value)
@@ -900,14 +869,6 @@ class SignalIntegrationPanelMixin:
         )
         changed |= self._set_spin_value("shear_noise_threshold_spin", processing, "noise_threshold", float)
 
-        sensor_gains = processing.get("sensor_gains", settings.get("sensor_gains", {}))
-        if isinstance(sensor_gains, dict):
-            for position, value in sensor_gains.items():
-                spin = getattr(self, "shear_gain_spins", {}).get(str(position))
-                if spin is not None and hasattr(spin, "setValue"):
-                    spin.setValue(float(value))
-                    changed = True
-
         raw_package_gains = processing.get("package_sensor_gains", settings.get("package_sensor_gains", {}))
         if not raw_package_gains:
             raw_package_gains = processing.get("sensor_package_gains", settings.get("sensor_package_gains", {}))
@@ -1000,13 +961,10 @@ class SignalIntegrationPanelMixin:
         return normalized or None
 
     def _default_pressure_sensor_gains(self) -> dict[str, float]:
-        gains: dict[str, float] = {}
-        gain_spins = getattr(self, "shear_gain_spins", {})
-        for position in SHEAR_SENSOR_POSITIONS:
-            gain_spin = gain_spins.get(position)
-            gain = float(gain_spin.value()) if gain_spin is not None else DEFAULT_SHEAR_CALIBRATION_GAIN
-            gains[position] = gain
-        return gains
+        return {
+            position: DEFAULT_SHEAR_CALIBRATION_GAIN
+            for position in SHEAR_SENSOR_POSITIONS
+        }
 
     def _normalize_pressure_package_sensor_gains(
         self,
@@ -2000,3 +1958,7 @@ class SignalIntegrationPanelMixin:
             self.signal_integration_plot_widget.setLabel("left", "Integrated HPF Voltage", units="V samples")
         self.signal_integration_plot_widget.enableAutoRange(axis="y")
         self.signal_integration_plot_widget.setLabel("bottom", "Time", units="s")
+
+
+# Backward compatibility alias; prefer PressureMapPanelMixin in new imports.
+SignalIntegrationPanelMixin = PressureMapPanelMixin

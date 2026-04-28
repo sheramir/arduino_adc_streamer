@@ -67,8 +67,8 @@ from gui import (
     ControlPanelsMixin,
     DisplayPanelsMixin,
     FilePanelsMixin,
+    PressureMapPanelMixin,
     SensorPanelMixin,
-    SignalIntegrationPanelMixin,
     SpectrumPanelMixin,
     StatusLoggingMixin,
 )
@@ -94,7 +94,7 @@ class ADCStreamerGUI(
     DisplayPanelsMixin,     # ✅ Display panel UI
     FilePanelsMixin,        # ✅ File panel UI
     SensorPanelMixin,       # ✅ Sensor panel UI
-    SignalIntegrationPanelMixin,  # Step 1 integrated piezo signal evaluation
+    PressureMapPanelMixin,  # Pressure Map tab pipeline and controls
     SpectrumPanelMixin,     # ✅ Spectrum panel UI
     ConfigurationMixin,     # ✅ Configuration management
     DataProcessorMixin,     # ✅ Data processing

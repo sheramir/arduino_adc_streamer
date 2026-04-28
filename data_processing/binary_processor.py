@@ -13,8 +13,8 @@ from constants.plotting import (
     MAX_PLOT_SWEEPS,
     PLOT_UPDATE_INTERVAL_SEC,
 )
+from constants.pressure_map import PRESSURE_MAP_PLOT_UPDATE_INTERVAL_SEC
 from constants.runtime import MAX_TIMING_SAMPLES
-from constants.signal_integration import SIGNAL_INTEGRATION_PLOT_UPDATE_INTERVAL_SEC
 from data_processing.force_state import get_force_runtime_state
 
 
@@ -235,7 +235,7 @@ class BinaryProcessorMixin:
                         hasattr(self, 'should_update_signal_integration_display')
                         and self.should_update_signal_integration_display()
                         and now - getattr(self, '_last_signal_integration_plot_update_time', 0.0)
-                        >= SIGNAL_INTEGRATION_PLOT_UPDATE_INTERVAL_SEC
+                        >= PRESSURE_MAP_PLOT_UPDATE_INTERVAL_SEC
                     ):
                         self._last_signal_integration_plot_update_time = now
                         if hasattr(self, 'trigger_signal_integration_update'):

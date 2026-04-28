@@ -42,7 +42,7 @@ class DisplayPanelsMixin:
         self.visualization_tabs.addTab(timeseries_tab, TIME_SERIES_TAB_NAME)
         self.timeseries_tab_index = 0
 
-        # Create pressure map tab (from SignalIntegrationPanelMixin)
+            # Create pressure map tab (from PressureMapPanelMixin)
         signal_integration_tab = self.create_signal_integration_tab()
         self.visualization_tabs.addTab(signal_integration_tab, PRESSURE_MAP_TAB_NAME)
         self.signal_integration_tab_index = 1

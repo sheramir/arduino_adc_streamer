@@ -123,7 +123,7 @@ class DisplayPanelsMixin:
         plot_layout.addWidget(self.plot_widget)
 
         # Combined info label
-        self.plot_info_label = QLabel("ADC - Sweeps: 0 | Samples: 0  |  Force: 0 samples")
+        self.plot_info_label = QLabel("ADC - Sweeps: 0 | Samples: 0  |  Force: 0 samples  |  Clock: 0.000s")
         plot_layout.addWidget(self.plot_info_label)
 
         self.charge_time_label = QLabel("")
@@ -296,7 +296,7 @@ class DisplayPanelsMixin:
         # Block gap timing
         layout.addWidget(QLabel("Block Gap:"))
         self.block_gap_label = QLabel("- ms")
-        self.block_gap_label.setStyleSheet("QLabel { font-weight: bold; color: #9C27B0; }")
+        self.block_gap_label.setStyleSheet("QLabel { font-weight: bold; color: #FFFFFF; }")
         layout.addWidget(self.block_gap_label)
 
         layout.addStretch()

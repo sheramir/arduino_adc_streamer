@@ -7,6 +7,7 @@ Owns capture timing state, timing calculations, and 555 timing readouts.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import math
 
 from constants.defaults_555 import (
     ANALYZER555_DEFAULT_CF_FARADS,
@@ -147,6 +148,84 @@ class TimingDisplayMixin:
 
         except Exception as e:
             self.log_status(f"ERROR: Failed to update timing display - {e}")
+
+    def _current_elapsed_since_first_sweep_seconds(self) -> float:
+        """Return elapsed capture time in seconds using latest ADC sweep timestamp."""
+        try:
+            if bool(getattr(self, "is_full_view", False)):
+                timestamps = getattr(self, "sweep_timestamps", None)
+                if timestamps is None:
+                    return 0.0
+                if len(timestamps) == 0:
+                    return 0.0
+                elapsed = float(timestamps[-1] - timestamps[0]) if len(timestamps) > 1 else 0.0
+                return elapsed if math.isfinite(elapsed) and elapsed > 0.0 else 0.0
+
+            with self.buffer_lock:
+                sweep_count = int(getattr(self, "sweep_count", 0) or 0)
+                if sweep_count <= 0:
+                    return 0.0
+                timestamps_buffer = getattr(self, "sweep_timestamps_buffer", None)
+                if timestamps_buffer is None:
+                    return 0.0
+                max_sweeps = int(getattr(self, "MAX_SWEEPS_BUFFER", 0) or 0)
+                if max_sweeps <= 0:
+                    return 0.0
+                latest_index = (int(getattr(self, "buffer_write_index", 0) or 0) - 1) % max_sweeps
+                elapsed = float(timestamps_buffer[latest_index])
+                return elapsed if math.isfinite(elapsed) and elapsed > 0.0 else 0.0
+        except Exception:
+            return 0.0
+
+    def format_plot_info_label_text(
+        self,
+        *,
+        sweep_count: int,
+        total_samples: int,
+        force_samples: int,
+        sweep_note: str | None = None,
+        elapsed_clock_s: float | None = None,
+    ) -> str:
+        """Build the shared Time Series status text for ADC/force counters."""
+        note_text = f" ({sweep_note})" if sweep_note else ""
+        elapsed_value = (
+            self._current_elapsed_since_first_sweep_seconds()
+            if elapsed_clock_s is None
+            else float(elapsed_clock_s)
+        )
+        if not math.isfinite(elapsed_value) or elapsed_value < 0.0:
+            elapsed_value = 0.0
+
+        return (
+            f"ADC - Sweeps: {int(sweep_count)}{note_text} | Samples: {int(total_samples)}  |  "
+            f"Force: {int(force_samples)} samples  |  Clock: {elapsed_value:.3f}s"
+        )
+
+    def update_plot_info_label(
+        self,
+        *,
+        sweep_count: int,
+        total_samples: int,
+        force_samples: int,
+        sweep_note: str | None = None,
+        elapsed_clock_s: float | None = None,
+    ) -> None:
+        """Update the shared plot info QLabel, skipping no-op UI writes."""
+        if not hasattr(self, "plot_info_label"):
+            return
+
+        text = self.format_plot_info_label_text(
+            sweep_count=sweep_count,
+            total_samples=total_samples,
+            force_samples=force_samples,
+            sweep_note=sweep_note,
+            elapsed_clock_s=elapsed_clock_s,
+        )
+        current_text_attr = getattr(self.plot_info_label, "text", "")
+        current_text = current_text_attr() if callable(current_text_attr) else str(current_text_attr)
+        if current_text == text:
+            return
+        self.plot_info_label.setText(text)
 
     def _format_time_auto(self, seconds: float) -> str:
         value = max(0.0, float(seconds))

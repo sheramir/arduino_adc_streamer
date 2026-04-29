@@ -64,7 +64,12 @@ class CaptureCacheMixin:
             self.plot_widget.setLabel('bottom', 'Time', units='s')
             self.plot_widget.setLabel('right', 'Force', units='N')
 
-            self.plot_info_label.setText("ADC - Sweeps: 0 | Samples: 0  |  Force: 0 samples")
+            self.update_plot_info_label(
+                sweep_count=0,
+                total_samples=0,
+                force_samples=0,
+                elapsed_clock_s=0.0,
+            )
             self.log_status("Data cleared - plot reset to initial state")
             self.cleanup_capture_cache(block=False)
 

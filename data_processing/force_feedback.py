@@ -41,9 +41,24 @@ def maybe_update_force_capture_status(owner, *, force_sample_count: int) -> None
 
     samples_per_sweep = max(0, int(getattr(owner, "samples_per_sweep", 0) or 0))
     total_samples = int(getattr(owner, "sweep_count", 0) or 0) * samples_per_sweep
+    if hasattr(owner, "update_plot_info_label"):
+        owner.update_plot_info_label(
+            sweep_count=int(getattr(owner, "sweep_count", 0) or 0),
+            total_samples=total_samples,
+            force_samples=force_sample_count,
+        )
+        return
+
+    elapsed_clock_s = 0.0
+    if hasattr(owner, "_current_elapsed_since_first_sweep_seconds"):
+        try:
+            elapsed_clock_s = float(owner._current_elapsed_since_first_sweep_seconds())
+        except Exception:
+            elapsed_clock_s = 0.0
+
     owner.plot_info_label.setText(
         f"ADC - Sweeps: {owner.sweep_count} | Samples: {total_samples}  |  "
-        f"Force: {force_sample_count} samples"
+        f"Force: {force_sample_count} samples  |  Clock: {elapsed_clock_s:.3f}s"
     )
 
 

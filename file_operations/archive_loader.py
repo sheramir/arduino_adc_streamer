@@ -264,9 +264,12 @@ class ArchiveLoaderMixin:
                     force_samples = len(get_force_runtime_state(self).data)
                     time_range = float(self.sweep_timestamps[-1] - self.sweep_timestamps[0]) if len(self.sweep_timestamps) > 1 else 0.0
 
-                    self.plot_info_label.setText(
-                        f"ADC - Sweeps: {actual_sweeps} (FULL VIEW) | Samples: {total_samples} | "
-                        f"Time: {time_range:.2f}s  |  Force: {force_samples} samples"
+                    self.update_plot_info_label(
+                        sweep_count=actual_sweeps,
+                        total_samples=total_samples,
+                        force_samples=force_samples,
+                        sweep_note="FULL VIEW",
+                        elapsed_clock_s=time_range,
                     )
                     self.log_status(f"Full view active from archive: {actual_sweeps} sweeps, {time_range:.2f}s")
                     return
@@ -319,8 +322,11 @@ class ArchiveLoaderMixin:
         force_samples = len(get_force_runtime_state(self).data)
         time_range = float(ordered_timestamps[-1] - ordered_timestamps[0]) if len(ordered_timestamps) > 1 else 0.0
 
-        self.plot_info_label.setText(
-            f"ADC - Sweeps: {actual_sweeps} (FULL VIEW) | Samples: {total_samples} | "
-            f"Time: {time_range:.2f}s  |  Force: {force_samples} samples"
+        self.update_plot_info_label(
+            sweep_count=actual_sweeps,
+            total_samples=total_samples,
+            force_samples=force_samples,
+            sweep_note="FULL VIEW",
+            elapsed_clock_s=time_range,
         )
         self.log_status(f"Full view active: {actual_sweeps} sweeps, {time_range:.2f}s")

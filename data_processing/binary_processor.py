@@ -245,16 +245,27 @@ class BinaryProcessorMixin:
                     # Always update the info label
                     total_samples = int(self.sweep_count) * samples_per_sweep
                     force_samples = len(force_state.data)
+                    sweep_note = None
                     if self.is_full_view:
-                        self.plot_info_label.setText(
-                            f"ADC - Sweeps: {self.sweep_count} (full view) | Samples: {total_samples}  |  Force: {force_samples} samples"
-                        )
+                        sweep_note = "full view"
                     else:
                         window_size = self.window_size_spin.value()
                         actual_sweeps = min(self.sweep_count, self.MAX_SWEEPS_BUFFER)
                         displayed_sweeps = min(actual_sweeps, window_size, MAX_PLOT_SWEEPS)
+                        sweep_note = f"showing last {displayed_sweeps}"
+
+                    if hasattr(self, "update_plot_info_label"):
+                        self.update_plot_info_label(
+                            sweep_count=int(self.sweep_count),
+                            total_samples=total_samples,
+                            force_samples=force_samples,
+                            sweep_note=sweep_note,
+                        )
+                    else:
+                        note_text = f" ({sweep_note})" if sweep_note else ""
                         self.plot_info_label.setText(
-                            f"ADC - Sweeps: {self.sweep_count} (showing last {displayed_sweeps}) | Samples: {total_samples}  |  Force: {force_samples} samples"
+                            f"ADC - Sweeps: {int(self.sweep_count)}{note_text} | Samples: {total_samples}  |  "
+                            f"Force: {force_samples} samples"
                         )
                 
                 # Track when this buffer finished being received

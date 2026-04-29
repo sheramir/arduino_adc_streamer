@@ -125,7 +125,7 @@ class ForceProcessorTests(unittest.TestCase):
 
         self.assertEqual(
             harness.plot_info_label.text,
-            "ADC - Sweeps: 4 | Samples: 20  |  Force: 10 samples",
+            "ADC - Sweeps: 4 | Samples: 20  |  Force: 10 samples  |  Clock: 0.000s",
         )
 
     def test_force_reset_uses_recent_raw_samples_not_capture_buffered_values(self):

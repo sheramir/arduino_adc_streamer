@@ -106,8 +106,6 @@ static const uint8_t  PZT_ACK_MAGIC          = 0xAC;
 static const uint8_t  PZT_ACK_STATUS_OK      = 0x00;
 
 // ── Timing ────────────────────────────────────────────────────────────
-static const uint32_t PZT_CONFIG_ACK_DELAY_MS    = 20;
-static const uint32_t PZT_INTER_BLOCK_DELAY_MS   = 1;
 static const uint32_t PZT_MUX_SETTLE_US          = 15; // <<========= was 30
 static const uint32_t PZT_IADC_CONV_US_OSR2      = 4;   // was 2 for faster IADC clock
 static const uint32_t PZT_IADC_CONV_US_OSR4      = 8;   // was 4 for faster IADC clock

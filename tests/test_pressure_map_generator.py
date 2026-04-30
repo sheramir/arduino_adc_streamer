@@ -134,10 +134,13 @@ class PressureMapGeneratorTests(unittest.TestCase):
         result = self.generator.generate({"C": 0.0, "R": 5.0, "T": 0.0, "L": 0.0, "B": 0.0})
         planes = self._planes_by_label(result)
         spacing = DEFAULT_PRESSURE_SENSOR_SPACING_MM
+        half_extent = self.generator.total_extent_mm / PRESSURE_GRID_MARGIN_SIDE_COUNT
 
         self.assertEqual(planes[PRESSURE_QUADRANT_TOP_RIGHT].mode, PRESSURE_QUADRANT_MODE_PEAKLESS)
         self.assertEqual(planes[PRESSURE_QUADRANT_BOTTOM_RIGHT].mode, PRESSURE_QUADRANT_MODE_PEAKLESS)
         self.assertAlmostEqual(self._grid_value(result, spacing, 0.0), 5.0, places=6)
+        self.assertAlmostEqual(self._grid_value(result, half_extent, 0.0), 0.0, places=6)
+        self.assertAlmostEqual(self._grid_value(result, spacing, half_extent / 2.0), 0.0, places=6)
         self.assertAlmostEqual(
             self._quadrant_value(planes[PRESSURE_QUADRANT_TOP_RIGHT], spacing / 2.0, 0.0),
             self._quadrant_value(planes[PRESSURE_QUADRANT_BOTTOM_RIGHT], spacing / 2.0, 0.0),
@@ -169,7 +172,11 @@ class PressureMapGeneratorTests(unittest.TestCase):
 
         self.assertEqual(tr_plane.mode, PRESSURE_QUADRANT_MODE_PEAKED)
         self.assertEqual(tr_plane.peak_point, (spacing, spacing))
-        self.assertEqual(tuple(triangle.name for triangle in tr_plane.triangles), ("inner-x", "inner-y"))
+        self.assertEqual(
+            tuple(triangle.name for triangle in tr_plane.triangles),
+            ("inner-x", "inner-y", "outer-x", "outer-y"),
+        )
+        self.assertEqual(float(tr_plane.corner_value), 0.0)
         self.assertAlmostEqual(
             self._quadrant_value(tr_plane, spacing, spacing),
             float(tr_plane.peak_height),

@@ -82,6 +82,7 @@ class PressureQuadrantPlane:
     peak_height: float | None = None
     corner_value: float | None = None
     triangles: tuple[PressureTrianglePlane, ...] = ()
+    single_outer_decay_sensor: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +139,7 @@ class PressureMapGenerator:
         self._validate_parameters()
         self.sensor_positions = self._build_sensor_positions()
         self.quadrants = self._build_quadrant_definitions()
+        self._quadrant_by_label = {quadrant.label: quadrant for quadrant in self.quadrants}
         self.cell_size_mm = self.circle_diameter_mm / float(self.grid_resolution - 1)
         self.total_grid_side = self.grid_resolution + (
             PRESSURE_GRID_MARGIN_SIDE_COUNT * self.grid_margin
@@ -302,6 +304,7 @@ class PressureMapGenerator:
     ) -> PressureQuadrantPlane:
         base_a, base_b, base_c = self._three_sensor_plane_coefficients(signals, quadrant)
         sign = self._quadrant_sign(*(signals[sensor] for sensor in quadrant.sensors))
+        single_outer_decay_sensor = self._single_outer_decay_sensor(signals, quadrant)
         peak_x, peak_y = self._pressure_point(signals, quadrant)
         if not self._is_peaked_pressure_point(peak_x, peak_y, quadrant):
             return PressureQuadrantPlane(
@@ -311,6 +314,7 @@ class PressureMapGenerator:
                 c=base_c,
                 sign=sign,
                 sensors=quadrant.sensors,
+                single_outer_decay_sensor=single_outer_decay_sensor,
             )
 
         peak_height = self._pressure_point_height(signals, quadrant, peak_x, peak_y)
@@ -329,6 +333,7 @@ class PressureMapGenerator:
                 c=base_c,
                 sign=sign,
                 sensors=quadrant.sensors,
+                single_outer_decay_sensor=single_outer_decay_sensor,
             )
         return PressureQuadrantPlane(
             label=quadrant.label,
@@ -342,7 +347,27 @@ class PressureMapGenerator:
             peak_height=peak_height,
             corner_value=corner_value,
             triangles=triangles,
+            single_outer_decay_sensor=single_outer_decay_sensor,
         )
+
+    def _single_outer_decay_sensor(
+        self,
+        signals: Mapping[str, float],
+        quadrant: _QuadrantDefinition,
+    ) -> str | None:
+        center_value = signals[SHEAR_POSITION_CENTER]
+        horizontal_value = signals[quadrant.horizontal_sensor]
+        vertical_value = signals[quadrant.vertical_sensor]
+        center_is_zero = abs(center_value) <= self.geometry_epsilon
+        horizontal_nonzero = abs(horizontal_value) > self.geometry_epsilon
+        vertical_nonzero = abs(vertical_value) > self.geometry_epsilon
+        if not center_is_zero:
+            return None
+        if horizontal_nonzero and not vertical_nonzero:
+            return quadrant.horizontal_sensor
+        if vertical_nonzero and not horizontal_nonzero:
+            return quadrant.vertical_sensor
+        return None
 
     def _three_sensor_plane_coefficients(
         self,
@@ -437,8 +462,15 @@ class PressureMapGenerator:
             signals[quadrant.vertical_sensor],
         )
         peak = (peak_x, peak_y, peak_height)
-        corner_xy = (quadrant.horizontal_sign * spacing, quadrant.vertical_sign * spacing)
-        corner_value = self._corner_value(horizontal, vertical, peak, corner_xy)
+        # Anchor outer corners at the margin boundary and force them to zero.
+        # The square corners are outside the visible circular mask but still
+        # shape the outer planes near the circle edge.
+        half_extent = self.total_extent_mm / PRESSURE_GRID_MARGIN_SIDE_COUNT
+        corner_xy = (
+            quadrant.horizontal_sign * half_extent,
+            quadrant.vertical_sign * half_extent,
+        )
+        corner_value = SHEAR_ZERO_VALUE
         corner = (corner_xy[0], corner_xy[1], corner_value)
 
         triangle_specs = (
@@ -543,7 +575,45 @@ class PressureMapGenerator:
             values = self._evaluate_peaked_quadrant(plane, x_values_mm, y_values_mm)
         else:
             values = self._evaluate_plane(plane.a, plane.b, plane.c, x_values_mm, y_values_mm)
+        values = self._apply_margin_decay(plane, x_values_mm, y_values_mm, values)
         return self._clamp_values(values, plane.sign)
+
+    def _apply_margin_decay(
+        self,
+        plane: PressureQuadrantPlane,
+        x_values_mm: np.ndarray,
+        y_values_mm: np.ndarray,
+        values: np.ndarray,
+    ) -> np.ndarray:
+        quadrant = self._quadrant_by_label.get(plane.label)
+        if quadrant is None:
+            return values
+
+        half_extent = self.total_extent_mm / PRESSURE_GRID_MARGIN_SIDE_COUNT
+        spacing = self.sensor_spacing_mm
+        if half_extent <= spacing + self.geometry_epsilon:
+            return values
+
+        local_x = x_values_mm * quadrant.horizontal_sign
+        local_y = y_values_mm * quadrant.vertical_sign
+        decay_x = np.ones_like(values, dtype=np.float64)
+        decay_y = np.ones_like(values, dtype=np.float64)
+        denominator = max(self.geometry_epsilon, half_extent - spacing)
+
+        x_mask = local_x > spacing
+        y_mask = local_y > spacing
+        decay_x[x_mask] = (half_extent - local_x[x_mask]) / denominator
+        decay_y[y_mask] = (half_extent - local_y[y_mask]) / denominator
+        decay = np.clip(decay_x, 0.0, 1.0) * np.clip(decay_y, 0.0, 1.0)
+
+        if plane.single_outer_decay_sensor is not None:
+            sensor_x, sensor_y = self.sensor_positions[plane.single_outer_decay_sensor]
+            radial_distance = np.hypot(x_values_mm - sensor_x, y_values_mm - sensor_y)
+            radial_range = max(self.geometry_epsilon, half_extent - spacing)
+            side_decay = np.clip(1.0 - (radial_distance / radial_range), 0.0, 1.0)
+            decay *= side_decay
+
+        return values * decay
 
     def _evaluate_peaked_quadrant(
         self,

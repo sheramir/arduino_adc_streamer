@@ -21,7 +21,7 @@ from constants.pressure_map import (
 from constants.shear import SHEAR_SENSOR_POSITIONS
 from data_processing.adc_filter_engine import ADCFilterEngine
 from data_processing.normal_force_calculator import NormalForceCalculator
-from data_processing.pressure_map_generator import PressureMapGenerator
+from data_processing.pressure_map_generator import DEFAULT_PRESSURE_SHOW_NEGATIVE, PressureMapGenerator
 from data_processing.shear_detector import ShearDetector
 from gui.pressure_map_widget import PressureMapWidget
 from gui.signal_integration_panel import PressureMapPanelMixin
@@ -127,6 +127,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         harness.pressure_circle_diameter_spin = DummySpinBox(5.5)
         harness.pressure_grid_resolution_spin = DummySpinBox(25)
         harness.pressure_grid_margin_spin = DummySpinBox(3)
+        harness.pressure_show_negative_check = DummyCheckBox(True)
 
     def test_counts_to_voltage_ignores_time_series_units(self):
         harness = SignalIntegrationPanelHarness()
@@ -443,6 +444,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             self.assertEqual(settings["pressure_map"]["circle_diameter_mm"], 5.5)
             self.assertEqual(settings["pressure_map"]["grid_resolution"], 25)
             self.assertEqual(settings["pressure_map"]["grid_margin"], 3)
+            self.assertTrue(settings["pressure_map"]["show_negative"])
 
             settings["processing"]["package_sensor_gains"] = {
                 "PZT3": {"R": 2.5, "L": 0.25}
@@ -457,6 +459,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             harness.pressure_circle_diameter_spin.setValue(6.0)
             harness.pressure_grid_resolution_spin.setValue(21)
             harness.pressure_grid_margin_spin.setValue(1)
+            harness.pressure_show_negative_check.setChecked(DEFAULT_PRESSURE_SHOW_NEGATIVE)
 
             applied = harness.load_shear_settings_from_path(settings_path, log_message=True)
 
@@ -469,6 +472,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             self.assertEqual(harness.pressure_circle_diameter_spin.value(), 5.5)
             self.assertEqual(harness.pressure_grid_resolution_spin.value(), 25)
             self.assertEqual(harness.pressure_grid_margin_spin.value(), 3)
+            self.assertTrue(harness.pressure_show_negative_check.isChecked())
             self.assertEqual(harness._pressure_package_sensor_gains["PZT3"]["R"], 2.5)
             self.assertEqual(harness._pressure_package_sensor_gains["PZT3"]["L"], 0.25)
 
@@ -494,6 +498,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
                 "pressure_circle_diameter_spin": "pressure footprint",
                 "pressure_grid_resolution_spin": "grid cells across the pressure-circle diameter",
                 "pressure_grid_margin_spin": "extra grid cells",
+                "pressure_show_negative_check": "negative release values",
             }
 
             for widget_name, expected_text in expected_tooltips.items():

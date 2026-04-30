@@ -44,6 +44,7 @@ from constants.shear import (
 
 DEFAULT_PRESSURE_DECAY_RATE = 0.8
 DEFAULT_PRESSURE_DECAY_REF_DISTANCE_MM = 1.5
+DEFAULT_PRESSURE_SHOW_NEGATIVE = False
 PRESSURE_GEOMETRY_EPSILON = 0.001
 PRESSURE_QUADRANT_MODE_PEAKLESS = "peakless"
 PRESSURE_QUADRANT_MODE_PEAKED = "peaked"
@@ -123,6 +124,7 @@ class PressureMapGenerator:
         decay_rate: float = DEFAULT_PRESSURE_DECAY_RATE,
         decay_ref_distance_mm: float = DEFAULT_PRESSURE_DECAY_REF_DISTANCE_MM,
         geometry_epsilon: float = PRESSURE_GEOMETRY_EPSILON,
+        show_negative: bool = DEFAULT_PRESSURE_SHOW_NEGATIVE,
     ) -> None:
         self.circle_diameter_mm = float(circle_diameter_mm)
         self.sensor_spacing_mm = float(sensor_spacing_mm)
@@ -131,6 +133,7 @@ class PressureMapGenerator:
         self.decay_rate = float(decay_rate)
         self.decay_ref_distance_mm = float(decay_ref_distance_mm)
         self.geometry_epsilon = float(geometry_epsilon)
+        self.show_negative = bool(show_negative)
 
         self._validate_parameters()
         self.sensor_positions = self._build_sensor_positions()
@@ -359,9 +362,9 @@ class PressureMapGenerator:
         signals: Mapping[str, float],
         quadrant: _QuadrantDefinition,
     ) -> tuple[float, float]:
-        center_magnitude = abs(signals[SHEAR_POSITION_CENTER])
-        horizontal_magnitude = abs(signals[quadrant.horizontal_sensor])
-        vertical_magnitude = abs(signals[quadrant.vertical_sensor])
+        center_magnitude = self._pressure_magnitude(signals[SHEAR_POSITION_CENTER])
+        horizontal_magnitude = self._pressure_magnitude(signals[quadrant.horizontal_sensor])
+        vertical_magnitude = self._pressure_magnitude(signals[quadrant.vertical_sensor])
         x_denominator = horizontal_magnitude + center_magnitude
         y_denominator = vertical_magnitude + center_magnitude
         x_peak = (
@@ -375,6 +378,11 @@ class PressureMapGenerator:
             else SHEAR_ZERO_VALUE
         )
         return (float(x_peak), float(y_peak))
+
+    def _pressure_magnitude(self, value: float) -> float:
+        if self.show_negative:
+            return abs(value)
+        return max(SHEAR_ZERO_VALUE, value)
 
     def _is_peaked_pressure_point(
         self,

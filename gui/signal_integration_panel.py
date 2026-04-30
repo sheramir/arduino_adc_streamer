@@ -145,7 +145,11 @@ from constants.shear import (
 )
 from data_processing.adc_filter_engine import ADCFilterEngine, SCIPY_FILTERS_AVAILABLE
 from data_processing.normal_force_calculator import NormalForceCalculator, NormalForceResult
-from data_processing.pressure_map_generator import PressureMapGenerator, PressureMapResult
+from data_processing.pressure_map_generator import (
+    DEFAULT_PRESSURE_SHOW_NEGATIVE,
+    PressureMapGenerator,
+    PressureMapResult,
+)
 from data_processing.shear_detector import ShearDetector, ShearResult
 from file_operations.settings_persistence import load_settings_payload, save_settings_payload
 from gui.pressure_map_widget import PressureMapPackageDisplay, PressureMapWidget
@@ -507,6 +511,17 @@ class PressureMapPanelMixin:
         self.pressure_grid_margin_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
         layout.addWidget(self.pressure_grid_margin_spin, 0, 7)
 
+        show_negative_tooltip = (
+            "When enabled, pressure-point placement uses absolute signal magnitude so "
+            "negative release values contribute. When disabled, only positive pressure "
+            "signals influence pressure-point placement."
+        )
+        self.pressure_show_negative_check = QCheckBox("Show negative")
+        self.pressure_show_negative_check.setChecked(DEFAULT_PRESSURE_SHOW_NEGATIVE)
+        self.pressure_show_negative_check.setToolTip(show_negative_tooltip)
+        self.pressure_show_negative_check.toggled.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_show_negative_check, 1, 0, 1, 4)
+
         return group
 
     def _create_pressure_package_gain_settings_group(self) -> QGroupBox:
@@ -705,6 +720,10 @@ class PressureMapPanelMixin:
                 "grid_margin": self._spin_int(
                     "pressure_grid_margin_spin",
                     DEFAULT_PRESSURE_GRID_MARGIN,
+                ),
+                "show_negative": self._check_bool(
+                    "pressure_show_negative_check",
+                    DEFAULT_PRESSURE_SHOW_NEGATIVE,
                 ),
             },
         }
@@ -922,6 +941,7 @@ class PressureMapPanelMixin:
         changed |= self._set_spin_value("pressure_circle_diameter_spin", pressure_map, "circle_diameter_mm", float)
         changed |= self._set_spin_value("pressure_grid_resolution_spin", pressure_map, "grid_resolution", int)
         changed |= self._set_spin_value("pressure_grid_margin_spin", pressure_map, "grid_margin", int)
+        changed |= self._set_check_value("pressure_show_negative_check", pressure_map, "show_negative")
 
         if changed:
             self._refresh_pressure_package_gain_controls()
@@ -1120,6 +1140,10 @@ class PressureMapPanelMixin:
                 grid_resolution=self._spin_int(
                     "pressure_grid_resolution_spin",
                     DEFAULT_PRESSURE_GRID_RESOLUTION,
+                ),
+                show_negative=self._check_bool(
+                    "pressure_show_negative_check",
+                    DEFAULT_PRESSURE_SHOW_NEGATIVE,
                 ),
             )
             self._update_pressure_map_from_latest()

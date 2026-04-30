@@ -15,6 +15,7 @@ from constants.shear import (
     SHEAR_SENSOR_POSITIONS,
 )
 from data_processing.pressure_map_generator import (
+    DEFAULT_PRESSURE_SHOW_NEGATIVE,
     PRESSURE_QUADRANT_MODE_PEAKED,
     PRESSURE_QUADRANT_MODE_PEAKLESS,
     PressureMapGenerator,
@@ -66,6 +67,24 @@ class PressureMapGeneratorTests(unittest.TestCase):
             self._grid_value(result, peak_x, peak_y),
             places=6,
         )
+
+    def test_default_mode_uses_positive_signals_for_pressure_point(self):
+        self.assertFalse(DEFAULT_PRESSURE_SHOW_NEGATIVE)
+        result = self.generator.generate({"C": -5.0, "R": -3.0, "T": -3.0, "L": 0.0, "B": 0.0})
+        tr_plane = self._planes_by_label(result)[PRESSURE_QUADRANT_TOP_RIGHT]
+
+        self.assertEqual(tr_plane.mode, PRESSURE_QUADRANT_MODE_PEAKLESS)
+
+    def test_show_negative_mode_uses_absolute_magnitude_for_pressure_point(self):
+        generator = PressureMapGenerator(grid_resolution=23, grid_margin=2, show_negative=True)
+        result = generator.generate({"C": -5.0, "R": -3.0, "T": -3.0, "L": 0.0, "B": 0.0})
+        tr_plane = self._planes_by_label(result)[PRESSURE_QUADRANT_TOP_RIGHT]
+
+        self.assertEqual(tr_plane.mode, PRESSURE_QUADRANT_MODE_PEAKED)
+        self.assertIsNotNone(tr_plane.peak_point)
+        peak_x, peak_y = tr_plane.peak_point
+        self.assertGreater(peak_x, 0.0)
+        self.assertGreater(peak_y, 0.0)
 
     def test_continuity_matches_on_shared_x_axis(self):
         signals = {"C": 5.0, "R": 3.0, "T": 7.0, "L": 2.0, "B": 4.0}

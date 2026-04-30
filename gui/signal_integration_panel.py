@@ -48,6 +48,7 @@ from constants.sensor_config import (
 from config.sensor_config import normalize_array_cell
 from constants.ui import PRESSURE_MAP_TAB_NAME
 from constants.pressure_map import (
+    DEFAULT_PRESSURE_SHOW_MARKER,
     DEFAULT_PRESSURE_DECAY_RATE,
     DEFAULT_PRESSURE_DECAY_REF_DISTANCE_MM,
     DEFAULT_PRESSURE_GRID_MARGIN,
@@ -565,6 +566,15 @@ class PressureMapPanelMixin:
         self.pressure_show_negative_check.toggled.connect(self.on_pressure_map_settings_changed)
         layout.addWidget(self.pressure_show_negative_check, 2, 0, 1, 4)
 
+        show_marker_tooltip = (
+            "Show calculated pressure-point marker(s) on the pressure map."
+        )
+        self.pressure_show_marker_check = QCheckBox("Show marker")
+        self.pressure_show_marker_check.setChecked(DEFAULT_PRESSURE_SHOW_MARKER)
+        self.pressure_show_marker_check.setToolTip(show_marker_tooltip)
+        self.pressure_show_marker_check.toggled.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_show_marker_check, 2, 4, 1, 4)
+
         return group
 
     def _create_pressure_package_gain_settings_group(self) -> QGroupBox:
@@ -775,6 +785,10 @@ class PressureMapPanelMixin:
                 "show_negative": self._check_bool(
                     "pressure_show_negative_check",
                     DEFAULT_PRESSURE_SHOW_NEGATIVE,
+                ),
+                "show_marker": self._check_bool(
+                    "pressure_show_marker_check",
+                    DEFAULT_PRESSURE_SHOW_MARKER,
                 ),
             },
         }
@@ -1000,6 +1014,7 @@ class PressureMapPanelMixin:
             float,
         )
         changed |= self._set_check_value("pressure_show_negative_check", pressure_map, "show_negative")
+        changed |= self._set_check_value("pressure_show_marker_check", pressure_map, "show_marker")
 
         if changed:
             self._refresh_pressure_package_gain_controls()
@@ -1183,6 +1198,13 @@ class PressureMapPanelMixin:
             in place.
         """
         try:
+            show_marker = self._check_bool(
+                "pressure_show_marker_check",
+                DEFAULT_PRESSURE_SHOW_MARKER,
+            )
+            if hasattr(self, "pressure_map_widget"):
+                self.pressure_map_widget.configure_markers(show_marker=show_marker)
+
             sensor_spacing_mm = self._spin_float(
                 "pressure_sensor_spacing_spin",
                 DEFAULT_PRESSURE_SENSOR_SPACING_MM,

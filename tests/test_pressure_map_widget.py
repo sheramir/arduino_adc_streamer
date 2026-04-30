@@ -195,6 +195,26 @@ class PressureMapWidgetTests(unittest.TestCase):
 
         self.assertEqual(levels, (0.0, 4.0))
 
+    def test_peak_markers_render_for_peaked_quadrants(self):
+        signals = {"C": 5.0, "R": 5.0, "T": 5.0, "L": 5.0, "B": 5.0}
+        normal_result = self.calculator.compute(signals)
+        pressure_result = self.generator.generate(signals)
+
+        self.widget.configure_markers(show_marker=True)
+        self.widget.update_display(normal_result, pressure_result)
+
+        self.assertGreater(len(self.widget.peak_marker_item.points()), 0)
+
+    def test_peak_markers_can_be_hidden(self):
+        signals = {"C": 5.0, "R": 5.0, "T": 5.0, "L": 5.0, "B": 5.0}
+        normal_result = self.calculator.compute(signals)
+        pressure_result = self.generator.generate(signals)
+
+        self.widget.configure_markers(show_marker=False)
+        self.widget.update_display(normal_result, pressure_result)
+
+        self.assertEqual(len(self.widget.peak_marker_item.points()), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

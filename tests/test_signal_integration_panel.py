@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import QApplication
 
 from constants.plotting import IADC_RESOLUTION_BITS
 from constants.pressure_map import (
+    DEFAULT_PRESSURE_SHOW_MARKER,
     DEFAULT_HPF_CUTOFF_HZ,
     DEFAULT_INTEGRATION_WINDOW_SAMPLES,
     SIGNAL_INTEGRATION_DISABLED_HPF_CUTOFF_HZ,
@@ -130,6 +131,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         harness.pressure_decay_rate_spin = DummySpinBox(0.9)
         harness.pressure_decay_ref_distance_spin = DummySpinBox(2.25)
         harness.pressure_show_negative_check = DummyCheckBox(True)
+        harness.pressure_show_marker_check = DummyCheckBox(False)
 
     def test_counts_to_voltage_ignores_time_series_units(self):
         harness = SignalIntegrationPanelHarness()
@@ -449,6 +451,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             self.assertEqual(settings["pressure_map"]["decay_rate"], 0.9)
             self.assertEqual(settings["pressure_map"]["decay_ref_distance_mm"], 2.25)
             self.assertTrue(settings["pressure_map"]["show_negative"])
+            self.assertFalse(settings["pressure_map"]["show_marker"])
 
             settings["processing"]["package_sensor_gains"] = {
                 "PZT3": {"R": 2.5, "L": 0.25}
@@ -466,6 +469,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             harness.pressure_decay_rate_spin.setValue(0.1)
             harness.pressure_decay_ref_distance_spin.setValue(0.5)
             harness.pressure_show_negative_check.setChecked(DEFAULT_PRESSURE_SHOW_NEGATIVE)
+            harness.pressure_show_marker_check.setChecked(DEFAULT_PRESSURE_SHOW_MARKER)
 
             applied = harness.load_shear_settings_from_path(settings_path, log_message=True)
 
@@ -481,6 +485,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             self.assertEqual(harness.pressure_decay_rate_spin.value(), 0.9)
             self.assertEqual(harness.pressure_decay_ref_distance_spin.value(), 2.25)
             self.assertTrue(harness.pressure_show_negative_check.isChecked())
+            self.assertFalse(harness.pressure_show_marker_check.isChecked())
             self.assertEqual(harness._pressure_package_sensor_gains["PZT3"]["R"], 2.5)
             self.assertEqual(harness._pressure_package_sensor_gains["PZT3"]["L"], 0.25)
 
@@ -509,6 +514,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
                 "pressure_decay_rate_spin": "distance gain",
                 "pressure_decay_ref_distance_spin": "reference distance",
                 "pressure_show_negative_check": "negative release values",
+                "pressure_show_marker_check": "pressure-point marker",
             }
 
             for widget_name, expected_text in expected_tooltips.items():

@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
 )
 
 from constants.pressure_map import (
+    DEFAULT_PRESSURE_SHOW_MARKER,
     PRESSURE_MAP_BACKGROUND_COLOR,
     PRESSURE_MAP_CIRCLE_Z,
     PRESSURE_MAP_COLORMAP_MAX_COLOR,
@@ -40,6 +41,11 @@ from constants.pressure_map import (
     PRESSURE_MAP_OVERLAY_COLOR,
     PRESSURE_MAP_PACKAGE_COLORS,
     PRESSURE_MAP_PACKAGE_SPACING_FRACTION,
+    PRESSURE_MAP_PEAK_MARKER_COLOR,
+    PRESSURE_MAP_PEAK_MARKER_PEN_WIDTH_PX,
+    PRESSURE_MAP_PEAK_MARKER_SIZE_PX,
+    PRESSURE_MAP_PEAK_MARKER_SYMBOL,
+    PRESSURE_MAP_PEAK_MARKER_Z,
     PRESSURE_MAP_PLOT_MIN_HEIGHT_PX,
     PRESSURE_MAP_SENSOR_MARKER_BRUSH_COLOR,
     PRESSURE_MAP_SENSOR_MARKER_PEN_COLOR,
@@ -122,6 +128,7 @@ class PressureMapWidget(QWidget):
         self.arrow_width_scales = DEFAULT_ARROW_WIDTH_SCALES
         self.arrow_base_width_px = DEFAULT_ARROW_BASE_WIDTH_PX
         self.arrow_color = DEFAULT_ARROW_COLOR
+        self.show_marker = DEFAULT_PRESSURE_SHOW_MARKER
         self.last_arrow_geometry = self._hidden_arrow_geometry()
 
         layout = QVBoxLayout(self)
@@ -149,6 +156,9 @@ class PressureMapWidget(QWidget):
         self.sensor_marker_item = pg.ScatterPlotItem()
         self.sensor_marker_item.setZValue(PRESSURE_MAP_SENSOR_Z)
         self.plot_widget.addItem(self.sensor_marker_item)
+        self.peak_marker_item = pg.ScatterPlotItem()
+        self.peak_marker_item.setZValue(PRESSURE_MAP_PEAK_MARKER_Z)
+        self.plot_widget.addItem(self.peak_marker_item)
 
         self.arrow_line_item = QGraphicsLineItem()
         self.arrow_head_item = QGraphicsPolygonItem()
@@ -157,6 +167,7 @@ class PressureMapWidget(QWidget):
         self.package_image_items: list[pg.ImageItem] = []
         self.package_circle_items: list[QGraphicsEllipseItem] = []
         self.package_sensor_marker_items: list[pg.ScatterPlotItem] = []
+        self.package_peak_marker_items: list[pg.ScatterPlotItem] = []
         self.package_arrow_items: list[tuple[QGraphicsLineItem, QGraphicsPolygonItem]] = []
         self.package_label_items: list[pg.TextItem] = []
 
@@ -185,6 +196,11 @@ class PressureMapWidget(QWidget):
             self.arrow_base_width_px = float(arrow_base_width_px)
         if arrow_color is not None:
             self.arrow_color = str(arrow_color)
+
+    def configure_markers(self, *, show_marker: bool | None = None) -> None:
+        """Update pressure-point marker visibility."""
+        if show_marker is not None:
+            self.show_marker = bool(show_marker)
 
     def update_display(
         self,
@@ -220,6 +236,7 @@ class PressureMapWidget(QWidget):
         self._update_image(normal_force_result, pressure_result)
         self._update_boundary(pressure_result)
         self._update_sensor_markers(pressure_result)
+        self._update_peak_markers(pressure_result)
         self._update_shear_arrow(shear_result)
         self._update_readout(normal_force_result, pressure_result, shear_result)
         self.plot_widget.getPlotItem().getViewBox().update()
@@ -251,6 +268,7 @@ class PressureMapWidget(QWidget):
             self._update_package_image(index, package, center_x, center_y)
             self._update_package_boundary(index, package, center_x, center_y)
             self._update_package_sensor_markers(index, package, center_x, center_y)
+            self._update_package_peak_markers(index, package, center_x, center_y)
             self._update_package_shear_arrow(index, package, center_x, center_y)
             self._update_package_label(index, package, center_x, center_y)
 
@@ -267,6 +285,7 @@ class PressureMapWidget(QWidget):
             levels=(PRESSURE_MAP_ZERO_LEVEL_MIN, PRESSURE_MAP_ZERO_LEVEL_MAX),
         )
         self.sensor_marker_item.setData([])
+        self.peak_marker_item.setData([])
         self._hide_arrow()
         if self.circle_item is not None:
             self.circle_item.setVisible(False)
@@ -362,6 +381,35 @@ class PressureMapWidget(QWidget):
         ]
         self.sensor_marker_item.setData(spots)
 
+    def _update_peak_markers(self, pressure_result: PressureMapResult) -> None:
+        if not self.show_marker:
+            self.peak_marker_item.setData([])
+            return
+        self.peak_marker_item.setData(self._peak_marker_spots(pressure_result))
+
+    def _peak_marker_spots(
+        self,
+        pressure_result: PressureMapResult,
+        *,
+        offset_x: float = 0.0,
+        offset_y: float = 0.0,
+    ) -> list[dict[str, object]]:
+        return [
+            {
+                "pos": (offset_x + peak_x, offset_y + peak_y),
+                "symbol": PRESSURE_MAP_PEAK_MARKER_SYMBOL,
+                "size": PRESSURE_MAP_PEAK_MARKER_SIZE_PX,
+                "pen": pg.mkPen(
+                    PRESSURE_MAP_PEAK_MARKER_COLOR,
+                    width=PRESSURE_MAP_PEAK_MARKER_PEN_WIDTH_PX,
+                ),
+                "brush": pg.mkBrush(PRESSURE_MAP_PEAK_MARKER_COLOR),
+            }
+            for plane in pressure_result.quadrant_planes
+            if plane.peak_point is not None
+            for peak_x, peak_y in [plane.peak_point]
+        ]
+
     def _sensor_positions_from_result(self, pressure_result: PressureMapResult) -> dict[str, tuple[float, float]]:
         return dict(pressure_result.sensor_positions)
 
@@ -408,6 +456,11 @@ class PressureMapWidget(QWidget):
             self.plot_widget.addItem(sensor_marker_item)
             self.package_sensor_marker_items.append(sensor_marker_item)
 
+            peak_marker_item = pg.ScatterPlotItem()
+            peak_marker_item.setZValue(PRESSURE_MAP_PEAK_MARKER_Z)
+            self.plot_widget.addItem(peak_marker_item)
+            self.package_peak_marker_items.append(peak_marker_item)
+
             arrow_line_item = QGraphicsLineItem()
             arrow_head_item = QGraphicsPolygonItem()
             arrow_z = SHEAR_ARROW_Z + 1
@@ -427,6 +480,7 @@ class PressureMapWidget(QWidget):
             self.package_image_items[index].hide()
             self.package_circle_items[index].hide()
             self.package_sensor_marker_items[index].setData([])
+            self.package_peak_marker_items[index].setData([])
             self._hide_package_arrow(index)
             if index < len(self.package_label_items):
                 self.package_label_items[index].setVisible(False)
@@ -512,6 +566,24 @@ class PressureMapWidget(QWidget):
             for position, (x_coord, y_coord) in self._sensor_positions_from_result(package.pressure_result).items()
         ]
         self.package_sensor_marker_items[index].setData(spots)
+
+    def _update_package_peak_markers(
+        self,
+        index: int,
+        package: PressureMapPackageDisplay,
+        center_x: float,
+        center_y: float,
+    ) -> None:
+        if not self.show_marker:
+            self.package_peak_marker_items[index].setData([])
+            return
+        self.package_peak_marker_items[index].setData(
+            self._peak_marker_spots(
+                package.pressure_result,
+                offset_x=center_x,
+                offset_y=center_y,
+            )
+        )
 
     def _update_package_shear_arrow(
         self,

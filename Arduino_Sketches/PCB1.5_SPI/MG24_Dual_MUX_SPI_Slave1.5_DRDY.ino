@@ -1,5 +1,5 @@
 /*
- * MG24_Dual_MUX_SPI_Slave.ino
+ * MG24_Dual_MUX_SPI_Slave_Optimized.ino
  * Dual-MUX ADC Streamer — XIAO MG24, SPI Slave
  * ==============================================
  * Controls two ADG1206 (16:1) MUXes whose A0–A3 address pins are wired
@@ -111,7 +111,26 @@ static const uint8_t        SPI_PIN_CS    = 0;
 // Time to wait after switching the ADG1206 address lines before sampling.
 // ADG1206 worst-case tON is 150 ns; we use a generous µs value to also
 // allow the connected circuitry (buffer op-amp, RC filter) to settle.
-static const uint32_t MUX_SETTLE_US      = 15; // <<========= was 30
+static const uint32_t MUX_SETTLE_US      = 3; // <<========= was 30
+
+// Ground-channel ghosting reduction.
+// FAST default: switch both MUXes to ground/Vmid and dwell, but do not spend
+// a full ADC conversion on data that is discarded. Set GROUND_READ_ADC=true
+// if you want the older dummy-conversion behavior for extra ADC front-end settling.
+static const bool     GROUND_READ_ADC    = true;
+static const uint32_t GROUND_DWELL_US    = 10;
+
+// Because the MUX EN pins are tied enabled, the MUX outputs are always
+// connected to the selected address. After each block and while SPI is
+// transmitting, park both MUXes on this channel instead of leaving them on
+// the last analog input. This is independent of useGround.
+// Set groundMuxCh/default below to the physical MUX input tied to Vmid/ground.
+static const bool     PARK_MUX_AFTER_BLOCK = true;
+static const uint32_t PARK_MUX_DWELL_US    = 0;
+
+// Keep the trailer format unchanged. When false, avg_dt_us is sent as 0 and
+// should be computed on the PC from block_start_us/block_end_us/sample_count.
+static const bool     COMPUTE_AVG_DT_US  = true;
 
 // ── IADC clock targets ────────────────────────────────────────────────
 // Faster ADC clock → higher throughput, more noise.
@@ -246,8 +265,8 @@ static void onCSRising() {
 // ── ADC / MUX configuration ───────────────────────────────────────────
 static uint8_t  channelSeq[MAX_SEQ_LEN];
 static uint8_t  channelCount     = 0;
-static int      groundMuxCh      = 0;
-static bool     useGround        = false;
+static int      groundMuxCh      = 10;     // also used as idle/after-block park channel
+static bool     useGround        = false; // insert ground steps during sampling when true
 static uint16_t repeatCount      = 1;
 static uint16_t sweepsPerBlock   = 1;
 
@@ -312,17 +331,76 @@ static void allocateAnalogBus(PinName p) {
 // ── MUX helpers ───────────────────────────────────────────────────────
 static uint8_t g_lastMuxCh = 0xFF;
 
-static void muxSelect(uint8_t ch) {
-  uint8_t diff = ch ^ g_lastMuxCh;
-  if (g_lastMuxCh == 0xFF || (diff & 0x01)) digitalWrite(PIN_MUX_A0, (ch & 0x01) ? HIGH : LOW);
-  if (g_lastMuxCh == 0xFF || (diff & 0x02)) digitalWrite(PIN_MUX_A1, (ch & 0x02) ? HIGH : LOW);
-  if (g_lastMuxCh == 0xFF || (diff & 0x04)) digitalWrite(PIN_MUX_A2, (ch & 0x04) ? HIGH : LOW);
-  if (g_lastMuxCh == 0xFF || (diff & 0x08)) digitalWrite(PIN_MUX_A3, (ch & 0x08) ? HIGH : LOW);
-  g_lastMuxCh = ch;
-  delayMicroseconds(MUX_SETTLE_US);
+// Avoid custom struct types in function parameters because the Arduino .ino
+// preprocessor can generate prototypes before the struct definition.
+static GPIO_Port_TypeDef muxFastPort[4];
+static uint8_t           muxFastPin[4];
+static bool              muxFastValid[4] = {false, false, false, false};
+static bool              muxFastPinsReady = false;
+
+static bool makeFastMuxPin(uint8_t idx, int arduinoPin) {
+  muxFastValid[idx] = false;
+
+  PinName n = pinToPinName(arduinoPin);
+  if (n == PIN_NAME_NC) return false;
+
+  uint32_t raw = (uint32_t)n - (uint32_t)PIN_NAME_MIN;
+  muxFastPin[idx] = raw & 0x0F;
+
+  switch (raw >> 4) {
+    case 0: muxFastPort[idx] = gpioPortA; break;
+    case 1: muxFastPort[idx] = gpioPortB; break;
+    case 2: muxFastPort[idx] = gpioPortC; break;
+    case 3: muxFastPort[idx] = gpioPortD; break;
+    default: return false;
+  }
+
+  muxFastValid[idx] = true;
+  return true;
 }
 
-// ── IADC scan-mode init (D1 = MUX1 COM, D2 = MUX2 COM) ───────────────
+static inline void fastMuxWrite(uint8_t idx, bool high) {
+  if (high) GPIO_PinOutSet(muxFastPort[idx], muxFastPin[idx]);
+  else      GPIO_PinOutClear(muxFastPort[idx], muxFastPin[idx]);
+}
+
+static void initFastMuxPins() {
+  muxFastPinsReady =
+      makeFastMuxPin(0, PIN_MUX_A0) &&
+      makeFastMuxPin(1, PIN_MUX_A1) &&
+      makeFastMuxPin(2, PIN_MUX_A2) &&
+      makeFastMuxPin(3, PIN_MUX_A3);
+}
+
+static inline void muxSelectSlow(uint8_t ch) {
+  digitalWrite(PIN_MUX_A0, (ch & 0x01) ? HIGH : LOW);
+  digitalWrite(PIN_MUX_A1, (ch & 0x02) ? HIGH : LOW);
+  digitalWrite(PIN_MUX_A2, (ch & 0x04) ? HIGH : LOW);
+  digitalWrite(PIN_MUX_A3, (ch & 0x08) ? HIGH : LOW);
+}
+
+static inline void muxSelect(uint8_t ch) {
+  if (ch == g_lastMuxCh) return;
+
+  uint8_t diff = (g_lastMuxCh == 0xFF) ? 0x0F : (uint8_t)(ch ^ g_lastMuxCh);
+
+  if (muxFastPinsReady) {
+    if (diff & 0x01) fastMuxWrite(0, (ch & 0x01) != 0);
+    if (diff & 0x02) fastMuxWrite(1, (ch & 0x02) != 0);
+    if (diff & 0x04) fastMuxWrite(2, (ch & 0x04) != 0);
+    if (diff & 0x08) fastMuxWrite(3, (ch & 0x08) != 0);
+  } else {
+    muxSelectSlow(ch);
+  }
+
+  g_lastMuxCh = ch;
+
+  if (MUX_SETTLE_US > 0) {
+    delayMicroseconds(MUX_SETTLE_US);
+  }
+}
+
+//// ── IADC scan-mode init (D1 = MUX1 COM, D2 = MUX2 COM) ───────────────
 static void initIADC() {
   g_iadcReady = false;
 
@@ -386,10 +464,17 @@ static void initIADC() {
   g_configDirty = false;
 }
 
+// Clear any stale scan results. Do this once per block/warmup, not once per sample.
+static inline void iadcFlushFifo() {
+  while (IADC_getScanFifoCnt(IADC0) > 0) {
+    (void)IADC_pullScanFifoResult(IADC0);
+  }
+}
+
 // Trigger one scan at the current MUX address; block until both results arrive.
-static bool iadcReadPair(uint16_t &v1, uint16_t &v2) {
+// Fast hot-path version: assumes scan table FIFO order is entry 0 then entry 1.
+static inline bool iadcReadPairFast(uint16_t &v1, uint16_t &v2) {
   if (!g_iadcReady) return false;
-  while (IADC_getScanFifoCnt(IADC0) > 0) (void)IADC_pullScanFifoResult(IADC0);
 
   IADC_command(IADC0, iadcCmdStartScan);
   while (IADC_getScanFifoCnt(IADC0) < 2) ; // tight poll
@@ -397,13 +482,54 @@ static bool iadcReadPair(uint16_t &v1, uint16_t &v2) {
   IADC_Result_t r0 = IADC_pullScanFifoResult(IADC0);
   IADC_Result_t r1 = IADC_pullScanFifoResult(IADC0);
 
-  // Use scan table ID to assign correctly regardless of FIFO order
-  if (r0.id == 0) { v1 = r0.data & 0x0FFF; v2 = r1.data & 0x0FFF; }
-  else             { v1 = r1.data & 0x0FFF; v2 = r0.data & 0x0FFF; }
+  v1 = r0.data & 0x0FFF;
+  v2 = r1.data & 0x0FFF;
   return true;
 }
 
-// ── Config helpers ────────────────────────────────────────────────────
+// Safer debug version. Not used in the hot path.
+static bool iadcReadPairChecked(uint16_t &v1, uint16_t &v2) {
+  if (!g_iadcReady) return false;
+  iadcFlushFifo();
+
+  IADC_command(IADC0, iadcCmdStartScan);
+  while (IADC_getScanFifoCnt(IADC0) < 2) ; // tight poll
+
+  IADC_Result_t r0 = IADC_pullScanFifoResult(IADC0);
+  IADC_Result_t r1 = IADC_pullScanFifoResult(IADC0);
+
+  if (r0.id == 0) { v1 = r0.data & 0x0FFF; v2 = r1.data & 0x0FFF; }
+  else            { v1 = r1.data & 0x0FFF; v2 = r0.data & 0x0FFF; }
+  return true;
+}
+
+static inline void groundStepIfNeeded() {
+  if (!useGround) return;
+
+  muxSelect((uint8_t)groundMuxCh);
+
+  if (GROUND_READ_ADC) {
+    uint16_t d1, d2;
+    iadcReadPairFast(d1, d2); // old behavior: read and discard
+  } else if (GROUND_DWELL_US > 0) {
+    delayMicroseconds(GROUND_DWELL_US);
+  }
+}
+
+// Park both MUXes on the ground/Vmid/discharge channel whenever we are not
+// actively sampling. EN is tied enabled on the PCB, so the selected analog
+// channel would otherwise remain connected during SPI TX.
+static inline void parkMuxOnGround() {
+  if (!PARK_MUX_AFTER_BLOCK) return;
+
+  muxSelect((uint8_t)groundMuxCh);
+
+  if (PARK_MUX_DWELL_US > 0) {
+    delayMicroseconds(PARK_MUX_DWELL_US);
+  }
+}
+
+//// ── Config helpers ────────────────────────────────────────────────────
 
 // Rebuild the per-entry MUX channel list (with optional ground entries).
 static void buildEntryList() {
@@ -426,7 +552,7 @@ static void buildEntryList() {
     }
     prev = (int)ch;
   }
-  g_configDirty = true;
+  // Channel/repeat/ground list changes do not require IADC reinitialization.
 }
 
 // Cap sweepsPerBlock so data always fits in spiTxBuf.
@@ -446,37 +572,60 @@ static void clampSweepsPerBlock() {
 static uint32_t captureBlock(uint8_t *txBuf) {
   if (!g_iadcReady || channelCount == 0) return 0;
 
-  uint32_t maxPairs = (uint32_t)sweepsPerBlock * channelCount * repeatCount;
-  if (maxPairs > MAX_PAIRS) maxPairs = MAX_PAIRS;
+  const uint32_t maxPairsConfigured = (uint32_t)sweepsPerBlock * channelCount * repeatCount;
+  const uint32_t maxPairs = (maxPairsConfigured > MAX_PAIRS) ? MAX_PAIRS : maxPairsConfigured;
 
-  uint32_t pairIdx    = 0;
+  uint32_t pairIdx = 0;
+  uint8_t *out = txBuf + ACK_FRAME_LEN;
+
   uint32_t blockStart = micros();
   g_lastMuxCh = 0xFF;
+  iadcFlushFifo();
 
   for (uint16_t sw = 0; sw < sweepsPerBlock && pairIdx < maxPairs; sw++) {
-    for (uint8_t e = 0; e < entryCount && pairIdx < maxPairs; e++) {
-      uint8_t ch = entryMuxCh[e];
-      if (ch != g_lastMuxCh) muxSelect(ch);
+    uint8_t prevCh = 0xFF;
 
-      uint16_t v1 = 0, v2 = 0;
-      iadcReadPair(v1, v2);
+    for (uint8_t i = 0; i < channelCount && pairIdx < maxPairs; i++) {
+      const uint8_t ch = channelSeq[i];
+      const bool isNewChannel = (i == 0) || (ch != prevCh);
 
-      if (!entryIsGround[e]) {
-        uint32_t off = (uint32_t)ACK_FRAME_LEN + pairIdx * 4u;
-        txBuf[off + 0] = (uint8_t)(v1 & 0xFF);
-        txBuf[off + 1] = (uint8_t)(v1 >> 8);
-        txBuf[off + 2] = (uint8_t)(v2 & 0xFF);
-        txBuf[off + 3] = (uint8_t)(v2 >> 8);
+      // Same logical placement as the previous flattened entry list:
+      // ground/Vmid before the first channel and before each changed channel.
+      // Faster default: switch + dwell only; no discarded ADC conversion.
+      if (isNewChannel) groundStepIfNeeded();
+
+      muxSelect(ch);
+
+      for (uint16_t r = 0; r < repeatCount && pairIdx < maxPairs; r++) {
+        uint16_t v1 = 0, v2 = 0;
+        iadcReadPairFast(v1, v2);
+
+        *out++ = (uint8_t)(v1 & 0xFF);
+        *out++ = (uint8_t)(v1 >> 8);
+        *out++ = (uint8_t)(v2 & 0xFF);
+        *out++ = (uint8_t)(v2 >> 8);
         pairIdx++;
       }
+
+      prevCh = ch;
     }
   }
 
+  // End timing before parking so block_start/block_end measure acquisition
+  // time only, not the idle/SPI-transmit parking action.
   uint32_t blockEnd    = micros();
+
+  // During SPI transmit, do not leave the MUXes connected to the last analog
+  // input. Park immediately on the ground/Vmid channel.
+  parkMuxOnGround();
+
   uint32_t sampleCount = pairIdx * 2u; // total uint16 samples (MUX1 + MUX2)
-  uint32_t elapsed     = blockEnd - blockStart;
-  uint16_t avgDtUs     = (sampleCount > 0)
-      ? (uint16_t)min(elapsed / sampleCount, 65535UL) : 0u;
+
+  uint16_t avgDtUs = 0;
+  if (COMPUTE_AVG_DT_US && sampleCount > 0) {
+    uint32_t elapsed = blockEnd - blockStart;
+    avgDtUs = (uint16_t)min(elapsed / sampleCount, 65535UL);
+  }
 
   // Header (first 4 bytes of spiTxBuf)
   txBuf[0] = BLOCK_MAGIC1;
@@ -485,7 +634,7 @@ static uint32_t captureBlock(uint8_t *txBuf) {
   txBuf[3] = (uint8_t)(sampleCount >> 8);
 
   // Trailer immediately after sample data
-  uint32_t tOff = (uint32_t)ACK_FRAME_LEN + pairIdx * 4u;
+  uint32_t tOff = (uint32_t)(out - txBuf);
   txBuf[tOff + 0] = (uint8_t)(avgDtUs & 0xFF);
   txBuf[tOff + 1] = (uint8_t)(avgDtUs >> 8);
   txBuf[tOff + 2] = (uint8_t)(blockStart & 0xFF);
@@ -500,7 +649,7 @@ static uint32_t captureBlock(uint8_t *txBuf) {
   return pairIdx;
 }
 
-// ── ACK helpers ───────────────────────────────────────────────────────
+//// ── ACK helpers ───────────────────────────────────────────────────────
 static void prepareAck(uint8_t *txBuf, bool ok, uint8_t b2 = 0x00, uint8_t b3 = 0x00) {
   txBuf[0] = ACK_MAGIC;
   txBuf[1] = ok ? ACK_STATUS_OK : ACK_STATUS_ERR;
@@ -545,17 +694,34 @@ static void prefetchNextBlockIfNeeded() {
 
 // ── Warmup sweeps ─────────────────────────────────────────────────────
 static void doWarmup() {
+  if (!g_iadcReady || channelCount == 0) return;
+
   g_lastMuxCh = 0xFF;
+  iadcFlushFifo();
+
   for (uint16_t sw = 0; sw < WARMUP_SWEEPS; sw++) {
-    for (uint8_t e = 0; e < entryCount; e++) {
-      muxSelect(entryMuxCh[e]);
-      uint16_t d1, d2;
-      iadcReadPair(d1, d2); // discard
+    uint8_t prevCh = 0xFF;
+
+    for (uint8_t i = 0; i < channelCount; i++) {
+      const uint8_t ch = channelSeq[i];
+      const bool isNewChannel = (i == 0) || (ch != prevCh);
+
+      if (isNewChannel) groundStepIfNeeded();
+      muxSelect(ch);
+
+      for (uint16_t r = 0; r < repeatCount; r++) {
+        uint16_t d1, d2;
+        iadcReadPairFast(d1, d2); // discard
+      }
+
+      prevCh = ch;
     }
   }
+
+  parkMuxOnGround();
 }
 
-// ── Command processing ────────────────────────────────────────────────
+//// ── Command processing ────────────────────────────────────────────────
 // Fills spiTxBuf and returns the number of bytes to arm as the response.
 // For config commands this is always ACK_FRAME_LEN (= 4).
 // For CMD_RUN it is ACK_FRAME_LEN + pairs*4 + BLOCK_TRAILER_LEN.
@@ -666,6 +832,7 @@ static uint32_t processCommand(const uint8_t *frame) {
     case CMD_STOP:
       isRunning = timedRun = false;
       resetStreamingPipeline();
+      parkMuxOnGround();
       prepareAck(armedRespBuf, true);
       return ACK_FRAME_LEN;
 
@@ -708,6 +875,7 @@ static uint32_t processCommand(const uint8_t *frame) {
       if (timedRun && (int32_t)(millis() - runStopMillis) >= 0) {
         isRunning = timedRun = false;
         resetStreamingPipeline();
+        parkMuxOnGround();
         prepareAck(armedRespBuf, false);   // error ACK signals Teensy to stop
         return ACK_FRAME_LEN;
       }
@@ -732,6 +900,8 @@ void setup() {
   pinMode(PIN_MUX_A1, OUTPUT); digitalWrite(PIN_MUX_A1, LOW);
   pinMode(PIN_MUX_A2, OUTPUT); digitalWrite(PIN_MUX_A2, LOW);
   pinMode(PIN_MUX_A3, OUTPUT); digitalWrite(PIN_MUX_A3, LOW);
+  initFastMuxPins();
+  parkMuxOnGround();
 
   // ADC inputs
   pinMode(PIN_ADC_MUX1, INPUT);

@@ -48,9 +48,37 @@ from constants.sensor_config import (
 from config.sensor_config import normalize_array_cell
 from constants.ui import PRESSURE_MAP_TAB_NAME
 from constants.pressure_map import (
+    DEFAULT_PRESSURE_DECAY_RATE,
+    DEFAULT_PRESSURE_DECAY_REF_DISTANCE_MM,
+    DEFAULT_PRESSURE_GRID_MARGIN,
+    DEFAULT_PRESSURE_GRID_RESOLUTION,
+    DEFAULT_PRESSURE_SENSOR_SPACING_MM,
     DEFAULT_DISPLAY_WINDOW_SEC,
     DEFAULT_HPF_CUTOFF_HZ,
     DEFAULT_INTEGRATION_WINDOW_SAMPLES,
+    PRESSURE_CIRCLE_DIAMETER_DECIMALS,
+    PRESSURE_CIRCLE_DIAMETER_MAX_MM,
+    PRESSURE_CIRCLE_DIAMETER_MIN_MM,
+    PRESSURE_CIRCLE_DIAMETER_STEP_MM,
+    PRESSURE_DECAY_RATE_DECIMALS,
+    PRESSURE_DECAY_RATE_MAX,
+    PRESSURE_DECAY_RATE_MIN,
+    PRESSURE_DECAY_RATE_STEP,
+    PRESSURE_DECAY_REF_DISTANCE_DECIMALS,
+    PRESSURE_DECAY_REF_DISTANCE_MAX_MM,
+    PRESSURE_DECAY_REF_DISTANCE_MIN_MM,
+    PRESSURE_DECAY_REF_DISTANCE_STEP_MM,
+    PRESSURE_GRID_MARGIN_MAX,
+    PRESSURE_GRID_MARGIN_STEP,
+    PRESSURE_GRID_MIN_MARGIN,
+    PRESSURE_GRID_RESOLUTION_MAX,
+    PRESSURE_GRID_RESOLUTION_MIN,
+    PRESSURE_GRID_RESOLUTION_STEP,
+    PRESSURE_MAP_STRETCH,
+    PRESSURE_SENSOR_SPACING_DECIMALS,
+    PRESSURE_SENSOR_SPACING_MAX_MM,
+    PRESSURE_SENSOR_SPACING_MIN_MM,
+    PRESSURE_SENSOR_SPACING_STEP_MM,
     SIGNAL_INTEGRATION_AVERAGE_LINE_WIDTH,
     SIGNAL_INTEGRATION_DIMMED_COLOR_FRACTION,
     SIGNAL_INTEGRATION_DISABLED_HPF_CUTOFF_HZ,
@@ -86,26 +114,8 @@ from constants.shear import (
     DEFAULT_ARROW_MIN_THRESHOLD,
     DEFAULT_ARROW_WIDTH_SCALES,
     DEFAULT_CIRCLE_DIAMETER_MM,
-    DEFAULT_PRESSURE_GRID_MARGIN,
-    DEFAULT_PRESSURE_GRID_RESOLUTION,
-    DEFAULT_PRESSURE_SENSOR_SPACING_MM,
     DEFAULT_SHEAR_CALIBRATION_GAIN,
     DEFAULT_SHEAR_NOISE_THRESHOLD,
-    PRESSURE_CIRCLE_DIAMETER_DECIMALS,
-    PRESSURE_CIRCLE_DIAMETER_MAX_MM,
-    PRESSURE_CIRCLE_DIAMETER_MIN_MM,
-    PRESSURE_CIRCLE_DIAMETER_STEP_MM,
-    PRESSURE_GRID_MARGIN_MAX,
-    PRESSURE_GRID_MARGIN_STEP,
-    PRESSURE_GRID_MIN_MARGIN,
-    PRESSURE_GRID_RESOLUTION_MAX,
-    PRESSURE_GRID_RESOLUTION_MIN,
-    PRESSURE_GRID_RESOLUTION_STEP,
-    PRESSURE_MAP_STRETCH,
-    PRESSURE_SENSOR_SPACING_DECIMALS,
-    PRESSURE_SENSOR_SPACING_MAX_MM,
-    PRESSURE_SENSOR_SPACING_MIN_MM,
-    PRESSURE_SENSOR_SPACING_STEP_MM,
     SHEAR_ARROW_BASE_WIDTH_DECIMALS,
     SHEAR_ARROW_BASE_WIDTH_MAX_PX,
     SHEAR_ARROW_BASE_WIDTH_MIN_PX,
@@ -511,6 +521,39 @@ class PressureMapPanelMixin:
         self.pressure_grid_margin_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
         layout.addWidget(self.pressure_grid_margin_spin, 0, 7)
 
+        decay_rate_tooltip = (
+            "Distance gain used when estimating pressure-point height from sensor values. "
+            "Higher values increase distance-based amplification."
+        )
+        layout.addWidget(self._create_tooltip_label("Decay rate:", decay_rate_tooltip), 1, 0)
+        self.pressure_decay_rate_spin = QDoubleSpinBox()
+        self.pressure_decay_rate_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
+        self.pressure_decay_rate_spin.setRange(PRESSURE_DECAY_RATE_MIN, PRESSURE_DECAY_RATE_MAX)
+        self.pressure_decay_rate_spin.setDecimals(PRESSURE_DECAY_RATE_DECIMALS)
+        self.pressure_decay_rate_spin.setSingleStep(PRESSURE_DECAY_RATE_STEP)
+        self.pressure_decay_rate_spin.setValue(DEFAULT_PRESSURE_DECAY_RATE)
+        self.pressure_decay_rate_spin.setToolTip(decay_rate_tooltip)
+        self.pressure_decay_rate_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_decay_rate_spin, 1, 1)
+
+        decay_ref_tooltip = (
+            "Reference distance in millimeters for pressure-point height decay shaping."
+        )
+        layout.addWidget(self._create_tooltip_label("Decay ref:", decay_ref_tooltip), 1, 2)
+        self.pressure_decay_ref_distance_spin = QDoubleSpinBox()
+        self.pressure_decay_ref_distance_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
+        self.pressure_decay_ref_distance_spin.setRange(
+            PRESSURE_DECAY_REF_DISTANCE_MIN_MM,
+            PRESSURE_DECAY_REF_DISTANCE_MAX_MM,
+        )
+        self.pressure_decay_ref_distance_spin.setDecimals(PRESSURE_DECAY_REF_DISTANCE_DECIMALS)
+        self.pressure_decay_ref_distance_spin.setSingleStep(PRESSURE_DECAY_REF_DISTANCE_STEP_MM)
+        self.pressure_decay_ref_distance_spin.setSuffix(" mm")
+        self.pressure_decay_ref_distance_spin.setValue(DEFAULT_PRESSURE_DECAY_REF_DISTANCE_MM)
+        self.pressure_decay_ref_distance_spin.setToolTip(decay_ref_tooltip)
+        self.pressure_decay_ref_distance_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_decay_ref_distance_spin, 1, 3)
+
         show_negative_tooltip = (
             "When enabled, pressure-point placement uses absolute signal magnitude so "
             "negative release values contribute. When disabled, only positive pressure "
@@ -520,7 +563,7 @@ class PressureMapPanelMixin:
         self.pressure_show_negative_check.setChecked(DEFAULT_PRESSURE_SHOW_NEGATIVE)
         self.pressure_show_negative_check.setToolTip(show_negative_tooltip)
         self.pressure_show_negative_check.toggled.connect(self.on_pressure_map_settings_changed)
-        layout.addWidget(self.pressure_show_negative_check, 1, 0, 1, 4)
+        layout.addWidget(self.pressure_show_negative_check, 2, 0, 1, 4)
 
         return group
 
@@ -720,6 +763,14 @@ class PressureMapPanelMixin:
                 "grid_margin": self._spin_int(
                     "pressure_grid_margin_spin",
                     DEFAULT_PRESSURE_GRID_MARGIN,
+                ),
+                "decay_rate": self._spin_float(
+                    "pressure_decay_rate_spin",
+                    DEFAULT_PRESSURE_DECAY_RATE,
+                ),
+                "decay_ref_distance_mm": self._spin_float(
+                    "pressure_decay_ref_distance_spin",
+                    DEFAULT_PRESSURE_DECAY_REF_DISTANCE_MM,
                 ),
                 "show_negative": self._check_bool(
                     "pressure_show_negative_check",
@@ -941,6 +992,13 @@ class PressureMapPanelMixin:
         changed |= self._set_spin_value("pressure_circle_diameter_spin", pressure_map, "circle_diameter_mm", float)
         changed |= self._set_spin_value("pressure_grid_resolution_spin", pressure_map, "grid_resolution", int)
         changed |= self._set_spin_value("pressure_grid_margin_spin", pressure_map, "grid_margin", int)
+        changed |= self._set_spin_value("pressure_decay_rate_spin", pressure_map, "decay_rate", float)
+        changed |= self._set_spin_value(
+            "pressure_decay_ref_distance_spin",
+            pressure_map,
+            "decay_ref_distance_mm",
+            float,
+        )
         changed |= self._set_check_value("pressure_show_negative_check", pressure_map, "show_negative")
 
         if changed:
@@ -1140,6 +1198,14 @@ class PressureMapPanelMixin:
                 grid_resolution=self._spin_int(
                     "pressure_grid_resolution_spin",
                     DEFAULT_PRESSURE_GRID_RESOLUTION,
+                ),
+                decay_rate=self._spin_float(
+                    "pressure_decay_rate_spin",
+                    DEFAULT_PRESSURE_DECAY_RATE,
+                ),
+                decay_ref_distance_mm=self._spin_float(
+                    "pressure_decay_ref_distance_spin",
+                    DEFAULT_PRESSURE_DECAY_REF_DISTANCE_MM,
                 ),
                 show_negative=self._check_bool(
                     "pressure_show_negative_check",

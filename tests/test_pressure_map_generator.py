@@ -4,7 +4,7 @@ import unittest
 
 import numpy as np
 
-from constants.shear import (
+from constants.pressure_map import (
     DEFAULT_PRESSURE_SENSOR_SPACING_MM,
     PRESSURE_ACTIVE_QUADRANTS,
     PRESSURE_GRID_MARGIN_SIDE_COUNT,
@@ -12,6 +12,8 @@ from constants.shear import (
     PRESSURE_QUADRANT_BOTTOM_RIGHT,
     PRESSURE_QUADRANT_TOP_LEFT,
     PRESSURE_QUADRANT_TOP_RIGHT,
+)
+from constants.shear import (
     SHEAR_SENSOR_POSITIONS,
 )
 from data_processing.pressure_map_generator import (

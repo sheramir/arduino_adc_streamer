@@ -127,6 +127,8 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         harness.pressure_circle_diameter_spin = DummySpinBox(5.5)
         harness.pressure_grid_resolution_spin = DummySpinBox(25)
         harness.pressure_grid_margin_spin = DummySpinBox(3)
+        harness.pressure_decay_rate_spin = DummySpinBox(0.9)
+        harness.pressure_decay_ref_distance_spin = DummySpinBox(2.25)
         harness.pressure_show_negative_check = DummyCheckBox(True)
 
     def test_counts_to_voltage_ignores_time_series_units(self):
@@ -444,6 +446,8 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             self.assertEqual(settings["pressure_map"]["circle_diameter_mm"], 5.5)
             self.assertEqual(settings["pressure_map"]["grid_resolution"], 25)
             self.assertEqual(settings["pressure_map"]["grid_margin"], 3)
+            self.assertEqual(settings["pressure_map"]["decay_rate"], 0.9)
+            self.assertEqual(settings["pressure_map"]["decay_ref_distance_mm"], 2.25)
             self.assertTrue(settings["pressure_map"]["show_negative"])
 
             settings["processing"]["package_sensor_gains"] = {
@@ -459,6 +463,8 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             harness.pressure_circle_diameter_spin.setValue(6.0)
             harness.pressure_grid_resolution_spin.setValue(21)
             harness.pressure_grid_margin_spin.setValue(1)
+            harness.pressure_decay_rate_spin.setValue(0.1)
+            harness.pressure_decay_ref_distance_spin.setValue(0.5)
             harness.pressure_show_negative_check.setChecked(DEFAULT_PRESSURE_SHOW_NEGATIVE)
 
             applied = harness.load_shear_settings_from_path(settings_path, log_message=True)
@@ -472,6 +478,8 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             self.assertEqual(harness.pressure_circle_diameter_spin.value(), 5.5)
             self.assertEqual(harness.pressure_grid_resolution_spin.value(), 25)
             self.assertEqual(harness.pressure_grid_margin_spin.value(), 3)
+            self.assertEqual(harness.pressure_decay_rate_spin.value(), 0.9)
+            self.assertEqual(harness.pressure_decay_ref_distance_spin.value(), 2.25)
             self.assertTrue(harness.pressure_show_negative_check.isChecked())
             self.assertEqual(harness._pressure_package_sensor_gains["PZT3"]["R"], 2.5)
             self.assertEqual(harness._pressure_package_sensor_gains["PZT3"]["L"], 0.25)
@@ -498,6 +506,8 @@ class SignalIntegrationPanelTests(unittest.TestCase):
                 "pressure_circle_diameter_spin": "pressure footprint",
                 "pressure_grid_resolution_spin": "grid cells across the pressure-circle diameter",
                 "pressure_grid_margin_spin": "extra grid cells",
+                "pressure_decay_rate_spin": "distance gain",
+                "pressure_decay_ref_distance_spin": "reference distance",
                 "pressure_show_negative_check": "negative release values",
             }
 

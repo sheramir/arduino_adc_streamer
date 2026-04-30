@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
 )
 
 from constants.pressure_map import (
+    DEFAULT_PRESSURE_MAP_MAX_INTENSITY,
     DEFAULT_PRESSURE_SHOW_MARKER,
     PRESSURE_MAP_BACKGROUND_COLOR,
     PRESSURE_MAP_CIRCLE_Z,
@@ -38,6 +39,7 @@ from constants.pressure_map import (
     PRESSURE_MAP_LEVEL_EPSILON,
     PRESSURE_MAP_LEVEL_SCALE_ALL_SENSORS,
     PRESSURE_MAP_LEVEL_SCALE_SINGLE_SENSOR,
+    PRESSURE_MAP_MAX_INTENSITY_MIN,
     PRESSURE_MAP_OVERLAY_COLOR,
     PRESSURE_MAP_PACKAGE_COLORS,
     PRESSURE_MAP_PACKAGE_SPACING_FRACTION,
@@ -129,6 +131,7 @@ class PressureMapWidget(QWidget):
         self.arrow_base_width_px = DEFAULT_ARROW_BASE_WIDTH_PX
         self.arrow_color = DEFAULT_ARROW_COLOR
         self.show_marker = DEFAULT_PRESSURE_SHOW_MARKER
+        self.max_intensity = float(DEFAULT_PRESSURE_MAP_MAX_INTENSITY)
         self.last_arrow_geometry = self._hidden_arrow_geometry()
 
         layout = QVBoxLayout(self)
@@ -201,6 +204,11 @@ class PressureMapWidget(QWidget):
         """Update pressure-point marker visibility."""
         if show_marker is not None:
             self.show_marker = bool(show_marker)
+
+    def configure_intensity(self, *, max_intensity: float | None = None) -> None:
+        """Update fixed pressure-map upper intensity level."""
+        if max_intensity is not None:
+            self.max_intensity = max(float(max_intensity), PRESSURE_MAP_MAX_INTENSITY_MIN)
 
     def update_display(
         self,
@@ -311,6 +319,17 @@ class PressureMapWidget(QWidget):
         self.plot_widget.setYRange(-half_extent, half_extent, padding=SHEAR_ZERO_VALUE)
 
     def _pressure_levels(
+        self,
+        normal_force_result: NormalForceResult,
+        pressure_grid: np.ndarray,
+    ) -> tuple[float, float]:
+        if self.max_intensity <= PRESSURE_MAP_LEVEL_EPSILON:
+            return self._normalized_pressure_levels(normal_force_result, pressure_grid)
+
+        level_max = max(float(self.max_intensity), PRESSURE_MAP_LEVEL_EPSILON)
+        return (PRESSURE_MAP_ZERO_LEVEL_MIN, level_max)
+
+    def _normalized_pressure_levels(
         self,
         normal_force_result: NormalForceResult,
         pressure_grid: np.ndarray,

@@ -53,6 +53,7 @@ from constants.pressure_map import (
     DEFAULT_PRESSURE_DECAY_REF_DISTANCE_MM,
     DEFAULT_PRESSURE_GRID_MARGIN,
     DEFAULT_PRESSURE_GRID_RESOLUTION,
+    DEFAULT_PRESSURE_MAP_MAX_INTENSITY,
     DEFAULT_PRESSURE_SENSOR_SPACING_MM,
     DEFAULT_DISPLAY_WINDOW_SEC,
     DEFAULT_HPF_CUTOFF_HZ,
@@ -76,6 +77,10 @@ from constants.pressure_map import (
     PRESSURE_GRID_RESOLUTION_MIN,
     PRESSURE_GRID_RESOLUTION_STEP,
     PRESSURE_MAP_STRETCH,
+    PRESSURE_MAP_MAX_INTENSITY_DECIMALS,
+    PRESSURE_MAP_MAX_INTENSITY_MAX,
+    PRESSURE_MAP_MAX_INTENSITY_MIN,
+    PRESSURE_MAP_MAX_INTENSITY_STEP,
     PRESSURE_SENSOR_SPACING_DECIMALS,
     PRESSURE_SENSOR_SPACING_MAX_MM,
     PRESSURE_SENSOR_SPACING_MIN_MM,
@@ -555,6 +560,24 @@ class PressureMapPanelMixin:
         self.pressure_decay_ref_distance_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
         layout.addWidget(self.pressure_decay_ref_distance_spin, 1, 3)
 
+        max_intensity_tooltip = (
+            "Fixed upper intensity mapped to white in the pressure-map heatmap. "
+            "Values below this appear as proportional gray levels; values at or above this saturate to white."
+        )
+        layout.addWidget(self._create_tooltip_label("Max intensity:", max_intensity_tooltip), 2, 0)
+        self.pressure_max_intensity_spin = QDoubleSpinBox()
+        self.pressure_max_intensity_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
+        self.pressure_max_intensity_spin.setRange(
+            PRESSURE_MAP_MAX_INTENSITY_MIN,
+            PRESSURE_MAP_MAX_INTENSITY_MAX,
+        )
+        self.pressure_max_intensity_spin.setDecimals(PRESSURE_MAP_MAX_INTENSITY_DECIMALS)
+        self.pressure_max_intensity_spin.setSingleStep(PRESSURE_MAP_MAX_INTENSITY_STEP)
+        self.pressure_max_intensity_spin.setValue(DEFAULT_PRESSURE_MAP_MAX_INTENSITY)
+        self.pressure_max_intensity_spin.setToolTip(max_intensity_tooltip)
+        self.pressure_max_intensity_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_max_intensity_spin, 2, 1)
+
         show_negative_tooltip = (
             "When enabled, pressure-point placement uses absolute signal magnitude so "
             "negative release values contribute. When disabled, only positive pressure "
@@ -564,7 +587,7 @@ class PressureMapPanelMixin:
         self.pressure_show_negative_check.setChecked(DEFAULT_PRESSURE_SHOW_NEGATIVE)
         self.pressure_show_negative_check.setToolTip(show_negative_tooltip)
         self.pressure_show_negative_check.toggled.connect(self.on_pressure_map_settings_changed)
-        layout.addWidget(self.pressure_show_negative_check, 2, 0, 1, 4)
+        layout.addWidget(self.pressure_show_negative_check, 3, 0, 1, 4)
 
         show_marker_tooltip = (
             "Show calculated pressure-point marker(s) on the pressure map."
@@ -573,7 +596,7 @@ class PressureMapPanelMixin:
         self.pressure_show_marker_check.setChecked(DEFAULT_PRESSURE_SHOW_MARKER)
         self.pressure_show_marker_check.setToolTip(show_marker_tooltip)
         self.pressure_show_marker_check.toggled.connect(self.on_pressure_map_settings_changed)
-        layout.addWidget(self.pressure_show_marker_check, 2, 4, 1, 4)
+        layout.addWidget(self.pressure_show_marker_check, 3, 4, 1, 4)
 
         return group
 
@@ -781,6 +804,10 @@ class PressureMapPanelMixin:
                 "decay_ref_distance_mm": self._spin_float(
                     "pressure_decay_ref_distance_spin",
                     DEFAULT_PRESSURE_DECAY_REF_DISTANCE_MM,
+                ),
+                "max_intensity": self._spin_float(
+                    "pressure_max_intensity_spin",
+                    DEFAULT_PRESSURE_MAP_MAX_INTENSITY,
                 ),
                 "show_negative": self._check_bool(
                     "pressure_show_negative_check",
@@ -1013,6 +1040,12 @@ class PressureMapPanelMixin:
             "decay_ref_distance_mm",
             float,
         )
+        changed |= self._set_spin_value(
+            "pressure_max_intensity_spin",
+            pressure_map,
+            "max_intensity",
+            float,
+        )
         changed |= self._set_check_value("pressure_show_negative_check", pressure_map, "show_negative")
         changed |= self._set_check_value("pressure_show_marker_check", pressure_map, "show_marker")
 
@@ -1202,8 +1235,13 @@ class PressureMapPanelMixin:
                 "pressure_show_marker_check",
                 DEFAULT_PRESSURE_SHOW_MARKER,
             )
+            max_intensity = self._spin_float(
+                "pressure_max_intensity_spin",
+                DEFAULT_PRESSURE_MAP_MAX_INTENSITY,
+            )
             if hasattr(self, "pressure_map_widget"):
                 self.pressure_map_widget.configure_markers(show_marker=show_marker)
+                self.pressure_map_widget.configure_intensity(max_intensity=max_intensity)
 
             sensor_spacing_mm = self._spin_float(
                 "pressure_sensor_spacing_spin",

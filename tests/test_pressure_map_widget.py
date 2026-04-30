@@ -176,24 +176,35 @@ class PressureMapWidgetTests(unittest.TestCase):
         self.assertTrue(np.array_equal(lookup_table[0], np.array([0, 0, 0], dtype=np.uint8)))
         self.assertTrue(np.array_equal(lookup_table[-1], np.array([255, 255, 255], dtype=np.uint8)))
 
-    def test_pressure_levels_expand_when_more_sensors_are_active(self):
+    def test_pressure_levels_use_fixed_max_intensity(self):
         pressure_grid = np.array([[6.0, 0.0], [3.0, 1.0]], dtype=np.float64)
         single_sensor_result = self.calculator.compute({"C": 0.0, "R": 6.0, "T": 0.0, "L": 0.0, "B": 0.0})
         all_sensor_result = self.calculator.compute({"C": 10.0, "R": 4.0, "T": 4.0, "L": 4.0, "B": 4.0})
+        self.widget.configure_intensity(max_intensity=7.5)
 
         single_levels = self.widget._pressure_levels(single_sensor_result, pressure_grid)
         all_levels = self.widget._pressure_levels(all_sensor_result, pressure_grid)
 
-        self.assertEqual(single_levels, (0.0, 6.0))
-        self.assertEqual(all_levels, (0.0, 12.0))
+        self.assertEqual(single_levels, (0.0, 7.5))
+        self.assertEqual(all_levels, (0.0, 7.5))
 
-    def test_pressure_levels_use_tension_magnitude(self):
+    def test_pressure_levels_use_fixed_max_intensity_for_tension(self):
         pressure_grid = np.array([[-4.0, 0.0], [-2.0, -1.0]], dtype=np.float64)
         tension_result = self.calculator.compute({"C": -4.0, "R": 0.0, "T": 0.0, "L": 0.0, "B": 0.0})
+        self.widget.configure_intensity(max_intensity=5.0)
 
         levels = self.widget._pressure_levels(tension_result, pressure_grid)
 
-        self.assertEqual(levels, (0.0, 4.0))
+        self.assertEqual(levels, (0.0, 5.0))
+
+    def test_pressure_levels_revert_to_normalized_when_max_intensity_is_zero(self):
+        pressure_grid = np.array([[6.0, 0.0], [3.0, 1.0]], dtype=np.float64)
+        all_sensor_result = self.calculator.compute({"C": 10.0, "R": 4.0, "T": 4.0, "L": 4.0, "B": 4.0})
+        self.widget.configure_intensity(max_intensity=0.0)
+
+        levels = self.widget._pressure_levels(all_sensor_result, pressure_grid)
+
+        self.assertEqual(levels, (0.0, 12.0))
 
     def test_peak_markers_render_for_peaked_quadrants(self):
         signals = {"C": 5.0, "R": 5.0, "T": 5.0, "L": 5.0, "B": 5.0}

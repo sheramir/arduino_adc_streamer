@@ -43,6 +43,7 @@ from constants.pressure_map import (
     PRESSURE_MAP_OVERLAY_COLOR,
     PRESSURE_MAP_PACKAGE_COLORS,
     PRESSURE_MAP_PACKAGE_SPACING_FRACTION,
+    PRESSURE_MAP_PACKAGE_VIEW_PADDING_FRACTION,
     PRESSURE_MAP_PEAK_MARKER_COLOR,
     PRESSURE_MAP_PEAK_MARKER_PEN_WIDTH_PX,
     PRESSURE_MAP_PEAK_MARKER_SIZE_PX,
@@ -706,8 +707,8 @@ class PressureMapWidget(QWidget):
         center_x = (min_x + max_x) / 2.0
         center_y = (min_y + max_y) / 2.0
 
-        # Keep a small world-space margin so circle outlines and markers do not touch edges.
-        padding = max_radius * 0.12
+        # Keep a small world-space margin so circles appear larger and denser in array mode.
+        padding = max_radius * PRESSURE_MAP_PACKAGE_VIEW_PADDING_FRACTION
         range_half_span = square_half_span + padding
         self.plot_widget.setXRange(
             center_x - range_half_span,

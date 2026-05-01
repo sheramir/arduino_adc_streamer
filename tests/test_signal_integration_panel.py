@@ -592,6 +592,52 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         finally:
             tab.close()
 
+    def test_settings_tab_activation_refreshes_package_gain_controls(self):
+        harness = SignalIntegrationPanelHarness()
+
+        tab = harness.create_signal_integration_tab()
+        try:
+            refresh_calls = []
+
+            def record_refresh(package_layout=None):
+                refresh_calls.append(package_layout)
+
+            harness._refresh_pressure_package_gain_controls = record_refresh
+
+            harness.pressure_map_inner_tabs.setCurrentIndex(harness.pressure_map_display_tab_index)
+            self.assertEqual(len(refresh_calls), 0)
+
+            harness.pressure_map_inner_tabs.setCurrentIndex(harness.pressure_map_settings_tab_index)
+            self.assertEqual(len(refresh_calls), 1)
+        finally:
+            tab.close()
+
+    def test_switching_to_settings_stops_pending_signal_integration_timer(self):
+        harness = SignalIntegrationPanelHarness()
+
+        class DummyTimer:
+            def __init__(self):
+                self._active = True
+                self.stop_calls = 0
+
+            def isActive(self):
+                return self._active
+
+            def stop(self):
+                self.stop_calls += 1
+                self._active = False
+
+        harness.signal_integration_update_timer = DummyTimer()
+
+        tab = harness.create_signal_integration_tab()
+        try:
+            harness.pressure_map_inner_tabs.setCurrentIndex(harness.pressure_map_settings_tab_index)
+
+            self.assertEqual(harness.signal_integration_update_timer.stop_calls, 1)
+            self.assertFalse(harness.signal_integration_update_timer.isActive())
+        finally:
+            tab.close()
+
 
 if __name__ == "__main__":
     unittest.main()

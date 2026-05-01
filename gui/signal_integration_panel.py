@@ -350,11 +350,22 @@ class PressureMapPanelMixin:
         return tab
 
     def on_pressure_map_inner_tab_changed(self, index: int) -> None:
+        if index == getattr(self, "pressure_map_settings_tab_index", 1):
+            timer = getattr(self, "signal_integration_update_timer", None)
+            if timer is not None and timer.isActive():
+                timer.stop()
+            self._refresh_pressure_package_gain_controls(
+                getattr(self, "_latest_signal_integration_package_layout", None)
+            )
+            return
+
         if index != getattr(self, "pressure_map_display_tab_index", 0):
             return
         if not self._should_refresh_signal_integration_plot():
             return
-        if hasattr(self, "update_signal_integration_plot"):
+        if hasattr(self, "trigger_signal_integration_update"):
+            self.trigger_signal_integration_update()
+        elif hasattr(self, "update_signal_integration_plot"):
             self.update_signal_integration_plot()
 
     def _create_tooltip_label(
@@ -1387,7 +1398,8 @@ class PressureMapPanelMixin:
             avg_sample_time_sec = getattr(self, "_cached_avg_sample_time_sec", 0.0)
             repeat_count = max(1, int(self.config.get("repeat", 1)))
             package_layout = self._get_signal_integration_package_layout()
-            self._refresh_pressure_package_gain_controls(package_layout)
+            if self._is_pressure_map_settings_tab_active():
+                self._refresh_pressure_package_gain_controls(package_layout)
             multi_package_force_mode = self._is_multi_package_force_mode(package_layout)
 
             for spec_index, spec in enumerate(display_specs):
@@ -1490,6 +1502,12 @@ class PressureMapPanelMixin:
         if inner_tabs is None:
             return True
         return inner_tabs.currentIndex() == getattr(self, "pressure_map_display_tab_index", 0)
+
+    def _is_pressure_map_settings_tab_active(self) -> bool:
+        inner_tabs = getattr(self, "pressure_map_inner_tabs", None)
+        if inner_tabs is None:
+            return False
+        return inner_tabs.currentIndex() == getattr(self, "pressure_map_settings_tab_index", 1)
 
     def _should_refresh_pressure_map_display(self) -> bool:
         return self._should_refresh_signal_integration_plot()

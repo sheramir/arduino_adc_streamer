@@ -23,6 +23,8 @@ class BinaryProcessorMixin:
 
     _SLOW_TIMESERIES_UPDATE_MS = 120.0
     _SLOW_TIMESERIES_LOG_INTERVAL_SEC = 2.0
+    _CAPTURE_STATUS_UPDATE_INTERVAL_SEC = 0.2
+    _TIMING_DISPLAY_UPDATE_INTERVAL_SEC = 0.2
     
     def process_binary_sweep(self, samples: np.ndarray, avg_sample_time_us: int, block_start_us: int, block_end_us: int):
         """Process incoming binary block data containing one or more sweeps.
@@ -242,31 +244,36 @@ class BinaryProcessorMixin:
                             self.trigger_signal_integration_update()
                         else:
                             self.update_signal_integration_plot()
-                    # Always update the info label
-                    total_samples = int(self.sweep_count) * samples_per_sweep
-                    force_samples = len(force_state.data)
-                    sweep_note = None
-                    if self.is_full_view:
-                        sweep_note = "full view"
-                    else:
-                        window_size = self.window_size_spin.value()
-                        actual_sweeps = min(self.sweep_count, self.MAX_SWEEPS_BUFFER)
-                        displayed_sweeps = min(actual_sweeps, window_size, MAX_PLOT_SWEEPS)
-                        sweep_note = f"showing last {displayed_sweeps}"
+                    # Keep status-label updates lightweight at high block rates.
+                    if (
+                        now - getattr(self, '_last_capture_status_update_time', 0.0)
+                        >= self._CAPTURE_STATUS_UPDATE_INTERVAL_SEC
+                    ):
+                        self._last_capture_status_update_time = now
+                        total_samples = int(self.sweep_count) * samples_per_sweep
+                        force_samples = len(force_state.data)
+                        sweep_note = None
+                        if self.is_full_view:
+                            sweep_note = "full view"
+                        else:
+                            window_size = self.window_size_spin.value()
+                            actual_sweeps = min(self.sweep_count, self.MAX_SWEEPS_BUFFER)
+                            displayed_sweeps = min(actual_sweeps, window_size, MAX_PLOT_SWEEPS)
+                            sweep_note = f"showing last {displayed_sweeps}"
 
-                    if hasattr(self, "update_plot_info_label"):
-                        self.update_plot_info_label(
-                            sweep_count=int(self.sweep_count),
-                            total_samples=total_samples,
-                            force_samples=force_samples,
-                            sweep_note=sweep_note,
-                        )
-                    else:
-                        note_text = f" ({sweep_note})" if sweep_note else ""
-                        self.plot_info_label.setText(
-                            f"ADC - Sweeps: {int(self.sweep_count)}{note_text} | Samples: {total_samples}  |  "
-                            f"Force: {force_samples} samples"
-                        )
+                        if hasattr(self, "update_plot_info_label"):
+                            self.update_plot_info_label(
+                                sweep_count=int(self.sweep_count),
+                                total_samples=total_samples,
+                                force_samples=force_samples,
+                                sweep_note=sweep_note,
+                            )
+                        else:
+                            note_text = f" ({sweep_note})" if sweep_note else ""
+                            self.plot_info_label.setText(
+                                f"ADC - Sweeps: {int(self.sweep_count)}{note_text} | Samples: {total_samples}  |  "
+                                f"Force: {force_samples} samples"
+                            )
                 
                 # Track when this buffer finished being received
                 block_end_time = time.time()
@@ -282,8 +289,14 @@ class BinaryProcessorMixin:
                 
                 timing.last_buffer_end_time = block_end_time
                 
-                # Update timing display after each block
-                self.update_timing_display()
+                # Update timing labels at a limited rate to keep the UI responsive.
+                now = time.time()
+                if (
+                    now - getattr(self, '_last_timing_display_update_time', 0.0)
+                    >= self._TIMING_DISPLAY_UPDATE_INTERVAL_SEC
+                ):
+                    self._last_timing_display_update_time = now
+                    self.update_timing_display()
 
             except Exception as e:
                 self.log_status(f"ERROR: Failed to process binary block - {e}")
@@ -315,3 +328,4 @@ class BinaryProcessorMixin:
             f"block_sweeps={sweeps_in_block}, samples_per_sweep={samples_per_sweep}, "
             f"sweep_count={int(getattr(self, 'sweep_count', 0))}"
         )
+

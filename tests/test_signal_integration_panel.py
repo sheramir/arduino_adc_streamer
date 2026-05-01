@@ -10,7 +10,7 @@ import numpy as np
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QScrollArea
 
 from constants.plotting import IADC_RESOLUTION_BITS
 from constants.pressure_map import (
@@ -573,6 +573,22 @@ class SignalIntegrationPanelTests(unittest.TestCase):
 
             self.assertTrue(harness._should_refresh_signal_integration_plot())
             self.assertGreater(getattr(harness, "signal_integration_update_calls", 0), previous_calls)
+        finally:
+            tab.close()
+
+    def test_pressure_map_inner_tabs_split_display_and_settings_content(self):
+        harness = SignalIntegrationPanelHarness()
+
+        tab = harness.create_signal_integration_tab()
+        try:
+            display_tab = harness.pressure_map_inner_tabs.widget(harness.pressure_map_display_tab_index)
+            settings_tab = harness.pressure_map_inner_tabs.widget(harness.pressure_map_settings_tab_index)
+
+            self.assertIsInstance(display_tab, QScrollArea)
+            self.assertIsInstance(settings_tab, QScrollArea)
+            self.assertTrue(display_tab.widget().isAncestorOf(harness.pressure_map_widget))
+            self.assertTrue(settings_tab.widget().isAncestorOf(harness.signal_integration_reset_btn))
+            self.assertFalse(display_tab.widget().isAncestorOf(harness.signal_integration_reset_btn))
         finally:
             tab.close()
 

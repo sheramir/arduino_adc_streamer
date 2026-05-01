@@ -210,9 +210,14 @@ class PressureMapPanelMixin:
         self.pressure_map_inner_tabs.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         root_layout.addWidget(self.pressure_map_inner_tabs)
 
-        display_tab = QWidget()
+        display_tab = QScrollArea()
+        display_tab.setWidgetResizable(True)
+        display_tab.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         display_tab.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        display_layout = QVBoxLayout(display_tab)
+        display_content = QWidget()
+        display_content.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        display_layout = QVBoxLayout(display_content)
+        display_tab.setWidget(display_content)
         self.pressure_map_inner_tabs.addTab(display_tab, "Display")
         self.pressure_map_display_tab_index = 0
 
@@ -302,7 +307,7 @@ class PressureMapPanelMixin:
         )
         self.signal_integration_reset_btn.clicked.connect(self.on_signal_integration_reset_clicked)
         controls_layout.addWidget(self.signal_integration_reset_btn, 0, 6)
-        display_layout.addWidget(controls_group)
+        settings_layout.addWidget(controls_group)
 
         self.signal_integration_plot_widget = pg.PlotWidget()
         self.signal_integration_plot_widget.setMinimumHeight(SIGNAL_INTEGRATION_PLOT_MIN_HEIGHT_PX)

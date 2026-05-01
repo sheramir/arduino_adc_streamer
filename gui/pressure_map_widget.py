@@ -104,6 +104,13 @@ class PressureMapPackageDisplay:
     color: str = PRESSURE_MAP_OVERLAY_COLOR
 
 
+@dataclass(slots=True)
+class _PressureMapImageCache:
+    pressure_grid: np.ndarray
+    levels: tuple[float, float]
+    rect: tuple[float, float, float, float]
+
+
 class PressureMapWidget(QWidget):
     """Display a pressure heatmap and normal-force numeric readout.
 
@@ -174,6 +181,8 @@ class PressureMapWidget(QWidget):
         self.package_peak_marker_items: list[pg.ScatterPlotItem] = []
         self.package_arrow_items: list[tuple[QGraphicsLineItem, QGraphicsPolygonItem]] = []
         self.package_label_items: list[pg.TextItem] = []
+        self._image_cache: _PressureMapImageCache | None = None
+        self._package_image_caches: list[_PressureMapImageCache | None] = []
 
         self.update_display(None, None, None)
 
@@ -293,6 +302,7 @@ class PressureMapWidget(QWidget):
             autoLevels=False,
             levels=(PRESSURE_MAP_ZERO_LEVEL_MIN, PRESSURE_MAP_ZERO_LEVEL_MAX),
         )
+        self._image_cache = None
         self.sensor_marker_item.setData([])
         self.peak_marker_item.setData([])
         self._hide_arrow()
@@ -308,16 +318,47 @@ class PressureMapWidget(QWidget):
         pressure_result: PressureMapResult,
     ) -> None:
         levels = self._pressure_levels(normal_force_result, pressure_result.pressure_grid)
-        self.image_item.setImage(
-            np.abs(pressure_result.pressure_grid).T,
-            autoLevels=False,
-            levels=levels,
-        )
         extent = float(pressure_result.total_extent_mm)
         half_extent = extent / PRESSURE_GRID_MARGIN_SIDE_COUNT
-        self.image_item.setRect(QRectF(-half_extent, -half_extent, extent, extent))
+        rect = (-half_extent, -half_extent, extent, extent)
+        self._image_cache = self._update_cached_image_item(
+            self.image_item,
+            self._image_cache,
+            pressure_result.pressure_grid,
+            levels,
+            rect,
+        )
         self.plot_widget.setXRange(-half_extent, half_extent, padding=SHEAR_ZERO_VALUE)
         self.plot_widget.setYRange(-half_extent, half_extent, padding=SHEAR_ZERO_VALUE)
+
+    def _update_cached_image_item(
+        self,
+        image_item: pg.ImageItem,
+        cache: _PressureMapImageCache | None,
+        pressure_grid: np.ndarray,
+        levels: tuple[float, float],
+        rect: tuple[float, float, float, float],
+    ) -> _PressureMapImageCache:
+        image_unchanged = False
+        if cache is not None and cache.levels == levels and cache.rect == rect:
+            image_unchanged = (
+                cache.pressure_grid is pressure_grid
+                or np.array_equal(cache.pressure_grid, pressure_grid)
+            )
+
+        if not image_unchanged:
+            image_item.setImage(
+                np.abs(pressure_grid).T,
+                autoLevels=False,
+                levels=levels,
+            )
+
+        image_item.setRect(QRectF(*rect))
+        return _PressureMapImageCache(
+            pressure_grid=pressure_grid,
+            levels=levels,
+            rect=rect,
+        )
 
     def _pressure_levels(
         self,
@@ -465,6 +506,7 @@ class PressureMapWidget(QWidget):
             image_item.setLookupTable(self._grayscale_lookup_table())
             self.plot_widget.addItem(image_item)
             self.package_image_items.append(image_item)
+            self._package_image_caches.append(None)
 
             circle_item = QGraphicsEllipseItem()
             circle_item.setZValue(PRESSURE_MAP_CIRCLE_Z)
@@ -498,6 +540,7 @@ class PressureMapWidget(QWidget):
     def _hide_unused_package_items(self, used_count: int) -> None:
         for index in range(used_count, len(self.package_image_items)):
             self.package_image_items[index].hide()
+            self._package_image_caches[index] = None
             self.package_circle_items[index].hide()
             self.package_sensor_marker_items[index].setData([])
             self.package_peak_marker_items[index].setData([])
@@ -539,14 +582,16 @@ class PressureMapWidget(QWidget):
         image_item = self.package_image_items[index]
         image_item.show()
         levels = self._pressure_levels(package.normal_force_result, package.pressure_result.pressure_grid)
-        image_item.setImage(
-            np.abs(package.pressure_result.pressure_grid).T,
-            autoLevels=False,
-            levels=levels,
-        )
         extent = float(package.pressure_result.total_extent_mm)
         half_extent = extent / PRESSURE_GRID_MARGIN_SIDE_COUNT
-        image_item.setRect(QRectF(center_x - half_extent, center_y - half_extent, extent, extent))
+        rect = (center_x - half_extent, center_y - half_extent, extent, extent)
+        self._package_image_caches[index] = self._update_cached_image_item(
+            image_item,
+            self._package_image_caches[index],
+            package.pressure_result.pressure_grid,
+            levels,
+            rect,
+        )
 
     def _update_package_boundary(
         self,

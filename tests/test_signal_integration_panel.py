@@ -77,6 +77,7 @@ class SignalIntegrationPanelHarness(PressureMapPanelMixin):
         self.active_sensor_reverse_polarity = False
         self.sensor_package_groups = []
         self.active_sensor_configuration = {"array_layout": {"cells": []}}
+        self.signal_integration_display_enabled = True
 
     def get_vref_voltage(self):
         return self.VREF_VOLTS
@@ -98,6 +99,12 @@ class SignalIntegrationPanelHarness(PressureMapPanelMixin):
 
     def get_active_sensor_configuration(self):
         return dict(self.active_sensor_configuration)
+
+    def should_update_signal_integration_display(self):
+        return bool(self.signal_integration_display_enabled)
+
+    def update_signal_integration_plot(self):
+        self.signal_integration_update_calls = getattr(self, "signal_integration_update_calls", 0) + 1
 
 
 class SignalIntegrationPanelTests(unittest.TestCase):
@@ -363,6 +370,28 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         self.assertNotEqual(packages[0].color, packages[1].color)
         self.assertTrue(packages[0].shear_result.has_shear)
 
+    def test_hidden_pressure_map_tab_skips_pressure_map_refresh(self):
+        harness = SignalIntegrationPanelHarness()
+        harness.signal_integration_display_enabled = False
+        harness.pressure_map_widget = object()
+        harness._latest_shear_result = object()
+
+        class FailingPressureMapGenerator:
+            def generate(self, _normalized):
+                raise AssertionError("pressure map generation should be skipped while hidden")
+
+        class FailingNormalForceCalculator:
+            def compute(self, _residual):
+                raise AssertionError("normal force calculation should be skipped while hidden")
+
+        harness.pressure_map_generator = FailingPressureMapGenerator()
+        harness.normal_force_calculator = FailingNormalForceCalculator()
+
+        harness._update_pressure_map_from_latest()
+
+        self.assertIsNone(getattr(harness, "_latest_normal_force_result", None))
+        self.assertIsNone(getattr(harness, "_latest_pressure_map_result", None))
+
     def test_multi_package_force_mode_enabled_only_for_multiple_array_packages(self):
         harness = SignalIntegrationPanelHarness()
         harness.config = {"channel_selection_source": "array", "selected_array_sensors": ["PZT3", "PZT5"]}
@@ -525,6 +554,25 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             for widget_name, expected_text in expected_tooltips.items():
                 widget = getattr(harness, widget_name)
                 self.assertIn(expected_text, widget.toolTip().lower(), msg=widget_name)
+        finally:
+            tab.close()
+
+    def test_pressure_map_settings_inner_tab_pauses_refresh_until_display_returns(self):
+        harness = SignalIntegrationPanelHarness()
+
+        tab = harness.create_signal_integration_tab()
+        try:
+            self.assertTrue(harness._should_refresh_signal_integration_plot())
+
+            harness.pressure_map_inner_tabs.setCurrentIndex(harness.pressure_map_settings_tab_index)
+
+            self.assertFalse(harness._should_refresh_signal_integration_plot())
+
+            previous_calls = getattr(harness, "signal_integration_update_calls", 0)
+            harness.pressure_map_inner_tabs.setCurrentIndex(harness.pressure_map_display_tab_index)
+
+            self.assertTrue(harness._should_refresh_signal_integration_plot())
+            self.assertGreater(getattr(harness, "signal_integration_update_calls", 0), previous_calls)
         finally:
             tab.close()
 

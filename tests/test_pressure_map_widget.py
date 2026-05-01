@@ -49,6 +49,24 @@ class PressureMapWidgetTests(unittest.TestCase):
         self.assertEqual(len(self.widget.sensor_marker_item.points()), len(pressure_result.sensor_positions))
         self.assertTrue(self.widget.circle_item.isVisible())
 
+    def test_update_display_skips_unchanged_image_upload(self):
+        normal_result = self.calculator.compute({"C": 0.0, "R": 5.0, "T": 0.0, "L": 0.0, "B": 0.0})
+        pressure_result = self.generator.generate(normal_result.normalized)
+
+        self.widget.update_display(normal_result, pressure_result)
+
+        image_uploads: list[int] = []
+        original_set_image = self.widget.image_item.setImage
+
+        def counting_set_image(*args, **kwargs):
+            image_uploads.append(1)
+            return original_set_image(*args, **kwargs)
+
+        self.widget.image_item.setImage = counting_set_image
+        self.widget.update_display(normal_result, pressure_result)
+
+        self.assertEqual(len(image_uploads), 0)
+
     def test_pressure_map_uses_combined_dark_axisless_overlay(self):
         shear_result = self.detector.detect({"C": 0.0, "L": -1.0, "R": 1.0, "T": 0.0, "B": 0.0})
         normal_result = self.calculator.compute(shear_result.residual)
@@ -169,6 +187,48 @@ class PressureMapWidgetTests(unittest.TestCase):
             self.assertLessEqual(circle_rect.right(), x_max)
             self.assertGreaterEqual(circle_rect.top(), y_min)
             self.assertLessEqual(circle_rect.bottom(), y_max)
+
+    def test_multiple_package_displays_skip_unchanged_image_uploads(self):
+        first_shear = self.detector.detect({"C": 0.0, "L": -1.0, "R": 1.0, "T": 0.0, "B": 0.0})
+        second_shear = self.detector.detect({"C": 0.0, "L": 0.0, "R": 0.0, "T": 1.0, "B": -1.0})
+        first_normal = self.calculator.compute(first_shear.residual)
+        second_normal = self.calculator.compute(second_shear.residual)
+        first_pressure = self.generator.generate(first_normal.normalized)
+        second_pressure = self.generator.generate(second_normal.normalized)
+        packages = [
+            PressureMapPackageDisplay(
+                sensor_id="PZT3",
+                normal_force_result=first_normal,
+                pressure_result=first_pressure,
+                shear_result=first_shear,
+                grid_position=(0, 0),
+                color=self.widget.package_color_for_index(0),
+            ),
+            PressureMapPackageDisplay(
+                sensor_id="PZT5",
+                normal_force_result=second_normal,
+                pressure_result=second_pressure,
+                shear_result=second_shear,
+                grid_position=(0, 1),
+                color=self.widget.package_color_for_index(1),
+            ),
+        ]
+
+        self.widget.update_package_displays(packages)
+
+        image_uploads: list[int] = []
+        original_methods = [item.setImage for item in self.widget.package_image_items[:2]]
+
+        for item, original_set_image in zip(self.widget.package_image_items[:2], original_methods):
+            def counting_set_image(*args, _original=original_set_image, **kwargs):
+                image_uploads.append(1)
+                return _original(*args, **kwargs)
+
+            item.setImage = counting_set_image
+
+        self.widget.update_package_displays(packages)
+
+        self.assertEqual(len(image_uploads), 0)
 
     def test_grayscale_lookup_table_runs_from_black_to_white(self):
         lookup_table = self.widget._grayscale_lookup_table()

@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QPushButton,
     QScrollArea,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -201,14 +202,31 @@ class PressureMapPanelMixin:
         self._shear_settings_loading = False
         self._shear_autosave_enabled = True
 
-        tab = QScrollArea()
-        tab.setWidgetResizable(True)
-        tab.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        tab = QWidget()
         tab.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        content_widget = QWidget()
-        content_widget.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        root_layout = QVBoxLayout(content_widget)
-        tab.setWidget(content_widget)
+        root_layout = QVBoxLayout(tab)
+
+        self.pressure_map_inner_tabs = QTabWidget()
+        self.pressure_map_inner_tabs.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        root_layout.addWidget(self.pressure_map_inner_tabs)
+
+        display_tab = QWidget()
+        display_tab.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        display_layout = QVBoxLayout(display_tab)
+        self.pressure_map_inner_tabs.addTab(display_tab, "Display")
+        self.pressure_map_display_tab_index = 0
+
+        settings_tab = QScrollArea()
+        settings_tab.setWidgetResizable(True)
+        settings_tab.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        settings_tab.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        settings_content = QWidget()
+        settings_content.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        settings_layout = QVBoxLayout(settings_content)
+        settings_tab.setWidget(settings_content)
+        self.pressure_map_inner_tabs.addTab(settings_tab, "Settings")
+        self.pressure_map_settings_tab_index = 1
+        self.pressure_map_inner_tabs.currentChanged.connect(self.on_pressure_map_inner_tab_changed)
 
         controls_group = QGroupBox("Signal Integration Controls")
         controls_layout = QGridLayout(controls_group)
@@ -284,7 +302,7 @@ class PressureMapPanelMixin:
         )
         self.signal_integration_reset_btn.clicked.connect(self.on_signal_integration_reset_clicked)
         controls_layout.addWidget(self.signal_integration_reset_btn, 0, 6)
-        root_layout.addWidget(controls_group)
+        display_layout.addWidget(controls_group)
 
         self.signal_integration_plot_widget = pg.PlotWidget()
         self.signal_integration_plot_widget.setMinimumHeight(SIGNAL_INTEGRATION_PLOT_MIN_HEIGHT_PX)
@@ -297,19 +315,20 @@ class PressureMapPanelMixin:
         self.signal_integration_plot_widget.getPlotItem().setMenuEnabled(False)
         self.signal_integration_plot_widget.getViewBox().setMouseEnabled(x=False, y=False)
         self.signal_integration_plot_widget.addLegend(offset=SIGNAL_INTEGRATION_LEGEND_OFFSET)
-        root_layout.addWidget(self.signal_integration_plot_widget)
+        display_layout.addWidget(self.signal_integration_plot_widget)
 
         self.signal_integration_status_label = QLabel("Waiting for raw ADC data")
-        root_layout.addWidget(self.signal_integration_status_label)
+        display_layout.addWidget(self.signal_integration_status_label)
 
         self.shear_detector = ShearDetector()
         self.normal_force_calculator = NormalForceCalculator()
         self.pressure_map_generator = PressureMapGenerator()
         self.pressure_map_widget = PressureMapWidget()
-        root_layout.addWidget(self.pressure_map_widget, stretch=PRESSURE_MAP_STRETCH)
-        root_layout.addWidget(self._create_shear_visualization_settings_group())
-        root_layout.addWidget(self._create_pressure_map_settings_group())
-        root_layout.addWidget(self._create_pressure_package_gain_settings_group())
+        display_layout.addWidget(self.pressure_map_widget, stretch=PRESSURE_MAP_STRETCH)
+        settings_layout.addWidget(self._create_shear_visualization_settings_group())
+        settings_layout.addWidget(self._create_pressure_map_settings_group())
+        settings_layout.addWidget(self._create_pressure_package_gain_settings_group())
+        settings_layout.addStretch()
 
         self.signal_integration_curves: dict[Hashable, object] = {}
         self._latest_signal_integration_values_by_position: dict[str, float] = {}
@@ -324,6 +343,14 @@ class PressureMapPanelMixin:
         self._signal_integration_updating_plot = False
 
         return tab
+
+    def on_pressure_map_inner_tab_changed(self, index: int) -> None:
+        if index != getattr(self, "pressure_map_display_tab_index", 0):
+            return
+        if not self._should_refresh_signal_integration_plot():
+            return
+        if hasattr(self, "update_signal_integration_plot"):
+            self.update_signal_integration_plot()
 
     def _create_tooltip_label(
         self,
@@ -1446,11 +1473,21 @@ class PressureMapPanelMixin:
             self._signal_integration_updating_plot = False
 
     def _should_refresh_signal_integration_plot(self) -> bool:
+        outer_tab_visible = True
         if hasattr(self, "should_update_signal_integration_display"):
-            return bool(self.should_update_signal_integration_display())
-        if hasattr(self, "get_current_visualization_tab_name"):
-            return self.get_current_visualization_tab_name() == PRESSURE_MAP_TAB_NAME
-        return True
+            outer_tab_visible = bool(self.should_update_signal_integration_display())
+        elif hasattr(self, "get_current_visualization_tab_name"):
+            outer_tab_visible = self.get_current_visualization_tab_name() == PRESSURE_MAP_TAB_NAME
+        return outer_tab_visible and self._is_pressure_map_display_tab_active()
+
+    def _is_pressure_map_display_tab_active(self) -> bool:
+        inner_tabs = getattr(self, "pressure_map_inner_tabs", None)
+        if inner_tabs is None:
+            return True
+        return inner_tabs.currentIndex() == getattr(self, "pressure_map_display_tab_index", 0)
+
+    def _should_refresh_pressure_map_display(self) -> bool:
+        return self._should_refresh_signal_integration_plot()
 
     def _hide_all_signal_integration_curves(self) -> None:
         for curve in self.signal_integration_curves.values():
@@ -1671,6 +1708,8 @@ class PressureMapPanelMixin:
 
     def _update_pressure_map_from_latest(self) -> None:
         if not hasattr(self, "pressure_map_widget"):
+            return
+        if not self._should_refresh_pressure_map_display():
             return
         if self._latest_shear_result is None:
             self._latest_normal_force_result = None

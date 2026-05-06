@@ -342,6 +342,39 @@ class PressureMapWidgetTests(unittest.TestCase):
             self.assertAlmostEqual(mirrored[0], -unmirrored[0], places=5)
             self.assertAlmostEqual(mirrored[1], unmirrored[1], places=5)
 
+    def test_configure_mirror_repaints_cached_single_display(self):
+        normal_result = self.calculator.compute({"C": 0.0, "R": 5.0, "T": 0.0, "L": 0.0, "B": 0.0})
+        pressure_result = self.generator.generate(normal_result.normalized)
+
+        self.widget.update_display(normal_result, pressure_result)
+
+        original_x_positions = [point.pos().x() for point in self.widget.sensor_marker_item.points()]
+
+        self.widget.configure_mirror(mirror=True)
+
+        mirrored_x_positions = [point.pos().x() for point in self.widget.sensor_marker_item.points()]
+        np.testing.assert_allclose(
+            mirrored_x_positions,
+            [-x_position for x_position in original_x_positions],
+            rtol=1e-7,
+            atol=1e-7,
+        )
+
+    def test_configure_mirror_repaints_cached_arrow_geometry(self):
+        shear_result = self.detector.detect({"C": 0.0, "L": -1.0, "R": 1.0, "T": 0.0, "B": 0.0})
+        normal_result = self.calculator.compute(shear_result.residual)
+        pressure_result = self.generator.generate(normal_result.normalized)
+
+        self.widget.update_display(normal_result, pressure_result, shear_result)
+
+        original_tip_x = self.widget.last_arrow_geometry.tip_x
+        original_tip_y = self.widget.last_arrow_geometry.tip_y
+
+        self.widget.configure_mirror(mirror=True)
+
+        self.assertAlmostEqual(self.widget.last_arrow_geometry.tip_x, -original_tip_x)
+        self.assertAlmostEqual(self.widget.last_arrow_geometry.tip_y, original_tip_y)
+
     def test_multi_package_mirror_flips_all_sensors(self):
         first_shear = self.detector.detect({"C": 0.0, "L": -1.0, "R": 1.0, "T": 0.0, "B": 0.0})
         second_shear = self.detector.detect({"C": 0.0, "L": 0.0, "R": 0.0, "T": 1.0, "B": -1.0})
@@ -393,6 +426,82 @@ class PressureMapWidgetTests(unittest.TestCase):
             # X should be negated, Y should be the same
             self.assertAlmostEqual(mirrored[0], -unmirrored[0], places=5)
             self.assertAlmostEqual(mirrored[1], unmirrored[1], places=5)
+
+    def test_configure_mirror_repaints_cached_multi_package_display(self):
+        self.widget.configure_markers(show_marker=True)
+        first_shear = self.detector.detect({"C": 0.0, "L": -1.0, "R": 1.0, "T": 0.0, "B": 0.0})
+        second_shear = self.detector.detect({"C": 0.0, "L": 0.0, "R": 0.0, "T": 1.0, "B": -1.0})
+        first_normal = self.calculator.compute(first_shear.residual)
+        second_normal = self.calculator.compute(second_shear.residual)
+        first_pressure = self.generator.generate(first_normal.normalized)
+        second_pressure = self.generator.generate(second_normal.normalized)
+        packages = [
+            PressureMapPackageDisplay(
+                sensor_id="PZT3",
+                normal_force_result=first_normal,
+                pressure_result=first_pressure,
+                shear_result=first_shear,
+                grid_position=(0, 0),
+                color=self.widget.package_color_for_index(0),
+            ),
+            PressureMapPackageDisplay(
+                sensor_id="PZT5",
+                normal_force_result=second_normal,
+                pressure_result=second_pressure,
+                shear_result=second_shear,
+                grid_position=(0, 1),
+                color=self.widget.package_color_for_index(1),
+            ),
+        ]
+
+        self.widget.update_package_displays(packages)
+
+        original_centers = [
+            self.widget.package_circle_items[index].rect().center().x()
+            for index in range(2)
+        ]
+        original_marker_x_positions = [
+            point.pos().x()
+            for point in self.widget.package_sensor_marker_items[0].points()
+        ]
+        original_peak_x_positions = [
+            point.pos().x()
+            for point in self.widget.package_peak_marker_items[0].points()
+        ]
+
+        self.widget.configure_mirror(mirror=True)
+
+        mirrored_centers = [
+            self.widget.package_circle_items[index].rect().center().x()
+            for index in range(2)
+        ]
+        mirrored_marker_x_positions = [
+            point.pos().x()
+            for point in self.widget.package_sensor_marker_items[0].points()
+        ]
+        mirrored_peak_x_positions = [
+            point.pos().x()
+            for point in self.widget.package_peak_marker_items[0].points()
+        ]
+
+        np.testing.assert_allclose(
+            mirrored_centers,
+            [-center_x for center_x in original_centers],
+            rtol=1e-7,
+            atol=1e-7,
+        )
+        np.testing.assert_allclose(
+            mirrored_marker_x_positions,
+            [-x_position for x_position in original_marker_x_positions],
+            rtol=1e-7,
+            atol=1e-7,
+        )
+        np.testing.assert_allclose(
+            mirrored_peak_x_positions,
+            [-x_position for x_position in original_peak_x_positions],
+            rtol=1e-7,
+            atol=1e-7,
+        )
 
 
 if __name__ == "__main__":

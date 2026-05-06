@@ -26,8 +26,8 @@
  *
  * ── PZR mode ─────────────────────────────────────────────────────────
  *   Uses 555 astable circuit + ADG706 MUX to measure unknown resistances.
- *   Rx is derived from measured high/low timing vs known Rb, Rk, Cf values.
- *   Each uint16 sample is Rx in ohms, rounded and clamped to 0..65535.
+ *   Ra is derived from measured high/low timing vs known Rb.
+ *   Each uint16 sample is Ra=(Rx+Rk) in ohms, rounded and clamped to 0..65535.
  *   Commands: channels, repeat, buffer, rb, rk, cf, rxmax, ascii, run, stop
  *
  *   Wiring (555 + MUX):
@@ -56,6 +56,9 @@
  *   4.23.26: Updated PZR Pins according to PCB board Octoplus_Reader_Ver1.5
  *            At this point only PZR MUX is used.
  *            Added new DRDY pin for PCB ver1.5 (provision for, not implemented yet).
+ *   5.5.26: Added switching between two 555 modes (MUXes): PZR / RS (Rosettes).
+ *            At this point only one 555 MUX is being read at a time (PCB1.5 has different MUX address controls)
+ *   5.6.26: Changed 555 calculation. Calc and send Ra (instead of just Rx = Ra - Rk). Moving avg for discharge cycles time.
  */
 
 #include <Arduino.h>
@@ -66,10 +69,19 @@
 
 // =====================================================================
 // ── MODE ─────────────────────────────────────────────────────────────
+// Set PZT or PZR mode: MODE_PZT, MODE_PZR 
+//
+// In PZR mode there are two Timer Modes: TIMER555_PZR, TIMER555_RS
+//   TIMEER555_PZR uses the PZR MUX
+//   TIMER555_RS uses the Rosettes and bridges MUX 
+// 
 // =====================================================================
 
 enum DeviceMode { MODE_PZT, MODE_PZR };
 static DeviceMode currentMode = MODE_PZT;   // default
+
+enum Timer555Mode { TIMER555_PZR, TIMER555_RS };
+static constexpr Timer555Mode DEFAULT_555_MODE = TIMER555_RS; 
 
 // =====================================================================
 // ── SHARED SERIAL CONSTANTS ──────────────────────────────────────────
@@ -106,7 +118,7 @@ static const uint8_t  PZT_ACK_MAGIC          = 0xAC;
 static const uint8_t  PZT_ACK_STATUS_OK      = 0x00;
 
 // ── Timing ────────────────────────────────────────────────────────────
-static const uint32_t PZT_MUX_SETTLE_US          = 1; // <<========= was 30
+static const uint32_t PZT_MUX_SETTLE_US          = 3; // <<========= was 30
 static const uint32_t PZT_IADC_CONV_US_OSR2      = 8;   // was 2 for faster 10k IADC clock / 4 for slower 5K IADC clock
 static const uint32_t PZT_IADC_CONV_US_OSR4      = 9;   // was 4 for faster 10k IADC clock / 8 for slower 5K IADC clock
 static const uint32_t PZT_IADC_CONV_US_OSR8      = 10;  // was 8 for faster 10k IADC clock / 16 for slower 5K IADC clock
@@ -194,26 +206,42 @@ static volatile uint32_t pztDrdyEdges       = 0;
 // In PCB_ver1.5 each 555 MUX is controlled separately, so need to define different set for 555-PZR MUX and 555-Rosette MUX
 
 // 555-PZR MUX pins
-static const int PZR_ICP_PIN    = 23;  // PCB_ver1.5: 23-PZR MUX. 14-Rosette MUX // PCB_ver1.0: 22 , 15
-static const int PZR_MUX_A0_PIN = 20;  // PCB_ver1.5: For PZR: 22 // PCB_ver1.0: 20 (shared mux address)
-static const int PZR_MUX_A1_PIN = 19;  // PCB_ver1.5: For PZR: 21 // PCB_ver1.0: 19 (shared mux address)
-static const int PZR_MUX_A2_PIN = 18;  // PCB_ver1.5: For PZR: 20 // PCB_ver1.0: 18 (shared mux address)
-static const int PZR_MUX_A3_PIN = 17;  // PCB_ver1.5: For PZR: 19 // PCB_ver1.0: 17 (shared mux address)
+static const int PZR_ICP_PIN    = 23;  // PCB_ver1.5: 23-PZR MUX // PCB_ver1.0: 22
+static const int PZR_MUX_A0_PIN = 22;  // PCB_ver1.5: For PZR: 22 // PCB_ver1.0: 20 (shared mux address)
+static const int PZR_MUX_A1_PIN = 21;  // PCB_ver1.5: For PZR: 21 // PCB_ver1.0: 19 (shared mux address)
+static const int PZR_MUX_A2_PIN = 20;  // PCB_ver1.5: For PZR: 20 // PCB_ver1.0: 18 (shared mux address)
+static const int PZR_MUX_A3_PIN = 19;  // PCB_ver1.5: For PZR: 19 // PCB_ver1.0: 17 (shared mux address)
 static const int PZR_MUX_EN_PIN = -1;   // -1 = not connected / tied to VDD
 
 // 555-Rosette MUX pins
-static const int RS_ICP_PIN    = 14;  
-static const int RS_MUX_A0_PIN = 18;  
-static const int RS_MUX_A1_PIN = 17;  
-static const int RS_MUX_A2_PIN = 16;  
-static const int RS_MUX_A3_PIN = 15;  
+static const int RS_ICP_PIN    = 14;  // PCB_ver1.5: 14-Rosette MUX // PCB_ver1.0: 15
+static const int RS_MUX_A0_PIN = 18;  // PCB_ver1.5: For Rosette: 18 // PCB_ver1.0: 20 (shared mux address)
+static const int RS_MUX_A1_PIN = 17;  // PCB_ver1.5: For Rosette: 17 // PCB_ver1.0: 19 (shared mux address)
+static const int RS_MUX_A2_PIN = 16;  // PCB_ver1.5: For Rosette: 16 // PCB_ver1.0: 18 (shared mux address)
+static const int RS_MUX_A3_PIN = 15;  // PCB_ver1.5: For Rosette: 15 // PCB_ver1.0: 17 (shared mux address)
 static const int RS_MUX_EN_PIN = -1;   // -1 = not connected / tied to VDD
 
-static constexpr bool     PZR_MUX_EN_ACTIVE_LOW          = false;
-static constexpr uint32_t PZR_MUX_SETTLE_NS              = 100;
+// Active 555 pins selected by DEFAULT_555_MODE.
+static constexpr int TIMER555_ICP_PIN =
+    (DEFAULT_555_MODE == TIMER555_RS) ? RS_ICP_PIN : PZR_ICP_PIN;
+static constexpr int TIMER555_MUX_A0_PIN =
+    (DEFAULT_555_MODE == TIMER555_RS) ? RS_MUX_A0_PIN : PZR_MUX_A0_PIN;
+static constexpr int TIMER555_MUX_A1_PIN =
+    (DEFAULT_555_MODE == TIMER555_RS) ? RS_MUX_A1_PIN : PZR_MUX_A1_PIN;
+static constexpr int TIMER555_MUX_A2_PIN =
+    (DEFAULT_555_MODE == TIMER555_RS) ? RS_MUX_A2_PIN : PZR_MUX_A2_PIN;
+static constexpr int TIMER555_MUX_A3_PIN =
+    (DEFAULT_555_MODE == TIMER555_RS) ? RS_MUX_A3_PIN : PZR_MUX_A3_PIN;
+static constexpr int TIMER555_MUX_EN_PIN =
+    (DEFAULT_555_MODE == TIMER555_RS) ? RS_MUX_EN_PIN : PZR_MUX_EN_PIN;
+
+static constexpr const char *TIMER555_NAME =
+    (DEFAULT_555_MODE == TIMER555_RS) ? "RS/555_A" : "PZR/555_B";
+
+static constexpr uint32_t TIMER555_MUX_SETTLE_NS          = 100;
 static constexpr int      PZR_DISCARD_CYCLES_AFTER_SWITCH = 1;
-static constexpr int      PZR_RX_MA_N                    = 20;
-static constexpr int      PZR_RDIS_MA_N                  = 20;
+static constexpr int      PZR_RA_MA_N                     = 1;  // Ra smoothing per MUX channel; set to 1 to disable MA
+static constexpr int      PZR_LCYC_MA_N                   = 50; // discharge-time smoothing per physical 555
 static constexpr int      PZR_MAX_CHANNEL_SEQUENCE        = 64;
 static constexpr uint16_t PZR_MAX_BLOCK_SAMPLES           = 2048;
 
@@ -222,7 +250,10 @@ static constexpr float LN2 = 0.69314718056f;
 // 555 component defaults (PCB ver 1.0)
 static constexpr float PZR_DEFAULT_RB_OHM     = 470.0f;     // discharge resistor
 static constexpr float PZR_DEFAULT_RK_OHM     = 470.0f;     // known series resistor
-static constexpr float PZR_DEFAULT_CF_F       = 22e-9f;   // 220nF 555_A(Rosettes) / 22nF 555_B(PZR)
+static constexpr float PZR_555_B_DEFAULT_CF_F = 22e-9f;    // PZR / 555_B = 22 nF
+static constexpr float RS_555_A_DEFAULT_CF_F  = 220e-9f;   // RS  / 555_A = 220 nF
+static constexpr float PZR_DEFAULT_CF_F =
+    (DEFAULT_555_MODE == TIMER555_RS) ? RS_555_A_DEFAULT_CF_F : PZR_555_B_DEFAULT_CF_F;
 static constexpr float PZR_DEFAULT_RX_MAX_OHM = 65500.0f;
 
 // =====================================================================
@@ -255,26 +286,58 @@ struct PZR_CaptureState {
 };
 static PZR_CaptureState pzr_cap;
 
-// Per-channel moving-average state
+// Per-channel moving-average state for the final reported value.
+// The reported PZR sample is now Ra=(Rx+Rk), not Rx.
 struct PZR_ChannelState {
-  float rxBuf[PZR_RX_MA_N];
-  float rdisBuf[PZR_RDIS_MA_N];
-  float rxSum    = 0.0f;
-  float rdisSum  = 0.0f;
-  int   rxIdx    = 0, rxCount   = 0;
-  int   rdisIdx  = 0, rdisCount = 0;
-  float lastPlotRx = NAN;
+  float raBuf[PZR_RA_MA_N];
+  float raSum       = 0.0f;
+  int   raIdx       = 0;
+  int   raCount     = 0;
+  float lastPlotRa  = NAN;
 
   void reset() {
-    rxSum = 0.0f; rdisSum = 0.0f;
-    rxIdx = rxCount = 0;
-    rdisIdx = rdisCount = 0;
-    for (int i = 0; i < PZR_RX_MA_N;   i++) rxBuf[i]   = 0.0f;
-    for (int i = 0; i < PZR_RDIS_MA_N; i++) rdisBuf[i] = 0.0f;
-    lastPlotRx = NAN;
+    raSum = 0.0f;
+    raIdx = raCount = 0;
+    for (int i = 0; i < PZR_RA_MA_N; i++) raBuf[i] = 0.0f;
+    lastPlotRa = NAN;
   }
 };
 static PZR_ChannelState pzr_chState[16];
+
+// Per-555 moving average for low/discharge cycles.
+// lCyc should be mostly independent of the selected Rx channel, but PZR and RS
+// are two different physical 555 circuits, so keep one average per source.
+enum { PZR_555_INDEX_PZR = 0, PZR_555_INDEX_RS = 1, PZR_555_COUNT = 2 };
+
+static inline int pzr_active555Index() {
+  return (DEFAULT_555_MODE == TIMER555_RS) ? PZR_555_INDEX_RS : PZR_555_INDEX_PZR;
+}
+
+struct PZR_555State {
+  uint32_t lCycBuf[PZR_LCYC_MA_N];
+  uint64_t lCycSum      = 0;
+  int      lCycIdx      = 0;
+  int      lCycCount    = 0;
+  float    lastLCycAvg  = NAN;
+
+  void reset() {
+    lCycSum = 0;
+    lCycIdx = lCycCount = 0;
+    for (int i = 0; i < PZR_LCYC_MA_N; i++) lCycBuf[i] = 0;
+    lastLCycAvg = NAN;
+  }
+
+  float update(uint32_t lCyc) {
+    lCycSum -= lCycBuf[lCycIdx];
+    lCycBuf[lCycIdx] = lCyc;
+    lCycSum += lCyc;
+    lCycIdx = (lCycIdx + 1) % PZR_LCYC_MA_N;
+    if (lCycCount < PZR_LCYC_MA_N) lCycCount++;
+    lastLCycAvg = (lCycCount > 0) ? ((float)lCycSum / (float)lCycCount) : NAN;
+    return lastLCycAvg;
+  }
+};
+static PZR_555State pzr_555State[PZR_555_COUNT];
 
 // =====================================================================
 // ── SHARED INPUT BUFFER ──────────────────────────────────────────────
@@ -792,17 +855,18 @@ static bool pzt_isValidAckFrame(const uint8_t *buf) {
 // =====================================================================
 
 void pzr_isr555() {
-  const uint32_t now       = dwtNow();
-  const bool     levelHigh = digitalReadFast(PZR_ICP_PIN);
+  // ARM_DWT_CYCCNT is the Teensy CPU-cycle counter. This is not micros()/millis().
+  const uint32_t cycNow    = dwtNow();
+  const bool     levelHigh = digitalReadFast(TIMER555_ICP_PIN);
 
   if (levelHigh) {
     if (pzr_cap.lastFallCycles != 0)
-      pzr_cap.lowCycles = now - pzr_cap.lastFallCycles;
-    pzr_cap.lastRiseCycles = now;
+      pzr_cap.lowCycles = cycNow - pzr_cap.lastFallCycles;
+    pzr_cap.lastRiseCycles = cycNow;
   } else {
     if (pzr_cap.lastRiseCycles != 0)
-      pzr_cap.highCycles = now - pzr_cap.lastRiseCycles;
-    pzr_cap.lastFallCycles = now;
+      pzr_cap.highCycles = cycNow - pzr_cap.lastRiseCycles;
+    pzr_cap.lastFallCycles = cycNow;
     if (pzr_cap.highCycles && pzr_cap.lowCycles)
       pzr_cap.pairReady = true;
   }
@@ -857,32 +921,36 @@ static inline float pzr_updateMA(float *buf, float &sum, int &idx,
   return sum / count;
 }
 
+static void pzr_resetAll555Averages() {
+  for (int i = 0; i < PZR_555_COUNT; i++) pzr_555State[i].reset();
+}
+
 static void pzr_resetAllChannels() {
   for (int i = 0; i < 16; i++) pzr_chState[i].reset();
+  pzr_resetAll555Averages();
 }
 
 static inline void pzr_muxEnable(bool en) {
-  if (PZR_MUX_EN_PIN < 0) return;
-  bool level = en ? HIGH : LOW;
-  if (PZR_MUX_EN_ACTIVE_LOW) level = !level;
-  digitalWriteFast(PZR_MUX_EN_PIN, level);
+  if (TIMER555_MUX_EN_PIN < 0) return;
+  bool level = en ? HIGH : LOW; // Convert True/Falce -> HIGH/LOW
+  digitalWriteFast(TIMER555_MUX_EN_PIN, level);
 }
 
 static inline void pzr_muxSelect(uint8_t ch) {
   ch &= 0x0F;
   pzr_muxEnable(false);
-  digitalWriteFast(PZR_MUX_A0_PIN, (ch & 0x01) ? HIGH : LOW);
-  digitalWriteFast(PZR_MUX_A1_PIN, (ch & 0x02) ? HIGH : LOW);
-  digitalWriteFast(PZR_MUX_A2_PIN, (ch & 0x04) ? HIGH : LOW);
-  digitalWriteFast(PZR_MUX_A3_PIN, (ch & 0x08) ? HIGH : LOW);
-  delayNanoseconds(PZR_MUX_SETTLE_NS);
+  digitalWriteFast(TIMER555_MUX_A0_PIN, (ch & 0x01) ? HIGH : LOW);
+  digitalWriteFast(TIMER555_MUX_A1_PIN, (ch & 0x02) ? HIGH : LOW);
+  digitalWriteFast(TIMER555_MUX_A2_PIN, (ch & 0x04) ? HIGH : LOW);
+  digitalWriteFast(TIMER555_MUX_A3_PIN, (ch & 0x08) ? HIGH : LOW);
+  delayNanoseconds(TIMER555_MUX_SETTLE_NS);
   pzr_muxEnable(true);
   pzr_resetCaptureState();
 }
 
-// Measure one Rx value on the given channel.
+// Measure one Ra=(Rx+Rk) value on the given channel.
 // switched=true triggers a MUX switch + discard cycles first.
-static bool pzr_measureOneRx(uint8_t ch, bool switched, float &outRx) {
+static bool pzr_measureOneRa(uint8_t ch, bool switched, float &outRa) {
   if (switched) {
     pzr_muxSelect(ch);
     for (int d = 0; d < PZR_DISCARD_CYCLES_AFTER_SWITCH; d++) {
@@ -894,41 +962,37 @@ static bool pzr_measureOneRx(uint8_t ch, bool switched, float &outRx) {
   uint32_t hCyc = 0, lCyc = 0;
   if (!pzr_waitForPair(hCyc, lCyc)) return false;
 
-  const float f_cpu = (float)F_CPU_ACTUAL;
-  const float tH_s  = (float)hCyc / f_cpu;
-  const float tL_s  = (float)lCyc / f_cpu;
+  // Use the low/discharge time average from the active physical 555 circuit.
+  // Because the formula uses a ratio, hCyc and lCycAvg can stay in CPU cycles.
+  PZR_555State &timerState = pzr_555State[pzr_active555Index()];
+  const float lCycAvg = timerState.update(lCyc);
 
-  // Estimate Rdis from discharge time: tL = ln(2)*Cf*Rdis  ->  Rdis = tL/(ln2*Cf) - Rb
-  float Rdis = NAN;
-  const float denom = LN2 * pzr_CF_F;
-  if (isfinite(denom) && denom > 0.0f)
-    Rdis = (tL_s / denom) - pzr_RB_OHM;
+  float last_Ra = NAN, last_RaMA = NAN;
+  if (isfinite(lCycAvg) && lCycAvg > 0.0f) {
+    // Astable model for this board:
+    //   tH = ln(2)*C*(Ra + Rb)
+    //   tL = ln(2)*C*Rb
+    // Therefore Ra = Rb*(tH - tL)/tL.
+    // hCyc/lCycAvg is equivalent to tH/tL, without converting to seconds.
+    last_Ra = pzr_RB_OHM * (((float)hCyc - lCycAvg) / lCycAvg);
 
-  if (isfinite(Rdis) && Rdis >= 0.0f) {
-    pzr_updateMA(pzr_chState[ch].rdisBuf, pzr_chState[ch].rdisSum,
-                 pzr_chState[ch].rdisIdx, pzr_chState[ch].rdisCount,
-                 PZR_RDIS_MA_N, Rdis);
-  }
-
-  float last_Rx = NAN, last_RxMA = NAN;
-  if (pzr_chState[ch].rdisCount > 0) {
-    const float tDiv     = (tL_s > 0.0f) ? (tH_s / tL_s) : NAN;
-    const float RdisUsed = pzr_chState[ch].rdisSum / (float)pzr_chState[ch].rdisCount;
-    // tH = ln(2)*Cf*(Ra + Rb)  tL = ln(2)*Cf*Rdis  ->  tH/tL = (Ra+Rb)/Rdis
-    const float Ra = tDiv * (pzr_RB_OHM + RdisUsed) - pzr_RB_OHM;
-    last_Rx = Ra - pzr_RK_OHM;
-    if (isfinite(last_Rx)) {
-      last_RxMA = pzr_updateMA(pzr_chState[ch].rxBuf, pzr_chState[ch].rxSum,
-                               pzr_chState[ch].rxIdx, pzr_chState[ch].rxCount,
-                               PZR_RX_MA_N, last_Rx);
+    if (isfinite(last_Ra)) {
+      if (PZR_RA_MA_N > 1) {
+        last_RaMA = pzr_updateMA(pzr_chState[ch].raBuf, pzr_chState[ch].raSum,
+                                pzr_chState[ch].raIdx, pzr_chState[ch].raCount,
+                                PZR_RA_MA_N, last_Ra);
+      } else {
+        // No final Ra moving average requested.
+        last_RaMA = last_Ra;
+      }
     }
   }
 
-  float candidate = isfinite(last_RxMA) ? last_RxMA :
-                    isfinite(last_Rx)   ? last_Rx   : NAN;
-  if (isfinite(candidate)) pzr_chState[ch].lastPlotRx = candidate;
+  float candidate = isfinite(last_RaMA) ? last_RaMA :
+                    isfinite(last_Ra)   ? last_Ra   : NAN;
+  if (isfinite(candidate)) pzr_chState[ch].lastPlotRa = candidate;
 
-  outRx = isfinite(pzr_chState[ch].lastPlotRx) ? pzr_chState[ch].lastPlotRx : 0.0f;
+  outRa = isfinite(pzr_chState[ch].lastPlotRa) ? pzr_chState[ch].lastPlotRa : 0.0f;
   return true;
 }
 
@@ -1362,6 +1426,13 @@ static bool pzr_handleAscii(const String &args) {
 
 static void pzr_printStatus() {
   Serial.println(F("# -------- STATUS (PZR mode) --------"));
+  Serial.print(F("# 555 source=")); Serial.println(TIMER555_NAME);
+  Serial.print(F("# 555 ICP pin=")); Serial.println(TIMER555_ICP_PIN);
+  Serial.print(F("# 555 MUX pins A0,A1,A2,A3="));
+  Serial.print(TIMER555_MUX_A0_PIN); Serial.print(',');
+  Serial.print(TIMER555_MUX_A1_PIN); Serial.print(',');
+  Serial.print(TIMER555_MUX_A2_PIN); Serial.print(',');
+  Serial.println(TIMER555_MUX_A3_PIN);
   Serial.print(F("# channels="));
   for (int i = 0; i < pzr_channelCount; i++) {
     Serial.print(pzr_channelSequence[i]);
@@ -1370,10 +1441,14 @@ static void pzr_printStatus() {
   Serial.println();
   Serial.print(F("# repeat=")); Serial.println(pzr_repeatCount);
   Serial.print(F("# buffer=")); Serial.println(pzr_bufferSweeps);
+  Serial.print(F("# output_value=Ra_ohm (total Rx+Rk, Rk is not subtracted)")); Serial.println();
   Serial.print(F("# rb_ohm=")); Serial.println(pzr_RB_OHM, 6);
   Serial.print(F("# rk_ohm=")); Serial.println(pzr_RK_OHM, 6);
   Serial.print(F("# cf_f="));   Serial.println(pzr_CF_F, 12);
   Serial.print(F("# rxmax_ohm=")); Serial.println(pzr_RX_MAX_OHM, 6);
+  Serial.print(F("# lcyc_ma_n=")); Serial.println(PZR_LCYC_MA_N);
+  Serial.print(F("# active_lcyc_count=")); Serial.println(pzr_555State[pzr_active555Index()].lCycCount);
+  Serial.print(F("# active_lcyc_avg_cycles=")); Serial.println(pzr_555State[pzr_active555Index()].lastLCycAvg, 3);
   Serial.print(F("# pair_timeout_ms=")); Serial.println(pzr_computePairTimeoutMs());
   uint32_t sps   = (uint32_t)pzr_channelCount * (uint32_t)pzr_repeatCount;
   uint32_t total = sps * (uint32_t)pzr_bufferSweeps;
@@ -1408,9 +1483,9 @@ static void pzr_doOneBlock() {
       for (int r = 0; r < pzr_repeatCount; r++) {
         bool  switched = (prevCh != (int)ch);
         prevCh = (int)ch;
-        float rx = 0.0f;
-        (void)pzr_measureOneRx(ch, switched, rx);
-        long v = lroundf(rx);
+        float ra = 0.0f;
+        (void)pzr_measureOneRa(ch, switched, ra);
+        long v = lroundf(ra);
         if (v < 0) v = 0;
         if (v > 65535L) v = 65535L;
         pzr_sampleBuf[idx++] = (uint16_t)v;
@@ -1525,10 +1600,12 @@ static void printHelp() {
   Serial.println(F("#   gain 1|2|3|4"));
   Serial.println(F("#   ground <ch>|true|false"));
   Serial.println(F("# ── PZR mode only ───────────────────────────────────────────"));
-  Serial.println(F("#   rb <ohms|k|M>         (discharge resistor, e.g. rb 470*)"));
-  Serial.println(F("#   rk <ohms|k|M>         (known series resistor, e.g. rk 470*)"));
-  Serial.println(F("#   cf <F|p|n|u|m>        (capacitance, e.g. cf 220n*)"));
-  Serial.println(F("#   rxmax <ohms|k|M>      (max expected Rx for timeouts)"));
+  Serial.print(F("#   active 555 source: ")); Serial.println(TIMER555_NAME);
+  Serial.println(F("#   PZR samples are Ra=(Rx+Rk) ohms; Rk is not subtracted"));
+  Serial.println(F("#   rb <ohms|k|M>         (Rb resistor, e.g. rb 470*)"));
+  Serial.println(F("#   rk <ohms|k|M>         (known series resistor; kept for timeout config)"));
+  Serial.println(F("#   cf <F|p|n|u|m>        (capacitance for timeout only, e.g. cf 220n*)"));
+  Serial.println(F("#   rxmax <ohms|k|M>      (max expected Rx before Rk, for timeouts)"));
   Serial.println(F("#   ascii [1|0|on|off]    (toggle ASCII/binary output; stops streaming)"));
 }
 
@@ -1656,10 +1733,8 @@ void setup() {
   pinMode(PZR_MUX_A1_PIN, OUTPUT);
   pinMode(PZR_MUX_A2_PIN, OUTPUT);
   pinMode(PZR_MUX_A3_PIN, OUTPUT);
-  if (PZR_MUX_EN_PIN >= 0) {
-    pinMode(PZR_MUX_EN_PIN, OUTPUT);
-    pzr_muxEnable(true);
-  }
+  if (PZR_MUX_EN_PIN >= 0) pinMode(PZR_MUX_EN_PIN, OUTPUT);
+
   
   // ── Rossette (555 + MUX, for PCB ver1.5. These poins are not defined in PCB ver1.0) ───────
   pinMode(RS_ICP_PIN, INPUT);
@@ -1667,13 +1742,12 @@ void setup() {
   pinMode(RS_MUX_A1_PIN, OUTPUT);
   pinMode(RS_MUX_A2_PIN, OUTPUT);
   pinMode(RS_MUX_A3_PIN, OUTPUT);
-  if (RS_MUX_EN_PIN >= 0) {
-    pinMode(RS_MUX_EN_PIN, OUTPUT);
-    pzr_muxEnable(true);
-  }
+  if (RS_MUX_EN_PIN >= 0) pinMode(RS_MUX_EN_PIN, OUTPUT);
+
+  if (TIMER555_MUX_EN_PIN >= 0) pzr_muxEnable(true);
 
   dwtInit();
-  attachInterrupt(digitalPinToInterrupt(PZR_ICP_PIN), pzr_isr555, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(TIMER555_ICP_PIN), pzr_isr555, CHANGE);
   pzr_resetAllChannels();
 
   pzr_muxSelect(15);   // Park PZR MUX on calibration channel
@@ -1681,6 +1755,9 @@ void setup() {
   // Announce device so the Python host can identify and detect current mode
   printMcu();
   Serial.println(F("# Default mode: PZT"));
+  Serial.print(F("# Active 555 source for mode PZR: ")); Serial.println(TIMER555_NAME);
+  Serial.print(F("# Active 555 Cf(F): ")); Serial.println(PZR_DEFAULT_CF_F, 12);
+  Serial.println(F("# PZR output: Ra=(Rx+Rk) ohms; low/discharge cycles use per-555 MA(50)"));
 }
 
 // =====================================================================

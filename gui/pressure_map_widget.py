@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
 
 from constants.pressure_map import (
     DEFAULT_PRESSURE_MAP_MAX_INTENSITY,
+    DEFAULT_PRESSURE_MIRROR,
     DEFAULT_PRESSURE_SHOW_MARKER,
     PRESSURE_MAP_BACKGROUND_COLOR,
     PRESSURE_MAP_CIRCLE_Z,
@@ -140,6 +141,7 @@ class PressureMapWidget(QWidget):
         self.arrow_color = DEFAULT_ARROW_COLOR
         self.show_marker = DEFAULT_PRESSURE_SHOW_MARKER
         self.max_intensity = float(DEFAULT_PRESSURE_MAP_MAX_INTENSITY)
+        self.mirror = bool(DEFAULT_PRESSURE_MIRROR)
         self.last_arrow_geometry = self._hidden_arrow_geometry()
 
         layout = QVBoxLayout(self)
@@ -219,6 +221,11 @@ class PressureMapWidget(QWidget):
         """Update fixed pressure-map upper intensity level."""
         if max_intensity is not None:
             self.max_intensity = max(float(max_intensity), PRESSURE_MAP_MAX_INTENSITY_MIN)
+
+    def configure_mirror(self, *, mirror: bool | None = None) -> None:
+        """Update pressure-map horizontal mirror display."""
+        if mirror is not None:
+            self.mirror = bool(mirror)
 
     def update_display(
         self,
@@ -320,11 +327,18 @@ class PressureMapWidget(QWidget):
         levels = self._pressure_levels(normal_force_result, pressure_result.pressure_grid)
         extent = float(pressure_result.total_extent_mm)
         half_extent = extent / PRESSURE_GRID_MARGIN_SIDE_COUNT
-        rect = (-half_extent, -half_extent, extent, extent)
+        
+        # Apply mirror flip to the grid if needed
+        grid = pressure_result.pressure_grid
+        if self.mirror:
+            grid = np.fliplr(grid)
+        
+        mirror_offset = self._mirror_x(0.0)
+        rect = (mirror_offset - half_extent, -half_extent, extent, extent)
         self._image_cache = self._update_cached_image_item(
             self.image_item,
             self._image_cache,
-            pressure_result.pressure_grid,
+            grid,
             levels,
             rect,
         )
@@ -386,6 +400,10 @@ class PressureMapWidget(QWidget):
         level_scale = self._level_scale_for_active_sensors(active_sensor_count)
         return (PRESSURE_MAP_ZERO_LEVEL_MIN, magnitude_max * level_scale)
 
+    def _mirror_x(self, x: float) -> float:
+        """Apply horizontal mirror transformation if enabled."""
+        return -x if self.mirror else x
+
     def _grayscale_lookup_table(self) -> np.ndarray:
         color_map = pg.ColorMap(
             [PRESSURE_MAP_ZERO_LEVEL_MIN, PRESSURE_MAP_ZERO_LEVEL_MAX],
@@ -428,7 +446,7 @@ class PressureMapWidget(QWidget):
     def _update_sensor_markers(self, pressure_result: PressureMapResult) -> None:
         spots = [
             {
-                "pos": (x_coord, y_coord),
+                "pos": (self._mirror_x(x_coord), y_coord),
                 "data": position,
                 "symbol": PRESSURE_MAP_SENSOR_MARKER_SYMBOL,
                 "size": PRESSURE_MAP_SENSOR_MARKER_SIZE_PX,
@@ -457,7 +475,7 @@ class PressureMapWidget(QWidget):
     ) -> list[dict[str, object]]:
         return [
             {
-                "pos": (offset_x + peak_x, offset_y + peak_y),
+                "pos": (self._mirror_x(offset_x + peak_x), offset_y + peak_y),
                 "symbol": PRESSURE_MAP_PEAK_MARKER_SYMBOL,
                 "size": PRESSURE_MAP_PEAK_MARKER_SIZE_PX,
                 "pen": pg.mkPen(
@@ -562,15 +580,20 @@ class PressureMapWidget(QWidget):
             fallback_col = 0
             for package in packages:
                 if package.grid_position is None:
-                    centers.append(((fallback_col - col_midpoint) * spacing, 0.0))
+                    center_x = self._mirror_x((fallback_col - col_midpoint) * spacing)
+                    centers.append((center_x, 0.0))
                     fallback_col += 1
                     continue
                 row, col = package.grid_position
-                centers.append(((float(col) - col_midpoint) * spacing, (row_midpoint - float(row)) * spacing))
+                # When mirroring, flip the column position
+                col_pos = float(col) if not self.mirror else -(float(col) - col_midpoint) - col_midpoint
+                center_x = (col_pos - col_midpoint) * spacing if not self.mirror else self._mirror_x((float(col) - col_midpoint) * spacing)
+                center_y = (row_midpoint - float(row)) * spacing
+                centers.append((center_x, center_y))
             return centers
 
         offset = (len(packages) - 1) / 2.0
-        return [((index - offset) * spacing, 0.0) for index in range(len(packages))]
+        return [(self._mirror_x((index - offset) * spacing), 0.0) for index in range(len(packages))]
 
     def _update_package_image(
         self,
@@ -584,11 +607,17 @@ class PressureMapWidget(QWidget):
         levels = self._pressure_levels(package.normal_force_result, package.pressure_result.pressure_grid)
         extent = float(package.pressure_result.total_extent_mm)
         half_extent = extent / PRESSURE_GRID_MARGIN_SIDE_COUNT
+        
+        # Apply mirror flip to the grid if needed
+        grid = package.pressure_result.pressure_grid
+        if self.mirror:
+            grid = np.fliplr(grid)
+        
         rect = (center_x - half_extent, center_y - half_extent, extent, extent)
         self._package_image_caches[index] = self._update_cached_image_item(
             image_item,
             self._package_image_caches[index],
-            package.pressure_result.pressure_grid,
+            grid,
             levels,
             rect,
         )
@@ -618,7 +647,7 @@ class PressureMapWidget(QWidget):
     ) -> None:
         spots = [
             {
-                "pos": (center_x + x_coord, center_y + y_coord),
+                "pos": (center_x + self._mirror_x(x_coord), center_y + y_coord),
                 "data": (package.sensor_id, position),
                 "symbol": PRESSURE_MAP_SENSOR_MARKER_SYMBOL,
                 "size": PRESSURE_MAP_SENSOR_MARKER_SIZE_PX,
@@ -696,18 +725,30 @@ class PressureMapWidget(QWidget):
         pen.setCosmetic(SHEAR_ARROW_PEN_IS_COSMETIC)
         arrow_line_item.setPen(pen)
         base_x, base_y = self._calculate_arrow_head_base(geometry)
+        
+        # Apply mirror transformation to arrow coordinates
+        mirrored_origin_x = self._mirror_x(geometry.origin_x)
+        mirrored_base_x = self._mirror_x(base_x)
+        
         arrow_line_item.setLine(
-            offset_x + geometry.origin_x,
+            offset_x + mirrored_origin_x,
             offset_y + geometry.origin_y,
-            offset_x + base_x,
+            offset_x + mirrored_base_x,
             offset_y + base_y,
         )
 
         polygon = self._build_arrow_head_polygon(geometry)
-        translated_polygon = QPolygonF([
-            QPointF(point.x() + offset_x, point.y() + offset_y)
-            for point in polygon
-        ])
+        # When mirroring, flip the polygon points horizontally
+        if self.mirror:
+            translated_polygon = QPolygonF([
+                QPointF(offset_x - point.x(), offset_y + point.y())
+                for point in polygon
+            ])
+        else:
+            translated_polygon = QPolygonF([
+                QPointF(point.x() + offset_x, point.y() + offset_y)
+                for point in polygon
+            ])
         arrow_head_item.setPolygon(translated_polygon)
         head_pen = QPen(QColor(color))
         head_pen.setCosmetic(SHEAR_ARROW_PEN_IS_COSMETIC)

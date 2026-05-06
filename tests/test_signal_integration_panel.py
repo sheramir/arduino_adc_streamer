@@ -140,6 +140,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         harness.pressure_max_intensity_spin = DummySpinBox(7.5)
         harness.pressure_show_negative_check = DummyCheckBox(True)
         harness.pressure_show_marker_check = DummyCheckBox(False)
+        harness.pressure_mirror_check = DummyCheckBox(False)
 
     def test_counts_to_voltage_ignores_time_series_units(self):
         harness = SignalIntegrationPanelHarness()
@@ -483,6 +484,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             self.assertEqual(settings["pressure_map"]["max_intensity"], 7.5)
             self.assertTrue(settings["pressure_map"]["show_negative"])
             self.assertFalse(settings["pressure_map"]["show_marker"])
+            self.assertFalse(settings["pressure_map"]["mirror"])
 
             settings["processing"]["package_sensor_gains"] = {
                 "PZT3": {"R": 2.5, "L": 0.25}
@@ -502,6 +504,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             harness.pressure_max_intensity_spin.setValue(1.0)
             harness.pressure_show_negative_check.setChecked(DEFAULT_PRESSURE_SHOW_NEGATIVE)
             harness.pressure_show_marker_check.setChecked(DEFAULT_PRESSURE_SHOW_MARKER)
+            harness.pressure_mirror_check.setChecked(False)
 
             applied = harness.load_shear_settings_from_path(settings_path, log_message=True)
 
@@ -519,6 +522,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             self.assertEqual(harness.pressure_max_intensity_spin.value(), 7.5)
             self.assertTrue(harness.pressure_show_negative_check.isChecked())
             self.assertFalse(harness.pressure_show_marker_check.isChecked())
+            self.assertFalse(harness.pressure_mirror_check.isChecked())
             self.assertEqual(harness._pressure_package_sensor_gains["PZT3"]["R"], 2.5)
             self.assertEqual(harness._pressure_package_sensor_gains["PZT3"]["L"], 0.25)
 
@@ -549,6 +553,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
                 "pressure_max_intensity_spin": "upper intensity mapped to white",
                 "pressure_show_negative_check": "negative release values",
                 "pressure_show_marker_check": "pressure-point marker",
+                "pressure_mirror_check": "mirror",
             }
 
             for widget_name, expected_text in expected_tooltips.items():

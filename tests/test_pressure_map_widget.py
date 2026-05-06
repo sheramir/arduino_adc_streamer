@@ -286,6 +286,114 @@ class PressureMapWidgetTests(unittest.TestCase):
 
         self.assertEqual(len(self.widget.peak_marker_item.points()), 0)
 
+    def test_mirror_can_be_enabled_and_disabled(self):
+        self.widget.configure_mirror(mirror=False)
+        self.assertFalse(self.widget.mirror)
+
+        self.widget.configure_mirror(mirror=True)
+        self.assertTrue(self.widget.mirror)
+
+    def test_mirror_flips_sensor_marker_positions(self):
+        signals = {"C": 0.0, "R": 5.0, "T": 0.0, "L": 0.0, "B": 0.0}
+        normal_result = self.calculator.compute(signals)
+        pressure_result = self.generator.generate(signals)
+
+        # Without mirror
+        self.widget.configure_mirror(mirror=False)
+        self.widget.update_display(normal_result, pressure_result)
+        points_unmirrored = self.widget.sensor_marker_item.points()
+        unmirrored_positions = [(pt.pos().x(), pt.pos().y()) for pt in points_unmirrored]
+
+        # With mirror
+        self.widget.configure_mirror(mirror=True)
+        self.widget.update_display(normal_result, pressure_result)
+        points_mirrored = self.widget.sensor_marker_item.points()
+        mirrored_positions = [(pt.pos().x(), pt.pos().y()) for pt in points_mirrored]
+
+        # Verify mirroring flips x coordinates
+        self.assertEqual(len(unmirrored_positions), len(mirrored_positions))
+        for unmirrored, mirrored in zip(unmirrored_positions, mirrored_positions):
+            # X should be negated, Y should be the same
+            self.assertAlmostEqual(mirrored[0], -unmirrored[0], places=5)
+            self.assertAlmostEqual(mirrored[1], unmirrored[1], places=5)
+
+    def test_mirror_flips_peak_marker_positions(self):
+        signals = {"C": 5.0, "R": 5.0, "T": 5.0, "L": 5.0, "B": 5.0}
+        normal_result = self.calculator.compute(signals)
+        pressure_result = self.generator.generate(signals)
+
+        self.widget.configure_markers(show_marker=True)
+
+        # Without mirror
+        self.widget.configure_mirror(mirror=False)
+        self.widget.update_display(normal_result, pressure_result)
+        points_unmirrored = self.widget.peak_marker_item.points()
+        unmirrored_peaks = [(pt.pos().x(), pt.pos().y()) for pt in points_unmirrored]
+
+        # With mirror
+        self.widget.configure_mirror(mirror=True)
+        self.widget.update_display(normal_result, pressure_result)
+        points_mirrored = self.widget.peak_marker_item.points()
+        mirrored_peaks = [(pt.pos().x(), pt.pos().y()) for pt in points_mirrored]
+
+        # Verify mirroring flips x coordinates
+        self.assertEqual(len(unmirrored_peaks), len(mirrored_peaks))
+        for unmirrored, mirrored in zip(unmirrored_peaks, mirrored_peaks):
+            self.assertAlmostEqual(mirrored[0], -unmirrored[0], places=5)
+            self.assertAlmostEqual(mirrored[1], unmirrored[1], places=5)
+
+    def test_multi_package_mirror_flips_all_sensors(self):
+        first_shear = self.detector.detect({"C": 0.0, "L": -1.0, "R": 1.0, "T": 0.0, "B": 0.0})
+        second_shear = self.detector.detect({"C": 0.0, "L": 0.0, "R": 0.0, "T": 1.0, "B": -1.0})
+        first_normal = self.calculator.compute(first_shear.residual)
+        second_normal = self.calculator.compute(second_shear.residual)
+        first_pressure = self.generator.generate(first_normal.normalized)
+        second_pressure = self.generator.generate(second_normal.normalized)
+        
+        packages = [
+            PressureMapPackageDisplay(
+                sensor_id="PZT3",
+                normal_force_result=first_normal,
+                pressure_result=first_pressure,
+                shear_result=first_shear,
+                grid_position=(0, 0),
+                color=self.widget.package_color_for_index(0),
+            ),
+            PressureMapPackageDisplay(
+                sensor_id="PZT5",
+                normal_force_result=second_normal,
+                pressure_result=second_pressure,
+                shear_result=second_shear,
+                grid_position=(0, 1),
+                color=self.widget.package_color_for_index(1),
+            ),
+        ]
+
+        # Without mirror
+        self.widget.configure_mirror(mirror=False)
+        self.widget.update_package_displays(packages)
+        unmirrored_centers = [
+            (self.widget.package_circle_items[i].rect().center().x(),
+             self.widget.package_circle_items[i].rect().center().y())
+            for i in range(2)
+        ]
+
+        # With mirror
+        self.widget.configure_mirror(mirror=True)
+        self.widget.update_package_displays(packages)
+        mirrored_centers = [
+            (self.widget.package_circle_items[i].rect().center().x(),
+             self.widget.package_circle_items[i].rect().center().y())
+            for i in range(2)
+        ]
+
+        # Verify package centers are mirrored
+        self.assertEqual(len(unmirrored_centers), len(mirrored_centers))
+        for unmirrored, mirrored in zip(unmirrored_centers, mirrored_centers):
+            # X should be negated, Y should be the same
+            self.assertAlmostEqual(mirrored[0], -unmirrored[0], places=5)
+            self.assertAlmostEqual(mirrored[1], unmirrored[1], places=5)
+
 
 if __name__ == "__main__":
     unittest.main()

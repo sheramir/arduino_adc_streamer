@@ -55,6 +55,7 @@ from constants.pressure_map import (
     DEFAULT_PRESSURE_GRID_MARGIN,
     DEFAULT_PRESSURE_GRID_RESOLUTION,
     DEFAULT_PRESSURE_MAP_MAX_INTENSITY,
+    DEFAULT_PRESSURE_MIRROR,
     DEFAULT_PRESSURE_SENSOR_SPACING_MM,
     DEFAULT_DISPLAY_WINDOW_SEC,
     DEFAULT_HPF_CUTOFF_HZ,
@@ -639,7 +640,16 @@ class PressureMapPanelMixin:
         self.pressure_show_marker_check.setChecked(DEFAULT_PRESSURE_SHOW_MARKER)
         self.pressure_show_marker_check.setToolTip(show_marker_tooltip)
         self.pressure_show_marker_check.toggled.connect(self.on_pressure_map_settings_changed)
-        layout.addWidget(self.pressure_show_marker_check, 3, 4, 1, 4)
+        layout.addWidget(self.pressure_show_marker_check, 3, 4, 1, 2)
+
+        mirror_tooltip = (
+            "Mirror the pressure-map display horizontally, flipping left-right sensor positions."
+        )
+        self.pressure_mirror_check = QCheckBox("Mirror")
+        self.pressure_mirror_check.setChecked(DEFAULT_PRESSURE_MIRROR)
+        self.pressure_mirror_check.setToolTip(mirror_tooltip)
+        self.pressure_mirror_check.toggled.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_mirror_check, 3, 6, 1, 2)
 
         return group
 
@@ -859,6 +869,10 @@ class PressureMapPanelMixin:
                 "show_marker": self._check_bool(
                     "pressure_show_marker_check",
                     DEFAULT_PRESSURE_SHOW_MARKER,
+                ),
+                "mirror": self._check_bool(
+                    "pressure_mirror_check",
+                    DEFAULT_PRESSURE_MIRROR,
                 ),
             },
         }
@@ -1091,6 +1105,7 @@ class PressureMapPanelMixin:
         )
         changed |= self._set_check_value("pressure_show_negative_check", pressure_map, "show_negative")
         changed |= self._set_check_value("pressure_show_marker_check", pressure_map, "show_marker")
+        changed |= self._set_check_value("pressure_mirror_check", pressure_map, "mirror")
 
         if changed:
             self._refresh_pressure_package_gain_controls()
@@ -1282,9 +1297,14 @@ class PressureMapPanelMixin:
                 "pressure_max_intensity_spin",
                 DEFAULT_PRESSURE_MAP_MAX_INTENSITY,
             )
+            mirror = self._check_bool(
+                "pressure_mirror_check",
+                DEFAULT_PRESSURE_MIRROR,
+            )
             if hasattr(self, "pressure_map_widget"):
                 self.pressure_map_widget.configure_markers(show_marker=show_marker)
                 self.pressure_map_widget.configure_intensity(max_intensity=max_intensity)
+                self.pressure_map_widget.configure_mirror(mirror=mirror)
 
             sensor_spacing_mm = self._spin_float(
                 "pressure_sensor_spacing_spin",

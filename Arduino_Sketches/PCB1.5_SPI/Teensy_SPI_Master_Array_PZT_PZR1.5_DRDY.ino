@@ -69,19 +69,19 @@
 
 // =====================================================================
 // ── MODE ─────────────────────────────────────────────────────────────
-// Set PZT or PZR mode: MODE_PZT, MODE_PZR 
+// Set PZT or PZR mode: MODE_PZT, MODE_PZR
 //
 // In PZR mode there are two Timer Modes: TIMER555_PZR, TIMER555_RS
 //   TIMEER555_PZR uses the PZR MUX
-//   TIMER555_RS uses the Rosettes and bridges MUX 
-// 
+//   TIMER555_RS uses the Rosettes and bridges MUX
+//
 // =====================================================================
 
 enum DeviceMode { MODE_PZT, MODE_PZR };
 static DeviceMode currentMode = MODE_PZT;   // default
 
 enum Timer555Mode { TIMER555_PZR, TIMER555_RS };
-static constexpr Timer555Mode DEFAULT_555_MODE = TIMER555_RS; 
+static constexpr Timer555Mode DEFAULT_555_MODE = TIMER555_RS;
 
 // =====================================================================
 // ── SHARED SERIAL CONSTANTS ──────────────────────────────────────────

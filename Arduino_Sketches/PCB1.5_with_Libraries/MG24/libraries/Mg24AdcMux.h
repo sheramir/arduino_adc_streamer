@@ -7,13 +7,12 @@
 namespace mg24_adc_mux {
 
 struct Pins {
-  int adc_mux1 = A1;
-  int adc_mux2 = A2;
-  int mux_a0 = D3;
-  int mux_a1 = D4;
-  int mux_a2 = D5;
-  int mux_a3 = D6;
-  int drdy_pin = D7;
+  int adc_mux1 = -1;
+  int adc_mux2 = -1;
+  int mux_a0 = -1;
+  int mux_a1 = -1;
+  int mux_a2 = -1;
+  int mux_a3 = -1;
 };
 
 struct Config {

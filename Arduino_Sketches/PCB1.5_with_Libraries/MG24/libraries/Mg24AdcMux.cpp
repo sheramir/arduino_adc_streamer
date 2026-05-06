@@ -46,6 +46,15 @@ static const IADC_PosInput_t kGpioToAdcMap[64] = {
 static IADC_PosInput_t g_mux1_pos;
 static IADC_PosInput_t g_mux2_pos;
 
+static bool hasRequiredPins(const Pins &pins) {
+  return pins.adc_mux1 >= 0 &&
+         pins.adc_mux2 >= 0 &&
+         pins.mux_a0 >= 0 &&
+         pins.mux_a1 >= 0 &&
+         pins.mux_a2 >= 0 &&
+         pins.mux_a3 >= 0;
+}
+
 static void allocateAnalogBus(PinName pin_name) {
   const bool even = (((uint32_t)pin_name) % 2u) == 0u;
   if (pin_name >= PD0 || pin_name >= PC0) {
@@ -261,6 +270,11 @@ void begin(Runtime &rt, const Pins &pins) {
   rt.config_dirty = true;
   rt.last_mux_ch = 0xFF;
 
+  if (!hasRequiredPins(rt.pins)) {
+    Serial.println(F("# ERROR: MG24 ADC pins not configured in sketch"));
+    return;
+  }
+
   pinMode(rt.pins.mux_a0, OUTPUT);
   digitalWrite(rt.pins.mux_a0, LOW);
   pinMode(rt.pins.mux_a1, OUTPUT);
@@ -272,8 +286,6 @@ void begin(Runtime &rt, const Pins &pins) {
 
   pinMode(rt.pins.adc_mux1, INPUT);
   pinMode(rt.pins.adc_mux2, INPUT);
-  pinMode(rt.pins.drdy_pin, OUTPUT);
-  digitalWrite(rt.pins.drdy_pin, LOW);
 
   clampSweepsPerBlock(rt);
   parkMuxOnGround(rt);

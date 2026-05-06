@@ -8,12 +8,20 @@
 
 namespace mg24_spi_slave {
 
+struct Config {
+  int cs_pin = -1;
+  int drdy_pin = -1;
+  uint32_t callback_timeout_ms = 0;
+  SPIDRV_Init_t init_data = {};
+};
+
 struct Runtime {
   enum State : uint8_t {
     WAIT_CMD = 0,
     RESP_ARMED = 1,
   };
 
+  Config config;
   SPIDRV_HandleData_t spi_handle = {};
   volatile bool xfer_done = false;
   volatile Ecode_t xfer_status = (Ecode_t)0xFFFFu;
@@ -33,7 +41,7 @@ struct Runtime {
   uint32_t next_block_len = 0;
 };
 
-void begin(Runtime &rt);
+void begin(Runtime &rt, const Config &config);
 void service(Runtime &rt, mg24_cmd::Runtime &cmd);
 
 }  // namespace mg24_spi_slave

@@ -1,6 +1,7 @@
 #include "PzrController.h"
 
 #include <math.h>
+#include <string.h>
 
 #include "SharedProtocol.h"
 
@@ -9,8 +10,8 @@ namespace pzr_controller {
 namespace {
 
 static constexpr float kLn2 = 0.69314718056f;
-static constexpr int kRxMaN = 20;
-static constexpr int kRdisMaN = 20;
+static constexpr int kRaMaN = 1;
+static constexpr int kLCycMaN = 50;
 static constexpr uint32_t kMuxSettleNs = 100;
 static constexpr int kDiscardCyclesAfterSwitch = 1;
 
@@ -23,28 +24,48 @@ struct CaptureState {
 } g_cap;
 
 struct ChannelState {
-  float rx_buf[kRxMaN] = {0};
-  float rdis_buf[kRdisMaN] = {0};
-  float rx_sum = 0;
-  float rdis_sum = 0;
-  int rx_idx = 0;
-  int rdis_idx = 0;
-  int rx_count = 0;
-  int rdis_count = 0;
-  float last_plot_rx = 0;
+  float ra_buf[kRaMaN] = {0};
+  float ra_sum = 0;
+  int ra_idx = 0;
+  int ra_count = 0;
+  float last_plot_ra = NAN;
 
   void reset() {
-    memset(rx_buf, 0, sizeof(rx_buf));
-    memset(rdis_buf, 0, sizeof(rdis_buf));
-    rx_sum = 0;
-    rdis_sum = 0;
-    rx_idx = 0;
-    rdis_idx = 0;
-    rx_count = 0;
-    rdis_count = 0;
-    last_plot_rx = 0;
+    memset(ra_buf, 0, sizeof(ra_buf));
+    ra_sum = 0;
+    ra_idx = 0;
+    ra_count = 0;
+    last_plot_ra = NAN;
   }
 } g_ch_state[16];
+
+struct TimerState {
+  uint32_t lcyc_buf[kLCycMaN] = {0};
+  uint64_t lcyc_sum = 0;
+  int lcyc_idx = 0;
+  int lcyc_count = 0;
+  float last_lcyc_avg = NAN;
+
+  void reset() {
+    memset(lcyc_buf, 0, sizeof(lcyc_buf));
+    lcyc_sum = 0;
+    lcyc_idx = 0;
+    lcyc_count = 0;
+    last_lcyc_avg = NAN;
+  }
+
+  float update(uint32_t lcyc) {
+    lcyc_sum -= lcyc_buf[lcyc_idx];
+    lcyc_buf[lcyc_idx] = lcyc;
+    lcyc_sum += lcyc;
+    lcyc_idx = (lcyc_idx + 1) % kLCycMaN;
+    if (lcyc_count < kLCycMaN) {
+      ++lcyc_count;
+    }
+    last_lcyc_avg = (lcyc_count > 0) ? (static_cast<float>(lcyc_sum) / static_cast<float>(lcyc_count)) : NAN;
+    return last_lcyc_avg;
+  }
+} g_timer_state[SOURCE_COUNT];
 
 Runtime *g_rt = nullptr;
 
@@ -85,10 +106,14 @@ static uint32_t computePairTimeoutMs(const Runtime &rt) {
 }
 
 void isr555() {
-  const bool level = digitalReadFast(g_rt->pins.icp_pin);
+  if (g_rt == nullptr) {
+    return;
+  }
+
+  const bool level_high = digitalReadFast(g_rt->pins.icp_pin);
   const uint32_t now = dwtNow();
 
-  if (level) {
+  if (level_high) {
     if (g_cap.last_fall != 0) {
       g_cap.low_cycles = now - g_cap.last_fall;
     }
@@ -116,11 +141,14 @@ static void resetCaptureState() {
 
 static bool waitForPair(Runtime &rt, uint32_t &h, uint32_t &l) {
   const uint32_t timeout_ms = computePairTimeoutMs(rt);
-
   const uint32_t t0 = millis();
-  while (!g_cap.pair_ready && (millis() - t0) < timeout_ms) {
+
+  while (!g_cap.pair_ready) {
     if (Serial.available() > 0) {
       break;
+    }
+    if ((millis() - t0) > timeout_ms) {
+      return false;
     }
     yield();
   }
@@ -148,10 +176,30 @@ static inline float updateMA(float *buf, float &sum, int &idx, int &count, int n
   return sum / count;
 }
 
+static void resetAllTimerAverages() {
+  for (int i = 0; i < SOURCE_COUNT; ++i) {
+    g_timer_state[i].reset();
+  }
+}
+
 static void resetAllChannels() {
   for (int i = 0; i < 16; ++i) {
     g_ch_state[i].reset();
   }
+  resetAllTimerAverages();
+}
+
+static TimerState &activeTimerState(const Runtime &rt) {
+  const uint8_t source_index = (rt.pins.source_index < SOURCE_COUNT) ? rt.pins.source_index : SOURCE_PZR;
+  return g_timer_state[source_index];
+}
+
+static bool hasRequiredPins(const Pins &pins) {
+  return pins.icp_pin >= 0 &&
+         pins.mux_a0 >= 0 &&
+         pins.mux_a1 >= 0 &&
+         pins.mux_a2 >= 0 &&
+         pins.mux_a3 >= 0;
 }
 
 static inline void muxEnable(Runtime &rt, bool en) {
@@ -177,7 +225,7 @@ static void muxSelect(Runtime &rt, uint8_t ch) {
   resetCaptureState();
 }
 
-static bool measureOneRx(Runtime &rt, uint8_t ch, bool switched, float &out_rx) {
+static bool measureOneRa(Runtime &rt, uint8_t ch, bool switched, float &out_ra) {
   if (switched) {
     muxSelect(rt, ch);
     for (int i = 0; i < kDiscardCyclesAfterSwitch; ++i) {
@@ -195,37 +243,29 @@ static bool measureOneRx(Runtime &rt, uint8_t ch, bool switched, float &out_rx) 
     return false;
   }
 
-  const float f_cpu = static_cast<float>(F_CPU_ACTUAL);
-  const float t_h = static_cast<float>(h) / f_cpu;
-  const float t_l = static_cast<float>(l) / f_cpu;
+  TimerState &timer_state = activeTimerState(rt);
+  const float lcyc_avg = timer_state.update(l);
 
-  float rdis = NAN;
-  const float denom = kLn2 * rt.cfg.cf_f;
-  if (isfinite(denom) && denom > 0.0f) {
-    rdis = (t_l / denom) - rt.cfg.rb_ohm;
-  }
-
-  if (isfinite(rdis) && rdis >= 0.0f) {
-    updateMA(g_ch_state[ch].rdis_buf, g_ch_state[ch].rdis_sum, g_ch_state[ch].rdis_idx,
-             g_ch_state[ch].rdis_count, kRdisMaN, rdis);
-  }
-
-  float rx = NAN;
-  if (g_ch_state[ch].rdis_count > 0 && t_l > 0.0f) {
-    const float t_div = t_h / t_l;
-    const float rdis_used = g_ch_state[ch].rdis_sum / g_ch_state[ch].rdis_count;
-    const float ra = t_div * (rt.cfg.rb_ohm + rdis_used) - rt.cfg.rb_ohm;
-    const float last_rx = ra - rt.cfg.rk_ohm;
-    if (isfinite(last_rx)) {
-      rx = updateMA(g_ch_state[ch].rx_buf, g_ch_state[ch].rx_sum, g_ch_state[ch].rx_idx,
-                    g_ch_state[ch].rx_count, kRxMaN, last_rx);
+  float last_ra = NAN;
+  float last_ra_ma = NAN;
+  if (isfinite(lcyc_avg) && lcyc_avg > 0.0f) {
+    last_ra = rt.cfg.rb_ohm * ((static_cast<float>(h) - lcyc_avg) / lcyc_avg);
+    if (isfinite(last_ra)) {
+      if (kRaMaN > 1) {
+        last_ra_ma = updateMA(g_ch_state[ch].ra_buf, g_ch_state[ch].ra_sum, g_ch_state[ch].ra_idx,
+                              g_ch_state[ch].ra_count, kRaMaN, last_ra);
+      } else {
+        last_ra_ma = last_ra;
+      }
     }
   }
 
-  if (isfinite(rx)) {
-    g_ch_state[ch].last_plot_rx = rx;
+  const float candidate = isfinite(last_ra_ma) ? last_ra_ma : (isfinite(last_ra) ? last_ra : NAN);
+  if (isfinite(candidate)) {
+    g_ch_state[ch].last_plot_ra = candidate;
   }
-  out_rx = g_ch_state[ch].last_plot_rx;
+
+  out_ra = isfinite(g_ch_state[ch].last_plot_ra) ? g_ch_state[ch].last_plot_ra : 0.0f;
   return true;
 }
 
@@ -234,6 +274,12 @@ static bool measureOneRx(Runtime &rt, uint8_t ch, bool switched, float &out_rx) 
 void begin(Runtime &rt, const Pins &pins) {
   rt.pins = pins;
   g_rt = &rt;
+
+  if (!hasRequiredPins(rt.pins)) {
+    g_rt = nullptr;
+    Serial.println(F("# ERROR: PZR pins not configured in sketch"));
+    return;
+  }
 
   pinMode(rt.pins.icp_pin, INPUT);
   pinMode(rt.pins.mux_a0, OUTPUT);
@@ -253,6 +299,13 @@ void begin(Runtime &rt, const Pins &pins) {
   muxSelect(rt, 15);
 }
 
+void parkMux(Runtime &rt, uint8_t ch) {
+  if (!hasRequiredPins(rt.pins)) {
+    return;
+  }
+  muxSelect(rt, ch);
+}
+
 bool handleChannels(Runtime &rt, const String &args) {
   String a = args;
   a.trim();
@@ -270,7 +323,7 @@ bool handleChannels(Runtime &rt, const String &args) {
     tok.trim();
     if (tok.length()) {
       const int ch = tok.toInt();
-      if (ch < 0 || ch > 15 || new_count >= 64) {
+      if (ch < 0 || ch > 15 || new_count >= kMaxChannelSequence) {
         return false;
       }
       rt.cfg.channel_sequence[new_count++] = static_cast<uint8_t>(ch);
@@ -393,6 +446,18 @@ bool handleAscii(Runtime &rt, const String &args) {
 
 void printStatus(const Runtime &rt) {
   Serial.println(F("# -------- STATUS (PZR mode, modular) --------"));
+  Serial.print(F("# 555 source="));
+  Serial.println(rt.pins.source_name != nullptr ? rt.pins.source_name : "PZR/555_B");
+  Serial.print(F("# 555 ICP pin="));
+  Serial.println(rt.pins.icp_pin);
+  Serial.print(F("# 555 MUX pins A0,A1,A2,A3="));
+  Serial.print(rt.pins.mux_a0);
+  Serial.print(',');
+  Serial.print(rt.pins.mux_a1);
+  Serial.print(',');
+  Serial.print(rt.pins.mux_a2);
+  Serial.print(',');
+  Serial.println(rt.pins.mux_a3);
   Serial.print(F("# channels="));
   for (int i = 0; i < rt.cfg.channel_count; ++i) {
     Serial.print(rt.cfg.channel_sequence[i]);
@@ -405,6 +470,7 @@ void printStatus(const Runtime &rt) {
   Serial.println(rt.cfg.repeat_count);
   Serial.print(F("# buffer="));
   Serial.println(rt.cfg.buffer_sweeps);
+  Serial.println(F("# output_value=Ra_ohm (total Rx+Rk, Rk is not subtracted)"));
   Serial.print(F("# rb_ohm="));
   Serial.println(rt.cfg.rb_ohm, 6);
   Serial.print(F("# rk_ohm="));
@@ -413,6 +479,12 @@ void printStatus(const Runtime &rt) {
   Serial.println(rt.cfg.cf_f, 12);
   Serial.print(F("# rxmax_ohm="));
   Serial.println(rt.cfg.rx_max_ohm, 6);
+  Serial.print(F("# lcyc_ma_n="));
+  Serial.println(kLCycMaN);
+  Serial.print(F("# active_lcyc_count="));
+  Serial.println(activeTimerState(rt).lcyc_count);
+  Serial.print(F("# active_lcyc_avg_cycles="));
+  Serial.println(activeTimerState(rt).last_lcyc_avg, 3);
   Serial.print(F("# pair_timeout_ms="));
   Serial.println(computePairTimeoutMs(rt));
   const uint32_t samples_per_sweep = static_cast<uint32_t>(rt.cfg.channel_count) * static_cast<uint32_t>(rt.cfg.repeat_count);
@@ -422,7 +494,7 @@ void printStatus(const Runtime &rt) {
   Serial.print(F("# samples_per_block="));
   Serial.println(total_samples);
   Serial.print(F("# max_block_samples="));
-  Serial.println(2048);
+  Serial.println(kMaxBlockSamples);
   Serial.print(F("# running="));
   Serial.println(rt.cfg.running ? F("true") : F("false"));
   Serial.print(F("# output="));
@@ -431,18 +503,17 @@ void printStatus(const Runtime &rt) {
 }
 
 void doOneBlock(Runtime &rt) {
-  const uint32_t samples_per_sweep = static_cast<uint32_t>(rt.cfg.channel_count) * rt.cfg.repeat_count;
-  const uint32_t total_samples_32 = samples_per_sweep * rt.cfg.buffer_sweeps;
-  if (total_samples_32 == 0 || total_samples_32 > 2048) {
+  const uint32_t samples_per_sweep = static_cast<uint32_t>(rt.cfg.channel_count) * static_cast<uint32_t>(rt.cfg.repeat_count);
+  const uint32_t total_samples_32 = samples_per_sweep * static_cast<uint32_t>(rt.cfg.buffer_sweeps);
+  if (total_samples_32 == 0 || total_samples_32 > kMaxBlockSamples) {
     rt.cfg.running = false;
     rt.cfg.timed_run = false;
-    Serial.println(F("# ERROR: block too large"));
+    Serial.println(F("# ERROR: block too large. Reduce channels/repeat/buffer."));
     return;
   }
 
   const uint16_t total_samples = static_cast<uint16_t>(total_samples_32);
   const uint32_t t0 = micros();
-
   uint16_t idx = 0;
   int prev_ch = -1;
 
@@ -453,10 +524,10 @@ void doOneBlock(Runtime &rt) {
         const bool switched = prev_ch != ch;
         prev_ch = ch;
 
-        float rx = 0.0f;
-        (void)measureOneRx(rt, ch, switched, rx);
+        float ra = 0.0f;
+        (void)measureOneRa(rt, ch, switched, ra);
 
-        long v = lroundf(rx);
+        long v = lroundf(ra);
         if (v < 0) {
           v = 0;
         }
@@ -487,7 +558,7 @@ void doOneBlock(Runtime &rt) {
     return;
   }
 
-  static uint8_t block_buf[4 + (2048u * sizeof(uint16_t)) + 10];
+  static uint8_t block_buf[4 + (kMaxBlockSamples * sizeof(uint16_t)) + 10];
   const uint32_t block_bytes = shared_proto::encodeBinaryBlock(block_buf, sizeof(block_buf), rt.sample_buf, total_samples, avg_dt, t0, t1);
   if (block_bytes > 0) {
     Serial.write(block_buf, block_bytes);

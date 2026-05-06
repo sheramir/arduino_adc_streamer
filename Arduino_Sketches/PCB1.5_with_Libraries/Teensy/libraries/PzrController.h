@@ -4,14 +4,25 @@
 
 namespace pzr_controller {
 
+enum SourceIndex : uint8_t {
+  SOURCE_PZR = 0,
+  SOURCE_RS = 1,
+  SOURCE_COUNT = 2,
+};
+
+static constexpr int kMaxChannelSequence = 64;
+static constexpr uint16_t kMaxBlockSamples = 2048;
+
 struct Pins {
-  int icp_pin = 23;
-  int mux_a0 = 20;
-  int mux_a1 = 19;
-  int mux_a2 = 18;
-  int mux_a3 = 17;
+  int icp_pin = -1;
+  int mux_a0 = -1;
+  int mux_a1 = -1;
+  int mux_a2 = -1;
+  int mux_a3 = -1;
   int mux_en = -1;
   bool mux_en_active_low = false;
+  SourceIndex source_index = SOURCE_PZR;
+  const char *source_name = nullptr;
 };
 
 struct Config {
@@ -21,7 +32,7 @@ struct Config {
   float rx_max_ohm = 65500.0f;
   bool ascii_output = false;
 
-  uint8_t channel_sequence[64] = {0, 1, 2, 3, 4};
+  uint8_t channel_sequence[kMaxChannelSequence] = {0, 1, 2, 3, 4};
   int channel_count = 5;
   int repeat_count = 1;
   int buffer_sweeps = 1;
@@ -34,10 +45,11 @@ struct Config {
 struct Runtime {
   Pins pins;
   Config cfg;
-  uint16_t sample_buf[2048];
+  uint16_t sample_buf[kMaxBlockSamples];
 };
 
 void begin(Runtime &rt, const Pins &pins);
+void parkMux(Runtime &rt, uint8_t ch = 15);
 
 bool handleChannels(Runtime &rt, const String &args);
 bool handleRepeat(Runtime &rt, const String &args);

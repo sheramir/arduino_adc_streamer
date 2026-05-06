@@ -1,6 +1,8 @@
 #include <Arduino.h>
 #include <SPI.h>
 
+#include "BoardConfig.h"
+
 #include "libraries/SharedProtocol.h"
 #include "libraries/SerialLineParser.h"
 #include "libraries/SpiMasterLink.h"
@@ -10,6 +12,7 @@
 enum DeviceMode { MODE_PZT, MODE_PZR };
 
 static DeviceMode current_mode = MODE_PZT;
+
 static SerialLineParser g_parser;
 static SpiMasterLink g_spi_link;
 static pzt_controller::Runtime g_pzt;
@@ -25,16 +28,30 @@ static void printMcu() {
 
 static void printHelp() {
   Serial.println(F("# Commands (* terminated):"));
-  Serial.println(F("#   mode PZT|PZR"));
-  Serial.println(F("#   mcu"));
-  Serial.println(F("#   status"));
-  Serial.println(F("#   channels 0,1,2,..."));
-  Serial.println(F("#   repeat <n>"));
-  Serial.println(F("#   buffer <n>"));
-  Serial.println(F("#   run [ms]"));
+  Serial.println(F("#   mode PZT|PZR         (switch operating mode; default PZT)"));
+  Serial.println(F("# ── Shared ──────────────────────────────────────────────────"));
+  Serial.println(F("#   mcu                   (print device ID)"));
+  Serial.println(F("#   status                (show current config)"));
+  Serial.println(F("#   channels 0,1,2,...    (MUX channels 0-15)"));
+  Serial.println(F("#   repeat <n>            (samples per channel per sweep)"));
+  Serial.println(F("#   buffer <n>            (sweeps per binary block)"));
+  Serial.println(F("#   run                   (stream until stop*)"));
+  Serial.println(F("#   run <ms>              (time-limited run)"));
   Serial.println(F("#   stop"));
-  Serial.println(F("# PZT-only: ref, osr, gain, ground"));
-  Serial.println(F("# PZR-only: rb, rk, cf, rxmax, ascii"));
+  Serial.println(F("# ── PZT mode only ───────────────────────────────────────────"));
+  Serial.println(F("#   ref 1.2|3.3|vdd"));
+  Serial.println(F("#   osr 2|4|8"));
+  Serial.println(F("#   gain 1|2|3|4"));
+  Serial.println(F("#   ground <ch>|true|false"));
+  Serial.println(F("# ── PZR mode only ───────────────────────────────────────────"));
+  Serial.print(F("#   active 555 source: "));
+  Serial.println(board_config::kTimer555Name);
+  Serial.println(F("#   PZR samples are Ra=(Rx+Rk) ohms; Rk is not subtracted"));
+  Serial.println(F("#   rb <ohms|k|M>         (Rb resistor, e.g. rb 470*)"));
+  Serial.println(F("#   rk <ohms|k|M>         (known series resistor; kept for timeout config)"));
+  Serial.println(F("#   cf <F|p|n|u|m>        (capacitance for timeout only, e.g. cf 220n*)"));
+  Serial.println(F("#   rxmax <ohms|k|M>      (max expected Rx before Rk, for timeouts)"));
+  Serial.println(F("#   ascii [1|0|on|off]    (toggle ASCII/binary output; stops streaming)"));
 }
 
 static bool handleMode(const String &args) {
@@ -45,6 +62,7 @@ static bool handleMode(const String &args) {
   if (a == "PZT") {
     if (current_mode != MODE_PZT) {
       pzr_controller::handleStop(g_pzr);
+      pzr_controller::parkMux(g_pzr);
       current_mode = MODE_PZT;
       Serial.println(F("# Switched to PZT mode"));
     }
@@ -60,6 +78,7 @@ static bool handleMode(const String &args) {
     return true;
   }
 
+  Serial.println(F("# ERROR: mode must be PZT or PZR"));
   return false;
 }
 
@@ -170,20 +189,22 @@ void setup() {
 
   g_parser.begin(shared_proto::kCmdTerm, shared_proto::kMaxCmdLen);
 
-  g_spi_link.begin(SPI, 10, 4000000UL, 10);
+  g_spi_link.begin(SPI, board_config::kPztCsPin, board_config::kPztSpiBitrate, board_config::kPztCsSetupUs);
   pzt_controller::begin(g_pzt, g_spi_link);
 
-  pzr_controller::Pins pins;
-  pins.icp_pin = 23;
-  pins.mux_a0 = 20;
-  pins.mux_a1 = 19;
-  pins.mux_a2 = 18;
-  pins.mux_a3 = 17;
-  pins.mux_en = -1;
+  board_config::initTimer555Pins();
+
+  pzr_controller::Pins pins = board_config::makePzrPins();
+  g_pzr.cfg.cf_f = board_config::kTimer555DefaultCfF;
   pzr_controller::begin(g_pzr, pins);
 
   printMcu();
   Serial.println(F("# Default mode: PZT"));
+  Serial.print(F("# Active 555 source for mode PZR: "));
+  Serial.println(board_config::kTimer555Name);
+  Serial.print(F("# Active 555 Cf(F): "));
+  Serial.println(board_config::kTimer555DefaultCfF, 12);
+  Serial.println(F("# PZR output: Ra=(Rx+Rk) ohms; low/discharge cycles use per-555 MA(50)"));
 }
 
 void loop() {

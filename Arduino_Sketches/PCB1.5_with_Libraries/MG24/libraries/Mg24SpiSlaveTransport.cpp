@@ -1,31 +1,24 @@
 #include "Mg24SpiSlaveTransport.h"
 
-#include "pins_arduino.h"
-#include "pinDefinitions.h"
-#include "sl_gpio.h"
-
 namespace mg24_spi_slave {
 
 namespace {
 
-static const int kPinCs = D0;
-static const int kPinDrdy = D7;
-static const uint32_t kSpiBitrate = 4000000UL;
-static const uint32_t kSpiCallbackTimeoutMs = 200;
-
-static const sl_gpio_port_t kSpiPortTx = SL_GPIO_PORT_A;
-static const uint8_t kSpiPinTx = 5;
-static const sl_gpio_port_t kSpiPortRx = SL_GPIO_PORT_A;
-static const uint8_t kSpiPinRx = 4;
-static const sl_gpio_port_t kSpiPortClk = SL_GPIO_PORT_A;
-static const uint8_t kSpiPinClk = 3;
-static const sl_gpio_port_t kSpiPortCs = SL_GPIO_PORT_C;
-static const uint8_t kSpiPinCs = 0;
-
 static Runtime *g_runtime = nullptr;
 
+static bool hasValidConfig(const Config &config) {
+  return config.cs_pin >= 0 &&
+         config.drdy_pin >= 0 &&
+         config.callback_timeout_ms > 0 &&
+         config.init_data.bitRate > 0 &&
+         config.init_data.port != nullptr;
+}
+
 static inline void drdyWrite(bool asserted) {
-  digitalWrite(kPinDrdy, asserted ? HIGH : LOW);
+  if (g_runtime == nullptr || g_runtime->config.drdy_pin < 0) {
+    return;
+  }
+  digitalWrite(g_runtime->config.drdy_pin, asserted ? HIGH : LOW);
 }
 
 static void spiCallback(SPIDRV_Handle_t, Ecode_t status, int) {
@@ -95,14 +88,21 @@ static void prefetchNextBlockIfNeeded(Runtime &rt, mg24_cmd::Runtime &cmd) {
 
 }  // namespace
 
-void begin(Runtime &rt) {
+void begin(Runtime &rt, const Config &config) {
   g_runtime = &rt;
+  rt.config = config;
 
-  pinMode(kPinDrdy, OUTPUT);
+  if (!hasValidConfig(rt.config)) {
+    Serial.println(F("SPI transport config missing"));
+    g_runtime = nullptr;
+    return;
+  }
+
+  pinMode(rt.config.drdy_pin, OUTPUT);
   drdyWrite(false);
 
-  pinMode(kPinCs, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(kPinCs), onCSRising, RISING);
+  pinMode(rt.config.cs_pin, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(rt.config.cs_pin), onCSRising, RISING);
 
   memset(&rt.spi_handle, 0, sizeof(rt.spi_handle));
   memset(rt.cmd_tx_dummy, 0, sizeof(rt.cmd_tx_dummy));
@@ -112,24 +112,7 @@ void begin(Runtime &rt) {
   rt.next_block_len = 0;
   rt.stream_resp_armed = false;
 
-  SPIDRV_Init_t init_data = {};
-  init_data.port = EUSART1;
-  init_data.portTx = kSpiPortTx;
-  init_data.pinTx = kSpiPinTx;
-  init_data.portRx = kSpiPortRx;
-  init_data.pinRx = kSpiPinRx;
-  init_data.portClk = kSpiPortClk;
-  init_data.pinClk = kSpiPinClk;
-  init_data.portCs = kSpiPortCs;
-  init_data.pinCs = kSpiPinCs;
-  init_data.bitRate = kSpiBitrate;
-  init_data.frameLength = 8;
-  init_data.dummyTxValue = 0x00;
-  init_data.type = spidrvSlave;
-  init_data.bitOrder = spidrvBitOrderMsbFirst;
-  init_data.clockMode = spidrvClockMode1;
-  init_data.csControl = spidrvCsControlAuto;
-  init_data.slaveStartMode = spidrvSlaveStartImmediate;
+  SPIDRV_Init_t init_data = rt.config.init_data;
 
   const Ecode_t e = SPIDRV_Init(&rt.spi_handle, &init_data);
   Serial.print(F("SPIDRV_Init="));
@@ -148,7 +131,7 @@ void service(Runtime &rt, mg24_cmd::Runtime &cmd) {
 
   const uint32_t start = millis();
   while (!rt.xfer_done) {
-    if ((millis() - start) > kSpiCallbackTimeoutMs) {
+    if ((millis() - start) > rt.config.callback_timeout_ms) {
       Serial.println(F("Callback timeout"));
       armCmd(rt);
       return;

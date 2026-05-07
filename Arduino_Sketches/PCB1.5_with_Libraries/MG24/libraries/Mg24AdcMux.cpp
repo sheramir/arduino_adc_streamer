@@ -57,14 +57,14 @@ static bool hasRequiredPins(const Pins &pins) {
 
 static void allocateAnalogBus(PinName pin_name) {
   const bool even = (((uint32_t)pin_name) % 2u) == 0u;
-  if ((pin_name >= PC0 && pin_name <= PC15) ||
-      (pin_name >= PD0 && pin_name <= PD15)) {
+  if ((pin_name >= PC0 && pin_name <= PC9) ||
+      (pin_name >= PD0 && pin_name <= PD5)) {
     if (even) {
       GPIO->CDBUSALLOC |= GPIO_CDBUSALLOC_CDEVEN0_ADC0;
     } else {
       GPIO->CDBUSALLOC |= GPIO_CDBUSALLOC_CDODD0_ADC0;
     }
-  } else if (pin_name >= PB0) {
+  } else if (pin_name >= PB0 && pin_name <= PB4) {
     if (even) {
       GPIO->BBUSALLOC |= GPIO_BBUSALLOC_BEVEN0_ADC0;
     } else {

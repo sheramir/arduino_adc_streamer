@@ -161,6 +161,11 @@ from constants.shear import (
     SHEAR_SETTINGS_VERTICAL_SPACING_PX,
     SHEAR_SETTINGS_VERSION,
 )
+from constants.touch_id import (
+    TOUCH_CLASSIFIER_DEFAULT_ENABLED,
+    TOUCH_MATERIALS,
+    TOUCH_MATERIAL_SEQUENCE,
+)
 from data_processing.adc_filter_engine import ADCFilterEngine, SCIPY_FILTERS_AVAILABLE
 from data_processing.normal_force_calculator import NormalForceCalculator, NormalForceResult
 from data_processing.pressure_map_generator import (
@@ -169,8 +174,10 @@ from data_processing.pressure_map_generator import (
     PressureMapResult,
 )
 from data_processing.shear_detector import ShearDetector, ShearResult
+from data_processing.touch_classifier_demo import TouchClassifierDemoEngine
 from file_operations.settings_persistence import load_settings_payload, save_settings_payload
 from gui.pressure_map_widget import PressureMapPackageDisplay, PressureMapWidget
+from gui.touch_classifier_widget import TouchClassifierWidget
 
 
 class PressureMapPanelMixin:
@@ -331,6 +338,15 @@ class PressureMapPanelMixin:
         self.pressure_map_generator = PressureMapGenerator()
         self.pressure_map_widget = PressureMapWidget()
         display_layout.addWidget(self.pressure_map_widget, stretch=PRESSURE_MAP_STRETCH)
+        self.touch_classifier_materials = tuple(str(item) for item in TOUCH_MATERIALS if str(item).strip())
+        if not self.touch_classifier_materials:
+            self.touch_classifier_materials = ("Material 1",)
+        self.touch_classifier_demo_engine = TouchClassifierDemoEngine(
+            material_count=len(self.touch_classifier_materials),
+            material_sequence=TOUCH_MATERIAL_SEQUENCE,
+        )
+        self.touch_classifier_widget = TouchClassifierWidget(self.touch_classifier_materials)
+        display_layout.addWidget(self.touch_classifier_widget)
         settings_layout.addWidget(self._create_shear_visualization_settings_group())
         settings_layout.addWidget(self._create_pressure_map_settings_group())
         settings_layout.addWidget(self._create_pressure_package_gain_settings_group())
@@ -651,6 +667,16 @@ class PressureMapPanelMixin:
         self.pressure_mirror_check.toggled.connect(self.on_pressure_map_settings_changed)
         layout.addWidget(self.pressure_mirror_check, 3, 6, 1, 2)
 
+        classifier_tooltip = (
+            "Enable the material-classifier demo bars in the Pressure Map display. "
+            "This is a GUI simulation, not a real classifier."
+        )
+        self.touch_classifier_enabled_check = QCheckBox("Enable material classifier demo")
+        self.touch_classifier_enabled_check.setChecked(TOUCH_CLASSIFIER_DEFAULT_ENABLED)
+        self.touch_classifier_enabled_check.setToolTip(classifier_tooltip)
+        self.touch_classifier_enabled_check.toggled.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.touch_classifier_enabled_check, 4, 0, 1, 4)
+
         return group
 
     def _create_pressure_package_gain_settings_group(self) -> QGroupBox:
@@ -873,6 +899,10 @@ class PressureMapPanelMixin:
                 "mirror": self._check_bool(
                     "pressure_mirror_check",
                     DEFAULT_PRESSURE_MIRROR,
+                ),
+                "touch_classifier_enabled": self._check_bool(
+                    "touch_classifier_enabled_check",
+                    TOUCH_CLASSIFIER_DEFAULT_ENABLED,
                 ),
             },
         }
@@ -1106,6 +1136,11 @@ class PressureMapPanelMixin:
         changed |= self._set_check_value("pressure_show_negative_check", pressure_map, "show_negative")
         changed |= self._set_check_value("pressure_show_marker_check", pressure_map, "show_marker")
         changed |= self._set_check_value("pressure_mirror_check", pressure_map, "mirror")
+        changed |= self._set_check_value(
+            "touch_classifier_enabled_check",
+            pressure_map,
+            "touch_classifier_enabled",
+        )
 
         if changed:
             self._refresh_pressure_package_gain_controls()
@@ -1301,10 +1336,18 @@ class PressureMapPanelMixin:
                 "pressure_mirror_check",
                 DEFAULT_PRESSURE_MIRROR,
             )
+            touch_classifier_enabled = self._check_bool(
+                "touch_classifier_enabled_check",
+                TOUCH_CLASSIFIER_DEFAULT_ENABLED,
+            )
             if hasattr(self, "pressure_map_widget"):
                 self.pressure_map_widget.configure_markers(show_marker=show_marker)
                 self.pressure_map_widget.configure_intensity(max_intensity=max_intensity)
                 self.pressure_map_widget.configure_mirror(mirror=mirror)
+            if hasattr(self, "touch_classifier_widget"):
+                self.touch_classifier_widget.setVisible(touch_classifier_enabled)
+            if not touch_classifier_enabled:
+                self._set_touch_classifier_display_zero(reset_engine=True)
 
             sensor_spacing_mm = self._spin_float(
                 "pressure_sensor_spacing_spin",
@@ -1545,6 +1588,62 @@ class PressureMapPanelMixin:
         self._latest_pressure_map_result = None
         if hasattr(self, "pressure_map_widget"):
             self.pressure_map_widget.update_display(None, None, None)
+        self._set_touch_classifier_display_zero(reset_engine=True)
+
+    def _set_touch_classifier_display_zero(self, *, reset_engine: bool) -> None:
+        widget = getattr(self, "touch_classifier_widget", None)
+        if widget is None:
+            return
+
+        if reset_engine and hasattr(self, "touch_classifier_demo_engine"):
+            state = self.touch_classifier_demo_engine.reset_scores()
+            widget.set_scores(list(state.scores), state.active_material_index)
+            return
+
+        material_count = max(1, len(getattr(self, "touch_classifier_materials", [])))
+        widget.set_scores([0.0] * material_count, None)
+
+    def _pressure_map_peak_magnitude(self, pressure_result: PressureMapResult | None) -> float:
+        if pressure_result is None:
+            return 0.0
+        grid = np.asarray(pressure_result.pressure_grid, dtype=np.float64)
+        if grid.size == 0:
+            return 0.0
+        finite_values = grid[np.isfinite(grid)]
+        if finite_values.size == 0:
+            return 0.0
+        return float(np.max(np.abs(finite_values)))
+
+    def _update_touch_classifier_demo(self, signal_magnitude: float) -> None:
+        widget = getattr(self, "touch_classifier_widget", None)
+        engine = getattr(self, "touch_classifier_demo_engine", None)
+        if widget is None or engine is None:
+            return
+
+        enabled = self._check_bool(
+            "touch_classifier_enabled_check",
+            TOUCH_CLASSIFIER_DEFAULT_ENABLED,
+        )
+        if not enabled:
+            self._set_touch_classifier_display_zero(reset_engine=True)
+            return
+
+        noise_threshold = self._spin_float(
+            "shear_noise_threshold_spin",
+            DEFAULT_SHEAR_NOISE_THRESHOLD,
+        )
+        max_intensity = self._spin_float(
+            "pressure_max_intensity_spin",
+            DEFAULT_PRESSURE_MAP_MAX_INTENSITY,
+        )
+        trigger_threshold = max(0.0, 0.5 * float(max_intensity))
+        state = engine.update(
+            signal_magnitude=float(signal_magnitude),
+            noise_threshold=float(noise_threshold),
+            trigger_threshold=trigger_threshold,
+            enabled=True,
+        )
+        widget.set_scores(list(state.scores), state.active_material_index)
 
     def _record_signal_integration_package_value(
         self,
@@ -1758,6 +1857,7 @@ class PressureMapPanelMixin:
             self._latest_normal_force_result = None
             self._latest_pressure_map_result = None
             self.pressure_map_widget.update_display(None, None, None)
+            self._set_touch_classifier_display_zero(reset_engine=True)
             return
 
         try:
@@ -1768,6 +1868,11 @@ class PressureMapPanelMixin:
                 self._latest_normal_force_result = first_package.normal_force_result
                 self._latest_pressure_map_result = first_package.pressure_result
                 self.pressure_map_widget.update_package_displays(package_displays)
+                peak_magnitude = max(
+                    self._pressure_map_peak_magnitude(package.pressure_result)
+                    for package in package_displays
+                )
+                self._update_touch_classifier_demo(peak_magnitude)
                 return
 
             self._latest_normal_force_result = self.normal_force_calculator.compute(
@@ -1781,10 +1886,14 @@ class PressureMapPanelMixin:
                 self._latest_pressure_map_result,
                 self._latest_shear_result,
             )
+            self._update_touch_classifier_demo(
+                self._pressure_map_peak_magnitude(self._latest_pressure_map_result)
+            )
         except Exception as exc:
             self._latest_normal_force_result = None
             self._latest_pressure_map_result = None
             self.pressure_map_widget.update_display(None, None, None)
+            self._set_touch_classifier_display_zero(reset_engine=True)
             if hasattr(self, "log_status"):
                 self.log_status(f"ERROR updating Pressure Map visualization: {exc}")
 

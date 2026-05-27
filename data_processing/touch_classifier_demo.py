@@ -56,6 +56,7 @@ class TouchClassifierDemoEngine:
         self._last_zero_time: float | None = None
         self._silence_started_time: float | None = None
         self._pending_material_index: int | None = None
+        self._pending_sequence_pos: int | None = None
         self._pending_deadline: float | None = None
         self._scores: list[float] = [0.0 for _ in range(self.material_count)]
 
@@ -64,6 +65,7 @@ class TouchClassifierDemoEngine:
         self._active_material_index = None
         self._last_displayed_material_index = None
         self._pending_material_index = None
+        self._pending_sequence_pos = None
         self._pending_deadline = None
         self._last_zero_time = None
         self._silence_started_time = None
@@ -93,6 +95,7 @@ class TouchClassifierDemoEngine:
                 self._last_zero_time = self._silence_started_time + self.hold_after_noise_sec
                 self._active_material_index = None
                 self._pending_material_index = None
+                self._pending_sequence_pos = None
                 self._pending_deadline = None
                 self._scores = [0.0 for _ in range(self.material_count)]
             elif magnitude > noise_floor:
@@ -109,12 +112,14 @@ class TouchClassifierDemoEngine:
                 self._last_zero_time = self._silence_started_time + self.hold_after_noise_sec
                 self._active_material_index = None
                 self._pending_material_index = None
+                self._pending_sequence_pos = None
                 self._pending_deadline = None
                 self._scores = [0.0 for _ in range(self.material_count)]
                 return TouchClassifierDisplayState(tuple(self._scores), None)
 
             if self._pending_material_index is not None:
                 self._pending_material_index = None
+                self._pending_sequence_pos = None
                 self._pending_deadline = None
                 self._scores = [0.0 for _ in range(self.material_count)]
                 return TouchClassifierDisplayState(tuple(self._scores), None)
@@ -125,14 +130,18 @@ class TouchClassifierDemoEngine:
         if self._pending_material_index is not None and self._pending_deadline is not None:
             if now >= self._pending_deadline:
                 self._active_material_index = self._pending_material_index
+                if self._pending_sequence_pos is not None:
+                    self._sequence_pos = self._pending_sequence_pos
                 self._last_displayed_material_index = self._active_material_index
                 self._pending_material_index = None
+                self._pending_sequence_pos = None
                 self._pending_deadline = None
                 self._silence_started_time = None
 
         if self._active_material_index is None and self._pending_material_index is None and magnitude >= trigger_floor:
-            selected = self._select_material_for_trigger(now)
+            selected, sequence_pos = self._select_material_for_trigger(now)
             self._pending_material_index = selected
+            self._pending_sequence_pos = sequence_pos
             self._pending_deadline = now + self.trigger_delay_sec
 
         if self._active_material_index is None:
@@ -142,19 +151,18 @@ class TouchClassifierDemoEngine:
         self._scores = self._generate_fluctuating_scores(self._active_material_index)
         return TouchClassifierDisplayState(tuple(self._scores), self._active_material_index)
 
-    def _select_material_for_trigger(self, now: float) -> int:
+    def _select_material_for_trigger(self, now: float) -> tuple[int, int]:
         if self._last_displayed_material_index is None:
-            self._sequence_pos = 0
-            return self.sequence[self._sequence_pos]
+            return self.sequence[0], 0
 
         reference_time = self._silence_started_time if self._silence_started_time is not None else self._last_zero_time
         if reference_time is not None:
             elapsed_since_zero = now - reference_time
             if elapsed_since_zero < self.repeat_window_sec:
-                return self._last_displayed_material_index
+                return self._last_displayed_material_index, self._sequence_pos
 
-        self._sequence_pos = (self._sequence_pos + 1) % len(self.sequence)
-        return self.sequence[self._sequence_pos]
+        next_pos = (self._sequence_pos + 1) % len(self.sequence)
+        return self.sequence[next_pos], next_pos
 
     def _generate_fluctuating_scores(self, dominant_index: int) -> list[float]:
         dominant = self._rng.uniform(TOUCH_CLASSIFIER_DOMINANT_MIN, TOUCH_CLASSIFIER_DOMINANT_MAX)

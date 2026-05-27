@@ -346,6 +346,7 @@ class PressureMapPanelMixin:
             material_sequence=TOUCH_MATERIAL_SEQUENCE,
         )
         self.touch_classifier_widget = TouchClassifierWidget(self.touch_classifier_materials)
+        self.touch_classifier_widget.setVisible(TOUCH_CLASSIFIER_DEFAULT_ENABLED)
         display_layout.addWidget(self.touch_classifier_widget)
         settings_layout.addWidget(self._create_shear_visualization_settings_group())
         settings_layout.addWidget(self._create_pressure_map_settings_group())
@@ -1624,6 +1625,7 @@ class PressureMapPanelMixin:
             "touch_classifier_enabled_check",
             TOUCH_CLASSIFIER_DEFAULT_ENABLED,
         )
+        widget.setVisible(enabled)
         if not enabled:
             self._set_touch_classifier_display_zero(reset_engine=True)
             return

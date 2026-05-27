@@ -84,6 +84,27 @@ class TouchClassifierDemoEngineTests(unittest.TestCase):
         self.assertIsNone(cleared.active_material_index)
         self.assertEqual(sum(cleared.scores), 0.0)
 
+    def test_canceled_pending_trigger_does_not_skip_sequence(self):
+        engine = TouchClassifierDemoEngine(material_count=5, material_sequence=(1, 2, 3, 4, 5))
+
+        # Activate first material.
+        engine.update(signal_magnitude=0.9, noise_threshold=0.1, trigger_threshold=0.5, enabled=True, now_monotonic=0.0)
+        first = engine.update(signal_magnitude=0.9, noise_threshold=0.1, trigger_threshold=0.5, enabled=True, now_monotonic=0.6)
+        self.assertEqual(first.active_material_index, 0)
+
+        # Go silent long enough to require advancing on next trigger.
+        engine.update(signal_magnitude=0.0, noise_threshold=0.1, trigger_threshold=0.5, enabled=True, now_monotonic=1.0)
+        engine.update(signal_magnitude=0.0, noise_threshold=0.1, trigger_threshold=0.5, enabled=True, now_monotonic=1.8)
+
+        # Start a trigger for the next material, then cancel it before delay elapses.
+        engine.update(signal_magnitude=0.9, noise_threshold=0.1, trigger_threshold=0.5, enabled=True, now_monotonic=3.2)
+        engine.update(signal_magnitude=0.0, noise_threshold=0.1, trigger_threshold=0.5, enabled=True, now_monotonic=3.4)
+
+        # Next successful trigger should still activate material index 1 (not skip to 2).
+        engine.update(signal_magnitude=0.9, noise_threshold=0.1, trigger_threshold=0.5, enabled=True, now_monotonic=5.0)
+        activated = engine.update(signal_magnitude=0.9, noise_threshold=0.1, trigger_threshold=0.5, enabled=True, now_monotonic=5.6)
+        self.assertEqual(activated.active_material_index, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

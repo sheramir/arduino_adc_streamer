@@ -125,6 +125,7 @@ static const uint32_t PZT_IADC_CONV_US_OSR4      = 9;   // was 4 for faster 10k 
 static const uint32_t PZT_IADC_CONV_US_OSR8      = 10;  // was 8 for faster 10k IADC clock / 16 for slower 5K IADC clock
 static const uint32_t PZT_BLOCK_DELAY_MARGIN_MS  = 15;
 static const uint32_t PZT_WARMUP_DELAY_MARGIN_MS = 10;
+static const uint32_t PZT_RS_FIRST_BLOCK_MIN_TIMEOUT_MS = 500;
 static const uint16_t PZT_WARMUP_SWEEPS          = 48;
 
 // ── Protocol limits ───────────────────────────────────────────────────
@@ -135,8 +136,8 @@ static const uint32_t PZT_MAX_PAIRS              = 8000UL;
 static const uint32_t PZT_MAX_BLOCK_BYTES =
     (uint32_t)PZT_ACK_FRAME_LEN + PZT_MAX_PAIRS * 4UL + PZT_BLOCK_TRAILER_LEN;
 
-// MODE_PZT_RS appends one RS sample per PZT pair.
-static const uint32_t PZT_RS_MAX_BLOCK_BYTES = PZT_MAX_BLOCK_BYTES + (PZT_MAX_PAIRS * 2UL);
+// MODE_PZT_RS appends two RS samples per PZT pair.
+static const uint32_t PZT_RS_MAX_BLOCK_BYTES = PZT_MAX_BLOCK_BYTES + (PZT_MAX_PAIRS * 4UL);
 
 // ── SPI command codes (must match MG24 sketch) ────────────────────────
 static const uint8_t PZT_CMD_SET_CHANNELS = 0x01;
@@ -160,7 +161,10 @@ static const SPISettings PZT_SPI_CFG(PZT_SPI_BITRATE, MSBFIRST, SPI_MODE1);
 
 struct PZTConfig {
   uint8_t  channels[16];
+  uint8_t  rsChannelsA[16];
+  uint8_t  rsChannelsB[16];
   uint8_t  channelCount   = 0;
+  uint8_t  rsChannelCount = 0;
   uint8_t  repeatCount    = 1;
   uint8_t  sweepsPerBlock = 1;
   uint8_t  osr            = 2;   // 2 | 4 | 8
@@ -206,12 +210,18 @@ static volatile uint32_t pztDrdyEdges       = 0;
 static uint8_t        pztRsBlockBuf[PZT_RS_MAX_BLOCK_BYTES];
 static uint16_t       pztRsLastRaQByChannel[16] = {0};
 static int8_t         pztRsPrevMeasuredChannel = -1;
+static uint8_t        pztRsRefreshIndex = 0;
 static uint32_t       pztRsLastRefreshMs = 0;
 static const uint32_t PZT_RS_REFRESH_MIN_MS = 5;
 
+enum PZTRsRefreshStage { PZT_RS_REFRESH_IDLE, PZT_RS_REFRESH_DISCARD, PZT_RS_REFRESH_MEASURE };
+static PZTRsRefreshStage pztRsRefreshStage = PZT_RS_REFRESH_IDLE;
+static uint8_t           pztRsPendingChannel = 0;
+static uint8_t           pztRsDiscardRemaining = 0;
+
 // Forward declarations for MODE_PZT_RS helpers used by SPI service paths.
 static void pzt_rsResetState();
-static void pzt_rsRefreshOneChannel();
+static void pzt_rsServiceRefresh();
 static bool pzt_buildCombinedBlock(const uint8_t *src, uint32_t srcLen,
                                    uint8_t *dst, uint32_t &dstLen);
 
@@ -526,6 +536,8 @@ static void pzt_streamResetState() {
   pztStreamLastActivity = millis();
   pzt_drdyClearAll();
   pztRsPrevMeasuredChannel = -1;
+  pztRsRefreshStage = PZT_RS_REFRESH_IDLE;
+  pztRsDiscardRemaining = 0;
   pztRsLastRefreshMs = 0;
 }
 
@@ -617,7 +629,6 @@ static bool pzt_handleStreamingFrame(PZTQueuedBlock *slot, bool fromDrdy) {
 
   uint32_t queuedLen = pztStreamBlockBytes;
   if (currentMode == MODE_PZT_RS) {
-    pzt_rsRefreshOneChannel();
     if (!pzt_buildCombinedBlock(slot->data, pztStreamBlockBytes, pztRsBlockBuf, queuedLen)) {
       pztStreamFault = true;
       pzt.running = false;
@@ -876,6 +887,14 @@ static uint32_t pzt_warmupDelayMs() {
   return (entries * pzt_usPerPair()) / 1000u + PZT_WARMUP_DELAY_MARGIN_MS;
 }
 
+static uint32_t pzt_firstBlockTimeoutMs() {
+  uint32_t timeoutMs = pzt_warmupDelayMs() + pzt_blockDelayMs() + PZT_DRDY_MARGIN_MS;
+  if (currentMode == MODE_PZT_RS) {
+    timeoutMs = max(timeoutMs, PZT_RS_FIRST_BLOCK_MIN_TIMEOUT_MS);
+  }
+  return timeoutMs;
+}
+
 // Compute raw PZT block size in bytes for the current channel configuration.
 static uint32_t pzt_blockResponseBytes() {
   // ×2: each channel slot yields MUX1 + MUX2 samples
@@ -955,6 +974,17 @@ static bool pzr_waitForPair(uint32_t &hCyc, uint32_t &lCyc,
   return (hCyc != 0 && lCyc != 0);
 }
 
+// Non-blocking variant used by PZT_RS so Rosette refresh never paces PZT blocks.
+static bool pzr_takeReadyPair(uint32_t &hCyc, uint32_t &lCyc) {
+  if (!pzr_cap.pairReady) return false;
+  noInterrupts();
+  hCyc = pzr_cap.highCycles;
+  lCyc = pzr_cap.lowCycles;
+  pzr_cap.pairReady = false;
+  interrupts();
+  return (hCyc != 0 && lCyc != 0);
+}
+
 // Update a fixed-size moving average buffer and return the new mean.
 static inline float pzr_updateMA(float *buf, float &sum, int &idx,
                                   int &count, int N, float val) {
@@ -1003,22 +1033,10 @@ static inline void pzr_muxSelect(uint8_t ch) {
   pzr_resetCaptureState();
 }
 
-// Measure one Ra=(Rx+Rk) value on the given channel.
-// switched=true triggers a MUX switch + discard cycles first.
-static bool pzr_measureOneRa(uint8_t ch, bool switched, float &outRa) {
-  if (switched) {
-    pzr_muxSelect(ch);
-    for (int d = 0; d < PZR_DISCARD_CYCLES_AFTER_SWITCH; d++) {
-      uint32_t h, l;
-      if (!pzr_waitForPair(h, l)) return false;
-    }
-  }
+static bool pzr_updateChannelRaFromPair(uint8_t ch, uint32_t hCyc, uint32_t lCyc,
+                                        float &outRa) {
+  if (ch > 15 || hCyc == 0 || lCyc == 0) return false;
 
-  uint32_t hCyc = 0, lCyc = 0;
-  if (!pzr_waitForPair(hCyc, lCyc)) return false;
-
-  // Use the low/discharge time average from the active physical 555 circuit.
-  // Because the formula uses a ratio, hCyc and lCycAvg can stay in CPU cycles.
   PZR_555State &timerState = pzr_555State[pzr_active555Index()];
   const float lCycAvg = timerState.update(lCyc);
 
@@ -1051,6 +1069,22 @@ static bool pzr_measureOneRa(uint8_t ch, bool switched, float &outRa) {
   return true;
 }
 
+// Measure one Ra=(Rx+Rk) value on the given channel.
+// switched=true triggers a MUX switch + discard cycles first.
+static bool pzr_measureOneRa(uint8_t ch, bool switched, float &outRa) {
+  if (switched) {
+    pzr_muxSelect(ch);
+    for (int d = 0; d < PZR_DISCARD_CYCLES_AFTER_SWITCH; d++) {
+      uint32_t h, l;
+      if (!pzr_waitForPair(h, l)) return false;
+    }
+  }
+
+  uint32_t hCyc = 0, lCyc = 0;
+  if (!pzr_waitForPair(hCyc, lCyc)) return false;
+  return pzr_updateChannelRaFromPair(ch, hCyc, lCyc, outRa);
+}
+
 // Quantize resistance to uint16 ohms for mixed PZT_RS payloads.
 static inline uint16_t pzt_rsQuantizeOhms(float ra) {
   long v = lroundf(ra);
@@ -1066,40 +1100,73 @@ static void pzt_rsResetState() {
     pztRsLastRaQByChannel[ch] = pzt_rsQuantizeOhms(ra);
   }
   pztRsPrevMeasuredChannel = -1;
+  pztRsRefreshIndex = 0;
   pztRsLastRefreshMs = 0;
+  pztRsRefreshStage = PZT_RS_REFRESH_IDLE;
+  pztRsPendingChannel = 0;
+  pztRsDiscardRemaining = 0;
 }
 
-// Refresh one RS channel in round-robin order, rate-limited by refresh interval.
-static void pzt_rsRefreshOneChannel() {
-  if (pzt.channelCount == 0) return;
+// Advance Rosette refresh without blocking the PZT/MG24 stream.
+static void pzt_rsServiceRefresh() {
+  if (pzt.rsChannelCount == 0) return;
 
   uint32_t nowMs = millis();
-  if (pztRsLastRefreshMs != 0 && (nowMs - pztRsLastRefreshMs) < PZT_RS_REFRESH_MIN_MS) {
+  if (pztRsRefreshStage == PZT_RS_REFRESH_IDLE) {
+    if (pztRsLastRefreshMs != 0 && (nowMs - pztRsLastRefreshMs) < PZT_RS_REFRESH_MIN_MS) {
+      return;
+    }
+
+    uint8_t slot = (uint8_t)((pztRsRefreshIndex / 2u) % pzt.rsChannelCount);
+    pztRsPendingChannel =
+        ((pztRsRefreshIndex & 0x01u) == 0u) ? pzt.rsChannelsA[slot] : pzt.rsChannelsB[slot];
+    pztRsPendingChannel &= 0x0F;
+    pztRsRefreshIndex =
+        (uint8_t)((pztRsRefreshIndex + 1u) % max((uint8_t)1, (uint8_t)(pzt.rsChannelCount * 2u)));
+
+    if (pztRsPrevMeasuredChannel != (int8_t)pztRsPendingChannel) {
+      pzr_muxSelect(pztRsPendingChannel);
+      pztRsDiscardRemaining = PZR_DISCARD_CYCLES_AFTER_SWITCH;
+      pztRsRefreshStage =
+          (pztRsDiscardRemaining > 0) ? PZT_RS_REFRESH_DISCARD : PZT_RS_REFRESH_MEASURE;
+    } else {
+      pztRsDiscardRemaining = 0;
+      pztRsRefreshStage = PZT_RS_REFRESH_MEASURE;
+    }
+  }
+
+  uint32_t hCyc = 0, lCyc = 0;
+  if (!pzr_takeReadyPair(hCyc, lCyc)) return;
+
+  if (pztRsRefreshStage == PZT_RS_REFRESH_DISCARD) {
+    if (pztRsDiscardRemaining > 0) pztRsDiscardRemaining--;
+    if (pztRsDiscardRemaining == 0) pztRsRefreshStage = PZT_RS_REFRESH_MEASURE;
     return;
   }
 
-  static uint8_t rrIdx = 0;
-  uint8_t ch = pzt.channels[rrIdx % pzt.channelCount] & 0x0F;
-  rrIdx = (uint8_t)((rrIdx + 1u) % max((uint8_t)1, pzt.channelCount));
-
-  bool switched = (pztRsPrevMeasuredChannel != (int8_t)ch);
-  float ra = 0.0f;
-  if (pzr_measureOneRa(ch, switched, ra)) {
-    pztRsLastRaQByChannel[ch] = pzt_rsQuantizeOhms(ra);
-    pztRsPrevMeasuredChannel = (int8_t)ch;
-    pztRsLastRefreshMs = nowMs;
+  if (pztRsRefreshStage == PZT_RS_REFRESH_MEASURE) {
+    float ra = 0.0f;
+    if (pzr_updateChannelRaFromPair(pztRsPendingChannel, hCyc, lCyc, ra)) {
+      pztRsLastRaQByChannel[pztRsPendingChannel] = pzt_rsQuantizeOhms(ra);
+      pztRsPrevMeasuredChannel = (int8_t)pztRsPendingChannel;
+      pztRsLastRefreshMs = millis();
+    }
+    pztRsRefreshStage = PZT_RS_REFRESH_IDLE;
   }
 }
 
-// Map each PZT pair index to the logical channel used for held RS insertion.
-static uint8_t pzt_rsChannelForPair(uint32_t pairIdx) {
-  if (pzt.channelCount == 0) return 0;
+// Map each PZT pair index to the RS_MUX channel pair used for held RS insertion.
+static void pzt_rsChannelsForPair(uint32_t pairIdx, uint8_t &rsA, uint8_t &rsB) {
+  rsA = 0;
+  rsB = 0;
+  if (pzt.rsChannelCount == 0) return;
   uint32_t repeat = max((uint8_t)1, pzt.repeatCount);
-  uint32_t channelOrdinal = (pairIdx / repeat) % pzt.channelCount;
-  return (uint8_t)(pzt.channels[channelOrdinal] & 0x0F);
+  uint32_t channelOrdinal = (pairIdx / repeat) % pzt.rsChannelCount;
+  rsA = (uint8_t)(pzt.rsChannelsA[channelOrdinal] & 0x0F);
+  rsB = (uint8_t)(pzt.rsChannelsB[channelOrdinal] & 0x0F);
 }
 
-// Expand one PZT block into PZT_RS layout by inserting held RS per pair.
+// Expand one PZT block into PZT_RS layout by inserting held RS pairs per PZT pair.
 static bool pzt_buildCombinedBlock(const uint8_t *src, uint32_t srcLen,
                                    uint8_t *dst, uint32_t &dstLen) {
   if (!src || !dst) return false;
@@ -1113,7 +1180,7 @@ static bool pzt_buildCombinedBlock(const uint8_t *src, uint32_t srcLen,
   if ((pztSampleCount & 0x01u) != 0u) return false; // PZT samples are MUX1/MUX2 pairs.
 
   uint16_t pairCount = pztSampleCount / 2u;
-  uint32_t combinedCount32 = (uint32_t)pztSampleCount + (uint32_t)pairCount;
+  uint32_t combinedCount32 = (uint32_t)pztSampleCount + ((uint32_t)pairCount * 2u);
   if (combinedCount32 > 65535u) return false;
   uint16_t combinedCount = (uint16_t)combinedCount32;
 
@@ -1129,15 +1196,20 @@ static bool pzt_buildCombinedBlock(const uint8_t *src, uint32_t srcLen,
   uint32_t srcPayloadPos = PZT_ACK_FRAME_LEN;
   uint32_t dstPayloadPos = PZT_ACK_FRAME_LEN;
   for (uint16_t pair = 0; pair < pairCount; ++pair) {
-    uint8_t ch = pzt_rsChannelForPair(pair);
-    uint16_t rsValue = pztRsLastRaQByChannel[ch];
+    uint8_t rsA = 0;
+    uint8_t rsB = 0;
+    pzt_rsChannelsForPair(pair, rsA, rsB);
+    uint16_t rsValueA = pztRsLastRaQByChannel[rsA];
+    uint16_t rsValueB = pztRsLastRaQByChannel[rsB];
 
     dst[dstPayloadPos++] = src[srcPayloadPos++]; // MUX1 LSB
     dst[dstPayloadPos++] = src[srcPayloadPos++]; // MUX1 MSB
     dst[dstPayloadPos++] = src[srcPayloadPos++]; // MUX2 LSB
     dst[dstPayloadPos++] = src[srcPayloadPos++]; // MUX2 MSB
-    dst[dstPayloadPos++] = (uint8_t)(rsValue & 0xFF);
-    dst[dstPayloadPos++] = (uint8_t)(rsValue >> 8);
+    dst[dstPayloadPos++] = (uint8_t)(rsValueA & 0xFF);
+    dst[dstPayloadPos++] = (uint8_t)(rsValueA >> 8);
+    dst[dstPayloadPos++] = (uint8_t)(rsValueB & 0xFF);
+    dst[dstPayloadPos++] = (uint8_t)(rsValueB >> 8);
   }
 
   uint32_t srcTrailerPos = (uint32_t)PZT_ACK_FRAME_LEN + payloadBytes;
@@ -1219,6 +1291,7 @@ static bool parseValueSuffix(const String &inRaw, double &outVal, bool isCapUnit
 // Parse channel list and send channel configuration to MG24.
 static bool pzt_handleChannels(const String &args) {
   pzt.channelCount = 0;
+  pzt.rsChannelCount = 0;
   int i = 0, len = args.length();
   while (i < len && pzt.channelCount < 16) {
     while (i < len && (args[i] == ' ' || args[i] == ',')) i++;
@@ -1244,6 +1317,35 @@ static bool pzt_handleChannels(const String &args) {
   uint8_t ack[PZT_ACK_FRAME_LEN] = {0};
   if (!pzt_recvAckWhenReady(ack, PZT_DRDY_ACK_TIMEOUT_MS)) return false;
   return (ack[0] == PZT_ACK_MAGIC && ack[1] == PZT_ACK_STATUS_OK);
+}
+
+// Parse RS_MUX channel pairs used by PZT_RS. The list is flattened as
+// RS1,RS2 per PZT channel slot, aligned with the active PZT channels list.
+static bool pzt_handleRsChannels(const String &args) {
+  if (pzt.channelCount == 0) return false;
+
+  uint8_t values[32];
+  uint8_t valueCount = 0;
+  int i = 0, len = args.length();
+  while (i < len && valueCount < 32) {
+    while (i < len && (args[i] == ' ' || args[i] == ',')) i++;
+    if (i >= len) break;
+    int start = i;
+    while (i < len && args[i] != ' ' && args[i] != ',') i++;
+    int v = args.substring(start, i).toInt();
+    if (v < 0 || v > 15) return false;
+    values[valueCount++] = (uint8_t)v;
+  }
+
+  if (valueCount != (uint8_t)(pzt.channelCount * 2u)) return false;
+
+  pzt.rsChannelCount = pzt.channelCount;
+  for (uint8_t slot = 0; slot < pzt.rsChannelCount; ++slot) {
+    pzt.rsChannelsA[slot] = values[slot * 2u];
+    pzt.rsChannelsB[slot] = values[(slot * 2u) + 1u];
+  }
+
+  return true;
 }
 
 // Update repeat count and push it to MG24.
@@ -1329,6 +1431,10 @@ static void pzt_handleRun(const String &args) {
     Serial.println(F("# ERROR: no channels configured"));
     hostAck(false, args); return;
   }
+  if (currentMode == MODE_PZT_RS && pzt.rsChannelCount != pzt.channelCount) {
+    Serial.println(F("# ERROR: PZT_RS requires two RS_MUX channels per PZT channel slot (use rschannels)."));
+    hostAck(false, args); return;
+  }
 
   uint32_t ms    = 0;
   bool     timed = false;
@@ -1358,7 +1464,7 @@ static void pzt_handleRun(const String &args) {
 
   // Wait for the first block to become ready and fetch it before we tell the PC
   // that streaming has started. This keeps the PC-side protocol unchanged.
-  uint32_t firstBlockTimeout = pzt_warmupDelayMs() + pzt_blockDelayMs() + PZT_DRDY_MARGIN_MS;
+  uint32_t firstBlockTimeout = pzt_firstBlockTimeoutMs();
   uint32_t waitStart = millis();
 
   while (pzt_queueIsEmpty()) {
@@ -1417,6 +1523,14 @@ static void pzt_handleRun(const String &args) {
     // Second priority: move queued blocks to the PC without blocking SPI service.
     pzt_serviceUsbTx();
 
+    if (currentMode == MODE_PZT_RS &&
+        !pztRemoteEnded &&
+        !pztWaitingFinalAck &&
+        !pzt_drdyPending() &&
+        pzt_queueIsEmpty()) {
+      pzt_rsServiceRefresh();
+    }
+
     if (pztStreamFault) {
       pzt.running = false;
       break;
@@ -1465,6 +1579,15 @@ static void pzt_printStatus() {
   for (uint8_t i = 0; i < pzt.channelCount; i++) {
     Serial.print(pzt.channels[i]);
     if (i + 1 < pzt.channelCount) Serial.print(',');
+  }
+  Serial.println();
+  Serial.print(F("# rschannels (pairs=")); Serial.print(pzt.rsChannelCount); Serial.println(F("):"));
+  Serial.print(F("#   "));
+  for (uint8_t i = 0; i < pzt.rsChannelCount; i++) {
+    Serial.print(pzt.rsChannelsA[i]);
+    Serial.print(',');
+    Serial.print(pzt.rsChannelsB[i]);
+    if (i + 1 < pzt.rsChannelCount) Serial.print(',');
   }
   Serial.println();
   Serial.print(F("# repeatCount: "));    Serial.println(pzt.repeatCount);
@@ -1792,7 +1915,8 @@ static void printHelp() {
   Serial.println(F("#   osr 2|4|8"));
   Serial.println(F("#   gain 1|2|3|4"));
   Serial.println(F("#   ground <ch>|true|false"));
-  Serial.println(F("#   PZT_RS binary payload layout: [PZT_MUX1,PZT_MUX2,RS_hold] per slot"));
+  Serial.println(F("#   rschannels a,b,c,d...  (PZT_RS only; two RS_MUX channels per PZT slot)"));
+  Serial.println(F("#   PZT_RS binary payload layout: [PZT_MUX1,PZT_MUX2,RS1_hold,RS2_hold] per slot"));
   Serial.println(F("# ── PZR mode only ───────────────────────────────────────────"));
   Serial.print(F("#   active 555 source: ")); Serial.println(TIMER555_NAME);
   Serial.println(F("#   PZR samples are Ra=(Rx+Rk) ohms; Rk is not subtracted"));
@@ -1866,6 +1990,7 @@ static void handleLine(const String &rawLine) {
   // ── PZT/PZT_RS mode commands ──────────────────────────────────────
   if (currentMode == MODE_PZT || currentMode == MODE_PZT_RS) {
     if      (cmd == "channels") ok = pzt_handleChannels(args);
+    else if (cmd == "rschannels" && currentMode == MODE_PZT_RS) ok = pzt_handleRsChannels(args);
     else if (cmd == "repeat")   ok = pzt_handleRepeat(args);
     else if (cmd == "buffer")   ok = pzt_handleBuffer(args);
     else if (cmd == "ref")      ok = pzt_handleRef(args);
@@ -1884,6 +2009,10 @@ static void handleLine(const String &rawLine) {
     }
     else if (cmd == "rb" || cmd == "rk" || cmd == "cf" || cmd == "rxmax" || cmd == "ascii") {
       Serial.println(F("# ERROR: this command is only available in PZR or PZT_RS mode."));
+      ok = false;
+    }
+    else if (cmd == "rschannels") {
+      Serial.println(F("# ERROR: rschannels is only available in PZT_RS mode."));
       ok = false;
     }
     else {

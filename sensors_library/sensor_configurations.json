@@ -1,7 +1,9 @@
 {
   "version": 1,
-  "selected_name": "Single_PZT_New",
-  "deleted_names": [],
+  "selected_name": "Array_PCB1.7",
+  "deleted_names": [
+    "Single_PZT_New"
+  ],
   "configurations": [
     {
       "name": "PLUS",
@@ -61,7 +63,7 @@
         "T"
       ],
       "type": "array_layout",
-      "reverse_polarity": false,
+      "reverse_polarity": true,
       "array_layout": {
         "cells": [
           [
@@ -90,7 +92,8 @@
             2,
             3,
             4
-          ]
+          ],
+          "rs_channels": []
         },
         "PZR4": {
           "mux": 2,
@@ -100,7 +103,8 @@
             7,
             8,
             9
-          ]
+          ],
+          "rs_channels": []
         },
         "PZR6": {
           "mux": 1,
@@ -110,7 +114,8 @@
             12,
             13,
             14
-          ]
+          ],
+          "rs_channels": []
         },
         "PZT1": {
           "mux": 1,
@@ -120,6 +125,102 @@
             2,
             3,
             4
+          ],
+          "rs_channels": []
+        },
+        "PZT3": {
+          "mux": 1,
+          "channels": [
+            5,
+            6,
+            7,
+            8,
+            9
+          ],
+          "rs_channels": []
+        },
+        "PZT5": {
+          "mux": 2,
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "rs_channels": []
+        },
+        "PZT7": {
+          "mux": 2,
+          "channels": [
+            5,
+            6,
+            7,
+            8,
+            9
+          ],
+          "rs_channels": []
+        }
+      },
+      "channel_layout": {
+        "channels_per_sensor": 5
+      }
+    },
+    {
+      "name": "Single_PZT_New_grey_wire",
+      "channel_sensor_map": [
+        "T",
+        "R",
+        "C",
+        "B",
+        "L"
+      ],
+      "type": "channel_layout",
+      "reverse_polarity": true
+    },
+    {
+      "name": "Array_PCB1.7",
+      "channel_sensor_map": [
+        "B",
+        "L",
+        "C",
+        "R",
+        "T"
+      ],
+      "type": "array_layout",
+      "reverse_polarity": false,
+      "array_layout": {
+        "cells": [
+          [
+            null,
+            "PZT7",
+            null
+          ],
+          [
+            "PZT1",
+            "PZT6",
+            "PZT5"
+          ],
+          [
+            null,
+            "PZT3",
+            null
+          ]
+        ]
+      },
+      "mux_mapping": {
+        "PZT1": {
+          "mux": 1,
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "rs_channels": [
+            9,
+            8
           ]
         },
         "PZT3": {
@@ -130,6 +231,10 @@
             7,
             8,
             9
+          ],
+          "rs_channels": [
+            7,
+            6
           ]
         },
         "PZT5": {
@@ -140,6 +245,24 @@
             2,
             3,
             4
+          ],
+          "rs_channels": [
+            5,
+            4
+          ]
+        },
+        "PZT6": {
+          "mux": 1,
+          "channels": [
+            10,
+            11,
+            12,
+            13,
+            14
+          ],
+          "rs_channels": [
+            2,
+            3
           ]
         },
         "PZT7": {
@@ -150,24 +273,16 @@
             7,
             8,
             9
+          ],
+          "rs_channels": [
+            1,
+            0
           ]
         }
       },
       "channel_layout": {
         "channels_per_sensor": 5
       }
-    },
-    {
-      "name": "Single_PZT_New",
-      "channel_sensor_map": [
-        "L",
-        "B",
-        "C",
-        "R",
-        "T"
-      ],
-      "type": "channel_layout",
-      "reverse_polarity": true
     }
   ]
 }

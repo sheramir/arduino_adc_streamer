@@ -111,7 +111,7 @@ static const uint8_t        SPI_PIN_CS    = 0;
 // Time to wait after switching the ADG1206 address lines before sampling.
 // ADG1206 worst-case tON is 150 ns; we use a generous µs value to also
 // allow the connected circuitry (buffer op-amp, RC filter) to settle.
-static const uint32_t MUX_SETTLE_US      = 3; // <<========= was 30
+static const uint32_t MUX_SETTLE_US      = 20; // <<========= was 30
 
 // Ground-channel ghosting reduction.
 // FAST default: switch both MUXes to ground/Vmid and dwell, but do not spend

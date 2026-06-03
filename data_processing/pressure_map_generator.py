@@ -50,6 +50,7 @@ DEFAULT_PRESSURE_SHOW_NEGATIVE = False
 PRESSURE_GEOMETRY_EPSILON = 0.001
 PRESSURE_QUADRANT_MODE_PEAKLESS = "peakless"
 PRESSURE_QUADRANT_MODE_PEAKED = "peaked"
+PRESSURE_QUADRANT_MODE_SINGLE_AXIS_PEAKED = "single-axis-peaked"
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +86,9 @@ class PressureQuadrantPlane:
     corner_value: float | None = None
     triangles: tuple[PressureTrianglePlane, ...] = ()
     single_outer_decay_sensor: str | None = None
+    single_axis_peak_sensor: str | None = None
+    single_axis_center_value: float | None = None
+    single_axis_outer_value: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -307,7 +311,24 @@ class PressureMapGenerator:
         base_a, base_b, base_c = self._three_sensor_plane_coefficients(signals, quadrant)
         sign = self._quadrant_sign(*(signals[sensor] for sensor in quadrant.sensors))
         single_outer_decay_sensor = self._single_outer_decay_sensor(signals, quadrant)
+        single_axis_peak_sensor = self._single_axis_peak_sensor(signals, quadrant)
         peak_x, peak_y = self._pressure_point(signals, quadrant)
+        if single_axis_peak_sensor is not None:
+            peak_height = self._pressure_point_height(signals, quadrant, peak_x, peak_y)
+            return PressureQuadrantPlane(
+                label=quadrant.label,
+                a=base_a,
+                b=base_b,
+                c=base_c,
+                sign=sign,
+                sensors=quadrant.sensors,
+                mode=PRESSURE_QUADRANT_MODE_SINGLE_AXIS_PEAKED,
+                peak_point=(peak_x, peak_y),
+                peak_height=peak_height,
+                single_axis_peak_sensor=single_axis_peak_sensor,
+                single_axis_center_value=float(signals[SHEAR_POSITION_CENTER]),
+                single_axis_outer_value=float(signals[single_axis_peak_sensor]),
+            )
         if not self._is_peaked_pressure_point(peak_x, peak_y, quadrant):
             return PressureQuadrantPlane(
                 label=quadrant.label,
@@ -364,6 +385,25 @@ class PressureMapGenerator:
         horizontal_nonzero = abs(horizontal_value) > self.geometry_epsilon
         vertical_nonzero = abs(vertical_value) > self.geometry_epsilon
         if not center_is_zero:
+            return None
+        if horizontal_nonzero and not vertical_nonzero:
+            return quadrant.horizontal_sensor
+        if vertical_nonzero and not horizontal_nonzero:
+            return quadrant.vertical_sensor
+        return None
+
+    def _single_axis_peak_sensor(
+        self,
+        signals: Mapping[str, float],
+        quadrant: _QuadrantDefinition,
+    ) -> str | None:
+        center_value = signals[SHEAR_POSITION_CENTER]
+        horizontal_value = signals[quadrant.horizontal_sensor]
+        vertical_value = signals[quadrant.vertical_sensor]
+        center_nonzero = abs(center_value) > self.geometry_epsilon
+        horizontal_nonzero = abs(horizontal_value) > self.geometry_epsilon
+        vertical_nonzero = abs(vertical_value) > self.geometry_epsilon
+        if not center_nonzero:
             return None
         if horizontal_nonzero and not vertical_nonzero:
             return quadrant.horizontal_sensor
@@ -575,10 +615,63 @@ class PressureMapGenerator:
     ) -> np.ndarray:
         if plane.mode == PRESSURE_QUADRANT_MODE_PEAKED and plane.triangles:
             values = self._evaluate_peaked_quadrant(plane, x_values_mm, y_values_mm)
+        elif plane.mode == PRESSURE_QUADRANT_MODE_SINGLE_AXIS_PEAKED:
+            values = self._evaluate_single_axis_peaked_quadrant(plane, x_values_mm, y_values_mm)
         else:
             values = self._evaluate_plane(plane.a, plane.b, plane.c, x_values_mm, y_values_mm)
         values = self._apply_margin_decay(plane, x_values_mm, y_values_mm, values)
         return self._clamp_values(values, plane.sign)
+
+    def _evaluate_single_axis_peaked_quadrant(
+        self,
+        plane: PressureQuadrantPlane,
+        x_values_mm: np.ndarray,
+        y_values_mm: np.ndarray,
+    ) -> np.ndarray:
+        if plane.peak_point is None:
+            return self._evaluate_plane(plane.a, plane.b, plane.c, x_values_mm, y_values_mm)
+
+        quadrant = self._quadrant_by_label.get(plane.label)
+        if quadrant is None:
+            return self._evaluate_plane(plane.a, plane.b, plane.c, x_values_mm, y_values_mm)
+
+        peak_x, peak_y = plane.peak_point
+        center_value = float(plane.single_axis_center_value or SHEAR_ZERO_VALUE)
+        outer_value = float(plane.single_axis_outer_value or SHEAR_ZERO_VALUE)
+        peak_value = float(plane.peak_height if plane.peak_height is not None else plane.c)
+
+        outer_sensor = plane.single_axis_peak_sensor
+        if outer_sensor is None:
+            return self._evaluate_plane(plane.a, plane.b, plane.c, x_values_mm, y_values_mm)
+        active_horizontal = outer_sensor == quadrant.horizontal_sensor
+        if active_horizontal:
+            local_axis = x_values_mm * quadrant.horizontal_sign
+            local_lateral = np.abs(y_values_mm)
+            peak_axis = peak_x * quadrant.horizontal_sign
+        else:
+            local_axis = y_values_mm * quadrant.vertical_sign
+            local_lateral = np.abs(x_values_mm)
+            peak_axis = peak_y * quadrant.vertical_sign
+
+        spacing = self.sensor_spacing_mm
+        peak_axis = float(np.clip(peak_axis, self.geometry_epsilon, spacing - self.geometry_epsilon))
+
+        before_peak = np.clip(local_axis / peak_axis, 0.0, 1.0)
+        after_peak = np.clip((spacing - local_axis) / (spacing - peak_axis), 0.0, 1.0)
+        axial_blend = np.where(local_axis <= peak_axis, before_peak, after_peak)
+
+        if center_value <= SHEAR_ZERO_VALUE and outer_value <= SHEAR_ZERO_VALUE:
+            edge_value = SHEAR_ZERO_VALUE
+        else:
+            edge_value = (center_value + outer_value) / 2.0
+
+        values = edge_value + (peak_value - edge_value) * axial_blend
+
+        width_at_peak = max(self.geometry_epsilon, spacing * 0.22)
+        width_at_edges = max(self.geometry_epsilon, spacing * 0.07)
+        lateral_width = width_at_edges + (width_at_peak - width_at_edges) * axial_blend
+        lateral_profile = np.exp(-((local_lateral / lateral_width) ** 2))
+        return values * lateral_profile
 
     def _apply_margin_decay(
         self,

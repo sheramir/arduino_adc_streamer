@@ -20,6 +20,7 @@ from data_processing.pressure_map_generator import (
     DEFAULT_PRESSURE_SHOW_NEGATIVE,
     PRESSURE_QUADRANT_MODE_PEAKED,
     PRESSURE_QUADRANT_MODE_PEAKLESS,
+    PRESSURE_QUADRANT_MODE_SINGLE_AXIS_PEAKED,
     PressureMapGenerator,
 )
 
@@ -155,17 +156,45 @@ class PressureMapGeneratorTests(unittest.TestCase):
 
         self.assertEqual(planes[PRESSURE_QUADRANT_TOP_RIGHT].mode, PRESSURE_QUADRANT_MODE_PEAKED)
         self.assertEqual(planes[PRESSURE_QUADRANT_TOP_LEFT].mode, PRESSURE_QUADRANT_MODE_PEAKED)
-        self.assertEqual(planes[PRESSURE_QUADRANT_BOTTOM_LEFT].mode, PRESSURE_QUADRANT_MODE_PEAKLESS)
-        self.assertEqual(planes[PRESSURE_QUADRANT_BOTTOM_RIGHT].mode, PRESSURE_QUADRANT_MODE_PEAKLESS)
+        self.assertEqual(
+            planes[PRESSURE_QUADRANT_BOTTOM_LEFT].mode,
+            PRESSURE_QUADRANT_MODE_SINGLE_AXIS_PEAKED,
+        )
+        self.assertEqual(
+            planes[PRESSURE_QUADRANT_BOTTOM_RIGHT].mode,
+            PRESSURE_QUADRANT_MODE_SINGLE_AXIS_PEAKED,
+        )
 
-    def test_mixed_inputs_peak_only_in_quadrants_with_two_outer_signals(self):
+    def test_center_plus_one_side_creates_single_axis_peak_between_sensors(self):
+        spacing = DEFAULT_PRESSURE_SENSOR_SPACING_MM
+        result = self.generator.generate({"C": 5.0, "R": 3.0, "T": 0.0, "L": 0.0, "B": 0.0})
+        tr_plane = self._planes_by_label(result)[PRESSURE_QUADRANT_TOP_RIGHT]
+
+        self.assertEqual(tr_plane.mode, PRESSURE_QUADRANT_MODE_SINGLE_AXIS_PEAKED)
+        self.assertIsNotNone(tr_plane.peak_point)
+        peak_x, peak_y = tr_plane.peak_point
+        self.assertGreater(peak_x, 0.0)
+        self.assertLess(peak_x, spacing)
+        self.assertAlmostEqual(peak_y, 0.0, places=6)
+
+        on_axis = self._grid_value(result, peak_x, 0.0)
+        off_axis = self._grid_value(result, peak_x, spacing / 2.0)
+        self.assertGreater(on_axis, off_axis)
+
+    def test_mixed_inputs_use_single_axis_peaks_when_one_outer_is_zero(self):
         result = self.generator.generate({"C": 5.0, "R": 0.0, "T": 8.0, "L": 3.0, "B": 2.0})
         planes = self._planes_by_label(result)
 
         self.assertEqual(planes[PRESSURE_QUADRANT_TOP_LEFT].mode, PRESSURE_QUADRANT_MODE_PEAKED)
         self.assertEqual(planes[PRESSURE_QUADRANT_BOTTOM_LEFT].mode, PRESSURE_QUADRANT_MODE_PEAKED)
-        self.assertEqual(planes[PRESSURE_QUADRANT_TOP_RIGHT].mode, PRESSURE_QUADRANT_MODE_PEAKLESS)
-        self.assertEqual(planes[PRESSURE_QUADRANT_BOTTOM_RIGHT].mode, PRESSURE_QUADRANT_MODE_PEAKLESS)
+        self.assertEqual(
+            planes[PRESSURE_QUADRANT_TOP_RIGHT].mode,
+            PRESSURE_QUADRANT_MODE_SINGLE_AXIS_PEAKED,
+        )
+        self.assertEqual(
+            planes[PRESSURE_QUADRANT_BOTTOM_RIGHT].mode,
+            PRESSURE_QUADRANT_MODE_SINGLE_AXIS_PEAKED,
+        )
 
     def test_center_zero_places_peak_at_corner_and_collapses_outer_triangles(self):
         result = self.generator.generate({"C": 0.0, "R": 5.0, "T": 7.0, "L": 0.0, "B": 0.0})

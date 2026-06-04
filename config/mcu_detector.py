@@ -17,8 +17,17 @@ class MCUDetectorMixin:
     """Mixin class for MCU detection and GUI adaptation."""
 
     @staticmethod
-    def _is_array_pzt_pzr1_mcu_name(mcu_name: str | None) -> bool:
-        return (mcu_name or "").strip().lower() == "array_pzt_pzr1"
+    def _get_locked_ground_pin_for_mcu_name(mcu_name: str | None) -> int | None:
+        normalized_name = (mcu_name or "").strip().lower()
+        if normalized_name == "array_pzt_pzr1":
+            return 10
+        if normalized_name == "array_pzt_pzr1.7":
+            return 15
+        return None
+
+    @classmethod
+    def _is_ground_default_mcu_name(cls, mcu_name: str | None) -> bool:
+        return cls._get_locked_ground_pin_for_mcu_name(mcu_name) is not None
 
     def is_555_analyzer_mode(self) -> bool:
         return getattr(self, 'device_mode', 'adc') == '555'
@@ -32,11 +41,8 @@ class MCUDetectorMixin:
         if state.log_message:
             self.log_status(state.log_message)
 
-        # Re-arm one-time defaults when transitioning away from the special MCU.
-        if (
-            previous_mcu != self.current_mcu
-            and not self._is_array_pzt_pzr1_mcu_name(self.current_mcu)
-        ):
+        # Re-arm one-time defaults when MCU identity changes.
+        if previous_mcu != self.current_mcu:
             self._array_pzt_pzr1_defaults_applied = False
     
     def detect_mcu(self):
@@ -66,26 +72,27 @@ class MCUDetectorMixin:
         if hasattr(self, 'use_ground_check'):
             self.use_ground_check.setVisible(view_state.show_ground_controls)
 
-        is_array_pzt_pzr1 = self._is_array_pzt_pzr1_mcu_name(self.current_mcu)
+        locked_ground_pin = self._get_locked_ground_pin_for_mcu_name(self.current_mcu)
+        is_ground_default_mcu = locked_ground_pin is not None
         if hasattr(self, 'ground_pin_spin'):
-            lock_ground_pin = bool(view_state.show_ground_controls and is_array_pzt_pzr1)
+            lock_ground_pin = bool(view_state.show_ground_controls and is_ground_default_mcu)
             self.ground_pin_spin.setEnabled(not lock_ground_pin)
             if lock_ground_pin:
-                changed_ground_pin = self.ground_pin_spin.value() != 10
+                changed_ground_pin = self.ground_pin_spin.value() != locked_ground_pin
                 self.ground_pin_spin.blockSignals(True)
-                self.ground_pin_spin.setValue(10)
+                self.ground_pin_spin.setValue(locked_ground_pin)
                 self.ground_pin_spin.blockSignals(False)
                 if hasattr(self, 'config'):
-                    changed_ground_pin = changed_ground_pin or int(self.config.get('ground_pin', -1)) != 10
-                    self.config['ground_pin'] = 10
+                    changed_ground_pin = changed_ground_pin or int(self.config.get('ground_pin', -1)) != locked_ground_pin
+                    self.config['ground_pin'] = locked_ground_pin
                 if changed_ground_pin and hasattr(self, 'update_start_button_state'):
                     self.config_is_valid = False
                     self.update_start_button_state()
 
-        # For Array_PZT_PZR1, default "Use Ground Sample" to on once per MCU
+        # For Array_PZT_PZR1* boards, default "Use Ground Sample" to on once per MCU
         # selection, but keep it user-editable afterward.
         if (
-            is_array_pzt_pzr1
+            is_ground_default_mcu
             and view_state.show_ground_controls
             and hasattr(self, 'use_ground_check')
             and not getattr(self, '_array_pzt_pzr1_defaults_applied', False)

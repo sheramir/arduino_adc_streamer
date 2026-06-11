@@ -133,8 +133,6 @@ static const uint32_t PZT_RS_FIRST_BLOCK_MIN_TIMEOUT_MS = 500;
 static const uint16_t PZT_WARMUP_SWEEPS          = 48;
 
 // ── Protocol limits ───────────────────────────────────────────────────
-#define PZT_RS_DEBUG_COUNTER 0
-
 static const uint16_t PZT_MAX_REPEAT             = 100;
 static const uint8_t  PZT_MUX_CH_MAX             = 15;
 static const uint8_t  PZT_MAX_PHYSICAL_CHANNELS  = 16;
@@ -721,17 +719,6 @@ static bool pzt_handleStreamingFrame(PZTQueuedBlock *slot, bool fromDrdy) {
 
   uint32_t queuedLen = pztStreamBlockBytes;
   if (currentMode == MODE_PZT_RS) {
-#if PZT_RS_DEBUG_COUNTER == 2
-    // Write counter directly into pztRsLastRaQByChannel for every RS channel.
-    // pzt_buildCombinedBlock will then read these through the normal path.
-    static uint32_t dbgHeldCount = 0;
-    dbgHeldCount++;
-    const uint16_t dbgHeldStep = (uint16_t)((dbgHeldCount % 11u) * 10u);
-    for (uint8_t i = 0; i < pzt.rsRefreshChannelCount; ++i) {
-      const uint8_t ch = pzt.rsRefreshChannels[i] & 0x0Fu;
-      pztRsLastRaQByChannel[ch] = 100u + dbgHeldStep;
-    }
-#endif
     pzt_rsServiceRefresh(false);
     if (!pzt_buildCombinedBlock(slot->data, pztStreamBlockBytes, pztRsBlockBuf, queuedLen)) {
       pztStreamFault = true;
@@ -1290,22 +1277,6 @@ static inline void pzr_muxSelect(uint8_t ch) {
 static bool pzr_updateChannelRaFromPair(uint8_t ch, uint32_t hCyc, uint32_t lCyc,
                                         float &outRa) {
   if (ch > 15 || hCyc == 0 || lCyc == 0) return false;
-#if PZT_RS_DEBUG_COUNTER == 4
-  // Counter per call, sweeps 100→200 across all channels combined.
-  static uint32_t dbgRaCount = 0;
-  dbgRaCount++;
-  outRa = 100.0f + (float)((dbgRaCount % 11u) * 10u);
-  pzr_chState[ch].lastPlotRa = outRa;
-  return true;
-#elif PZT_RS_DEBUG_COUNTER == 5
-  // Per-channel base (ch*50+100) + shared oscillating offset (0..100 step 10).
-  // ch6=400-500, ch7=450-550, ch8=500-600, ch9=550-650 for PCB1.7 RS channels.
-  static uint32_t dbgCh5Count = 0;
-  dbgCh5Count++;
-  outRa = (float)ch * 50.0f + 100.0f + (float)((dbgCh5Count % 11u) * 10u);
-  pzr_chState[ch].lastPlotRa = outRa;
-  return true;
-#endif
 
   PZR_LowCycleSmootherState &lowCycleSmoother =
       pzr_lowCycleSmootherBy555[pzr_active555Index()];
@@ -1432,18 +1403,6 @@ static bool pzt_rsConsumeReadyPair() {
   }
 
   if (pztRsRefreshStage == PZT_RS_REFRESH_MEASURE) {
-#if PZT_RS_DEBUG_COUNTER == 3
-    // pzr_takeReadyPair succeeded (555 ISR fired and pairReady was set).
-    // Replace the real Ra calculation with a counter to confirm MEASURE is reached.
-    static uint32_t dbgMeasureCount = 0;
-    dbgMeasureCount++;
-    pztRsLastRaQByChannel[pztRsPendingChannel] =
-        100u + (uint16_t)((dbgMeasureCount % 11u) * 10u);
-    pztRsUpdateCountByChannel[pztRsPendingChannel]++;
-    pztRsTotalUpdates++;
-    pztRsPrevMeasuredChannel = (int8_t)pztRsPendingChannel;
-    pztRsLastRefreshMs = millis();
-#else
     float ra = 0.0f;
     if (pzr_updateChannelRaFromPair(pztRsPendingChannel, hCyc, lCyc, ra)) {
       pztRsLastRaQByChannel[pztRsPendingChannel] = pzt_rsQuantizeOhms(ra);
@@ -1453,7 +1412,6 @@ static bool pzt_rsConsumeReadyPair() {
       pztRsPrevMeasuredChannel = (int8_t)pztRsPendingChannel;
       pztRsLastRefreshMs = millis();
     }
-#endif
     pzt_rsStartNextRefreshChannel(); // 555 immediately starts measuring next channel
     return true;
   }
@@ -1516,12 +1474,6 @@ static bool pzt_buildCombinedBlock(const uint8_t *src, uint32_t srcLen,
   if (srcLen < expectedLen) return false;
   if ((pztSampleCount & 0x01u) != 0u) return false; // PZT samples are MUX1/MUX2 pairs.
 
-#if PZT_RS_DEBUG_COUNTER == 1
-  static uint32_t pztRsDebugBlockCount = 0;
-  const uint16_t pztRsDebugStep = (uint16_t)((pztRsDebugBlockCount % 11u) * 10u);
-  pztRsDebugBlockCount++;
-#endif
-
   uint16_t physicalPairCount = pztSampleCount / 2u;
   uint8_t physicalCount = pzt_physicalChannelCount();
   if (physicalCount == 0 || pzt.channelCount == 0 || pzt.sensorCount == 0) return false;
@@ -1568,13 +1520,8 @@ static bool pzt_buildCombinedBlock(const uint8_t *src, uint32_t srcLen,
           dst[dstPayloadPos++] = src[srcPayloadPos++]; // selected PZT MUX side MSB
         }
 
-#if PZT_RS_DEBUG_COUNTER == 1
-        uint16_t rsA = pztRsDebugStep + 100u;
-        uint16_t rsB = 200u - pztRsDebugStep;
-#else
         uint16_t rsA = pzt_rsHeldValueOrZero(pzt.sensorRsA[sensor]);
         uint16_t rsB = pzt_rsHeldValueOrZero(pzt.sensorRsB[sensor]);
-#endif
         dst[dstPayloadPos++] = (uint8_t)(rsA & 0xFF);
         dst[dstPayloadPos++] = (uint8_t)(rsA >> 8);
         dst[dstPayloadPos++] = (uint8_t)(rsB & 0xFF);

@@ -69,6 +69,31 @@ class ADCConfigurationServiceTests(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual(result.messages, ["Applied cf=220n"])
 
+    def test_apply_555_parameter_switches_device_into_pzt_rs_mode_first(self):
+        commands = []
+
+        def send_command(command, expected):
+            commands.append((command, expected))
+            responses = {
+                "mode PZT_RS": (True, "PZT_RS"),
+                "rxmax 5000": (True, "5000"),
+            }
+            return responses[command]
+
+        service = ADCConfigurationService(send_command)
+        result = service.apply_555_parameter(
+            "rxmax",
+            "5000",
+            is_connected=True,
+            device_mode="adc",
+            allow_in_pzt_rs_mode=True,
+            target_array_mode="PZT_RS",
+        )
+
+        self.assertTrue(result.success)
+        self.assertEqual(commands, [("mode PZT_RS", "PZT_RS"), ("rxmax 5000", None)])
+        self.assertEqual(result.messages, ["Set Array operating mode: PZT_RS", "Applied rxmax=5000"])
+
     def test_estimate_555_pair_timeout_ms_matches_pcb17_rs_defaults(self):
         timeout_ms = ADCConfigurationService.estimate_555_pair_timeout_ms(
             rb_ohms=470.0,

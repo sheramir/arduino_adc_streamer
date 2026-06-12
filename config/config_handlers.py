@@ -1028,6 +1028,7 @@ class ConfigurationMixin:
             is_connected=bool(self.serial_port and self.serial_port.is_open),
             device_mode=str(getattr(self, 'device_mode', 'adc')),
             allow_in_pzt_rs_mode=self.is_array_pzt_rs_mode(),
+            target_array_mode=self.get_selected_array_operation_mode() if self.is_array_pzt_pzr_mode() else None,
         )
         for message in result.messages:
             self.log_status(message)

@@ -78,6 +78,7 @@ class ADCConfigurationService:
         is_connected: bool,
         device_mode: str,
         allow_in_pzt_rs_mode: bool = False,
+        target_array_mode: str | None = None,
     ) -> ADCCommandResult:
         if not is_connected:
             return ADCCommandResult(False, messages=["ERROR: Connect a device before applying 555 parameters"])
@@ -85,12 +86,22 @@ class ADCConfigurationService:
         if device_mode != "555" and not allow_in_pzt_rs_mode:
             return ADCCommandResult(False, messages=["Ignoring 555 parameter apply while not in 555 or PZT_RS mode"])
 
+        messages: list[str] = []
+        normalized_target_mode = (target_array_mode or "").strip().upper()
+        if allow_in_pzt_rs_mode and normalized_target_mode == "PZT_RS":
+            mode_success, mode_received = self._send_command_and_wait_ack("mode PZT_RS", "PZT_RS")
+            if not mode_success:
+                return ADCCommandResult(False, messages=["ERROR: Failed to switch device to PZT_RS mode"])
+            messages.append(f"Set Array operating mode: {mode_received or 'PZT_RS'}")
+
         success, received = self._send_command_and_wait_ack(f"{command_name} {value}", None)
         if not success:
-            return ADCCommandResult(False, received, [f"ERROR: Failed to apply {command_name}"])
+            messages.append(f"ERROR: Failed to apply {command_name}")
+            return ADCCommandResult(False, received, messages)
 
         shown = received if received not in (None, "") else value
-        return ADCCommandResult(True, received, [f"Applied {command_name}={shown}"])
+        messages.append(f"Applied {command_name}={shown}")
+        return ADCCommandResult(True, received, messages)
 
     @staticmethod
     def estimate_555_pair_timeout_ms(*, rb_ohms: float, rk_ohms: float, cf_farads: float, rxmax_ohms: float) -> int:

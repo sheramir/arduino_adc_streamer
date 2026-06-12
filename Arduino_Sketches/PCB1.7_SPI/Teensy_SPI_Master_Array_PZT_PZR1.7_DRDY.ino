@@ -323,10 +323,6 @@ static constexpr uint32_t TIMER555_MUX_SETTLE_NS          = 100;
 static constexpr int      PZR_DISCARD_CYCLES_AFTER_SWITCH = 1;
 static constexpr int      PZR_RA_MA_N                     = 1;  // Ra smoothing per MUX channel; set to 1 to disable MA
 static constexpr int      PZR_RA_MEDIAN_N                 = 3;  // Median-of-3 rejects isolated one-pair spikes
-static constexpr float    PZR_RS_SPIKE_REJECT_DELTA_OHM   = 0.35f;
-static constexpr float    PZR_RS_SPIKE_CONFIRM_DELTA_OHM  = 0.20f;
-static constexpr float    PZR_DISCHARGE_SWITCH_OHM        = 65.0f; // 555 discharge transistor / switch resistance estimate
-static constexpr float    PZR_RS_MAX_LOWCYC_MODEL_RATIO   = 1.50f; // discard if measured lCyc exceeds 1.5x the modeled discharge time
 static constexpr int      PZR_LCYC_MA_N                   = 1;  // set to 1 to use the raw measured low-cycle directly
 static constexpr int      PZR_MAX_CHANNEL_SEQUENCE        = 64;
 static constexpr uint16_t PZR_MAX_BLOCK_SAMPLES           = 2048;
@@ -343,7 +339,7 @@ static constexpr float PZR_DEFAULT_CF_F =
 static constexpr float PZR_DEFAULT_RX_MAX_OHM = 65500.0f;
 
 enum PZRLowCycleSource { PZR_LCYC_SOURCE_MEASURED, PZR_LCYC_SOURCE_MODELED };
-static constexpr PZRLowCycleSource PZR_RA_LCYC_SOURCE = PZR_LCYC_SOURCE_MEASURED;
+static constexpr PZRLowCycleSource PZR_RA_LCYC_SOURCE = PZR_LCYC_SOURCE_MODELED;
 
 // =====================================================================
 // ── PZR MODE — STATE ─────────────────────────────────────────────────
@@ -394,9 +390,6 @@ struct PZR_ChannelState {
   int   raCount     = 0;
   int   raMedianIdx = 0;
   int   raMedianCount = 0;
-  float pendingSpikeRa = NAN;
-  uint32_t spikeRejectCount = 0;
-  uint32_t periodRejectCount = 0;
   uint32_t lastHCyc = 0;
   uint32_t lastLCyc = 0;
   float lastLCycAvgUsed = NAN;
@@ -407,9 +400,6 @@ struct PZR_ChannelState {
     raSum = 0.0f;
     raIdx = raCount = 0;
     raMedianIdx = raMedianCount = 0;
-    pendingSpikeRa = NAN;
-    spikeRejectCount = 0;
-    periodRejectCount = 0;
     for (int i = 0; i < PZR_RA_MA_N; i++) raBuf[i] = 0.0f;
     for (int i = 0; i < PZR_RA_MEDIAN_N; i++) raMedianBuf[i] = 0.0f;
     lastHCyc = 0;
@@ -1228,18 +1218,6 @@ static float pzt_rsUpdateHeldMedian(uint8_t ch, float ra) {
   return pzt_rsMedianN(buf, count);
 }
 
-static inline float pzr_absf(float v) {
-  return (v < 0.0f) ? -v : v;
-}
-
-static bool pzr_pairLooksLikeMissedCycle(uint8_t ch, uint32_t lCyc) {
-  if (currentMode != MODE_PZT_RS || ch > 15 || lCyc == 0) return false;
-
-  if (!(isfinite(pzr_lCycModelCycles) && pzr_lCycModelCycles > 0.0f)) return false;
-  const float maxAllowedLowCycles = pzr_lCycModelCycles * PZR_RS_MAX_LOWCYC_MODEL_RATIO;
-  return (float)lCyc > maxAllowedLowCycles;
-}
-
 static inline double pzr_cyclesToUs(uint32_t cycles) {
   return ((double)cycles * 1000000.0) / (double)F_CPU_ACTUAL;
 }
@@ -1248,11 +1226,9 @@ static inline double pzr_cyclesFloatToUs(double cycles) {
   return (cycles * 1000000.0) / (double)F_CPU_ACTUAL;
 }
 
-// Model the 555 discharge interval from board-component values plus the
-// discharge-path switch resistance. This is used for diagnostics and to reject
-// implausibly long low cycles before they enter the measurement pipeline.
+// Model the theoretical 555 discharge interval from board-component values.
 static float pzr_computeModeledLowCycles() {
-  const double rb = (double)pzr_RB_OHM + (double)PZR_DISCHARGE_SWITCH_OHM;
+  const double rb = (double)pzr_RB_OHM;
   const double cf = (double)pzr_CF_F;
   if (!(rb > 0.0) || !(cf > 0.0)) return NAN;
 
@@ -1268,7 +1244,7 @@ static void pzr_refreshModeledLowCycles() {
 
 static const __FlashStringHelper *pzr_raLowCycleSourceLabel() {
   return (PZR_RA_LCYC_SOURCE == PZR_LCYC_SOURCE_MODELED)
-             ? F("modeled_lcyc_from_rb_rdis_cf")
+             ? F("modeled_lcyc_from_rb_cf")
              : F("measured_lcyc");
 }
 
@@ -1287,7 +1263,6 @@ static void pzr_printChannelTimingDiagnostics(uint8_t ch, const __FlashStringHel
   }
 
   const double rb = (double)pzr_RB_OHM;
-  const double rbDis = (double)pzr_RB_OHM + (double)PZR_DISCHARGE_SWITCH_OHM;
   const double cf = (double)pzr_CF_F;
   const double hUs = pzr_cyclesToUs(state.lastHCyc);
   const double lUs = pzr_cyclesToUs(state.lastLCyc);
@@ -1299,7 +1274,7 @@ static void pzr_printChannelTimingDiagnostics(uint8_t ch, const __FlashStringHel
       (isfinite(state.lastLCycModelUsed) && state.lastLCycModelUsed > 0.0f)
           ? pzr_cyclesFloatToUs((double)state.lastLCycModelUsed)
           : NAN;
-  const double modelLUs = (double)LN2 * cf * rbDis * 1000000.0;
+  const double modelLUs = (double)LN2 * cf * rb * 1000000.0;
   const double modelHUs =
       isfinite(state.lastPlotRa) ? ((double)LN2 * cf * ((double)state.lastPlotRa + rb) * 1000000.0) : NAN;
   const double raFromRaw =
@@ -1326,8 +1301,6 @@ static void pzr_printChannelTimingDiagnostics(uint8_t ch, const __FlashStringHel
   Serial.print(F(", ra_ohm="));
   if (isfinite(state.lastPlotRa)) Serial.print(state.lastPlotRa, 3);
   else                            Serial.print(F("nan"));
-  Serial.print(F(", spike_rejects=")); Serial.print(state.spikeRejectCount);
-  Serial.print(F(", lowcycle_rejects=")); Serial.print(state.periodRejectCount);
   Serial.print(F(", ra_from_raw_ohm="));
   if (isfinite(raFromRaw)) Serial.print(raFromRaw, 3);
   else                     Serial.print(F("nan"));
@@ -1416,11 +1389,6 @@ static bool pzr_updateChannelRaFromPair(uint8_t ch, uint32_t hCyc, uint32_t lCyc
                                         float &outRa) {
   if (ch > 15 || hCyc == 0 || lCyc == 0) return false;
 
-  if (pzr_pairLooksLikeMissedCycle(ch, lCyc)) {
-    pzr_chState[ch].periodRejectCount++;
-    return false;
-  }
-
   PZR_LowCycleSmootherState &lowCycleSmoother =
       pzr_lowCycleSmootherBy555[pzr_active555Index()];
   const float lCycAvgMeasured = lowCycleSmoother.update(lCyc);
@@ -1462,29 +1430,7 @@ static bool pzr_updateChannelRaFromPair(uint8_t ch, uint32_t hCyc, uint32_t lCyc
         pzr_chState[ch].raMedianIdx,
         pzr_chState[ch].raMedianCount,
         candidate);
-
-    if (currentMode == MODE_PZT_RS && isfinite(pzr_chState[ch].lastPlotRa)) {
-      const float baseline = pzr_chState[ch].lastPlotRa;
-      const float delta = candidate - baseline;
-      if (pzr_absf(delta) > PZR_RS_SPIKE_REJECT_DELTA_OHM) {
-        if (isfinite(pzr_chState[ch].pendingSpikeRa) &&
-            pzr_absf(candidate - pzr_chState[ch].pendingSpikeRa) <= PZR_RS_SPIKE_CONFIRM_DELTA_OHM) {
-          pzr_chState[ch].lastPlotRa = candidate;
-          pzr_chState[ch].pendingSpikeRa = NAN;
-        } else {
-          pzr_chState[ch].pendingSpikeRa = candidate;
-          pzr_chState[ch].spikeRejectCount++;
-          outRa = baseline;
-          return true;
-        }
-      } else {
-        pzr_chState[ch].pendingSpikeRa = NAN;
-        pzr_chState[ch].lastPlotRa = candidate;
-      }
-    } else {
-      pzr_chState[ch].pendingSpikeRa = NAN;
-      pzr_chState[ch].lastPlotRa = candidate;
-    }
+    pzr_chState[ch].lastPlotRa = candidate;
   }
 
   outRa = isfinite(pzr_chState[ch].lastPlotRa) ? pzr_chState[ch].lastPlotRa : 0.0f;
@@ -1507,14 +1453,12 @@ static bool pzr_measureOneRa(uint8_t ch, bool switched, float &outRa) {
     }
   }
 
-  while (true) {
-    uint32_t elapsedMs = millis() - measureStartMs;
-    if (elapsedMs >= timeoutMs) return false;
+  uint32_t elapsedMs = millis() - measureStartMs;
+  if (elapsedMs >= timeoutMs) return false;
 
-    uint32_t hCyc = 0, lCyc = 0;
-    if (!pzr_waitForPair(hCyc, lCyc, timeoutMs - elapsedMs)) return false;
-    if (pzr_updateChannelRaFromPair(ch, hCyc, lCyc, outRa)) return true;
-  }
+  uint32_t hCyc = 0, lCyc = 0;
+  if (!pzr_waitForPair(hCyc, lCyc, timeoutMs - elapsedMs)) return false;
+  return pzr_updateChannelRaFromPair(ch, hCyc, lCyc, outRa);
 }
 
 // Quantize resistance to uint16 deci-ohms for mixed PZT_RS payloads.
@@ -2416,7 +2360,6 @@ static void pzr_printStatus() {
   Serial.print(F("# buffer=")); Serial.println(pzr_bufferSweeps);
   Serial.print(F("# output_value=Ra_ohm (total Rx+Rk, Rk is not subtracted)")); Serial.println();
   Serial.print(F("# rb_ohm=")); Serial.println(pzr_RB_OHM, 6);
-  Serial.print(F("# discharge_switch_ohm=")); Serial.println(PZR_DISCHARGE_SWITCH_OHM, 6);
   Serial.print(F("# rk_ohm=")); Serial.println(pzr_RK_OHM, 6);
   Serial.print(F("# cf_f="));   Serial.println(pzr_CF_F, 12);
   Serial.print(F("# rxmax_ohm=")); Serial.println(pzr_RX_MAX_OHM, 6);

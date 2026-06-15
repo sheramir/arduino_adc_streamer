@@ -230,6 +230,9 @@ class MCUDetectorMixin:
         if hasattr(self, 'update_pzt_rs_timeseries_tabs_visibility'):
             self.update_pzt_rs_timeseries_tabs_visibility()
 
+        if hasattr(self, 'update_pressure_map_timeline_controls'):
+            self.update_pressure_map_timeline_controls()
+
         if hasattr(self, 'refresh_spectrum_filter_availability'):
             self.refresh_spectrum_filter_availability(log_message=False)
 
@@ -243,3 +246,6 @@ class MCUDetectorMixin:
 
         if hasattr(self, 'update_pzt_rs_timeseries_tabs_visibility'):
             self.update_pzt_rs_timeseries_tabs_visibility()
+
+        if hasattr(self, 'update_pressure_map_timeline_controls'):
+            self.update_pressure_map_timeline_controls()

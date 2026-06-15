@@ -23,6 +23,7 @@ import pyqtgraph as pg
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QHBoxLayout,
     QGridLayout,
     QGroupBox,
@@ -60,6 +61,10 @@ from constants.pressure_map import (
     DEFAULT_DISPLAY_WINDOW_SEC,
     DEFAULT_HPF_CUTOFF_HZ,
     DEFAULT_INTEGRATION_WINDOW_SAMPLES,
+    DEFAULT_SIGNAL_INTEGRATION_ROSETTE_RS1_ENABLED,
+    DEFAULT_SIGNAL_INTEGRATION_ROSETTE_RS2_ENABLED,
+    DEFAULT_SIGNAL_INTEGRATION_ROSETTE_Y_MAX_OHMS,
+    DEFAULT_SIGNAL_INTEGRATION_ROSETTE_Y_MIN_OHMS,
     PRESSURE_CIRCLE_DIAMETER_DECIMALS,
     PRESSURE_CIRCLE_DIAMETER_MAX_MM,
     PRESSURE_CIRCLE_DIAMETER_MIN_MM,
@@ -110,6 +115,10 @@ from constants.pressure_map import (
     SIGNAL_INTEGRATION_PLOT_MAX_HEIGHT_PX,
     SIGNAL_INTEGRATION_PLOT_MIN_HEIGHT_PX,
     SIGNAL_INTEGRATION_PLOT_LINE_WIDTH,
+    SIGNAL_INTEGRATION_ROSETTE_Y_DECIMALS,
+    SIGNAL_INTEGRATION_ROSETTE_Y_MAX_LIMIT_OHMS,
+    SIGNAL_INTEGRATION_ROSETTE_Y_MIN_LIMIT_OHMS,
+    SIGNAL_INTEGRATION_ROSETTE_Y_STEP_OHMS,
     SIGNAL_INTEGRATION_REPEAT_LINE_WIDTH,
     SIGNAL_INTEGRATION_POSITION_ORDER,
     SIGNAL_INTEGRATION_WINDOW_MAX_SAMPLES,
@@ -308,6 +317,92 @@ class PressureMapPanelMixin:
         )
         self.signal_integration_reset_btn.clicked.connect(self.on_signal_integration_reset_clicked)
         controls_layout.addWidget(self.signal_integration_reset_btn, 0, 6)
+
+        timeline_mode_tooltip = (
+            "Choose whether the Pressure Map timeline shows integrated PZT signals "
+            "or the held Rosette (PZR) values available in PZT_RS mode."
+        )
+        controls_layout.addWidget(
+            self._create_tooltip_label("Timeline source:", timeline_mode_tooltip),
+            1,
+            0,
+        )
+        self.signal_integration_timeline_mode_combo = QComboBox()
+        self.signal_integration_timeline_mode_combo.addItems(["PZT", "PZR"])
+        self.signal_integration_timeline_mode_combo.setToolTip(timeline_mode_tooltip)
+        self.signal_integration_timeline_mode_combo.setCurrentText(
+            str(getattr(self, "signal_integration_timeline_mode", "PZT")).strip().upper() or "PZT"
+        )
+        self.signal_integration_timeline_mode_combo.currentTextChanged.connect(
+            self.on_signal_integration_timeline_settings_changed
+        )
+        controls_layout.addWidget(self.signal_integration_timeline_mode_combo, 1, 1)
+
+        rosette_tooltip = (
+            "Choose whether the Pressure Map timeline shows RS1, RS2, or both together "
+            "when the timeline source is set to PZR."
+        )
+        self.signal_integration_rosette_label = self._create_tooltip_label("Rosettes:", rosette_tooltip)
+        controls_layout.addWidget(self.signal_integration_rosette_label, 1, 2)
+        self.signal_integration_rosette_rs1_check = QCheckBox("RS1")
+        self.signal_integration_rosette_rs1_check.setChecked(
+            bool(getattr(self, "signal_integration_rosette_rs1_enabled", DEFAULT_SIGNAL_INTEGRATION_ROSETTE_RS1_ENABLED))
+        )
+        self.signal_integration_rosette_rs1_check.setToolTip(rosette_tooltip)
+        self.signal_integration_rosette_rs1_check.stateChanged.connect(
+            self.on_signal_integration_timeline_settings_changed
+        )
+        controls_layout.addWidget(self.signal_integration_rosette_rs1_check, 1, 3)
+        self.signal_integration_rosette_rs2_check = QCheckBox("RS2")
+        self.signal_integration_rosette_rs2_check.setChecked(
+            bool(getattr(self, "signal_integration_rosette_rs2_enabled", DEFAULT_SIGNAL_INTEGRATION_ROSETTE_RS2_ENABLED))
+        )
+        self.signal_integration_rosette_rs2_check.setToolTip(rosette_tooltip)
+        self.signal_integration_rosette_rs2_check.stateChanged.connect(
+            self.on_signal_integration_timeline_settings_changed
+        )
+        controls_layout.addWidget(self.signal_integration_rosette_rs2_check, 1, 4)
+
+        rosette_y_tooltip = (
+            "Fixed Y-axis range for the Pressure Map timeline when the timeline source is PZR."
+        )
+        self.signal_integration_rosette_y_min_label = self._create_tooltip_label("Y min:", rosette_y_tooltip)
+        controls_layout.addWidget(self.signal_integration_rosette_y_min_label, 1, 5)
+        self.signal_integration_rosette_y_min_spin = QDoubleSpinBox()
+        self.signal_integration_rosette_y_min_spin.setRange(
+            SIGNAL_INTEGRATION_ROSETTE_Y_MIN_LIMIT_OHMS,
+            SIGNAL_INTEGRATION_ROSETTE_Y_MAX_LIMIT_OHMS,
+        )
+        self.signal_integration_rosette_y_min_spin.setDecimals(SIGNAL_INTEGRATION_ROSETTE_Y_DECIMALS)
+        self.signal_integration_rosette_y_min_spin.setSingleStep(SIGNAL_INTEGRATION_ROSETTE_Y_STEP_OHMS)
+        self.signal_integration_rosette_y_min_spin.setSuffix(" ohm")
+        self.signal_integration_rosette_y_min_spin.setValue(
+            float(getattr(self, "signal_integration_rosette_y_min_ohms", DEFAULT_SIGNAL_INTEGRATION_ROSETTE_Y_MIN_OHMS))
+        )
+        self.signal_integration_rosette_y_min_spin.setToolTip(rosette_y_tooltip)
+        self.signal_integration_rosette_y_min_spin.valueChanged.connect(
+            self.on_signal_integration_timeline_settings_changed
+        )
+        controls_layout.addWidget(self.signal_integration_rosette_y_min_spin, 1, 6)
+
+        self.signal_integration_rosette_y_max_label = self._create_tooltip_label("Y max:", rosette_y_tooltip)
+        controls_layout.addWidget(self.signal_integration_rosette_y_max_label, 1, 7)
+        self.signal_integration_rosette_y_max_spin = QDoubleSpinBox()
+        self.signal_integration_rosette_y_max_spin.setRange(
+            SIGNAL_INTEGRATION_ROSETTE_Y_MIN_LIMIT_OHMS,
+            SIGNAL_INTEGRATION_ROSETTE_Y_MAX_LIMIT_OHMS,
+        )
+        self.signal_integration_rosette_y_max_spin.setDecimals(SIGNAL_INTEGRATION_ROSETTE_Y_DECIMALS)
+        self.signal_integration_rosette_y_max_spin.setSingleStep(SIGNAL_INTEGRATION_ROSETTE_Y_STEP_OHMS)
+        self.signal_integration_rosette_y_max_spin.setSuffix(" ohm")
+        self.signal_integration_rosette_y_max_spin.setValue(
+            float(getattr(self, "signal_integration_rosette_y_max_ohms", DEFAULT_SIGNAL_INTEGRATION_ROSETTE_Y_MAX_OHMS))
+        )
+        self.signal_integration_rosette_y_max_spin.setToolTip(rosette_y_tooltip)
+        self.signal_integration_rosette_y_max_spin.valueChanged.connect(
+            self.on_signal_integration_timeline_settings_changed
+        )
+        controls_layout.addWidget(self.signal_integration_rosette_y_max_spin, 1, 8)
         settings_layout.addWidget(controls_group)
 
         self.signal_integration_plot_widget = pg.PlotWidget()
@@ -347,6 +442,7 @@ class PressureMapPanelMixin:
         self._signal_integration_filter_engine = ADCFilterEngine()
         self._signal_integration_filter_warning = ""
         self._signal_integration_updating_plot = False
+        self.update_pressure_map_timeline_controls()
 
         return tab
 
@@ -368,6 +464,119 @@ class PressureMapPanelMixin:
             self.trigger_signal_integration_update()
         elif hasattr(self, "update_signal_integration_plot"):
             self.update_signal_integration_plot()
+
+    def update_pressure_map_timeline_controls(self) -> None:
+        """Keep Pressure Map timeline selectors aligned with the active MCU mode."""
+        timeline_combo = getattr(self, "signal_integration_timeline_mode_combo", None)
+        rosette_rs1_check = getattr(self, "signal_integration_rosette_rs1_check", None)
+        rosette_rs2_check = getattr(self, "signal_integration_rosette_rs2_check", None)
+        rosette_label = getattr(self, "signal_integration_rosette_label", None)
+        rosette_y_min_label = getattr(self, "signal_integration_rosette_y_min_label", None)
+        rosette_y_max_label = getattr(self, "signal_integration_rosette_y_max_label", None)
+        rosette_y_min_spin = getattr(self, "signal_integration_rosette_y_min_spin", None)
+        rosette_y_max_spin = getattr(self, "signal_integration_rosette_y_max_spin", None)
+        if timeline_combo is None or rosette_rs1_check is None or rosette_rs2_check is None:
+            return
+
+        is_pzt_rs_mode = bool(
+            hasattr(self, "is_array_pzt_rs_mode") and self.is_array_pzt_rs_mode()
+        )
+        if not is_pzt_rs_mode and timeline_combo.currentText() != "PZT":
+            timeline_combo.blockSignals(True)
+            timeline_combo.setCurrentText("PZT")
+            timeline_combo.blockSignals(False)
+
+        timeline_combo.setEnabled(is_pzt_rs_mode)
+        show_rosette_selector = is_pzt_rs_mode and self._get_signal_integration_timeline_mode() == "PZR"
+        rosette_rs1_check.setVisible(show_rosette_selector)
+        rosette_rs1_check.setEnabled(show_rosette_selector)
+        rosette_rs2_check.setVisible(show_rosette_selector)
+        rosette_rs2_check.setEnabled(show_rosette_selector)
+        if rosette_label is not None:
+            rosette_label.setVisible(show_rosette_selector)
+        if rosette_y_min_label is not None:
+            rosette_y_min_label.setVisible(show_rosette_selector)
+        if rosette_y_max_label is not None:
+            rosette_y_max_label.setVisible(show_rosette_selector)
+        if rosette_y_min_spin is not None:
+            rosette_y_min_spin.setVisible(show_rosette_selector)
+            rosette_y_min_spin.setEnabled(show_rosette_selector)
+        if rosette_y_max_spin is not None:
+            rosette_y_max_spin.setVisible(show_rosette_selector)
+            rosette_y_max_spin.setEnabled(show_rosette_selector)
+
+    def _get_signal_integration_timeline_mode(self) -> str:
+        combo = getattr(self, "signal_integration_timeline_mode_combo", None)
+        if combo is None or not hasattr(combo, "currentText"):
+            fallback = str(getattr(self, "signal_integration_timeline_mode", "PZT"))
+        else:
+            fallback = str(combo.currentText())
+        normalized = fallback.strip().upper() or "PZT"
+        if normalized != "PZR":
+            normalized = "PZT"
+        if not (hasattr(self, "is_array_pzt_rs_mode") and self.is_array_pzt_rs_mode()):
+            return "PZT"
+        return normalized
+
+    def _get_signal_integration_rosette_selection(self) -> dict[str, bool]:
+        rs1_widget = getattr(self, "signal_integration_rosette_rs1_check", None)
+        rs2_widget = getattr(self, "signal_integration_rosette_rs2_check", None)
+        rs1_enabled = (
+            bool(rs1_widget.isChecked())
+            if rs1_widget is not None and hasattr(rs1_widget, "isChecked")
+            else bool(getattr(self, "signal_integration_rosette_rs1_enabled", DEFAULT_SIGNAL_INTEGRATION_ROSETTE_RS1_ENABLED))
+        )
+        rs2_enabled = (
+            bool(rs2_widget.isChecked())
+            if rs2_widget is not None and hasattr(rs2_widget, "isChecked")
+            else bool(getattr(self, "signal_integration_rosette_rs2_enabled", DEFAULT_SIGNAL_INTEGRATION_ROSETTE_RS2_ENABLED))
+        )
+        return {"RS1": rs1_enabled, "RS2": rs2_enabled}
+
+    def _get_signal_integration_rosette_y_range(self) -> tuple[float, float]:
+        y_min_widget = getattr(self, "signal_integration_rosette_y_min_spin", None)
+        y_max_widget = getattr(self, "signal_integration_rosette_y_max_spin", None)
+        y_min = (
+            float(y_min_widget.value())
+            if y_min_widget is not None and hasattr(y_min_widget, "value")
+            else float(getattr(self, "signal_integration_rosette_y_min_ohms", DEFAULT_SIGNAL_INTEGRATION_ROSETTE_Y_MIN_OHMS))
+        )
+        y_max = (
+            float(y_max_widget.value())
+            if y_max_widget is not None and hasattr(y_max_widget, "value")
+            else float(getattr(self, "signal_integration_rosette_y_max_ohms", DEFAULT_SIGNAL_INTEGRATION_ROSETTE_Y_MAX_OHMS))
+        )
+        if y_max <= y_min:
+            y_max = y_min + max(1.0, abs(y_min) * 0.01)
+        return y_min, y_max
+
+    def _get_signal_integration_timeline_specs(self) -> list[dict]:
+        if self._get_signal_integration_timeline_mode() != "PZR":
+            return self.get_display_channel_specs()
+
+        rosette_specs = self.get_rosette_display_channel_specs()
+        if not rosette_specs:
+            return []
+
+        selected_rosettes = self._get_signal_integration_rosette_selection()
+        distinguishable = False
+        filtered_specs: list[dict] = []
+        for spec in rosette_specs:
+            key = spec.get("key")
+            if isinstance(key, tuple) and len(key) >= 4 and key[0] == "rs":
+                distinguishable = True
+                try:
+                    rosette_name = f"RS{int(key[2])}"
+                    if selected_rosettes.get(rosette_name, False):
+                        filtered_specs.append(spec)
+                except (TypeError, ValueError):
+                    continue
+            else:
+                filtered_specs.append(spec)
+
+        if not distinguishable:
+            return rosette_specs if any(selected_rosettes.values()) else []
+        return filtered_specs
 
     def _create_tooltip_label(
         self,
@@ -794,6 +1003,26 @@ class PressureMapPanelMixin:
                     "signal_integration_display_window_spin",
                     float(getattr(self, "signal_integration_display_window_sec", DEFAULT_DISPLAY_WINDOW_SEC)),
                 ),
+                "timeline_source": self._combo_text(
+                    "signal_integration_timeline_mode_combo",
+                    str(getattr(self, "signal_integration_timeline_mode", "PZT")).strip().upper() or "PZT",
+                ),
+                "show_rs1": self._check_bool(
+                    "signal_integration_rosette_rs1_check",
+                    bool(getattr(self, "signal_integration_rosette_rs1_enabled", DEFAULT_SIGNAL_INTEGRATION_ROSETTE_RS1_ENABLED)),
+                ),
+                "show_rs2": self._check_bool(
+                    "signal_integration_rosette_rs2_check",
+                    bool(getattr(self, "signal_integration_rosette_rs2_enabled", DEFAULT_SIGNAL_INTEGRATION_ROSETTE_RS2_ENABLED)),
+                ),
+                "rosette_y_min_ohms": self._spin_float(
+                    "signal_integration_rosette_y_min_spin",
+                    float(getattr(self, "signal_integration_rosette_y_min_ohms", DEFAULT_SIGNAL_INTEGRATION_ROSETTE_Y_MIN_OHMS)),
+                ),
+                "rosette_y_max_ohms": self._spin_float(
+                    "signal_integration_rosette_y_max_spin",
+                    float(getattr(self, "signal_integration_rosette_y_max_ohms", DEFAULT_SIGNAL_INTEGRATION_ROSETTE_Y_MAX_OHMS)),
+                ),
             },
             "processing": {
                 "noise_threshold": self._spin_float(
@@ -1048,6 +1277,45 @@ class PressureMapPanelMixin:
             "display_window_sec",
             float,
         )
+        changed |= self._set_combo_value(
+            "signal_integration_timeline_mode_combo",
+            signal_integration,
+            "timeline_source",
+        )
+        changed |= self._set_check_value(
+            "signal_integration_rosette_rs1_check",
+            signal_integration,
+            "show_rs1",
+        )
+        changed |= self._set_check_value(
+            "signal_integration_rosette_rs2_check",
+            signal_integration,
+            "show_rs2",
+        )
+        changed |= self._set_spin_value(
+            "signal_integration_rosette_y_min_spin",
+            signal_integration,
+            "rosette_y_min_ohms",
+            float,
+        )
+        changed |= self._set_spin_value(
+            "signal_integration_rosette_y_max_spin",
+            signal_integration,
+            "rosette_y_max_ohms",
+            float,
+        )
+        legacy_rosette_channel = str(signal_integration.get("rosette_channel", "")).strip().upper()
+        if legacy_rosette_channel in {"RS1", "RS2"}:
+            changed |= self._set_check_value(
+                "signal_integration_rosette_rs1_check",
+                {"show_rs1": legacy_rosette_channel == "RS1"},
+                "show_rs1",
+            )
+            changed |= self._set_check_value(
+                "signal_integration_rosette_rs2_check",
+                {"show_rs2": legacy_rosette_channel == "RS2"},
+                "show_rs2",
+            )
         changed |= self._set_spin_value("shear_noise_threshold_spin", processing, "noise_threshold", float)
 
         raw_package_gains = processing.get("package_sensor_gains", settings.get("package_sensor_gains", {}))
@@ -1133,6 +1401,12 @@ class PressureMapPanelMixin:
             return bool(fallback)
         return bool(widget.isChecked())
 
+    def _combo_text(self, widget_name: str, fallback: str) -> str:
+        widget = getattr(self, widget_name, None)
+        if widget is None or not hasattr(widget, "currentText"):
+            return str(fallback)
+        return str(widget.currentText())
+
     def _set_spin_value(self, widget_name: str, settings: dict, key: str, value_type: type) -> bool:
         if key not in settings:
             return False
@@ -1150,6 +1424,25 @@ class PressureMapPanelMixin:
             return False
         widget.setChecked(bool(settings[key]))
         return True
+
+    def _set_combo_value(self, widget_name: str, settings: dict, key: str) -> bool:
+        if key not in settings:
+            return False
+        widget = getattr(self, widget_name, None)
+        if widget is None:
+            return False
+
+        value = str(settings[key])
+        if hasattr(widget, "findText") and hasattr(widget, "setCurrentIndex"):
+            index = widget.findText(value)
+            if index < 0:
+                return False
+            widget.setCurrentIndex(index)
+            return True
+        if hasattr(widget, "setCurrentText"):
+            widget.setCurrentText(value)
+            return True
+        return False
 
     def _normalize_pressure_package_id(self, package_id: str | None) -> str | None:
         if package_id is None:
@@ -1225,6 +1518,19 @@ class PressureMapPanelMixin:
         self._refresh_pressure_package_gain_controls(
             getattr(self, "_latest_signal_integration_package_layout", None)
         )
+        self.save_last_shear_settings()
+
+    def on_signal_integration_timeline_settings_changed(self, _value: object | None = None) -> None:
+        self.signal_integration_timeline_mode = self._get_signal_integration_timeline_mode()
+        rosette_selection = self._get_signal_integration_rosette_selection()
+        self.signal_integration_rosette_rs1_enabled = bool(rosette_selection.get("RS1", False))
+        self.signal_integration_rosette_rs2_enabled = bool(rosette_selection.get("RS2", False))
+        (
+            self.signal_integration_rosette_y_min_ohms,
+            self.signal_integration_rosette_y_max_ohms,
+        ) = self._get_signal_integration_rosette_y_range()
+        self.update_pressure_map_timeline_controls()
+        self.update_signal_integration_plot()
         self.save_last_shear_settings()
 
     def on_shear_processing_settings_changed(self, _value: object | None = None) -> None:
@@ -1381,7 +1687,8 @@ class PressureMapPanelMixin:
                 return
 
             display_specs = self.get_display_channel_specs()
-            selected_channels = {spec["key"] for spec in display_specs}
+            timeline_specs = self._get_signal_integration_timeline_specs()
+            timeline_mode = self._get_signal_integration_timeline_mode()
             if not display_specs:
                 self._hide_all_signal_integration_curves()
                 self._clear_shear_visualization()
@@ -1406,20 +1713,27 @@ class PressureMapPanelMixin:
             latest_integrated_by_position: dict[str, float] = {}
             latest_integrated_by_package: dict[str, dict[str, float]] = {}
             package_series_by_position: dict[str, dict[str, tuple[np.ndarray, np.ndarray]]] = {}
-            visible_series_count = max(1, len(selected_channels))
-            max_samples_per_series = max(
+            pzt_visible_series_count = max(1, len(display_specs))
+            pzt_max_samples_per_series = max(
                 SIGNAL_INTEGRATION_MIN_POINTS_PER_VISIBLE_CHANNEL,
-                SIGNAL_INTEGRATION_MAX_TOTAL_POINTS_TO_DISPLAY // visible_series_count,
+                SIGNAL_INTEGRATION_MAX_TOTAL_POINTS_TO_DISPLAY // pzt_visible_series_count,
+            )
+            timeline_visible_series_count = max(1, len(timeline_specs) or len(display_specs))
+            timeline_max_samples_per_series = max(
+                SIGNAL_INTEGRATION_MIN_POINTS_PER_VISIBLE_CHANNEL,
+                SIGNAL_INTEGRATION_MAX_TOTAL_POINTS_TO_DISPLAY // timeline_visible_series_count,
             )
             avg_sample_time_sec = getattr(self, "_cached_avg_sample_time_sec", 0.0)
             repeat_count = max(1, int(self.config.get("repeat", 1)))
             package_layout = self._get_signal_integration_package_layout()
             if self._is_pressure_map_settings_tab_active():
                 self._refresh_pressure_package_gain_controls(package_layout)
-            multi_package_force_mode = self._is_multi_package_force_mode(package_layout)
+            multi_package_force_mode = (
+                timeline_mode != "PZR" and self._is_multi_package_force_mode(package_layout)
+            )
 
             for spec_index, spec in enumerate(display_specs):
-                should_plot = (spec["key"] in selected_channels) and not multi_package_force_mode
+                should_plot = timeline_mode != "PZR" and not multi_package_force_mode
                 shear_position = self._get_shear_position_for_display_spec(spec, spec_index)
                 should_collect_package = shear_position in SHEAR_SENSOR_POSITIONS
                 should_collect_shear = (
@@ -1435,7 +1749,7 @@ class PressureMapPanelMixin:
                     data_array,
                     timestamps_array,
                     avg_sample_time_sec,
-                    max_samples_per_series,
+                    pzt_max_samples_per_series,
                     visible_start_time_sec,
                 )
                 if prepared_series is None:
@@ -1484,12 +1798,24 @@ class PressureMapPanelMixin:
                     package_layout,
                     desired_curve_keys,
                 )
+            elif timeline_mode == "PZR":
+                self._plot_signal_integration_rosette_series(
+                    timeline_specs,
+                    data_array,
+                    timestamps_array,
+                    avg_sample_time_sec,
+                    timeline_max_samples_per_series,
+                    desired_curve_keys,
+                )
 
             for key, curve in self.signal_integration_curves.items():
                 if key not in desired_curve_keys:
                     curve.setVisible(False)
 
-            self._apply_signal_integration_axis_settings(is_package_force_mode=multi_package_force_mode)
+            self._apply_signal_integration_axis_settings(
+                is_package_force_mode=multi_package_force_mode,
+                is_rosette_mode=timeline_mode == "PZR",
+            )
             self._latest_signal_integration_values_by_package = latest_integrated_by_package
             self._latest_signal_integration_package_layout = package_layout
             self._latest_signal_integration_values_by_position = (
@@ -1497,7 +1823,14 @@ class PressureMapPanelMixin:
                 or latest_integrated_by_position
             )
             self._update_shear_visualization_from_latest()
-            self.signal_integration_status_label.setText("")
+            if timeline_mode == "PZR" and not timeline_specs:
+                rosette_selection = self._get_signal_integration_rosette_selection()
+                if not any(rosette_selection.values()):
+                    self.signal_integration_status_label.setText("Select RS1 or RS2 to display Rosette data")
+                else:
+                    self.signal_integration_status_label.setText("No selected Rosette data available")
+            else:
+                self.signal_integration_status_label.setText("")
 
         except Exception as exc:
             if hasattr(self, "log_status"):
@@ -2112,6 +2445,33 @@ class PressureMapPanelMixin:
         curve.setPen(pen)
         curve.setData(x=x_data, y=y_data)
 
+    def _plot_signal_integration_rosette_series(
+        self,
+        specs: list[dict],
+        data_array: np.ndarray,
+        timestamps_array: np.ndarray,
+        avg_sample_time_sec: float,
+        max_samples_per_series: int,
+        desired_curve_keys: set,
+    ) -> None:
+        for spec in specs:
+            prepared_series = self._prepare_channel_plot_series(
+                spec,
+                data_array,
+                timestamps_array,
+                avg_sample_time_sec,
+                max_samples_per_series,
+            )
+            if prepared_series is None:
+                continue
+
+            channel_data, channel_times, _latest_value = prepared_series
+            color = PLOT_COLORS[spec["color_slot"] % len(PLOT_COLORS)]
+            pen = pg.mkPen(color=color, width=SIGNAL_INTEGRATION_PLOT_LINE_WIDTH)
+            curve_key = ("signal_integration_rosette", spec["key"])
+            desired_curve_keys.add(curve_key)
+            self._set_signal_integration_curve_data(curve_key, spec["label"], pen, channel_times, channel_data)
+
     def _plot_signal_integration_repeat_series(
         self,
         spec: dict,
@@ -2196,12 +2556,23 @@ class PressureMapPanelMixin:
         self._set_signal_integration_curve_data(curve_key, name, pen, channel_times, channel_data)
         return True
 
-    def _apply_signal_integration_axis_settings(self, *, is_package_force_mode: bool = False) -> None:
+    def _apply_signal_integration_axis_settings(
+        self,
+        *,
+        is_package_force_mode: bool = False,
+        is_rosette_mode: bool = False,
+    ) -> None:
         if is_package_force_mode:
             self.signal_integration_plot_widget.setLabel("left", "Total Normal Force")
+            self.signal_integration_plot_widget.enableAutoRange(axis="y")
+        elif is_rosette_mode:
+            self.signal_integration_plot_widget.setLabel("left", "Resistance", units="ohms")
+            y_min, y_max = self._get_signal_integration_rosette_y_range()
+            self.signal_integration_plot_widget.enableAutoRange(axis="y", enable=False)
+            self.signal_integration_plot_widget.setYRange(y_min, y_max, padding=0.0)
         else:
             self.signal_integration_plot_widget.setLabel("left", "Integrated HPF Voltage", units="V samples")
-        self.signal_integration_plot_widget.enableAutoRange(axis="y")
+            self.signal_integration_plot_widget.enableAutoRange(axis="y")
         self.signal_integration_plot_widget.setLabel("bottom", "Time", units="s")
 
 

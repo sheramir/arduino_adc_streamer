@@ -54,6 +54,19 @@ class DummyCheckBox:
         self._checked = bool(checked)
 
 
+class DummyComboBox:
+    """Small current-text stand-in for Qt combo boxes."""
+
+    def __init__(self, value):
+        self._value = str(value)
+
+    def currentText(self):
+        return self._value
+
+    def setCurrentText(self, value):
+        self._value = str(value)
+
+
 class SignalIntegrationPanelHarness(PressureMapPanelMixin):
     """Minimal harness for exercising non-Qt plotting helper methods."""
 
@@ -78,6 +91,12 @@ class SignalIntegrationPanelHarness(PressureMapPanelMixin):
         self.sensor_package_groups = []
         self.active_sensor_configuration = {"array_layout": {"cells": []}}
         self.signal_integration_display_enabled = True
+        self.pressure_map_pzt_rs_mode = False
+        self.signal_integration_timeline_mode = "PZT"
+        self.signal_integration_rosette_rs1_enabled = True
+        self.signal_integration_rosette_rs2_enabled = False
+        self.signal_integration_rosette_y_min_ohms = 0.0
+        self.signal_integration_rosette_y_max_ohms = 65500.0
 
     def get_vref_voltage(self):
         return self.VREF_VOLTS
@@ -103,6 +122,9 @@ class SignalIntegrationPanelHarness(PressureMapPanelMixin):
     def should_update_signal_integration_display(self):
         return bool(self.signal_integration_display_enabled)
 
+    def is_array_pzt_rs_mode(self):
+        return bool(self.pressure_map_pzt_rs_mode)
+
     def update_signal_integration_plot(self):
         self.signal_integration_update_calls = getattr(self, "signal_integration_update_calls", 0) + 1
 
@@ -122,6 +144,11 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         harness.signal_integration_hpf_spin = DummySpinBox(12.5)
         harness.signal_integration_window_spin = DummySpinBox(44)
         harness.signal_integration_display_window_spin = DummySpinBox(2.5)
+        harness.signal_integration_timeline_mode_combo = DummyComboBox("PZR")
+        harness.signal_integration_rosette_rs1_check = DummyCheckBox(False)
+        harness.signal_integration_rosette_rs2_check = DummyCheckBox(True)
+        harness.signal_integration_rosette_y_min_spin = DummySpinBox(100.0)
+        harness.signal_integration_rosette_y_max_spin = DummySpinBox(2500.0)
         harness.shear_noise_threshold_spin = DummySpinBox(0.75)
         harness._pressure_package_sensor_gains = {
             "PZT3": {position: float(index + 1.25) for index, position in enumerate(SHEAR_SENSOR_POSITIONS)}
@@ -472,6 +499,11 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             self.assertEqual(payload["version"], 1)
             self.assertEqual(settings["signal_integration"]["hpf_cutoff_hz"], 12.5)
             self.assertEqual(settings["signal_integration"]["integration_window_samples"], 44)
+            self.assertEqual(settings["signal_integration"]["timeline_source"], "PZR")
+            self.assertFalse(settings["signal_integration"]["show_rs1"])
+            self.assertTrue(settings["signal_integration"]["show_rs2"])
+            self.assertEqual(settings["signal_integration"]["rosette_y_min_ohms"], 100.0)
+            self.assertEqual(settings["signal_integration"]["rosette_y_max_ohms"], 2500.0)
             self.assertEqual(settings["processing"]["noise_threshold"], 0.75)
             self.assertEqual(settings["processing"]["package_sensor_gains"]["PZT3"]["C"], 1.25)
             self.assertFalse(settings["visualization"]["arrow_width_scales"])
@@ -493,6 +525,11 @@ class SignalIntegrationPanelTests(unittest.TestCase):
 
             harness.signal_integration_hpf_spin.setValue(1.0)
             harness.signal_integration_window_spin.setValue(2)
+            harness.signal_integration_timeline_mode_combo.setCurrentText("PZT")
+            harness.signal_integration_rosette_rs1_check.setChecked(True)
+            harness.signal_integration_rosette_rs2_check.setChecked(False)
+            harness.signal_integration_rosette_y_min_spin.setValue(-10.0)
+            harness.signal_integration_rosette_y_max_spin.setValue(10.0)
             harness.shear_noise_threshold_spin.setValue(3.0)
             harness.shear_arrow_width_scales_check.setChecked(True)
             harness.pressure_sensor_spacing_spin.setValue(2.0)
@@ -511,6 +548,11 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             self.assertTrue(applied)
             self.assertEqual(harness.signal_integration_hpf_spin.value(), 12.5)
             self.assertEqual(harness.signal_integration_window_spin.value(), 44)
+            self.assertEqual(harness.signal_integration_timeline_mode_combo.currentText(), "PZR")
+            self.assertFalse(harness.signal_integration_rosette_rs1_check.isChecked())
+            self.assertTrue(harness.signal_integration_rosette_rs2_check.isChecked())
+            self.assertEqual(harness.signal_integration_rosette_y_min_spin.value(), 100.0)
+            self.assertEqual(harness.signal_integration_rosette_y_max_spin.value(), 2500.0)
             self.assertEqual(harness.shear_noise_threshold_spin.value(), 0.75)
             self.assertFalse(harness.shear_arrow_width_scales_check.isChecked())
             self.assertEqual(harness.pressure_sensor_spacing_spin.value(), 1.75)
@@ -536,6 +578,11 @@ class SignalIntegrationPanelTests(unittest.TestCase):
                 "signal_integration_window_spin": "recent high-pass-filtered samples",
                 "signal_integration_display_window_spin": "recent history",
                 "signal_integration_reset_btn": "refresh the integrated preview",
+                "signal_integration_timeline_mode_combo": "timeline shows integrated pzt signals",
+                "signal_integration_rosette_rs1_check": "shows rs1, rs2, or both together",
+                "signal_integration_rosette_rs2_check": "shows rs1, rs2, or both together",
+                "signal_integration_rosette_y_min_spin": "fixed y-axis range",
+                "signal_integration_rosette_y_max_spin": "fixed y-axis range",
                 "shear_noise_threshold_spin": "zeros each integrated channel",
                 "shear_arrow_gain_spin": "displayed arrow length",
                 "shear_arrow_threshold_spin": "hides only the displayed arrow",
@@ -559,6 +606,86 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             for widget_name, expected_text in expected_tooltips.items():
                 widget = getattr(harness, widget_name)
                 self.assertIn(expected_text, widget.toolTip().lower(), msg=widget_name)
+        finally:
+            tab.close()
+
+    def test_pressure_map_timeline_controls_follow_pzt_rs_mode(self):
+        harness = SignalIntegrationPanelHarness()
+        harness.pressure_map_pzt_rs_mode = True
+
+        tab = harness.create_signal_integration_tab()
+        try:
+            self.assertTrue(harness.signal_integration_timeline_mode_combo.isEnabled())
+            self.assertTrue(harness.signal_integration_rosette_rs1_check.isHidden())
+            self.assertTrue(harness.signal_integration_rosette_rs2_check.isHidden())
+            self.assertTrue(harness.signal_integration_rosette_y_min_spin.isHidden())
+            self.assertTrue(harness.signal_integration_rosette_y_max_spin.isHidden())
+
+            harness.signal_integration_timeline_mode_combo.setCurrentText("PZR")
+            harness.on_signal_integration_timeline_settings_changed()
+
+            self.assertFalse(harness.signal_integration_rosette_rs1_check.isHidden())
+            self.assertFalse(harness.signal_integration_rosette_rs2_check.isHidden())
+            self.assertTrue(harness.signal_integration_rosette_rs1_check.isEnabled())
+            self.assertTrue(harness.signal_integration_rosette_rs2_check.isEnabled())
+            self.assertFalse(harness.signal_integration_rosette_y_min_spin.isHidden())
+            self.assertFalse(harness.signal_integration_rosette_y_max_spin.isHidden())
+
+            harness.pressure_map_pzt_rs_mode = False
+            harness.update_pressure_map_timeline_controls()
+
+            self.assertEqual(harness.signal_integration_timeline_mode_combo.currentText(), "PZT")
+            self.assertFalse(harness.signal_integration_timeline_mode_combo.isEnabled())
+            self.assertTrue(harness.signal_integration_rosette_rs1_check.isHidden())
+            self.assertTrue(harness.signal_integration_rosette_rs2_check.isHidden())
+            self.assertTrue(harness.signal_integration_rosette_y_min_spin.isHidden())
+            self.assertTrue(harness.signal_integration_rosette_y_max_spin.isHidden())
+        finally:
+            tab.close()
+
+    def test_pressure_map_rosette_timeline_specs_filter_selected_rs_channels(self):
+        harness = SignalIntegrationPanelHarness()
+        harness.pressure_map_pzt_rs_mode = True
+        harness.signal_integration_timeline_mode_combo = DummyComboBox("PZR")
+        harness.signal_integration_rosette_rs1_check = DummyCheckBox(False)
+        harness.signal_integration_rosette_rs2_check = DummyCheckBox(True)
+        harness.get_rosette_display_channel_specs = lambda: [
+            {"key": ("rs", "PZT1", 1, 9), "label": "PZT1_RS1", "sample_indices": [5], "color_slot": 0, "stream": "rs"},
+            {"key": ("rs", "PZT1", 2, 8), "label": "PZT1_RS2", "sample_indices": [6], "color_slot": 1, "stream": "rs"},
+            {"key": ("rs", "PZT3", 1, 7), "label": "PZT3_RS1", "sample_indices": [12], "color_slot": 2, "stream": "rs"},
+            {"key": ("rs", "PZT3", 2, 6), "label": "PZT3_RS2", "sample_indices": [13], "color_slot": 3, "stream": "rs"},
+        ]
+
+        specs = harness._get_signal_integration_timeline_specs()
+
+        self.assertEqual([spec["label"] for spec in specs], ["PZT1_RS2", "PZT3_RS2"])
+
+        harness.signal_integration_rosette_rs1_check.setChecked(True)
+        specs = harness._get_signal_integration_timeline_specs()
+        self.assertEqual(
+            [spec["label"] for spec in specs],
+            ["PZT1_RS1", "PZT1_RS2", "PZT3_RS1", "PZT3_RS2"],
+        )
+
+        harness.signal_integration_rosette_rs1_check.setChecked(False)
+        harness.signal_integration_rosette_rs2_check.setChecked(False)
+        self.assertEqual(harness._get_signal_integration_timeline_specs(), [])
+
+    def test_pressure_map_rosette_axis_uses_fixed_min_max(self):
+        harness = SignalIntegrationPanelHarness()
+        harness.pressure_map_pzt_rs_mode = True
+
+        tab = harness.create_signal_integration_tab()
+        try:
+            harness.signal_integration_timeline_mode_combo.setCurrentText("PZR")
+            harness.signal_integration_rosette_y_min_spin.setValue(10.0)
+            harness.signal_integration_rosette_y_max_spin.setValue(20.0)
+
+            harness._apply_signal_integration_axis_settings(is_rosette_mode=True)
+
+            _x_range, y_range = harness.signal_integration_plot_widget.viewRange()
+            self.assertAlmostEqual(y_range[0], 10.0, places=6)
+            self.assertAlmostEqual(y_range[1], 20.0, places=6)
         finally:
             tab.close()
 

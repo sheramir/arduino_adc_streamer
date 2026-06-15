@@ -1291,6 +1291,8 @@ class ConfigurationMixin:
         self._reset_force_channel_checkbox_refs()
 
         if not self.config['channels']:
+            if hasattr(self, "update_pressure_map_timeline_controls"):
+                self.update_pressure_map_timeline_controls()
             self.update_rosette_channel_list()
             return
 
@@ -1310,6 +1312,8 @@ class ConfigurationMixin:
             self.channel_checkboxes[spec['key']] = checkbox
 
         self._add_force_channel_checkboxes(start_index=len(display_specs))
+        if hasattr(self, "update_pressure_map_timeline_controls"):
+            self.update_pressure_map_timeline_controls()
         self.update_rosette_channel_list()
 
     def update_rosette_channel_list(self):

@@ -267,12 +267,13 @@ class ArrayDualModePZTTests(unittest.TestCase):
         self.assertEqual(get_pzt_rs_ohms_per_wire_unit("centiohm"), 0.01)
         self.assertIsNone(get_pzt_rs_ohms_per_wire_unit("unknown"))
 
-    def test_older_array_dual_mode_does_not_select_pzt_rs(self):
+    def test_array_pzt_pzr1_selects_pzt_rs_when_requested(self):
         harness = DualModePZTHarness()
         harness.array_mode_combo = DummyCombo("PZT_RS")
 
-        self.assertEqual(harness.get_selected_array_operation_mode(), "PZT")
-        self.assertFalse(harness.is_array_pzt_rs_mode())
+        self.assertEqual(harness.get_selected_array_operation_mode(), "PZT_RS")
+        self.assertTrue(harness.is_array_pzt_rs_mode())
+        self.assertEqual(harness.get_supported_array_operation_modes(), ("PZT", "PZR", "PZT_RS"))
 
 
 if __name__ == "__main__":

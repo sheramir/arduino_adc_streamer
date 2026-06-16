@@ -46,7 +46,7 @@ def resolve_mcu_profile(mcu_name: str | None, *, selected_array_mode: str = "PZT
     name = (mcu_name or "").strip()
     lower_name = name.lower()
     is_array_pzt_pzr17 = lower_name == "array_pzt_pzr1.7"
-    supports_pzt_rs = is_array_pzt_pzr17
+    supports_pzt_rs = lower_name in ("array_pzt_pzr1", "array_pzt_pzr1.7")
     array_operation_modes = ("PZT", "PZR", "PZT_RS") if supports_pzt_rs else ("PZT", "PZR")
     normalized_array_mode = (selected_array_mode or "PZT").strip().upper()
     if normalized_array_mode not in array_operation_modes:

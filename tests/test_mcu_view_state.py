@@ -37,6 +37,13 @@ class MCUViewStateTests(unittest.TestCase):
         self.assertTrue(view_state.show_555_controls)
         self.assertTrue(view_state.osr_visible)
 
+    def test_array_pzt_pzr1_pzt_rs_profile_shows_555_controls_without_hiding_osr(self):
+        profile = resolve_mcu_profile("Array_PZT_PZR1", selected_array_mode="PZT_RS")
+        view_state = build_mcu_view_state(profile)
+
+        self.assertTrue(view_state.show_555_controls)
+        self.assertTrue(view_state.osr_visible)
+
 
 if __name__ == "__main__":
     unittest.main()

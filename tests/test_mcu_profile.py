@@ -47,12 +47,19 @@ class MCUProfileTests(unittest.TestCase):
         self.assertTrue(profile.osr_visible)
         self.assertEqual(profile.array_operation_modes, ("PZT", "PZR", "PZT_RS"))
 
-    def test_pzt_rs_selection_is_not_enabled_for_older_array_dual_mcu(self):
+    def test_array_pzt_pzr1_now_supports_pzt_rs(self):
         profile = resolve_mcu_profile("Array_PZT_PZR1", selected_array_mode="PZT_RS")
 
-        self.assertFalse(profile.supports_pzt_rs)
-        self.assertFalse(profile.is_pzt_rs_mode)
-        self.assertEqual(profile.array_operation_modes, ("PZT", "PZR"))
+        self.assertTrue(profile.is_array_dual)
+        self.assertFalse(profile.is_array_pzt_pzr17)
+        self.assertTrue(profile.supports_pzt_rs)
+        self.assertTrue(profile.is_pzt_rs_mode)
+        self.assertTrue(profile.is_array_pzt1)
+        self.assertFalse(profile.is_555_mode)
+        self.assertEqual(profile.device_mode, "adc")
+        self.assertTrue(profile.show_555_controls)
+        self.assertTrue(profile.osr_visible)
+        self.assertEqual(profile.array_operation_modes, ("PZT", "PZR", "PZT_RS"))
 
 
 if __name__ == "__main__":

@@ -733,6 +733,65 @@ class HeatmapPanelMixin:
         checkbox = getattr(self, "show_heatmap_position_labels_check", None)
         return bool(checkbox is not None and checkbox.isChecked())
 
+    def _aspect_correct_display_bounds(
+        self,
+        x_min,
+        x_max,
+        y_min,
+        y_max,
+        viewport_width=None,
+        viewport_height=None,
+    ):
+        x_min = float(x_min)
+        x_max = float(x_max)
+        y_min = float(y_min)
+        y_max = float(y_max)
+        x_span = max(1.0, x_max - x_min)
+        y_span = max(1.0, y_max - y_min)
+
+        width = float(viewport_width or 0.0)
+        height = float(viewport_height or 0.0)
+        if width <= 0.0 or height <= 0.0:
+            return x_min, x_max, y_min, y_max
+
+        target_aspect = width / height
+        content_aspect = x_span / y_span
+        center_x = (x_min + x_max) / 2.0
+        center_y = (y_min + y_max) / 2.0
+
+        if content_aspect < target_aspect:
+            x_span = y_span * target_aspect
+        else:
+            y_span = x_span / target_aspect
+
+        return (
+            center_x - x_span / 2.0,
+            center_x + x_span / 2.0,
+            center_y - y_span / 2.0,
+            center_y + y_span / 2.0,
+        )
+
+    def _set_display_plot_range(self, x_min, x_max, y_min, y_max):
+        view_box = self.display_plot.getViewBox()
+        view_box.setAspectLocked(True, ratio=1.0)
+        self.display_plot.setAspectLocked(True, ratio=1.0)
+        view_box.setLimits(xMin=-1e307, xMax=1e307, yMin=-1e307, yMax=1e307)
+
+        x_min, x_max, y_min, y_max = self._aspect_correct_display_bounds(
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+            viewport_width=view_box.width(),
+            viewport_height=view_box.height(),
+        )
+        view_box.setRange(
+            xRange=(x_min, x_max),
+            yRange=(y_min, y_max),
+            padding=0.0,
+            disableAutoRange=True,
+        )
+
     def _update_display_plot_view(self):
         if not hasattr(self, "display_plot"):
             return
@@ -743,9 +802,7 @@ class HeatmapPanelMixin:
         extra_margin = float(getattr(self, "display_canvas_extra_margin", 0.0))
         if not centers:
             half = heatmap_size * 0.5 + 40.0
-            self.display_plot.setXRange(-half, half, padding=0.0)
-            self.display_plot.setYRange(-half, half, padding=0.0)
-            self.display_plot.setLimits(xMin=-half, xMax=half, yMin=-half, yMax=half)
+            self._set_display_plot_range(-half, half, -half, half)
             return
 
         x_centers = [center_x for center_x, _center_y in centers]
@@ -759,9 +816,7 @@ class HeatmapPanelMixin:
         y_min = min(y_centers) - content_half - margin
         y_max = max(y_centers) + content_half + margin
 
-        self.display_plot.setXRange(x_min, x_max, padding=0.0)
-        self.display_plot.setYRange(y_min, y_max, padding=0.0)
-        self.display_plot.setLimits(xMin=x_min, xMax=x_max, yMin=y_min, yMax=y_max)
+        self._set_display_plot_range(x_min, x_max, y_min, y_max)
 
     def update_visible_display_cards(self, visible_count):
         self.display_visible_count = max(0, int(visible_count))

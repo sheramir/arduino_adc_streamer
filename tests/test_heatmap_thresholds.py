@@ -250,6 +250,23 @@ class HeatmapThresholdTests(unittest.TestCase):
             ],
         )
 
+    def test_heatmap_display_bounds_expand_to_viewport_aspect(self):
+        panel = HeatmapLayoutHarness()
+
+        x_min, x_max, y_min, y_max = panel._aspect_correct_display_bounds(
+            -217.6,
+            217.6,
+            -297.6,
+            297.6,
+            viewport_width=966.0,
+            viewport_height=307.0,
+        )
+
+        self.assertAlmostEqual((x_max - x_min) / (y_max - y_min), 966.0 / 307.0)
+        self.assertLessEqual(x_min, -217.6)
+        self.assertGreaterEqual(x_max, 217.6)
+        self.assertEqual((y_min, y_max), (-297.6, 297.6))
+
     def test_555_thresholds_use_package_sensor_id_and_per_channel_totals(self):
         processor = Dummy555Processor()
         settings = {

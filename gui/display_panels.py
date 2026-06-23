@@ -16,6 +16,7 @@ import types
 from constants.ui import (
     CHANNEL_SCROLL_HEIGHT,
     DEFAULT_WINDOW_SIZE,
+    HEATMAP_TAB_NAME,
     PRESSURE_MAP_TAB_NAME,
     PZT_RS_PZT_TAB_NAME,
     ROSETTE_TAB_NAME,
@@ -66,15 +67,19 @@ class DisplayPanelsMixin:
         self.visualization_tabs.addTab(signal_integration_tab, PRESSURE_MAP_TAB_NAME)
         self.signal_integration_tab_index = 2
 
+        heatmap_tab = self.create_heatmap_tab()
+        self.visualization_tabs.addTab(heatmap_tab, HEATMAP_TAB_NAME)
+        self.heatmap_tab_index = 3
+
         # Create spectrum tab (from SpectrumPanelMixin)
         spectrum_tab = self.create_spectrum_tab()
         self.visualization_tabs.addTab(spectrum_tab, SPECTRUM_TAB_NAME)
-        self.spectrum_tab_index = 3
+        self.spectrum_tab_index = 4
 
         # Create sensor tab last (from SensorPanelMixin)
         sensor_tab = self.create_sensor_tab()
         self.visualization_tabs.addTab(sensor_tab, SENSOR_TAB_NAME)
-        self.sensor_tab_index = 4
+        self.sensor_tab_index = 5
         
         return self.visualization_tabs
     

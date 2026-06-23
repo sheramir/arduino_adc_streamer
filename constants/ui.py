@@ -24,6 +24,7 @@ TIME_SERIES_TAB_NAME = "Time Series"
 PZT_RS_PZT_TAB_NAME = "PZT"
 ROSETTE_TAB_NAME = "Rosette (RS)"
 PRESSURE_MAP_TAB_NAME = "Pressure Map"
+HEATMAP_TAB_NAME = "Heatmap"
 SPECTRUM_TAB_NAME = "Spectrum"
 SENSOR_TAB_NAME = "Sensor"
 

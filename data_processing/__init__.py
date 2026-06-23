@@ -19,6 +19,7 @@ from data_processing.capture_lifecycle import CaptureLifecycleMixin
 from data_processing.filter_processor import FilterProcessorMixin
 from data_processing.force_overlay import ForceOverlayMixin
 from data_processing.force_processor import ForceProcessorMixin
+from data_processing.heatmap_processor import HeatmapProcessorMixin
 from data_processing.normal_force_calculator import NormalForceCalculator, NormalForceResult
 from data_processing.pressure_map_generator import (
     PressureMapGenerator,
@@ -41,6 +42,7 @@ __all__ = [
     'FilterProcessorMixin',
     'ForceOverlayMixin',
     'ForceProcessorMixin',
+    'HeatmapProcessorMixin',
     'NormalForceCalculator',
     'NormalForceResult',
     'PressureMapGenerator',

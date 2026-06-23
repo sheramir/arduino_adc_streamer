@@ -2,9 +2,15 @@
 
 This folder preserves the previous heatmap, shear, and combined Display tab implementations for future reference or rollback.
 
-The active application no longer imports these modules. Current runtime tabs are:
+The active application now contains promoted copies of the legacy heatmap GUI and
+processing code under `gui/`, `data_processing/`, and `constants/`. The files in
+this folder remain archived source copies for reference or rollback.
+
+Current runtime tabs include:
 
 - Time Series
+- Pressure Map
+- Heatmap
 - Spectrum
 - Sensor
 

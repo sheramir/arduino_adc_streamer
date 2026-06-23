@@ -7,6 +7,7 @@ Desktop GUI and firmware workspace for streaming ADC data from MG24 and Teensy b
 - Real-time ADC plotting with selectable channels, repeat handling, baseline subtraction, and rolling window controls
 - Shared live filtering for time-series and spectrum views
 - Spectrum tab with FFT and Welch PSD modes
+- Heatmap tab using the promoted legacy PZT/PZR heatmap calculation path
 - Force-sensor overlay with timestamp alignment against ADC capture timing
 - Editable sensor library with both 5-channel layouts and 3x3 array layouts
 - Archive-backed capture flow with full-view reload for captures larger than RAM
@@ -52,7 +53,7 @@ Desktop GUI and firmware workspace for streaming ADC data from MG24 and Teensy b
 - `data_processing/`: binary parsing, filtering, plotting, force processing, spectrum, and capture lifecycle
 - `gui/`: tab construction and UI panels for time series, spectrum, sensor, controls, files, and status views
 - `file_operations/`: archive loading, export, plot export, and settings persistence helpers
-- `Legacy/`: archived heatmap, shear, and combined Display tab GUI/processing modules kept for reference or rollback
+- `Legacy/`: archived source copies for older heatmap, shear, and combined Display tab implementations kept for reference or rollback
 
 ### Firmware
 
@@ -98,5 +99,5 @@ uv run pytest
 ## Notes
 
 - The bundled sensor library is loaded from `sensors_library/` when present, then overlaid by the user library under `~/.adc_streamer/sensors/`.
-- The active GUI now shows only `Time Series`, `Spectrum`, and `Sensor` tabs, with `Sensor` last.
+- The active GUI includes `Time Series`, `Pressure Map`, `Heatmap`, `Spectrum`, and `Sensor` tabs, with `Sensor` last. `Rosette (RS)` appears when the active mode supports it.
 - `plus_heatmap_config.json` is a legacy root-level sample file and is not part of the active startup path.

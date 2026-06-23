@@ -250,6 +250,14 @@ class BinaryProcessorMixin:
                             self.trigger_signal_integration_update()
                         else:
                             self.update_signal_integration_plot()
+                    elif (
+                        hasattr(self, 'should_update_heatmap_display')
+                        and self.should_update_heatmap_display()
+                    ):
+                        if hasattr(self, 'trigger_heatmap_update'):
+                            self.trigger_heatmap_update()
+                        elif hasattr(self, 'update_heatmap_plot'):
+                            self.update_heatmap_plot()
                     # Keep status-label updates lightweight at high block rates.
                     if (
                         now - getattr(self, '_last_capture_status_update_time', 0.0)

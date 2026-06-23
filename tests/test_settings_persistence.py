@@ -5,7 +5,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from uuid import uuid4
 
-from Legacy.gui.heatmap_panel import HeatmapPanelMixin
+from gui.heatmap_panel import HeatmapPanelMixin
 from Legacy.gui.shear_panel import ShearPanelMixin
 from gui.spectrum_panel import SpectrumPanelMixin
 
@@ -98,8 +98,7 @@ class HeatmapSettingsHarness(HeatmapPanelMixin):
         self._heatmap_autosave_enabled = True
         self._heatmap_settings_loading = False
         self.log_messages = []
-        self.global_threshold_spins = [SimpleSpin(v) for v in (1, 2, 3, 4, 5)]
-        self.global_release_threshold_spins = [SimpleSpin(v) for v in (6, 7, 8, 9, 10)]
+        self.global_noise_threshold_spin = SimpleSpin(3.0)
         self.sensor_calibration_spins = {
             "PZT1": {
                 "threshold_spins": [SimpleSpin(v) for v in (11, 12, 13, 14, 15)],
@@ -119,7 +118,12 @@ class HeatmapSettingsHarness(HeatmapPanelMixin):
         self.r555_map_smooth_alpha_spin = SimpleSpin(0.81)
         self.rms_window_spin = SimpleSpin(55)
         self.dc_removal_combo = SimpleCombo(["Bias (2s)", "High-pass"], current="High-pass")
-        self.magnitude_threshold_spin = SimpleSpin(0.0)
+        self.show_heatmap_circle_check = SimpleCheck(True)
+        self.show_heatmap_position_labels_check = SimpleCheck(True)
+        self.heatmap_colormap_combo = SimpleCombo(
+            ["Thermal", "Grayscale", "Viridis", "Magma"],
+            current="Grayscale",
+        )
 
     def _get_last_heatmap_settings_path(self):
         return self._settings_path
@@ -234,18 +238,29 @@ class SettingsPersistenceTests(unittest.TestCase):
             payload = json.loads(settings_path.read_text(encoding="utf-8"))
             self.assertEqual(payload["version"], 2)
             self.assertEqual(payload["heatmap_settings"]["rms_window_ms"], 55)
+            self.assertEqual(payload["heatmap_settings"]["global_noise_threshold"], 3.0)
+            self.assertEqual(payload["heatmap_settings"]["heatmap_colormap"], "Grayscale")
+            self.assertTrue(payload["heatmap_settings"]["show_circle_overlay"])
+            self.assertTrue(payload["heatmap_settings"]["show_position_labels"])
             self.assertNotIn("cop_smooth_alpha", payload["heatmap_settings"])
+            self.assertNotIn("global_channel_release_thresholds", payload["heatmap_settings"])
 
-            harness.global_threshold_spins[0].setValue(999.0)
+            harness.global_noise_threshold_spin.setValue(999.0)
             harness.sensor_calibration_spins["PZT1"]["gain_spins"][0].setValue(9.9)
             harness.dc_removal_combo.setCurrentText("Bias (2s)")
+            harness.show_heatmap_circle_check.setChecked(False)
+            harness.show_heatmap_position_labels_check.setChecked(False)
+            harness.heatmap_colormap_combo.setCurrentText("Thermal")
 
             applied = harness.load_last_heatmap_settings()
 
             self.assertTrue(applied)
-            self.assertEqual(harness.global_threshold_spins[0].value(), 3.0)
+            self.assertEqual(harness.global_noise_threshold_spin.value(), 3.0)
             self.assertEqual(harness.sensor_calibration_spins["PZT1"]["gain_spins"][0].value(), 1.1)
             self.assertEqual(harness.dc_removal_combo.currentText(), "High-pass")
+            self.assertTrue(harness.show_heatmap_circle_check.isChecked())
+            self.assertTrue(harness.show_heatmap_position_labels_check.isChecked())
+            self.assertEqual(harness.heatmap_colormap_combo.currentText(), "Grayscale")
 
     def test_shear_save_last_and_load_last_round_trip(self):
         with workspace_tempdir("shear_settings") as tmpdir:

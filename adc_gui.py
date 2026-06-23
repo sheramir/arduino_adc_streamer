@@ -36,6 +36,7 @@ from constants.ui import (
     CONFIG_CHECK_INTERVAL,
     CONTROL_PANEL_STRETCH,
     FORCE_PLOT_DEBOUNCE_MS,
+    HEATMAP_TAB_NAME,
     MAIN_PANEL_LAYOUT_SPACING,
     PRESSURE_MAP_TAB_NAME,
     PZT_RS_PZT_TAB_NAME,
@@ -51,6 +52,7 @@ from constants.ui import (
     WINDOW_SCREEN_MARGIN_PX,
     WINDOW_WIDTH,
 )
+from constants.heatmap import HEATMAP_FPS
 
 # Import mixin modules
 from serial_communication import ADCSerialMixin, ForceSerialMixin
@@ -69,6 +71,7 @@ from gui import (
     ControlPanelsMixin,
     DisplayPanelsMixin,
     FilePanelsMixin,
+    HeatmapPanelMixin,
     PressureMapPanelMixin,
     SensorPanelMixin,
     SpectrumPanelMixin,
@@ -97,6 +100,7 @@ class ADCStreamerGUI(
     FilePanelsMixin,        # ✅ File panel UI
     SensorPanelMixin,       # ✅ Sensor panel UI
     PressureMapPanelMixin,  # Pressure Map tab pipeline and controls
+    HeatmapPanelMixin,      # Heatmap tab pipeline and controls
     SpectrumPanelMixin,     # ✅ Spectrum panel UI
     ConfigurationMixin,     # ✅ Configuration management
     DataProcessorMixin,     # ✅ Data processing
@@ -123,6 +127,7 @@ class ADCStreamerGUI(
         self._init_ui_state()
         self.init_sensor_config_state()
         self._init_signal_integration_state()
+        self.init_heatmap_processing_state()
         self._init_spectrum_state()
         self._init_timers()
 
@@ -130,6 +135,7 @@ class ADCStreamerGUI(
         self.init_ui()
         self._refresh_sensor_tab_ui()
         self.load_last_spectrum_settings()
+        self.load_last_heatmap_settings()
         self.load_last_shear_settings()
 
         # Post-initialization
@@ -235,6 +241,10 @@ class ADCStreamerGUI(
         self.signal_integration_update_timer = QTimer()
         self.signal_integration_update_timer.setSingleShot(True)
         self.signal_integration_update_timer.timeout.connect(self.update_signal_integration_plot)
+
+        self.heatmap_update_timer = QTimer()
+        self.heatmap_update_timer.setSingleShot(True)
+        self.heatmap_update_timer.timeout.connect(self.update_heatmap_plot)
         
         self.config_check_timer = QTimer()
         self.config_check_timer.timeout.connect(self.check_config_completion)
@@ -353,6 +363,7 @@ class ADCStreamerGUI(
     def closeEvent(self, event):
         """Handle window close event."""
         self.save_last_spectrum_settings()
+        self.save_last_heatmap_settings()
         self.save_last_shear_settings()
 
         if self.serial_port and self.serial_port.is_open:
@@ -393,6 +404,10 @@ class ADCStreamerGUI(
         if current_tab == PRESSURE_MAP_TAB_NAME:
             self.update_signal_integration_plot()
 
+        if current_tab == HEATMAP_TAB_NAME:
+            self.update_heatmap_ui_for_mode()
+            self.update_heatmap_plot()
+
     def get_current_visualization_tab_name(self) -> str:
         """Return the current visualization tab title."""
         if not hasattr(self, "visualization_tabs") or self.visualization_tabs is None:
@@ -422,6 +437,10 @@ class ADCStreamerGUI(
         """Return True when the pressure map tab is the visible tab."""
         return self.get_current_visualization_tab_name() == PRESSURE_MAP_TAB_NAME
 
+    def should_update_heatmap_display(self) -> bool:
+        """Return True when the Heatmap tab is the visible tab."""
+        return self.get_current_visualization_tab_name() == HEATMAP_TAB_NAME
+
     def trigger_signal_integration_update(self):
         """Queue a pressure-map refresh outside the ADC block handler."""
         if not self.should_update_signal_integration_display():
@@ -432,6 +451,16 @@ class ADCStreamerGUI(
             return
         if not self.signal_integration_update_timer.isActive():
             self.signal_integration_update_timer.start(0)
+
+    def trigger_heatmap_update(self):
+        """Queue a Heatmap refresh outside the ADC block handler."""
+        if not self.should_update_heatmap_display():
+            return
+        if getattr(self, "_heatmap_updating_plot", False):
+            return
+        interval_ms = max(1, int(1000 / max(1, HEATMAP_FPS)))
+        if not self.heatmap_update_timer.isActive():
+            self.heatmap_update_timer.start(interval_ms)
 
     def start_spectrum_updates(self):
         """Start spectrum updates."""

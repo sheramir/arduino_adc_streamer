@@ -63,8 +63,7 @@ and force-calibration tab/persistence settings.
 Heatmap visualization defaults: resolution, sensor positions/calibration/noise floor, Gaussian
 blob shape, smoothing, DC-removal mode, channel mapping (derived from
 `constants.sensor_config.DEFAULT_SENSOR_CONFIGURATION`), and PZR-specific (555-mode) heatmap
-aliases. Also defines shear/CoP visualization constants in its second half (signed integration
-window, EMA baseline coefficients, Gaussian CoP blob and arrow rendering parameters).
+aliases.
 
 - Data only: `HEATMAP_FPS`, `HEATMAP_WIDTH/HEIGHT`, `HEATMAP_COORD_EXTENT`, `SENSOR_POS_X/Y`,
   `SENSOR_CALIBRATION`, `SENSOR_NOISE_FLOOR`, `PZT_SENSOR_CALIBRATION`, `R_SENSOR_CALIBRATION`,
@@ -74,11 +73,14 @@ window, EMA baseline coefficients, Gaussian CoP blob and arrow rendering paramet
   `SIGMA_SPREAD_FACTOR`, `AXIS_SIGMA_FACTOR`, `RMS_WINDOW_MS`, `BIAS_CALIBRATION_DURATION_SEC`,
   `HPF_CUTOFF_HZ`, `HEATMAP_DC_REMOVAL_MODE`, `REMOVE_NEGATIVES`, `HEATMAP_CHANNEL_SENSOR_MAP`,
   `HEATMAP_REQUIRED_CHANNELS`, `MAX_SENSOR_PACKAGES`, `PZR_ZERO_BASELINE_WINDOW_SEC`,
-  `PZR_AUTO_BASELINE_DELAY_SEC`, `R_HEATMAP_*` aliases, plus the `SHEAR_*` Gaussian/EMA/arrow
-  constants noted above (`SHEAR_INTEGRATION_WINDOW_MS`, `SHEAR_BASELINE_ALPHA`,
-  `SHEAR_CONDITIONING_ALPHA`, `SHEAR_DEADBAND_THRESHOLD`, `SHEAR_CHANNEL_GAINS/BASELINES`,
-  `SHEAR_GAUSSIAN_SIGMA_X/Y`, `SHEAR_INTENSITY_SCALE`, `SHEAR_ARROW_*`,
-  `SHEAR_CONFIDENCE_SIGNAL_REF`, `SHEAR_VIEW_EXTENT`, `SHEAR_SENSOR_RADIUS`).
+  `PZR_AUTO_BASELINE_DELAY_SEC`, `R_HEATMAP_*` aliases.
+
+  Note: this module previously also defined a duplicate, unused set of `SHEAR_*` constants
+  (signed integration window, EMA baseline coefficients, Gaussian CoP blob/arrow parameters).
+  No active code imported them from here — the live shear pipeline uses `constants/shear.py`
+  instead, and `Legacy/config_constants.py` keeps its own isolated literal copies (enforced by
+  `tests/test_legacy_constants.py`). That dead block was removed; if you're looking for shear
+  constants, see `shear.py` below.
 
 ### plotting.py
 
@@ -184,11 +186,10 @@ limits used across the main GUI.
 
 ## Notes
 
-- `heatmap.py` contains both heatmap constants and a "Shear / CoP Visualization Constants"
-  section; `shear.py` also defines overlapping/related shear constants (sensor positions,
-  geometry, arrow rendering). The split appears to be a historical artifact of incremental
-  refactors rather than a clean module boundary — both files are read by shear/heatmap-related
-  processing code, so check both when changing shear behavior.
+- `heatmap.py` previously also carried a dead "Shear / CoP Visualization Constants" section
+  duplicating concerns better covered by `shear.py`. It was unused by any active import and has
+  been removed; shear-related constants now live solely in `shear.py` for active code (and in
+  `Legacy/config_constants.py` for the archived shear pipeline).
 - `pressure_map.py` imports from both `plotting.py` and `shear.py`, and re-exports many
   `SIGNAL_INTEGRATION_*` constants under `PRESSURE_MAP_*`/`PRESSURE_*` aliases for the same
   values — this is intentional naming-migration scaffolding ("Legacy SIGNAL_INTEGRATION_* names

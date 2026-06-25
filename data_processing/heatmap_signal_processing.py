@@ -10,6 +10,14 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 
+# Shared sensor label order for both the piezo and 555 heatmap pipelines.
+HEATMAP_SENSOR_LABEL_ORDER: Tuple[str, ...] = ("T", "B", "R", "L", "C")
+
+
+def heatmap_sensor_label_order() -> List[str]:
+    """Return the fixed T/B/R/L/C sensor label order as a list."""
+    return list(HEATMAP_SENSOR_LABEL_ORDER)
+
 
 def resolve_heatmap_blob_sigmas(settings, default_x: float, default_y: float) -> tuple[float, float]:
     """Return configured blob sigmas, or one shared radius for circular mode."""

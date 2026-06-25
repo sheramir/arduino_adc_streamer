@@ -102,35 +102,3 @@ R_HEATMAP_INTENSITY_MAX = 10.0
 R_HEATMAP_AXIS_ADAPT_STRENGTH = 0.0
 R_HEATMAP_MAP_SMOOTH_ALPHA = SMOOTH_ALPHA
 R_HEATMAP_COP_SMOOTH_ALPHA = SMOOTH_ALPHA
-
-# ============================================================================
-# Shear / CoP Visualization Constants
-# ============================================================================
-
-# Signed integration window for shear extraction
-SHEAR_INTEGRATION_WINDOW_MS = 16.0
-
-# EMA coefficients for baseline tracking and light conditioning
-SHEAR_BASELINE_ALPHA = 0.05
-SHEAR_CONDITIONING_ALPHA = 0.25
-
-# Deadband / signed calibration defaults
-SHEAR_DEADBAND_THRESHOLD = 0.0
-SHEAR_CHANNEL_GAINS = [1.0, 1.0, 1.0, 1.0, 1.0]
-SHEAR_CHANNEL_BASELINES = [0.0, 0.0, 0.0, 0.0, 0.0]
-
-# Gaussian CoP blob and arrow visualization
-SHEAR_GAUSSIAN_SIGMA_X = 0.18
-SHEAR_GAUSSIAN_SIGMA_Y = 0.18
-SHEAR_INTENSITY_SCALE = 0.2
-SHEAR_ARROW_SCALE = 0.35
-SHEAR_ARROW_HEAD_LENGTH_BASE_PX = 12.0
-SHEAR_ARROW_HEAD_LENGTH_AMPLIFIER = 12.0
-SHEAR_ARROW_THICKNESS_AMPLIFIER = 30.0
-
-# Confidence scoring reference magnitude
-SHEAR_CONFIDENCE_SIGNAL_REF = 0.02
-
-# Shear panel view geometry
-SHEAR_VIEW_EXTENT = 1.25
-SHEAR_SENSOR_RADIUS = 0.72

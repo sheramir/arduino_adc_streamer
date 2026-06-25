@@ -17,7 +17,10 @@ from constants.heatmap import (
     R_HEATMAP_COP_SMOOTH_ALPHA,
     MAX_SENSOR_PACKAGES,
 )
-from data_processing.heatmap_signal_processing import resolve_heatmap_blob_sigmas
+from data_processing.heatmap_signal_processing import (
+    heatmap_sensor_label_order,
+    resolve_heatmap_blob_sigmas,
+)
 
 
 class Heatmap555ProcessorMixin:
@@ -25,7 +28,7 @@ class Heatmap555ProcessorMixin:
 
     @staticmethod
     def _threshold_label_order():
-        return ["T", "B", "R", "L", "C"]
+        return heatmap_sensor_label_order()
 
     def _get_package_sensor_id(self, package_index):
         if self.is_array_sensor_selection_mode():

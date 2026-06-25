@@ -191,7 +191,7 @@ Typed force runtime state plus a legacy-attribute adapter so older mixins can ke
 
 Mixin implementing the 555-resistance-mode (4-sensor-channel) displacement heatmap pipeline, including per-package baseline tracking and Gaussian blob smoothing.
 
-- Heatmap555ProcessorMixin._threshold_label_order() — returns the fixed sensor label order `T, B, R, L, C`.
+- Heatmap555ProcessorMixin._threshold_label_order() — returns the fixed sensor label order `T, B, R, L, C` via the shared `heatmap_sensor_label_order()` helper.
 - Heatmap555ProcessorMixin._get_package_sensor_id(package_index) — resolves a sensor ID string for a package.
 - Heatmap555ProcessorMixin._build_r555_channel_value_array(label_order, values, default) — maps threshold/gain arrays onto a label order.
 - Heatmap555ProcessorMixin._get_r555_global_noise_threshold(settings) — resolves the global noise threshold from settings.
@@ -205,7 +205,7 @@ Mixin implementing the 555-resistance-mode (4-sensor-channel) displacement heatm
 
 Mixin implementing the piezoelectric (5-sensor) heatmap pipeline: RMS magnitude extraction, center-of-pressure, confidence, and Gaussian blob generation.
 
-- PiezoHeatmapProcessorMixin._threshold_label_order() — returns the fixed sensor label order.
+- PiezoHeatmapProcessorMixin._threshold_label_order() — returns the fixed sensor label order via the shared `heatmap_sensor_label_order()` helper.
 - PiezoHeatmapProcessorMixin._get_heatmap_position_for_display_spec / _get_heatmap_package_id_for_display_spec / _get_heatmap_baseline_key_for_display_spec — resolve sensor position/package/baseline key from a display spec.
 - PiezoHeatmapProcessorMixin._build_piezo_channel_value_array(values, default, size) — builds a fixed-size per-sensor value array.
 - PiezoHeatmapProcessorMixin._get_piezo_global_noise_threshold(settings) — resolves the global noise threshold.
@@ -230,6 +230,7 @@ Coordinator mixin combining the piezo and 555 heatmap mixins and owning shared h
 GUI-independent per-channel signal conditioning (bias removal, high-pass filtering, RMS, smoothing/thresholding) shared by both heatmap pipelines.
 
 - resolve_heatmap_blob_sigmas(settings, default_x, default_y) — returns configured or circular-averaged blob sigmas.
+- heatmap_sensor_label_order() — returns the shared `["T", "B", "R", "L", "C"]` sensor label order used by both `Heatmap555ProcessorMixin` and `PiezoHeatmapProcessorMixin`.
 - HeatmapSignalProcessor.__init__(channel_count, bias_duration_sec, hpf_cutoff_hz) — sets up per-channel state.
 - HeatmapSignalProcessor.reset() — clears bias, HPF, and EMA state.
 - HeatmapSignalProcessor.update_channel_count(channel_count) — resizes/reinitializes state if channel count changes.

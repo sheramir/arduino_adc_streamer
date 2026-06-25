@@ -13,7 +13,10 @@ from constants.heatmap import (
     HEATMAP_REQUIRED_CHANNELS, MAX_SENSOR_PACKAGES, CONFIDENCE_INTENSITY_REF, SIGMA_SPREAD_FACTOR,
     AXIS_SIGMA_FACTOR,
 )
-from data_processing.heatmap_signal_processing import resolve_heatmap_blob_sigmas
+from data_processing.heatmap_signal_processing import (
+    heatmap_sensor_label_order,
+    resolve_heatmap_blob_sigmas,
+)
 
 
 class PiezoHeatmapProcessorMixin:
@@ -21,7 +24,7 @@ class PiezoHeatmapProcessorMixin:
 
     @staticmethod
     def _threshold_label_order():
-        return ["T", "B", "R", "L", "C"]
+        return heatmap_sensor_label_order()
 
     def _get_heatmap_position_for_display_spec(self, spec, spec_index, channel_to_sensor):
         key = spec.get('key') if isinstance(spec, dict) else None

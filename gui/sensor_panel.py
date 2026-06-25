@@ -88,8 +88,8 @@ class SensorPanelMixin:
 
         Returns:
             True when the selected sensor configuration marks compression as
-            negative raw piezo response and pressure-map processing should
-            multiply the integrated signal by -1.
+            negative raw piezo response and piezo displays/processing should
+            multiply the signal by -1.
 
         Raises:
             None.
@@ -825,7 +825,7 @@ class SensorPanelMixin:
 
         Args:
             checked: True when the active sensor package should be treated as
-                reverse-polarity for pressure-map signal processing.
+                reverse-polarity for piezo signal displays and processing.
 
         Returns:
             None.
@@ -841,6 +841,14 @@ class SensorPanelMixin:
         self.sensor_status_label.setText("")
         self.save_sensor_configurations()
         self.refresh_sensor_mapping_usage()
+        if hasattr(self, "trigger_plot_update"):
+            self.trigger_plot_update()
+        elif hasattr(self, "update_plot"):
+            self.update_plot()
+        if hasattr(self, "trigger_signal_integration_update"):
+            self.trigger_signal_integration_update()
+        elif hasattr(self, "update_signal_integration_plot"):
+            self.update_signal_integration_plot()
         polarity_label = "reverse" if checked else "normal"
         self.log_status(f"Updated sensor polarity: {self.active_sensor_config_name} is {polarity_label}")
 

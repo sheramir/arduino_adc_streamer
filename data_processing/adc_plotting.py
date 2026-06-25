@@ -19,6 +19,10 @@ from constants.plotting import (
     ROSETTE_FIXED_Y_MAX_DEFAULT_OHMS,
     ROSETTE_FIXED_Y_MIN_DEFAULT_OHMS,
 )
+from constants.sensor_config import (
+    SENSOR_POLARITY_NORMAL_MULTIPLIER,
+    SENSOR_POLARITY_REVERSED_MULTIPLIER,
+)
 
 
 class ADCPlottingMixin:
@@ -378,12 +382,33 @@ class ADCPlottingMixin:
             if spec['key'] in self.plot_baselines:
                 channel_data = channel_data - self.plot_baselines[spec['key']]
 
+        channel_data = self._apply_active_sensor_polarity(spec, channel_data)
+        if getattr(self, 'device_mode', 'adc') != '555':
+            latest_value = float(channel_data[-1]) if len(channel_data) > 0 else None
+
         if len(channel_data) > max_samples_per_series:
             downsample_factor = max(1, len(channel_data) // max_samples_per_series)
             channel_data = channel_data[::downsample_factor]
             channel_times = channel_times[::downsample_factor]
 
         return channel_data, channel_times, latest_value
+
+    def _apply_active_sensor_polarity(self, spec, values):
+        """Flip ADC trace sign for reverse-polarity sensor packages."""
+        samples = np.asarray(values, dtype=np.float64)
+        if getattr(self, 'device_mode', 'adc') == '555':
+            return samples
+        if spec.get('stream') == 'rs':
+            return samples
+        reverse_polarity = False
+        if hasattr(self, 'is_active_sensor_reverse_polarity'):
+            reverse_polarity = bool(self.is_active_sensor_reverse_polarity())
+        multiplier = (
+            SENSOR_POLARITY_REVERSED_MULTIPLIER
+            if reverse_polarity
+            else SENSOR_POLARITY_NORMAL_MULTIPLIER
+        )
+        return samples * multiplier
 
     def _get_or_create_adc_curve(self, curve_key, name, pen):
         """Fetch an existing ADC curve or create it on first use."""

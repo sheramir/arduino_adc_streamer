@@ -23,7 +23,7 @@ Data file, not code. Top-level shape:
     code (`T`, `R`, `C`, `L`, `B`).
   - `type` (string) — `"channel_layout"` for a plain 5-channel package, or `"array_layout"` for a
     multi-package 3x3 array.
-  - `reverse_polarity` (bool) — whether pressure-map processing should invert this package's polarity.
+  - `reverse_polarity` (bool) — whether piezo time-series and pressure-map processing should invert this package's polarity.
   - For `"array_layout"` entries only:
     - `array_layout.cells` — a 3x3 grid (list of 3 lists of 3 entries) where each cell is either
       `null` or a sensor ID string like `"PZT1"`/`"PZR2"`.

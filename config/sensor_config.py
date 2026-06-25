@@ -2,8 +2,9 @@
 Sensor configuration helpers and persistence for editable 5-channel layouts.
 
 The module normalizes named sensor-package channel maps, optional array-layout
-attachments, and the package-level reverse-polarity flag used by pressure-map
-processing. It depends on the schema defaults in ``constants.sensor_config``.
+attachments, and the package-level reverse-polarity flag used by piezo display
+and pressure-map processing. It depends on the schema defaults in
+``constants.sensor_config``.
 """
 
 from __future__ import annotations

@@ -2,13 +2,13 @@
 
 Main sketch:
 
-- `Teensy_SPI_Master_Array_PZT_PZR1.7_DRDY_Modular.ino`
+- `Teensy_SPI_Master_Array_PZT_PZR1.7_DRDY_Modular.ino` — a 2-function wrapper: `setup()` calls `pcb17_firmware::setupFirmware()` and `loop()` calls `pcb17_firmware::loopFirmware()`. All actual setup/loop logic lives in `libraries/Pcb17Firmware.cpp`.
 
 Board config:
 
-- `BoardConfig.h` records the PCB1.7 pinout and 555 defaults.
+- `BoardConfig.h` records the PCB1.7 pinout and 555 defaults: PZT SPI CS/DRDY pins (`kPztCsPin`=10, `kPztDrdyPin`=0) and bitrate, separate PZR and RS 555-timer ICP/MUX pin sets (both with MUX-enable pins, unlike PCB1.5 where PZR has no enable pin), `kDefault555Mode` (default `TIMER555_RS`), and derived `kTimer555*` constants plus `initTimer555Pins()`. Values match `PCB1.5_with_Libraries/Teensy/BoardConfig.h` except PZR/RS now both have MUX-enable pins (7 and 8) since PZR and RS MUXes must be independently disabled/enabled when switching to/from `PZT_RS` mode.
 
-Firmware libraries:
+Firmware libraries (see `libraries/README.md` for full API details):
 
 - `libraries/Pcb17Firmware.h`
 - `libraries/Pcb17Firmware.cpp`

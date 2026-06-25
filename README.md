@@ -75,6 +75,43 @@ Desktop GUI and firmware workspace for streaming ADC data from MG24 and Teensy b
 - `docs/architecture/`: implementation notes for active subsystems
 - `docs/history/`: historical refactor logs and milestone notes
 
+## Root Files
+
+### `adc_gui.py`
+
+Main application entry point. Defines `ADCStreamerGUI`, a `QMainWindow` subclass composed from the mixins in `serial_communication/`, `config/`, `gui/`, `data_processing/`, and `file_operations/`, plus a `main()` function that launches the Qt application.
+
+- `main()` — creates the `QApplication`, instantiates `ADCStreamerGUI`, shows it, and starts the Qt event loop.
+- `ADCStreamerGUI.__init__()` — runs the state-init helpers below, builds the UI, restores last-used settings, and logs the startup message.
+- `ADCStreamerGUI._init_serial_state()` — initializes ADC serial port/thread state and the `ADCConnectionWorkflow`.
+- `ADCStreamerGUI._init_data_buffers()` — sets up raw/processed sample buffers, the buffer lock, filter state, and capture-buffer state.
+- `ADCStreamerGUI._init_archive_state()` — initializes archive writer/path and block-timing file state.
+- `ADCStreamerGUI._init_force_state()` — initializes the force serial workflow, session, and default force runtime state.
+- `ADCStreamerGUI._init_timing_state()` — resets timing measurement state (without resetting labels).
+- `ADCStreamerGUI._init_config_state()` — sets the device mode, builds the ADC configuration service/runner, and default config/status state.
+- `ADCStreamerGUI._init_ui_state()` — initializes checkbox dicts, plot curve caches, and UI flags.
+- `ADCStreamerGUI._init_timers()` — creates and wires the plot/force/signal-integration/heatmap/config-check/spectrum `QTimer`s.
+- `ADCStreamerGUI._log_startup_message()` — writes the startup banner to the status log.
+- `ADCStreamerGUI.init_ui()` — builds the main splitter layout from the left control panel and right visualization panel, sets the window title/status bar, and fits the window to the screen.
+- `ADCStreamerGUI._fit_window_to_screen()` — clamps window geometry to the available screen size and re-centers the window.
+- `ADCStreamerGUI._create_left_control_panel()` — assembles the serial/config/acquisition/run-control/file/status sections into the left panel.
+- `ADCStreamerGUI._create_right_visualization_panel()` — assembles the tabbed plot section into the right panel.
+- `ADCStreamerGUI.closeEvent(event)` — persists spectrum/heatmap/shear settings, disconnects serial ports, and shuts down background workers on window close.
+- `ADCStreamerGUI.on_visualization_tab_changed(index)` — starts/stops spectrum updates and triggers the relevant plot refresh when the active visualization tab changes.
+- `ADCStreamerGUI.get_current_visualization_tab_name()` — returns the title of the currently active visualization tab.
+- `ADCStreamerGUI.is_live_visualization_only_tab()` — returns `False`; placeholder hook for tabs that should skip default time-series capture.
+- `ADCStreamerGUI.should_store_capture_data()` — returns whether captured data should be persisted/archived.
+- `ADCStreamerGUI.should_update_live_timeseries_display()` — returns whether the active tab is one of the live time-series/PZT-RS/Rosette tabs.
+- `ADCStreamerGUI.should_update_signal_integration_display()` — returns whether the Pressure Map tab is active.
+- `ADCStreamerGUI.should_update_heatmap_display()` — returns whether the Heatmap tab is active.
+- `ADCStreamerGUI.trigger_signal_integration_update()` — debounced trigger that queues a pressure-map redraw when that tab is visible.
+- `ADCStreamerGUI.trigger_heatmap_update()` — debounced trigger that queues a heatmap redraw at the configured `HEATMAP_FPS` interval.
+- `ADCStreamerGUI.start_spectrum_updates()` / `stop_spectrum_updates()` — start or stop the periodic spectrum refresh timer.
+
+### `excel_tests.c`
+
+Despite the `.c` extension, this is not compiled code — it's a scratch file of Excel formulas (IDW-style weighted-average interpolation by inverse squared distance) used while prototyping the pressure-map/heatmap interpolation math before it was ported into `data_processing/`. Not part of the build or import graph.
+
 ## Recommended Documentation
 
 - [Arduino_Sketches/README.md](Arduino_Sketches/README.md): current firmware sketch map and serial protocol summary

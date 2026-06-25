@@ -1,0 +1,15 @@
+# refactoring_log
+
+Historical, point-in-time completion reports and summaries from the original modularization of `adc_gui.py` (a 3,499-line monolith) into mixin-based modules, plus a couple of unrelated update/optimization summaries from the same era. These describe work that was already done; they are not current architecture docs (see `docs/architecture/` for that) and some figures/file names (e.g. `adc_gui_modular.py`, `adc_gui_refactored_demo.py`) may no longer match the present codebase layout.
+
+## Files
+
+- `README_REFACTORING.md` — the original refactoring plan/guide: proposed directory structure, module breakdown (serial_communication, gui, data_processing, config, file_operations), migration strategy by phase, and a running status table. Ends with all 5 phases marked complete and ~88% (3,070/3,499 lines) extracted.
+- `PHASE3_COMPLETION.md` — completion report for Phase 3 (Configuration Management): extracted ~500 lines into `config/config_handlers.py` (`ConfigurationMixin`), covering config event handlers, the Arduino configure/verify workflow, and channel-list management.
+- `PHASE4_COMPLETION.md` — completion report for Phase 4 (Data Processing): extracted ~1,200 lines into `data_processing/data_processor.py` (`DataProcessorMixin`), covering serial/binary sweep processing, force data processing, plotting, and capture control.
+- `PHASE5_COMPLETION.md` — completion report for Phase 5 (File Operations), the final phase: extracted ~300 lines into `file_operations/file_manager.py` (`FileOperationsMixin`), covering CSV export, plot image export, and archive loading/full-view. Declares the refactoring project complete at 88% extraction.
+- `REFACTORING_COMPLETE.md` — top-level summary celebrating completion of all 5 phases, with before/after comparison, module structure diagram, statistics table, and lessons learned.
+- `GUI_README.md` — a user-guide-style document (features, installation, usage workflows, Arduino command reference, troubleshooting) describing the ADC Streamer GUI as it existed at the time of writing; largely superseded by the root `README.md` and `docs/user/` guides for current behavior.
+- `IADC_UPDATE_CHANGES.md` — summary of GUI changes made to support the Arduino's high-speed IADC scan: removed the resolution dropdown, restricted voltage reference to two options, and added OSR (oversampling) and analog gain configuration controls.
+- `BUFFER_OPTIMIZATION.md` — describes an implemented buffer-optimization system (`calculate_optimal_sweeps_per_block`, `validate_and_limit_sweeps_per_block` in `config_constants.py`) that computes optimal `sweeps_per_block` values from channel count, baud rate, target latency, and USB packet efficiency, plus the GUI integration points.
+- `OPTIMIZATION_SUMMARY.md` — summary of a real-time performance optimization pass (dated April 2026) covering vectorized sample parsing, archive write threading, filter dtype fixes, and several correctness bugs introduced and then fixed during that work; includes a bug taxonomy table and before/after performance comparison.

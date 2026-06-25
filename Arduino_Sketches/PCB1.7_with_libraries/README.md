@@ -10,8 +10,9 @@ mode.
 
 - `Teensy/` - Teensy master sketch plus split firmware libraries for protocol,
   serial parsing, SPI transport, PZT streaming, PZR streaming, and `PZT_RS`
-  combined routing.
-- `MG24/` - Modular MG24 SPI slave sketch plus reusable MG24 libraries.
+  combined routing. See `Teensy/README.md` and `Teensy/libraries/README.md`.
+- `MG24/` - Modular MG24 SPI slave sketch plus reusable MG24 libraries. See
+  `MG24/README.md` and `MG24/libraries/README.md`.
 
 ## Flash Together
 

@@ -2,18 +2,18 @@
 
 Main sketch:
 
-- `MG24_Dual_MUX_SPI_Slave1.5_DRDY_Modular.ino`
+- `MG24_Dual_MUX_SPI_Slave1.5_DRDY_Modular.ino` — `setup()` starts Serial at `board_config::kSerialBaud`, builds `mg24_adc_mux::Pins` and `mg24_spi_slave::Config` from `BoardConfig.h`, then calls `mg24_adc_mux::begin`, `mg24_cmd::begin`, and `mg24_spi_slave::begin` in that order. `loop()` calls `mg24_spi_slave::service(g_spi, g_cmd)` on every iteration; all command handling, ADC capture, and transport state live in the libraries below.
 
 Board config:
 
-- `BoardConfig.h` (single source of ADC and SPI transport pinout/settings)
+- `BoardConfig.h` — single source of ADC MUX pins (`kAdcMux1Pin`, `kAdcMux2Pin`, `kMuxA0Pin`..`kMuxA3Pin`), SPI slave pins (`kSpiCsPin`, `kSpiDrdyPin`), serial baud, and the full `SPIDRV_Init_t` transport config (EUSART1, 4 MHz, mode 1, slave). Exposes `makeAdcMuxPins()` and `makeSpiSlaveConfig()` factory functions consumed directly by the `.ino`.
 
-Libraries:
+Libraries (see `libraries/README.md` for full API details):
 
-- `libraries/Mg24SharedProtocol.*`
-- `libraries/Mg24AdcMux.*`
-- `libraries/Mg24CommandEngine.*`
-- `libraries/Mg24SpiSlaveTransport.*`
+- `libraries/Mg24SharedProtocol.*` — protocol constants and frame encoders.
+- `libraries/Mg24AdcMux.*` — MUX switching, dual-channel IADC capture, run-state.
+- `libraries/Mg24CommandEngine.*` — command frame interpreter producing ACK/block responses.
+- `libraries/Mg24SpiSlaveTransport.*` — SPIDRV transport state machine, DRDY signaling, response prefetch.
 
 Current transport behavior in this modular sketch matches the original MG24
 PCB1.5 SPI slave protocol:

@@ -2,22 +2,24 @@
 
 Main sketch:
 
-- `Teensy_SPI_Master_Array_PZT_PZR1.5_DRDY_Modular.ino`
+- `Teensy_SPI_Master_Array_PZT_PZR1.5_DRDY_Modular.ino` — owns `current_mode` (`MODE_PZT`/`MODE_PZR`), serial command dispatch, and `setup()`/`loop()`. Functions: `suppressAck()` (suppress host ACK while ASCII PZR streaming), `printMcu()` (prints `# Array_PZT_PZR1`), `printHelp()`, `handleMode(const String &args)` (switches `mode PZT|PZR*`), `handleLine(const String &line)` (dispatches shared and mode-specific commands), `setup()` (starts Serial, initializes the line parser, SPI link, PZT controller, 555 pins, and PZR controller), `loop()` (drains Serial into the parser/dispatcher and, in `MODE_PZR`, calls `pzr_controller::doOneBlock` once per iteration while running).
 
 Board config:
 
-- `BoardConfig.h` (single source of board wiring and mode defaults)
+- `BoardConfig.h` — single source of board wiring and mode defaults: PZT SPI pin/bitrate/CS-setup constants, PZR and RS 555-timer ICP/MUX pin sets, `kDefault555Mode` selecting which physical 555 (`TIMER555_PZR` or `TIMER555_RS`) is active by default, and derived `kTimer555*` constants/`initTimer555Pins()`/`makePzrPins()` helpers consumed by the `.ino`.
 
-Libraries:
+Libraries (see `libraries/README.md` for full API details):
 
-- `libraries/SharedProtocol.*`
-- `libraries/SerialLineParser.*`
-- `libraries/SpiMasterLink.*`
-- `libraries/PztController.*`
-- `libraries/PzrController.*`
+- `libraries/SharedProtocol.*` — host ACK/value-parsing/binary-block helpers.
+- `libraries/SerialLineParser.*` — `*`-terminated serial line tokenizer.
+- `libraries/SpiMasterLink.*` — low-level Teensy-to-MG24 SPI transport.
+- `libraries/PztController.*` — PZT mode command handling and blocking SPI streaming.
+- `libraries/PzrController.*` — PZR/555 resistance acquisition and ASCII/binary output.
 
 This sketch is a modularized Teensy implementation for PCB1.5 where reusable
 logic is in libraries and board-specific pinout/defaults live in `BoardConfig.h`.
+There is no combined `PZT_RS` mode in this PCB1.5 sketch — that mode is
+introduced in `PCB1.7_with_libraries/Teensy/`.
 
 ## Reuse Strategy
 

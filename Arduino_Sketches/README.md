@@ -67,6 +67,8 @@ The active MG24 and Teensy sketches use the same host-side command style:
 | Text encoding | ASCII |
 | Binary transport | raw bytes on the same serial port |
 
+Note: `Teensy/Teensy555_streamer/Teensy555_streamer.ino` is an exception and uses `115200` baud instead of `460800`.
+
 ### Common Command Flow
 
 Typical startup sequence from the host:
@@ -218,6 +220,12 @@ Example frame layout:
 [0xAA][0x55][countL][countH][samples...][avg_dt_us][block_start_us][block_end_us]
 ```
 
+Notes on sample payload meaning:
+
+- For the standard ADC streamer sketches (MG24, Teensy, PCB SPI array sketches), each `uint16` sample is a raw ADC reading.
+- For `Teensy/Teensy555_streamer/`, each `uint16` sample is instead an `Rx` resistance value in ohms (rounded and clamped to `0..65535`), not a raw ADC reading.
+- The legacy `legacy/MG24/ADC_Streamer_binary_buffer/` sketch uses a shorter trailer (`avg_dt_us` only, no `block_start_us`/`block_end_us`); see `legacy/MG24/ADC_Streamer_binary_buffer/README.md` for details.
+
 ### PCB1.7 `PZT_RS` Combined Payload
 
 When `mode PZT_RS*` is active on `# Array_PZT_PZR1.7`, each selected PZT sensor emits seven `uint16` values:
@@ -275,3 +283,7 @@ Archived MG24 variants now live under `legacy/MG24/`:
 - `legacy/MG24/ADC_Streamer_binary/`: older single-sweep binary/CSV-era host flow
 - `legacy/MG24/ADC_Streamer_binary_buffer/`: pre-scan blocked-output MG24 variant
 - `legacy/MG24/ADC_Streamer XIAO MG24/`: older interactive CSV sweeper variant
+
+Also archived under `legacy/`:
+
+- `legacy/Teensy_MG24_SPI/`: predecessor of the `PCB1.0_SPI/` Teensy+MG24 array pair (`Teensy_SPI_Master_Array_PZT1.ino`, `# Array_PZT1`); same host-facing text command vocabulary, but a custom non-DRDY SPI command/ACK framing to the MG24 side, and no surviving matching MG24 slave sketch in this folder.

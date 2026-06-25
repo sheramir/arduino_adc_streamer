@@ -63,8 +63,8 @@ class SignalIntegrationProcessorTests(unittest.TestCase):
     SAMPLES_PER_SWEEP = 5
 
     def test_signal_integration_refresh_rate_is_configured_for_pressure_map_tab(self):
-        self.assertEqual(SIGNAL_INTEGRATION_PLOT_UPDATE_FPS, 15.0)
-        self.assertAlmostEqual(SIGNAL_INTEGRATION_PLOT_UPDATE_INTERVAL_SEC, 1.0 / 15.0)
+        self.assertEqual(SIGNAL_INTEGRATION_PLOT_UPDATE_FPS, 30.0)
+        self.assertAlmostEqual(SIGNAL_INTEGRATION_PLOT_UPDATE_INTERVAL_SEC, 1.0 / 30.0)
 
     def _process_block(
         self,

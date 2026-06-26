@@ -47,7 +47,7 @@ Desktop GUI and firmware workspace for streaming ADC data from MG24 and Teensy b
 ### Application
 
 - `adc_gui.py`: main PyQt application entry point
-- `config_constants.py`: shared defaults and numeric limits
+- `constants/`: shared defaults, numeric limits, and UI/runtime tuning values
 - `config/`: MCU detection, config state, sensor library helpers, and channel-selection logic
 - `serial_communication/`: ADC and force connection workflows, sessions, parser, and reader threads
 - `data_processing/`: binary parsing, filtering, plotting, force processing, spectrum, and capture lifecycle
@@ -137,4 +137,4 @@ uv run pytest
 
 - The bundled sensor library is loaded from `sensors_library/` when present, then overlaid by the user library under `~/.adc_streamer/sensors/`.
 - The active GUI includes `Time Series`, `Pressure Map`, `Heatmap`, `Spectrum`, and `Sensor` tabs, with `Sensor` last. `Rosette (RS)` appears when the active mode supports it.
-- `plus_heatmap_config.json` is a legacy root-level sample file and is not part of the active startup path.
+- Older notes may refer to `plus_heatmap_config.json`, but this repo no longer ships that root-level sample file.

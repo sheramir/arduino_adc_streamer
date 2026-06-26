@@ -16,7 +16,7 @@ Current runtime tabs include:
 
 The legacy regression tests import these modules through the `Legacy` package so the archived processing behavior remains executable while new implementations are developed.
 
-Legacy-only visualization defaults live in `Legacy/config_constants.py`; active application constants remain in the root `config_constants.py`.
+Legacy-only visualization defaults live in `Legacy/config_constants.py`; active application constants live under `constants/`.
 
 ## Files
 

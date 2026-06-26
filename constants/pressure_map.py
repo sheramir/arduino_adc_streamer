@@ -1,7 +1,10 @@
 """Pressure Map constants.
 
-Canonical constants for Pressure Map processing and visualization.
-Legacy SIGNAL_INTEGRATION_* names are retained for compatibility during refactor.
+Pressure Map processing and visualization constants.
+
+The Pressure Map tab is the active user-facing name, while a subset of
+historical SIGNAL_INTEGRATION_* identifiers remains in use across older
+processor, test, and import paths for compatibility.
 """
 
 from constants.plotting import MAX_PLOT_SWEEPS
@@ -75,7 +78,8 @@ SIGNAL_INTEGRATION_Y_RANGE_PADDING_FRACTION = 0.1
 SIGNAL_INTEGRATION_Y_RANGE_MIN_SPAN = 1e-9
 SIGNAL_INTEGRATION_Y_RANGE_CENTER_DIVISOR = 2.0
 
-# Canonical pressure-map aliases
+# Pressure-map aliases used by code paths that have already adopted the
+# user-facing Pressure Map terminology.
 PRESSURE_MAP_CHANNEL_COUNT = SIGNAL_INTEGRATION_CHANNEL_COUNT
 PRESSURE_MAP_POSITION_ORDER = SIGNAL_INTEGRATION_POSITION_ORDER
 PRESSURE_MAP_PLOT_UPDATE_FPS = SIGNAL_INTEGRATION_PLOT_UPDATE_FPS

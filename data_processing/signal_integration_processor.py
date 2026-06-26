@@ -1,11 +1,14 @@
 """
-Dormant signal integration processor for future ADC acquisition blocks.
+Compatibility-named processor mixin for the Pressure Map tab's dormant
+streaming path.
 
 This mixin keeps the standalone ``SignalIntegrator`` wired into the application
-state, but the live capture loop does not call it yet. The current Signal
-Integration tab deliberately reads the same raw ADC circular buffers as the
-Time Series tab so we can validate UI responsiveness before reintroducing HPF
-processing and then moving-sum integration.
+state, but the live capture loop does not call it yet. The active tab label is
+"Pressure Map", while this processor and many helper attributes still use the
+older "signal integration" terminology for compatibility with existing tests
+and imports. The current Pressure Map tab deliberately reads the same raw ADC
+circular buffers as the Time Series tab so we can validate UI responsiveness
+before reintroducing HPF processing and then moving-sum integration.
 
 Dependencies:
     numpy, config channel utilities, constants modules, and

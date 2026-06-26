@@ -13,6 +13,7 @@ from gui.custom_widgets import NonScrollableSpinBox as QSpinBox, NonScrollableDo
 
 from constants.heatmap import (
     HEATMAP_WIDTH, HEATMAP_HEIGHT, HEATMAP_COORD_EXTENT, SENSOR_CALIBRATION, SENSOR_SIZE,
+    POINT_TRACKING_ENABLED, POINT_TRACKING_GAP_MM,
     INTENSITY_SCALE, BLOB_SIGMA_X, BLOB_SIGMA_Y, SMOOTH_ALPHA,
     RMS_WINDOW_MS, SENSOR_NOISE_FLOOR, HEATMAP_DC_REMOVAL_MODE,
     HPF_CUTOFF_HZ, HEATMAP_CHANNEL_SENSOR_MAP, HEATMAP_THRESHOLD, ELLIPSE_SHAPE_ENABLED,
@@ -26,6 +27,8 @@ from constants.heatmap import (
 )
 from file_operations.settings_persistence import load_settings_payload, save_settings_payload
 from config.channel_utils import unique_channels_in_order
+from data_processing.heatmap_point_tracker import resolve_point_tracking_target
+from data_processing.heatmap_signal_processing import resolve_heatmap_blob_sigmas
 
 
 class HeatmapPanelMixin:
@@ -89,6 +92,94 @@ class HeatmapPanelMixin:
         if not getattr(self, "_heatmap_settings_loading", False):
             self.save_last_heatmap_settings()
 
+    def _get_sensor_diameter_mm(self) -> float:
+        widget = getattr(self, "sensor_size_spin", None)
+        if widget is None:
+            return max(1e-6, float(getattr(self, "display_circle_diameter", float(HEATMAP_WIDTH))))
+        try:
+            return max(1e-6, float(widget.value()))
+        except (TypeError, ValueError, RuntimeError):
+            return max(1e-6, float(SENSOR_SIZE))
+
+    def _get_display_units_per_mm(self) -> float:
+        sensor_diameter_mm = self._get_sensor_diameter_mm()
+        reference_diameter = max(1e-6, float(getattr(self, "display_circle_diameter", float(HEATMAP_WIDTH))))
+        return reference_diameter / sensor_diameter_mm
+
+    def _get_point_tracking_gap_mm(self) -> float:
+        widget = getattr(self, "heatmap_gap_spin", None)
+        if widget is None:
+            return 0.0
+        try:
+            return max(0.0, float(widget.value()))
+        except (TypeError, ValueError, RuntimeError):
+            return 0.0
+
+    def _get_display_circle_diameter_value(self) -> float:
+        if hasattr(self, "is_array_sensor_selection_mode") and self.is_array_sensor_selection_mode():
+            return self._get_sensor_diameter_mm() * self._get_display_units_per_mm()
+        return max(1e-6, float(getattr(self, "display_circle_diameter", float(HEATMAP_WIDTH))))
+
+    def _get_display_cell_spacing_value(self) -> float:
+        if hasattr(self, "is_array_sensor_selection_mode") and self.is_array_sensor_selection_mode():
+            return (
+                (self._get_sensor_diameter_mm() + self._get_point_tracking_gap_mm())
+                * self._get_display_units_per_mm()
+            )
+        return max(1e-6, float(getattr(self, "display_cell_spacing", float(HEATMAP_WIDTH))))
+
+    def _get_display_heatmap_size_value(self) -> float:
+        if hasattr(self, "is_array_sensor_selection_mode") and self.is_array_sensor_selection_mode():
+            return self._get_sensor_diameter_mm() * self._get_display_units_per_mm() * float(HEATMAP_COORD_EXTENT)
+        return max(
+            1e-6,
+            float(getattr(self, "display_heatmap_size", float(HEATMAP_WIDTH) * float(HEATMAP_COORD_EXTENT))),
+        )
+
+    def _is_point_tracking_enabled(self) -> bool:
+        checkbox = getattr(self, "heatmap_point_tracking_check", None)
+        return bool(
+            checkbox is not None
+            and checkbox.isChecked()
+            and hasattr(self, "is_array_sensor_selection_mode")
+            and self.is_array_sensor_selection_mode()
+        )
+
+    def _on_heatmap_geometry_changed(self, _value=None):
+        self._update_display_plot_view()
+        self._refresh_display_item_overlays()
+        if getattr(self, "_heatmap_settings_loading", False):
+            return
+        self.save_last_heatmap_settings()
+        if hasattr(self, "trigger_heatmap_update"):
+            self.trigger_heatmap_update()
+
+    def _on_heatmap_point_tracking_toggled(self, _state=False):
+        self._update_display_plot_view()
+        self._refresh_display_item_overlays()
+        if getattr(self, "_heatmap_settings_loading", False):
+            return
+        self.save_last_heatmap_settings()
+        if hasattr(self, "trigger_heatmap_update"):
+            self.trigger_heatmap_update()
+
+    def _build_point_tracking_heatmap(self, intensity, settings):
+        if not hasattr(self, "_tracking_heatmap_x_grid") or not hasattr(self, "_tracking_heatmap_y_grid"):
+            y_coords = np.linspace(-HEATMAP_COORD_EXTENT, HEATMAP_COORD_EXTENT, HEATMAP_HEIGHT).reshape(-1, 1)
+            x_coords = np.linspace(-HEATMAP_COORD_EXTENT, HEATMAP_COORD_EXTENT, HEATMAP_WIDTH).reshape(1, -1)
+            self._tracking_heatmap_y_grid = np.tile(y_coords, (1, HEATMAP_WIDTH))
+            self._tracking_heatmap_x_grid = np.tile(x_coords, (HEATMAP_HEIGHT, 1))
+
+        sigma_x, sigma_y = resolve_heatmap_blob_sigmas(settings, BLOB_SIGMA_X, BLOB_SIGMA_Y)
+        gaussian = np.exp(
+            -(
+                (self._tracking_heatmap_x_grid ** 2) / (2.0 * sigma_x ** 2)
+                + (self._tracking_heatmap_y_grid ** 2) / (2.0 * sigma_y ** 2)
+            )
+        )
+        amplitude = float(intensity) * float(settings.get("intensity_scale", INTENSITY_SCALE))
+        return np.clip(gaussian * amplitude, 0.0, 1.0).astype(np.float32)
+
     def _is_display_mirror_enabled(self) -> bool:
         checkbox = getattr(self, "heatmap_mirror_check", None)
         if checkbox is None:
@@ -117,6 +208,7 @@ class HeatmapPanelMixin:
         if mode == "pzr":
             return {
                 "sensor_calibration",
+                "sensor_size",
                 "global_noise_threshold",
                 "global_channel_thresholds",  # Backward compatibility for older settings files
                 "intensity_scale",
@@ -135,6 +227,8 @@ class HeatmapPanelMixin:
                 "show_position_labels",
                 "mirror_display",
                 "heatmap_colormap",
+                "point_tracking_enabled",
+                "gap_mm",
             }
         return {
             "sensor_calibration",
@@ -157,6 +251,8 @@ class HeatmapPanelMixin:
             "show_position_labels",
             "mirror_display",
             "heatmap_colormap",
+            "point_tracking_enabled",
+            "gap_mm",
         }
 
     def _filter_heatmap_settings_for_mode(self, settings: dict, mode_key: str | None = None) -> dict:
@@ -372,6 +468,7 @@ class HeatmapPanelMixin:
             
             scalar_map = [
                 ("sensor_size", self.sensor_size_spin),
+                ("gap_mm", getattr(self, "heatmap_gap_spin", None)),
                 ("intensity_scale", self.intensity_scale_spin),
                 ("blob_sigma_x", self.blob_sigma_x_spin),
                 ("blob_sigma_y", self.blob_sigma_y_spin),
@@ -417,6 +514,9 @@ class HeatmapPanelMixin:
                 if color_map_name in self.HEATMAP_COLOR_MAPS:
                     self.heatmap_colormap_combo.setCurrentText(color_map_name)
                     changed = True
+            if "point_tracking_enabled" in mode_settings and hasattr(self, "heatmap_point_tracking_check"):
+                self.heatmap_point_tracking_check.setChecked(bool(mode_settings["point_tracking_enabled"]))
+                changed = True
         finally:
             self._heatmap_settings_loading = False
         return changed
@@ -475,7 +575,8 @@ class HeatmapPanelMixin:
         # Build list of widgets to connect, excluding those that might not exist
         widgets = [
             self.rms_window_spin, self.dc_removal_combo, self.hpf_cutoff_spin,
-            self.sensor_size_spin, self.intensity_scale_spin, self.blob_sigma_x_spin, self.blob_sigma_y_spin, self.smooth_alpha_spin,
+            self.sensor_size_spin, self.heatmap_gap_spin,
+            self.intensity_scale_spin, self.blob_sigma_x_spin, self.blob_sigma_y_spin, self.smooth_alpha_spin,
             self.r555_cop_smooth_alpha_spin,
             self.r555_intensity_min_spin, self.r555_intensity_max_spin, self.r555_axis_adapt_spin,
             self.r555_map_smooth_alpha_spin,
@@ -492,6 +593,9 @@ class HeatmapPanelMixin:
         self.ellipse_shape_check.stateChanged.connect(self._on_heatmap_ellipse_shape_toggled)
         self.heatmap_mirror_check.stateChanged.connect(self._on_heatmap_mirror_toggled)
         self.remove_negatives_check.stateChanged.connect(self._on_heatmap_remove_negatives_toggled)
+        self.sensor_size_spin.valueChanged.connect(self._on_heatmap_geometry_changed)
+        self.heatmap_gap_spin.valueChanged.connect(self._on_heatmap_geometry_changed)
+        self.heatmap_point_tracking_check.stateChanged.connect(self._on_heatmap_point_tracking_toggled)
         # Note: Per-sensor threshold and gain spinboxes are connected in _build_per_sensor_calibration_ui()
 
     def _on_heatmap_circle_overlay_toggled(self, _state=False):
@@ -632,10 +736,10 @@ class HeatmapPanelMixin:
         self.display_plot.showAxis("bottom", False)
         self.display_plot.setMouseEnabled(x=False, y=False)
 
-        self.display_circle_diameter = float(HEATMAP_WIDTH)
-        self.display_cell_spacing = float(HEATMAP_WIDTH)
-        self.display_heatmap_size = float(HEATMAP_WIDTH) * float(HEATMAP_COORD_EXTENT)
-        self.display_canvas_extra_margin = 8.0
+        self.display_circle_diameter = 240.0
+        self.display_cell_spacing = 240.0
+        self.display_heatmap_size = self.display_circle_diameter * float(HEATMAP_COORD_EXTENT)
+        self.display_canvas_extra_margin = 0.0
         self.display_items = []
         for _ in range(MAX_SENSOR_PACKAGES):
             image = self._create_heatmap_image_item()
@@ -761,7 +865,7 @@ class HeatmapPanelMixin:
         if not positions:
             return []
 
-        spacing = float(getattr(self, "display_cell_spacing", float(HEATMAP_WIDTH)))
+        spacing = self._get_display_cell_spacing_value()
         row_values = [row for row, _col in positions]
         col_values = [col for _row, col in positions]
         row_midpoint = (min(row_values) + max(row_values)) / 2.0
@@ -770,6 +874,13 @@ class HeatmapPanelMixin:
             ((float(col) - col_midpoint) * spacing, (float(row) - row_midpoint) * spacing)
             for row, col in positions
         ]
+
+    def _get_visible_array_display_context(self, visible_count):
+        positions, _, _ = self._get_display_package_positions(visible_count)
+        centers = self._get_display_package_centers(visible_count)
+        limit = min(visible_count, len(positions), len(centers))
+        sensor_ids = [self._get_sensor_id_for_package(index) for index in range(limit)]
+        return sensor_ids, positions[:limit], centers[:limit]
 
     def _is_heatmap_position_labels_enabled(self):
         checkbox = getattr(self, "show_heatmap_position_labels_check", None)
@@ -840,7 +951,7 @@ class HeatmapPanelMixin:
 
         visible_count = getattr(self, "display_visible_count", 1)
         centers = self._get_display_package_centers(visible_count)
-        heatmap_size = float(getattr(self, "display_heatmap_size", 250.0))
+        heatmap_size = self._get_display_heatmap_size_value()
         extra_margin = float(getattr(self, "display_canvas_extra_margin", 0.0))
         if not centers:
             half = heatmap_size * 0.5 + 40.0
@@ -851,7 +962,10 @@ class HeatmapPanelMixin:
         y_centers = [center_y for _center_x, center_y in centers]
         content_half = heatmap_size * 0.5
 
-        margin = max(8.0, heatmap_size * 0.04 + extra_margin)
+        if hasattr(self, "is_array_sensor_selection_mode") and self.is_array_sensor_selection_mode():
+            margin = max(0.0, extra_margin)
+        else:
+            margin = max(8.0, heatmap_size * 0.04 + extra_margin)
 
         x_min = min(x_centers) - content_half - margin
         x_max = max(x_centers) + content_half + margin
@@ -868,7 +982,7 @@ class HeatmapPanelMixin:
     def _refresh_display_item_overlays(self):
         visible_count = max(0, int(getattr(self, "display_visible_count", 0)))
         centers = self._get_display_package_centers(visible_count)
-        circle_diameter = float(getattr(self, "display_circle_diameter", float(HEATMAP_WIDTH)))
+        circle_diameter = self._get_display_circle_diameter_value()
         radius = circle_diameter * 0.5
         theta = np.linspace(0.0, 2.0 * np.pi, 240)
         show_circle = bool(
@@ -942,13 +1056,59 @@ class HeatmapPanelMixin:
         self.update_visible_display_cards(1)
         return display_widget
 
-    def update_display_tab(self, package_results, shear_results=None):
-        self.update_visible_display_cards(len(package_results))
-        centers = self._get_display_package_centers(len(package_results))
-        heatmap_size = float(getattr(self, "display_heatmap_size", 250.0))
+    def _render_point_tracking_display(self, package_results, settings):
+        sensor_ids, sensor_positions, sensor_centers = self._get_visible_array_display_context(len(package_results))
+        if not sensor_ids or not sensor_centers:
+            return False
+
+        target = resolve_point_tracking_target(
+            package_results,
+            sensor_ids,
+            sensor_positions,
+            sensor_centers,
+            self._get_display_circle_diameter_value(),
+        )
+        if target is None:
+            return False
+
+        tracking_heatmap = self._build_point_tracking_heatmap(target.intensity, settings)
+        display_heatmap = np.fliplr(tracking_heatmap) if self._is_display_mirror_enabled() else tracking_heatmap
+        heatmap_size = self._get_display_heatmap_size_value()
 
         for item in getattr(self, "display_items", []):
             item["image"].setVisible(False)
+
+        if not getattr(self, "display_items", []):
+            return False
+
+        item = self.display_items[0]
+        self._set_heatmap_image(item["image"], display_heatmap)
+        item["image"].setRect(
+            QRectF(
+                float(target.center_x) - (heatmap_size * 0.5),
+                float(target.center_y) - (heatmap_size * 0.5),
+                heatmap_size,
+                heatmap_size,
+            )
+        )
+        item["image"].setVisible(True)
+        self._refresh_display_item_overlays()
+        return True
+
+    def update_display_tab(self, package_results, shear_results=None, settings=None):
+        self.update_visible_display_cards(len(package_results))
+        centers = self._get_display_package_centers(len(package_results))
+        heatmap_size = self._get_display_heatmap_size_value()
+
+        for item in getattr(self, "display_items", []):
+            item["image"].setVisible(False)
+
+        point_tracking_enabled = self._is_point_tracking_enabled()
+        if point_tracking_enabled and settings is None:
+            settings = self.get_heatmap_settings()
+
+        if point_tracking_enabled and self._render_point_tracking_display(package_results, settings):
+            return
 
         for index, result in enumerate(package_results):
             if index >= len(getattr(self, "display_items", [])) or index >= len(centers):
@@ -1161,58 +1321,70 @@ class HeatmapPanelMixin:
         self.sensor_size_spin.setDecimals(2)
         self.sensor_size_spin.setValue(SENSOR_SIZE)
         display_layout.addWidget(self.sensor_size_spin, 0, 1)
-        display_layout.addWidget(QLabel("Intensity Scale:"), 0, 2)
+        display_layout.addWidget(QLabel("Gap (mm):"), 0, 2)
+        self.heatmap_gap_spin = QDoubleSpinBox()
+        self.heatmap_gap_spin.setRange(0.0, 10000.0)
+        self.heatmap_gap_spin.setDecimals(2)
+        self.heatmap_gap_spin.setValue(POINT_TRACKING_GAP_MM)
+        display_layout.addWidget(self.heatmap_gap_spin, 0, 3)
+        display_layout.addWidget(QLabel("Intensity Scale:"), 1, 0)
         self.intensity_scale_spin = QDoubleSpinBox()
         self.intensity_scale_spin.setRange(0.0, 1.0)
         self.intensity_scale_spin.setDecimals(6)
         self.intensity_scale_spin.setSingleStep(0.0001)
         self.intensity_scale_spin.setValue(INTENSITY_SCALE)
-        display_layout.addWidget(self.intensity_scale_spin, 0, 3)
-        display_layout.addWidget(QLabel("Blob Sigma X:"), 1, 0)
+        display_layout.addWidget(self.intensity_scale_spin, 1, 1)
+        self.heatmap_point_tracking_check = QCheckBox("Point Tracking")
+        self.heatmap_point_tracking_check.setChecked(POINT_TRACKING_ENABLED)
+        self.heatmap_point_tracking_check.setToolTip(
+            "Show only the strongest single point of pressure across the full array"
+        )
+        display_layout.addWidget(self.heatmap_point_tracking_check, 1, 2, 1, 2)
+        display_layout.addWidget(QLabel("Blob Sigma X:"), 2, 0)
         self.blob_sigma_x_spin = QDoubleSpinBox()
         self.blob_sigma_x_spin.setRange(0.01, 5.0)
         self.blob_sigma_x_spin.setDecimals(4)
         self.blob_sigma_x_spin.setValue(BLOB_SIGMA_X)
-        display_layout.addWidget(self.blob_sigma_x_spin, 1, 1)
-        display_layout.addWidget(QLabel("Blob Sigma Y:"), 1, 2)
+        display_layout.addWidget(self.blob_sigma_x_spin, 2, 1)
+        display_layout.addWidget(QLabel("Blob Sigma Y:"), 2, 2)
         self.blob_sigma_y_spin = QDoubleSpinBox()
         self.blob_sigma_y_spin.setRange(0.01, 5.0)
         self.blob_sigma_y_spin.setDecimals(4)
         self.blob_sigma_y_spin.setValue(BLOB_SIGMA_Y)
-        display_layout.addWidget(self.blob_sigma_y_spin, 1, 3)
+        display_layout.addWidget(self.blob_sigma_y_spin, 2, 3)
         self.ellipse_shape_check = QCheckBox("Ellipse Shape")
         self.ellipse_shape_check.setChecked(ELLIPSE_SHAPE_ENABLED)
         self.ellipse_shape_check.setToolTip(
             "Allow outer-sensor balance to stretch the blob; turn off for a circular blob"
         )
-        display_layout.addWidget(self.ellipse_shape_check, 2, 2, 1, 2)
-        display_layout.addWidget(QLabel("Signal Smooth Alpha (sensor):"), 2, 0)
+        display_layout.addWidget(self.ellipse_shape_check, 3, 2, 1, 2)
+        display_layout.addWidget(QLabel("Signal Smooth Alpha (sensor):"), 3, 0)
         self.smooth_alpha_spin = QDoubleSpinBox()
         self.smooth_alpha_spin.setRange(0.0, 1.0)
         self.smooth_alpha_spin.setDecimals(3)
         self.smooth_alpha_spin.setSingleStep(0.01)
         self.smooth_alpha_spin.setValue(SMOOTH_ALPHA)
-        display_layout.addWidget(self.smooth_alpha_spin, 2, 1)
+        display_layout.addWidget(self.smooth_alpha_spin, 3, 1)
         self.show_heatmap_circle_check = QCheckBox("Show Circle")
         self.show_heatmap_circle_check.setChecked(False)
         self.show_heatmap_circle_check.setToolTip("Draw the sensor boundary circle over each heatmap")
         self.show_heatmap_circle_check.stateChanged.connect(self._on_heatmap_circle_overlay_toggled)
-        display_layout.addWidget(self.show_heatmap_circle_check, 3, 2, 1, 2)
+        display_layout.addWidget(self.show_heatmap_circle_check, 4, 2, 1, 2)
         self.show_heatmap_position_labels_check = QCheckBox("Show Position Labels")
         self.show_heatmap_position_labels_check.setChecked(False)
         self.show_heatmap_position_labels_check.setToolTip("Show selected sensor IDs over the array heatmap display")
-        display_layout.addWidget(self.show_heatmap_position_labels_check, 4, 2, 1, 2)
+        display_layout.addWidget(self.show_heatmap_position_labels_check, 5, 2, 1, 2)
         self.heatmap_mirror_check = QCheckBox("Mirror")
         self.heatmap_mirror_check.setChecked(HEATMAP_MIRROR_DISPLAY)
         self.heatmap_mirror_check.setToolTip(
             "Mirror the heatmap display horizontally, swapping left/right packages and sensors"
         )
-        display_layout.addWidget(self.heatmap_mirror_check, 4, 0, 1, 2)
-        display_layout.addWidget(QLabel("Color Scale:"), 3, 0)
+        display_layout.addWidget(self.heatmap_mirror_check, 5, 0, 1, 2)
+        display_layout.addWidget(QLabel("Color Scale:"), 4, 0)
         self.heatmap_colormap_combo = QComboBox()
         self.heatmap_colormap_combo.addItems(list(self.HEATMAP_COLOR_MAPS.keys()))
         self.heatmap_colormap_combo.setCurrentText("Thermal")
-        display_layout.addWidget(self.heatmap_colormap_combo, 3, 1)
+        display_layout.addWidget(self.heatmap_colormap_combo, 4, 1)
 
         params_layout.addLayout(display_layout)
         params_layout.addWidget(signal_group)
@@ -1225,6 +1397,7 @@ class HeatmapPanelMixin:
         main_layout.addWidget(params_group)
 
         self._connect_heatmap_settings_autosave()
+        self.enable_heatmap_settings_autosave()
         self.update_heatmap_ui_for_mode()
         group.setLayout(main_layout)
         return group
@@ -1288,6 +1461,7 @@ class HeatmapPanelMixin:
             "sensor_noise_floor": sensor_noise_floor,
             "global_noise_threshold": global_noise_threshold,
             "sensor_size": self.sensor_size_spin.value(),
+            "gap_mm": self.heatmap_gap_spin.value(),
             "intensity_scale": self.intensity_scale_spin.value(),
             "blob_sigma_x": self.blob_sigma_x_spin.value(),
             "blob_sigma_y": self.blob_sigma_y_spin.value(),
@@ -1331,6 +1505,11 @@ class HeatmapPanelMixin:
                 else HEATMAP_MIRROR_DISPLAY
             ),
             "heatmap_colormap": self._get_selected_heatmap_colormap_name(),
+            "point_tracking_enabled": (
+                self.heatmap_point_tracking_check.isChecked()
+                if hasattr(self, "heatmap_point_tracking_check")
+                else POINT_TRACKING_ENABLED
+            ),
         }
 
     def update_heatmap_ui_for_mode(self):
@@ -1402,15 +1581,15 @@ class HeatmapPanelMixin:
                 return
 
             self.clear_heatmap_channel_warning()
-            self.update_heatmap_display(package_results)
+            self.update_heatmap_display(package_results, settings=settings)
         except Exception as exc:
             if hasattr(self, "log_status"):
                 self.log_status(f"Heatmap update unavailable: {exc}")
         finally:
             self._heatmap_updating_plot = False
 
-    def update_heatmap_display(self, package_results, shear_results=None):
-        self.update_display_tab(package_results, shear_results=shear_results)
+    def update_heatmap_display(self, package_results, shear_results=None, settings=None):
+        self.update_display_tab(package_results, shear_results=shear_results, settings=settings)
 
     def show_heatmap_channel_warning(self, current_channels, required_channels="5"):
         self.heatmap_status_label.setText(f"Heatmap requires {required_channels} channels (currently {current_channels} selected)")

@@ -61,19 +61,23 @@ and force-calibration tab/persistence settings.
 ### heatmap.py
 
 Heatmap visualization defaults: resolution, sensor positions/calibration/noise floor, Gaussian
-blob shape, smoothing, DC-removal mode, channel mapping (derived from
+blob shape, smoothing, physical display geometry defaults, point-tracking defaults, DC-removal mode, channel mapping (derived from
 `constants.sensor_config.DEFAULT_SENSOR_CONFIGURATION`), and PZR-specific (555-mode) heatmap
 aliases.
 
 - Data only: `HEATMAP_FPS`, `HEATMAP_WIDTH/HEIGHT`, `HEATMAP_COORD_EXTENT`, `SENSOR_POS_X/Y`,
   `SENSOR_CALIBRATION`, `SENSOR_NOISE_FLOOR`, `PZT_SENSOR_CALIBRATION`, `R_SENSOR_CALIBRATION`,
   `PZT_THRESHOLD_DEFAULT`, `PZT_GAIN_DEFAULT`, `R_THRESHOLD_DEFAULT`, `R_GAIN_DEFAULT`,
-  `SENSOR_SIZE`, `INTENSITY_SCALE`, `COP_EPS`, `BLOB_SIGMA_X/Y`, `ELLIPSE_SHAPE_ENABLED`,
+  `SENSOR_SIZE`, `POINT_TRACKING_ENABLED`, `POINT_TRACKING_GAP_MM`, `INTENSITY_SCALE`, `COP_EPS`, `BLOB_SIGMA_X/Y`, `ELLIPSE_SHAPE_ENABLED`,
   `HEATMAP_MIRROR_DISPLAY`, `SMOOTH_ALPHA`, `HEATMAP_THRESHOLD`, `CONFIDENCE_INTENSITY_REF`,
   `SIGMA_SPREAD_FACTOR`, `AXIS_SIGMA_FACTOR`, `RMS_WINDOW_MS`, `BIAS_CALIBRATION_DURATION_SEC`,
   `HPF_CUTOFF_HZ`, `HEATMAP_DC_REMOVAL_MODE`, `REMOVE_NEGATIVES`, `HEATMAP_CHANNEL_SENSOR_MAP`,
   `HEATMAP_REQUIRED_CHANNELS`, `MAX_SENSOR_PACKAGES`, `PZR_ZERO_BASELINE_WINDOW_SEC`,
   `PZR_AUTO_BASELINE_DELAY_SEC`, `R_HEATMAP_*` aliases.
+
+  `SENSOR_SIZE` is the physical sensor diameter in millimeters used by the Heatmap display geometry.
+  `POINT_TRACKING_ENABLED` and `POINT_TRACKING_GAP_MM` define the default array point-tracking state
+  and the default physical edge-to-edge gap between adjacent sensors.
 
   Note: this module previously also defined a duplicate, unused set of `SHEAR_*` constants
   (signed integration window, EMA baseline coefficients, Gaussian CoP blob/arrow parameters).

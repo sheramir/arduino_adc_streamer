@@ -7,7 +7,7 @@ Desktop GUI and firmware workspace for streaming ADC data from MG24 and Teensy b
 - Real-time ADC plotting with selectable channels, repeat handling, baseline subtraction, and rolling window controls
 - Shared live filtering for time-series and spectrum views
 - Spectrum tab with FFT and Welch PSD modes
-- Heatmap tab using the promoted legacy PZT/PZR heatmap calculation path
+- Heatmap tab using the promoted legacy PZT/PZR heatmap calculation path, with per-package display plus array-wide point tracking
 - Force-sensor overlay with timestamp alignment against ADC capture timing
 - Editable sensor library with both 5-channel layouts and 3x3 array layouts
 - Archive-backed capture flow with full-view reload for captures larger than RAM
@@ -116,7 +116,7 @@ Despite the `.c` extension, this is not compiled code — it's a scratch file of
 
 - [Arduino_Sketches/README.md](Arduino_Sketches/README.md): current firmware sketch map and serial protocol summary
 - [docs/user/ARRAY_CONFIGURATION_GUIDE.md](docs/user/ARRAY_CONFIGURATION_GUIDE.md): configuring bundled and custom sensor layouts
-- [docs/user/HEATMAP_README.md](docs/user/HEATMAP_README.md): legacy heatmap modes, inputs, and saved settings behavior
+- [docs/user/HEATMAP_README.md](docs/user/HEATMAP_README.md): current heatmap modes, array point tracking, geometry controls, and saved settings behavior
 - [docs/history/FORCE_SENSOR_REFACTOR_PLAN.md](docs/history/FORCE_SENSOR_REFACTOR_PLAN.md): future force-path cleanup roadmap
 
 ## Testing
@@ -136,5 +136,5 @@ uv run pytest
 ## Notes
 
 - The bundled sensor library is loaded from `sensors_library/` when present, then overlaid by the user library under `~/.adc_streamer/sensors/`.
-- The active GUI includes `Time Series`, `Pressure Map`, `Heatmap`, `Spectrum`, and `Sensor` tabs, with `Sensor` last. `Rosette (RS)` appears when the active mode supports it.
+- The active GUI includes `Time Series`, `Pressure Map`, `Heatmap`, `Force Calibration`, `Spectrum`, and `Sensor` tabs, with `Sensor` last. `Rosette (RS)` appears when the active mode supports it.
 - Older notes may refer to `plus_heatmap_config.json`, but this repo no longer ships that root-level sample file.

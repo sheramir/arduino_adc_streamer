@@ -6,6 +6,7 @@ import numpy as np
 from constants.heatmap import HEATMAP_COORD_EXTENT, HEATMAP_HEIGHT, HEATMAP_WIDTH, MAX_SENSOR_PACKAGES
 from data_processing.heatmap_555_processor import Heatmap555ProcessorMixin
 from data_processing.heatmap_piezo_processor import PiezoHeatmapProcessorMixin
+from data_processing.heatmap_point_tracker import resolve_point_tracking_target
 from data_processing.heatmap_signal_processing import HeatmapSignalProcessor
 from gui.heatmap_panel import HeatmapPanelMixin
 
@@ -174,6 +175,22 @@ class FakeImageItem:
         self.visible = bool(visible)
 
 
+class StaticSpin:
+    def __init__(self, value):
+        self._value = value
+
+    def value(self):
+        return self._value
+
+
+class StaticCheck:
+    def __init__(self, checked=False):
+        self._checked = checked
+
+    def isChecked(self):
+        return self._checked
+
+
 class HeatmapLayoutHarness(HeatmapPanelMixin):
     def __init__(self):
         self.config = {
@@ -206,6 +223,13 @@ class MirroredHeatmapLayoutHarness(HeatmapLayoutHarness):
         return True
 
 
+class HeatmapGapLayoutHarness(HeatmapLayoutHarness):
+    def __init__(self):
+        super().__init__()
+        self.sensor_size_spin = StaticSpin(10.0)
+        self.heatmap_gap_spin = StaticSpin(2.0)
+
+
 class HeatmapRenderHarness(HeatmapPanelMixin):
     def __init__(self, mirrored=False):
         self.mirrored = mirrored
@@ -223,6 +247,38 @@ class HeatmapRenderHarness(HeatmapPanelMixin):
 
     def _refresh_display_item_overlays(self):
         pass
+
+
+class PointTrackingRenderHarness(HeatmapPanelMixin):
+    def __init__(self):
+        self.config = {
+            "selected_array_sensors": ["PZT1", "PZT2"],
+        }
+        self.display_items = [{"image": FakeImageItem()}, {"image": FakeImageItem()}]
+        self.sensor_size_spin = StaticSpin(10.0)
+        self.heatmap_gap_spin = StaticSpin(2.0)
+        self.heatmap_point_tracking_check = StaticCheck(True)
+        self.heatmap_mirror_check = StaticCheck(False)
+
+    def is_array_sensor_selection_mode(self):
+        return True
+
+    def update_visible_display_cards(self, visible_count):
+        self.display_visible_count = visible_count
+
+    def _refresh_display_item_overlays(self):
+        pass
+
+    def get_active_sensor_configuration(self):
+        return {
+            "array_layout": {
+                "cells": [
+                    ["PZT1", "PZT2", None],
+                    [None, None, None],
+                    [None, None, None],
+                ]
+            }
+        }
 
 
 class HeatmapThresholdTests(unittest.TestCase):
@@ -382,6 +438,22 @@ class HeatmapThresholdTests(unittest.TestCase):
                 (-160.0, 0.0),
                 (0.0, 0.0),
                 (0.0, -160.0),
+            ],
+        )
+
+    def test_heatmap_gap_uses_sensor_diameter_plus_gap_mm(self):
+        panel = HeatmapGapLayoutHarness()
+
+        centers = panel._get_display_package_centers(5)
+
+        self.assertEqual(
+            centers,
+            [
+                (-192.0, 0.0),
+                (0.0, 192.0),
+                (192.0, 0.0),
+                (0.0, 0.0),
+                (0.0, -192.0),
             ],
         )
 
@@ -554,6 +626,101 @@ class HeatmapThresholdTests(unittest.TestCase):
         _, _, _, intensity, _, display_values = result[0]
         self.assertEqual(display_values, [0.0, 0.0, 0.0, 0.0, 0.0])
         self.assertEqual(intensity, 0.0)
+
+    def test_point_tracking_uses_horizontal_gap_for_matching_edge_pair(self):
+        target = resolve_point_tracking_target(
+            [
+                (None, 0.0, 0.0, 4.0, 0.0, [0.0, 0.4, 4.0, 0.0, 0.2]),
+                (None, 0.0, 0.0, 8.0, 0.0, [0.3, 0.0, 0.0, 8.0, 0.1]),
+            ],
+            ["PZT1", "PZT2"],
+            [(0, 0), (0, 1)],
+            [(0.0, 0.0), (12.0, 0.0)],
+            sensor_diameter_mm=10.0,
+        )
+
+        self.assertIsNotNone(target)
+        self.assertEqual(target.kind, "pair")
+        self.assertEqual(target.sensor_ids, ("PZT1", "PZT2"))
+        self.assertAlmostEqual(target.center_x, 19.0 / 3.0)
+        self.assertAlmostEqual(target.center_y, 0.0)
+
+    def test_point_tracking_uses_vertical_gap_for_matching_edge_pair(self):
+        target = resolve_point_tracking_target(
+            [
+                (None, 0.0, 0.0, 3.0, 0.0, [0.0, 3.0, 0.3, 0.0, 0.1]),
+                (None, 0.0, 0.0, 9.0, 0.0, [9.0, 0.0, 0.0, 0.4, 0.2]),
+            ],
+            ["PZT1", "PZT3"],
+            [(0, 0), (1, 0)],
+            [(0.0, 0.0), (0.0, 12.0)],
+            sensor_diameter_mm=10.0,
+        )
+
+        self.assertIsNotNone(target)
+        self.assertEqual(target.kind, "pair")
+        self.assertEqual(target.sensor_ids, ("PZT1", "PZT3"))
+        self.assertAlmostEqual(target.center_x, 0.0)
+        self.assertAlmostEqual(target.center_y, 6.5)
+
+    def test_point_tracking_prefers_strongest_sensor_when_no_pair_exists(self):
+        target = resolve_point_tracking_target(
+            [
+                (None, 0.0, 0.0, 8.0, 0.0, [0.0, 0.0, 8.0, 0.0, 0.0]),
+                (None, 0.0, 0.0, 20.0, 0.0, [0.0, 0.0, 20.0, 0.0, 0.0]),
+            ],
+            ["PZT1", "PZT2"],
+            [(0, 0), (0, 1)],
+            [(0.0, 0.0), (12.0, 0.0)],
+            sensor_diameter_mm=10.0,
+        )
+
+        self.assertIsNotNone(target)
+        self.assertEqual(target.kind, "sensor")
+        self.assertEqual(target.sensor_ids, ("PZT2",))
+        self.assertAlmostEqual(target.center_x, 17.0)
+        self.assertAlmostEqual(target.center_y, 0.0)
+
+    def test_point_tracking_keeps_multi_channel_sensor_inside_sensor(self):
+        target = resolve_point_tracking_target(
+            [
+                (None, 0.0, 0.0, 10.0, 0.0, [0.0, 0.0, 5.0, 0.0, 5.0]),
+                (None, 0.0, 0.0, 6.0, 0.0, [0.0, 0.0, 0.0, 6.0, 0.0]),
+            ],
+            ["PZT1", "PZT2"],
+            [(0, 0), (0, 1)],
+            [(0.0, 0.0), (12.0, 0.0)],
+            sensor_diameter_mm=10.0,
+        )
+
+        self.assertIsNotNone(target)
+        self.assertEqual(target.kind, "sensor")
+        self.assertEqual(target.sensor_ids, ("PZT1",))
+        self.assertAlmostEqual(target.center_x, 2.5)
+        self.assertAlmostEqual(target.center_y, 0.0)
+
+    def test_point_tracking_display_renders_single_tracking_blob(self):
+        panel = PointTrackingRenderHarness()
+        settings = {
+            "intensity_scale": 1.0,
+            "blob_sigma_x": 0.08,
+            "blob_sigma_y": 0.08,
+            "point_tracking_enabled": True,
+        }
+
+        panel.update_display_tab(
+            [
+                (None, 0.0, 0.0, 4.0, 0.0, [0.0, 0.0, 4.0, 0.0, 0.0]),
+                (None, 0.0, 0.0, 8.0, 0.0, [0.0, 0.0, 0.0, 8.0, 0.0]),
+            ],
+            settings=settings,
+        )
+
+        first_rect = panel.display_items[0]["image"].rect
+        self.assertTrue(panel.display_items[0]["image"].visible)
+        self.assertFalse(panel.display_items[1]["image"].visible)
+        self.assertAlmostEqual(first_rect.x() + (first_rect.width() * 0.5), 16.0 / 3.0)
+        self.assertAlmostEqual(first_rect.y() + (first_rect.height() * 0.5), 0.0)
 
 
 if __name__ == "__main__":

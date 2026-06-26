@@ -44,8 +44,10 @@ PZT_GAIN_DEFAULT = 1.0
 R_THRESHOLD_DEFAULT = 0.0
 R_GAIN_DEFAULT = 1.0
 
-# Physical size between endpoint sensors (for reference)
-SENSOR_SIZE = 0.5
+# Physical sensor diameter in millimeters.
+SENSOR_SIZE = 4.0
+POINT_TRACKING_ENABLED = False
+POINT_TRACKING_GAP_MM = 0.5
 
 # Intensity mapping
 INTENSITY_SCALE = 0.005

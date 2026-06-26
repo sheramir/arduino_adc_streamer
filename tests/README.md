@@ -237,7 +237,7 @@ Tests `ForceRuntimeState` defaults and the legacy adapter that maps state fields
 - test_legacy_force_runtime_adapter_reads_and_writes_legacy_fields() — verifies adapter reads/writes correctly map to legacy attribute names.
 
 ### test_heatmap_thresholds.py
-Tests heatmap signal processing across 555 and piezo (PZT) processors: RMS computation (including positive-only RMS), Gaussian blob shape (circular vs. ellipse), per-sensor/global thresholding, array layout package-center geometry (including mirroring), and row-major image rendering.
+Tests heatmap signal processing across 555 and piezo (PZT) processors: RMS computation (including positive-only RMS), Gaussian blob shape (circular vs. ellipse), per-sensor/global thresholding, array layout package-center geometry (including mirroring), array point-tracking selection, gap-aware display geometry, and row-major image rendering.
 - test_remove_negatives_uses_half_wave_rms() — verifies positive-only RMS uses half-wave rectification.
 - test_piezo_heatmap_blob_uses_columns_for_left_right_motion() — verifies left/right sensor signals shift the blob horizontally.
 - test_piezo_circular_blob_mode_uses_equal_axis_spread() — verifies circular blob mode produces symmetric heatmap variance.
@@ -248,6 +248,12 @@ Tests heatmap signal processing across 555 and piezo (PZT) processors: RMS compu
 - test_heatmap_mirror_flips_array_package_centers() — verifies mirror toggle flips package center X coordinates.
 - test_heatmap_mirror_flips_display_image_left_right() — verifies mirror toggle flips the rendered heatmap image left-right.
 - test_heatmap_display_bounds_expand_to_viewport_aspect() — verifies display bounds expand to match the viewport aspect ratio.
+- test_heatmap_gap_uses_sensor_diameter_plus_gap_mm() — verifies configured physical gap expands the display spacing based on sensor diameter plus edge-to-edge gap.
+- test_point_tracking_uses_horizontal_gap_for_matching_edge_pair() — verifies point tracking can place the point between left/right neighboring sensors.
+- test_point_tracking_uses_vertical_gap_for_matching_edge_pair() — verifies point tracking can place the point between upper/lower neighboring sensors.
+- test_point_tracking_prefers_strongest_sensor_when_no_pair_exists() — verifies only the strongest valid tracked point is rendered across the array when no between-sensor pair wins.
+- test_point_tracking_keeps_multi_channel_sensor_inside_sensor() — verifies multi-channel activity on one sensor resolves inside that sensor instead of in a gap.
+- test_point_tracking_display_renders_single_tracking_blob() — verifies the combined display renders the single tracked point when point tracking is enabled.
 - test_555_thresholds_use_package_sensor_id_and_per_channel_totals() — verifies per-sensor and global thresholds reduce 555 channel values correctly.
 - test_piezo_thresholds_use_global_plus_package_channel_thresholds() — verifies piezo per-channel thresholding combines global and package thresholds.
 - test_piezo_array_mux_mode_uses_display_spec_sample_indices() — verifies paired-mux mode reads intensities from the correct display sample indices.
@@ -374,8 +380,8 @@ Tests `SerialReaderThread.process_binary_data` resilience to corrupted binary pa
 - test_timing_sanity_rejection_recovers_to_following_valid_packet() — verifies a packet with implausible timing is rejected and parsing recovers on the next packet.
 
 ### test_settings_persistence.py
-Tests save/load round trips for heatmap, shear, and spectrum tab settings files (JSON), including version fields, defaults, and UI control restoration; also covers spectrum filter UI behaviors that don't require full reprocessing during capture.
-- test_heatmap_save_last_and_load_last_round_trip() — verifies heatmap settings save and reload restores all control values.
+Tests save/load round trips for heatmap, shear, and spectrum tab settings files (JSON), including version fields, defaults, geometry/toggle restoration, and UI control restoration; also covers spectrum filter UI behaviors that don't require full reprocessing during capture.
+- test_heatmap_save_last_and_load_last_round_trip() — verifies heatmap settings save and reload restores all control values, including `Sensor Size (mm)`, `Gap (mm)`, and `Point Tracking`.
 - test_shear_save_last_and_load_last_round_trip() — verifies shear settings save and reload restores all control values.
 - test_spectrum_save_last_and_load_last_round_trip() — verifies spectrum settings save and reload restores filter and display settings.
 - test_spectrum_filter_cutoff_ui_matches_filter_type() — verifies cutoff label/visibility update correctly for lowpass/highpass/bandpass filter types.

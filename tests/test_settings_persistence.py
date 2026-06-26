@@ -106,6 +106,7 @@ class HeatmapSettingsHarness(HeatmapPanelMixin):
             }
         }
         self.sensor_size_spin = SimpleSpin(1.25)
+        self.heatmap_gap_spin = SimpleSpin(2.5)
         self.intensity_scale_spin = SimpleSpin(0.45)
         self.blob_sigma_x_spin = SimpleSpin(0.31)
         self.blob_sigma_y_spin = SimpleSpin(0.41)
@@ -123,6 +124,7 @@ class HeatmapSettingsHarness(HeatmapPanelMixin):
         self.show_heatmap_circle_check = SimpleCheck(True)
         self.show_heatmap_position_labels_check = SimpleCheck(True)
         self.heatmap_mirror_check = SimpleCheck(True)
+        self.heatmap_point_tracking_check = SimpleCheck(True)
         self.heatmap_colormap_combo = SimpleCombo(
             ["Thermal", "Grayscale", "Viridis", "Magma"],
             current="Grayscale",
@@ -243,20 +245,24 @@ class SettingsPersistenceTests(unittest.TestCase):
             self.assertEqual(payload["heatmap_settings"]["rms_window_ms"], 55)
             self.assertEqual(payload["heatmap_settings"]["global_noise_threshold"], 3.0)
             self.assertEqual(payload["heatmap_settings"]["heatmap_colormap"], "Grayscale")
+            self.assertEqual(payload["heatmap_settings"]["gap_mm"], 2.5)
             self.assertTrue(payload["heatmap_settings"]["ellipse_shape_enabled"])
             self.assertTrue(payload["heatmap_settings"]["remove_negatives"])
             self.assertTrue(payload["heatmap_settings"]["show_circle_overlay"])
             self.assertTrue(payload["heatmap_settings"]["show_position_labels"])
             self.assertTrue(payload["heatmap_settings"]["mirror_display"])
+            self.assertTrue(payload["heatmap_settings"]["point_tracking_enabled"])
             self.assertNotIn("cop_smooth_alpha", payload["heatmap_settings"])
             self.assertNotIn("global_channel_release_thresholds", payload["heatmap_settings"])
 
             harness.global_noise_threshold_spin.setValue(999.0)
+            harness.heatmap_gap_spin.setValue(0.0)
             harness.sensor_calibration_spins["PZT1"]["gain_spins"][0].setValue(9.9)
             harness.dc_removal_combo.setCurrentText("Bias (2s)")
             harness.show_heatmap_circle_check.setChecked(False)
             harness.show_heatmap_position_labels_check.setChecked(False)
             harness.heatmap_mirror_check.setChecked(False)
+            harness.heatmap_point_tracking_check.setChecked(False)
             harness.ellipse_shape_check.setChecked(False)
             harness.remove_negatives_check.setChecked(False)
             harness.heatmap_colormap_combo.setCurrentText("Thermal")
@@ -265,11 +271,13 @@ class SettingsPersistenceTests(unittest.TestCase):
 
             self.assertTrue(applied)
             self.assertEqual(harness.global_noise_threshold_spin.value(), 3.0)
+            self.assertEqual(harness.heatmap_gap_spin.value(), 2.5)
             self.assertEqual(harness.sensor_calibration_spins["PZT1"]["gain_spins"][0].value(), 1.1)
             self.assertEqual(harness.dc_removal_combo.currentText(), "High-pass")
             self.assertTrue(harness.show_heatmap_circle_check.isChecked())
             self.assertTrue(harness.show_heatmap_position_labels_check.isChecked())
             self.assertTrue(harness.heatmap_mirror_check.isChecked())
+            self.assertTrue(harness.heatmap_point_tracking_check.isChecked())
             self.assertTrue(harness.ellipse_shape_check.isChecked())
             self.assertTrue(harness.remove_negatives_check.isChecked())
             self.assertEqual(harness.heatmap_colormap_combo.currentText(), "Grayscale")

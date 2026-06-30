@@ -161,6 +161,38 @@ class ExportHarness(DataExporterMixin, FilterProcessorMixin):
         self.save_notice_hidden += 1
 
 
+class ArrayExportHarness(ExportHarness):
+    def __init__(self, output_dir: Path):
+        super().__init__(output_dir)
+        self.raw_data = np.array(
+            [
+                [2045.0, 2046.0, 2043.0, 2047.0, 2047.0, 2047.0, 2040.0, 2046.0, 2049.0, 2047.0],
+                [2047.0, 2046.0, 2046.0, 2049.0, 2048.0, 2048.0, 2040.0, 2046.0, 2049.0, 2047.0],
+            ],
+            dtype=np.float32,
+        )
+        self.sweep_timestamps = np.arange(len(self.raw_data), dtype=np.float64) / 100.0
+        self.sweep_count = len(self.raw_data)
+        self.MAX_SWEEPS_BUFFER = len(self.raw_data)
+        self.config["channels"] = [0, 1, 2, 3, 4]
+        self.filtering_enabled = False
+
+    def is_array_pzt1_mode(self):
+        return True
+
+    def get_display_channel_specs(self):
+        return [
+            {"label": "PZT3_B", "sample_indices": [0]},
+            {"label": "PZT3_L", "sample_indices": [2]},
+            {"label": "PZT3_C", "sample_indices": [4]},
+            {"label": "PZT3_R", "sample_indices": [6]},
+            {"label": "PZT3_T", "sample_indices": [8]},
+        ]
+
+    def get_effective_samples_per_sweep(self, channels=None, repeat_count=None):
+        return 10
+
+
 @unittest.skipUnless(SCIPY_FILTERS_AVAILABLE, "SciPy not available")
 class DataExporterTests(unittest.TestCase):
     def test_export_prefers_fullest_available_source_over_short_archive_cache(self):
@@ -302,6 +334,38 @@ class DataExporterTests(unittest.TestCase):
             metadata = json.loads(metadata_files[0].read_text(encoding="utf-8"))
             self.assertEqual(metadata["export_source"], "archive")
             self.assertEqual(metadata["saved_sweeps"], harness.sweep_count)
+
+    def test_array_mode_save_data_omits_unlabeled_placeholder_columns(self):
+        with workspace_tempdir("data_exporter_array_header") as tmpdir:
+            harness = ArrayExportHarness(tmpdir)
+
+            with patch("file_operations.data_exporter.QMessageBox.information"), patch(
+                "file_operations.data_exporter.QMessageBox.warning"
+            ), patch("file_operations.data_exporter.QMessageBox.critical"):
+                harness.save_data()
+
+            csv_files = sorted(tmpdir.glob("capture_*.csv"))
+            metadata_files = sorted(tmpdir.glob("capture_*_metadata.json"))
+            self.assertEqual(len(csv_files), 1)
+            self.assertEqual(len(metadata_files), 1)
+
+            with csv_files[0].open("r", encoding="utf-8", newline="") as handle:
+                rows = list(csv.reader(handle))
+
+            self.assertEqual(
+                rows[0],
+                ["Timestamp", "PZT3_B", "PZT3_L", "PZT3_C", "PZT3_R", "PZT3_T", "Force_X_N", "Force_Z_N"],
+            )
+
+            self.assertEqual(len(rows[1]), len(rows[0]))
+            self.assertEqual(rows[1][1:6], ["2045.0", "2043.0", "2047.0", "2040.0", "2049.0"])
+
+            metadata = json.loads(metadata_files[0].read_text(encoding="utf-8"))
+            self.assertEqual(metadata["configuration"]["buffer_total_samples"], harness.buffer_spin.value() * 5)
+            self.assertEqual(
+                metadata["configuration"]["exported_signal_columns"],
+                ["PZT3_B", "PZT3_L", "PZT3_C", "PZT3_R", "PZT3_T"],
+            )
 
 
 if __name__ == "__main__":

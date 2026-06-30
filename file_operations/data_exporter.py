@@ -253,6 +253,7 @@ class DataExporterMixin:
         export_start_datetime,
         apply_filter: bool,
         rs_round_indices: list | None = None,
+        export_column_indices: list[int] | None = None,
     ):
         """Stream archived sweeps to CSV, optionally filtering in bounded chunks."""
         chunk_size = 4096
@@ -289,7 +290,7 @@ class DataExporterMixin:
                     scale_override=archive_rs_scale,
                 )
             if first_sweep_len <= 0 and data.ndim == 2 and len(data) > 0:
-                first_sweep_len = int(data.shape[1])
+                first_sweep_len = len(export_column_indices) if export_column_indices else int(data.shape[1])
 
             if apply_filter:
                 timestamp_array = None
@@ -321,6 +322,8 @@ class DataExporterMixin:
                     for _i in rs_round_indices:
                         if _i < len(row):
                             row[_i] = round(row[_i], 2)
+                if export_column_indices:
+                    row = [row[index] for index in export_column_indices if 0 <= index < len(row)]
                 row.insert(0, format_export_clock_time(export_start_datetime, row_time))
                 if is_555_mode:
                     row.insert(1, float(row_time if row_time is not None else 0.0))
@@ -474,9 +477,18 @@ class DataExporterMixin:
                     for col_idx in spec.get('sample_indices', []):
                         col_label_map[col_idx] = spec.get('label', f"Col{col_idx}")
                 total_cols = self.get_effective_samples_per_sweep(repeat_count=repeat_count)
-                header = [col_label_map.get(i, f"Col{i}") for i in range(total_cols)]
+                export_column_indices = [index for index in sorted(col_label_map) if 0 <= index < total_cols]
+                if export_column_indices:
+                    header = [col_label_map[index] for index in export_column_indices]
+                else:
+                    header = [col_label_map.get(i, f"Col{i}") for i in range(total_cols)]
+                    export_column_indices = None
             else:
                 header = [f"CH{ch}" for ch in self.config['channels']] * repeat_count
+                export_column_indices = None
+
+            signal_header = list(header)
+            exported_samples_per_sweep = len(signal_header)
 
             force_state = get_force_runtime_state(self)
             force_series = build_force_export_series(force_state.data)
@@ -525,6 +537,8 @@ class DataExporterMixin:
                 if selected_sweeps is not None and selected_sweeps.ndim == 2 and len(selected_sweeps) > 0
                 else 0
             )
+            if exported_samples_per_sweep > 0:
+                first_sweep_len = exported_samples_per_sweep
 
             rs_round_indices = (
                 self.get_pzt_rs_rosette_sample_indices()
@@ -563,6 +577,7 @@ class DataExporterMixin:
                         export_start_datetime=export_start_datetime,
                         apply_filter=bool(applied_filter_to_csv),
                         rs_round_indices=rs_round_indices,
+                        export_column_indices=export_column_indices,
                     )
                 else:
                     # Determine how many sweeps will be saved (respecting range selection)
@@ -583,6 +598,8 @@ class DataExporterMixin:
                             for _i in rs_round_indices:
                                 if _i < len(row):
                                     row[_i] = round(row[_i], 2)
+                        if export_column_indices:
+                            row = [row[index] for index in export_column_indices if 0 <= index < len(row)]
                         row.insert(0, format_export_clock_time(export_start_datetime, row_time))
                         if is_555_mode:
                             timestamp_to_write = row_time if row_time is not None else 0.0
@@ -615,7 +632,8 @@ class DataExporterMixin:
                     "osr": self.config['osr'],
                     "gain": self.config['gain'],
                     "buffer_sweeps_per_block": self.buffer_spin.value(),
-                    "buffer_total_samples": self.buffer_spin.value() * self.get_effective_samples_per_sweep()
+                    "buffer_total_samples": self.buffer_spin.value() * exported_samples_per_sweep,
+                    "exported_signal_columns": list(signal_header),
                 },
                 "block_timing_csv": self._block_timing_path,
                 "timing": {

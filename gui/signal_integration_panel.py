@@ -50,13 +50,17 @@ from constants.sensor_config import (
 from config.sensor_config import normalize_array_cell
 from constants.ui import PRESSURE_MAP_TAB_NAME
 from constants.pressure_map import (
+    DEFAULT_PRESSURE_GAP_CONTRAST_GAIN,
     DEFAULT_PRESSURE_SHOW_MARKER,
     DEFAULT_PRESSURE_DECAY_RATE,
     DEFAULT_PRESSURE_DECAY_REF_DISTANCE_MM,
+    DEFAULT_PRESSURE_GAP_FADE_WIDTH_FRACTION,
     DEFAULT_PRESSURE_GRID_MARGIN,
     DEFAULT_PRESSURE_GRID_RESOLUTION,
     DEFAULT_PRESSURE_MAP_MAX_INTENSITY,
     DEFAULT_PRESSURE_MIRROR,
+    DEFAULT_PRESSURE_PACKAGE_GAP_MM,
+    DEFAULT_PRESSURE_PACKAGE_BOUNDARY_SHAPE,
     DEFAULT_PRESSURE_SENSOR_SPACING_MM,
     DEFAULT_DISPLAY_WINDOW_SEC,
     DEFAULT_HPF_CUTOFF_HZ,
@@ -81,6 +85,10 @@ from constants.pressure_map import (
     PRESSURE_GRID_MARGIN_MAX,
     PRESSURE_GRID_MARGIN_STEP,
     PRESSURE_GRID_MIN_MARGIN,
+    PRESSURE_PACKAGE_GAP_DECIMALS,
+    PRESSURE_PACKAGE_GAP_MAX_MM,
+    PRESSURE_PACKAGE_GAP_MIN_MM,
+    PRESSURE_PACKAGE_GAP_STEP_MM,
     PRESSURE_GRID_RESOLUTION_MAX,
     PRESSURE_GRID_RESOLUTION_MIN,
     PRESSURE_GRID_RESOLUTION_STEP,
@@ -89,6 +97,7 @@ from constants.pressure_map import (
     PRESSURE_MAP_MAX_INTENSITY_MAX,
     PRESSURE_MAP_MAX_INTENSITY_MIN,
     PRESSURE_MAP_MAX_INTENSITY_STEP,
+    PRESSURE_PACKAGE_BOUNDARY_SHAPES,
     PRESSURE_SENSOR_SPACING_DECIMALS,
     PRESSURE_SENSOR_SPACING_MAX_MM,
     PRESSURE_SENSOR_SPACING_MIN_MM,
@@ -177,6 +186,10 @@ from data_processing.pressure_map_generator import (
     DEFAULT_PRESSURE_SHOW_NEGATIVE,
     PressureMapGenerator,
     PressureMapResult,
+)
+from data_processing.pressure_map_array_generator import (
+    PressureMapArrayGenerator,
+    PressureMapArrayPackage,
 )
 from data_processing.shear_detector import ShearDetector, ShearResult
 from file_operations.settings_persistence import load_settings_payload, save_settings_payload
@@ -439,6 +452,7 @@ class PressureMapPanelMixin:
         self.shear_detector = ShearDetector()
         self.normal_force_calculator = NormalForceCalculator()
         self.pressure_map_generator = PressureMapGenerator()
+        self.pressure_map_array_generator = PressureMapArrayGenerator()
         self.pressure_map_widget = PressureMapWidget()
         display_layout.addWidget(self.pressure_map_widget, stretch=PRESSURE_MAP_STRETCH)
         settings_layout.addWidget(self._create_shear_visualization_settings_group())
@@ -828,6 +842,22 @@ class PressureMapPanelMixin:
         self.pressure_decay_ref_distance_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
         layout.addWidget(self.pressure_decay_ref_distance_spin, 1, 3)
 
+        package_gap_tooltip = (
+            "Physical edge-to-edge distance between adjacent sensor packages in array layouts. "
+            "Single-package pressure maps are unchanged."
+        )
+        layout.addWidget(self._create_tooltip_label("Package gap:", package_gap_tooltip), 1, 4)
+        self.pressure_package_gap_spin = QDoubleSpinBox()
+        self.pressure_package_gap_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
+        self.pressure_package_gap_spin.setRange(PRESSURE_PACKAGE_GAP_MIN_MM, PRESSURE_PACKAGE_GAP_MAX_MM)
+        self.pressure_package_gap_spin.setDecimals(PRESSURE_PACKAGE_GAP_DECIMALS)
+        self.pressure_package_gap_spin.setSingleStep(PRESSURE_PACKAGE_GAP_STEP_MM)
+        self.pressure_package_gap_spin.setSuffix(" mm")
+        self.pressure_package_gap_spin.setValue(DEFAULT_PRESSURE_PACKAGE_GAP_MM)
+        self.pressure_package_gap_spin.setToolTip(package_gap_tooltip)
+        self.pressure_package_gap_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_package_gap_spin, 1, 5)
+
         max_intensity_tooltip = (
             "Fixed upper intensity mapped to white in the pressure-map heatmap. "
             "Values below this appear as proportional gray levels; values at or above this saturate to white."
@@ -845,6 +875,18 @@ class PressureMapPanelMixin:
         self.pressure_max_intensity_spin.setToolTip(max_intensity_tooltip)
         self.pressure_max_intensity_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
         layout.addWidget(self.pressure_max_intensity_spin, 2, 1)
+
+        boundary_shape_tooltip = (
+            "Whole-package boundary shape on the pressure map. "
+            "This does not affect the small T/R/L/C/B sensor markers or the pressure-point marker."
+        )
+        layout.addWidget(self._create_tooltip_label("Package boundary:", boundary_shape_tooltip), 2, 2)
+        self.pressure_package_boundary_shape_combo = QComboBox()
+        self.pressure_package_boundary_shape_combo.addItems(["Circle", "Square", "None"])
+        self.pressure_package_boundary_shape_combo.setCurrentText(DEFAULT_PRESSURE_PACKAGE_BOUNDARY_SHAPE.title())
+        self.pressure_package_boundary_shape_combo.setToolTip(boundary_shape_tooltip)
+        self.pressure_package_boundary_shape_combo.currentTextChanged.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_package_boundary_shape_combo, 2, 3)
 
         show_negative_tooltip = (
             "When enabled, pressure-point placement uses absolute signal magnitude so "
@@ -1102,9 +1144,19 @@ class PressureMapPanelMixin:
                     "pressure_decay_ref_distance_spin",
                     DEFAULT_PRESSURE_DECAY_REF_DISTANCE_MM,
                 ),
+                "package_gap_mm": self._spin_float(
+                    "pressure_package_gap_spin",
+                    DEFAULT_PRESSURE_PACKAGE_GAP_MM,
+                ),
                 "max_intensity": self._spin_float(
                     "pressure_max_intensity_spin",
                     DEFAULT_PRESSURE_MAP_MAX_INTENSITY,
+                ),
+                "package_boundary_shape": self._normalized_pressure_package_boundary_shape(
+                    self._combo_text(
+                        "pressure_package_boundary_shape_combo",
+                        DEFAULT_PRESSURE_PACKAGE_BOUNDARY_SHAPE,
+                    )
                 ),
                 "show_negative": self._check_bool(
                     "pressure_show_negative_check",
@@ -1385,12 +1437,20 @@ class PressureMapPanelMixin:
             "decay_ref_distance_mm",
             float,
         )
+        changed |= self._set_spin_value("pressure_package_gap_spin", pressure_map, "package_gap_mm", float)
         changed |= self._set_spin_value(
             "pressure_max_intensity_spin",
             pressure_map,
             "max_intensity",
             float,
         )
+        boundary_shape_key = "package_boundary_shape" if "package_boundary_shape" in pressure_map else "sensor_marker_shape"
+        if boundary_shape_key in pressure_map:
+            changed |= self._set_combo_value(
+                "pressure_package_boundary_shape_combo",
+                {"package_boundary_shape": self._pressure_boundary_shape_label(pressure_map.get(boundary_shape_key))},
+                "package_boundary_shape",
+            )
         changed |= self._set_check_value("pressure_show_negative_check", pressure_map, "show_negative")
         changed |= self._set_check_value("pressure_show_marker_check", pressure_map, "show_marker")
         changed |= self._set_check_value("pressure_mirror_check", pressure_map, "mirror")
@@ -1430,6 +1490,15 @@ class PressureMapPanelMixin:
         if widget is None or not hasattr(widget, "currentText"):
             return str(fallback)
         return str(widget.currentText())
+
+    def _normalized_pressure_package_boundary_shape(self, value: object) -> str:
+        normalized = str(value).strip().lower()
+        if normalized not in PRESSURE_PACKAGE_BOUNDARY_SHAPES:
+            return DEFAULT_PRESSURE_PACKAGE_BOUNDARY_SHAPE
+        return normalized
+
+    def _pressure_boundary_shape_label(self, value: object) -> str:
+        return self._normalized_pressure_package_boundary_shape(value).title()
 
     def _set_spin_value(self, widget_name: str, settings: dict, key: str, value_type: type) -> bool:
         if key not in settings:
@@ -1602,11 +1671,7 @@ class PressureMapPanelMixin:
             arrow_width_scales=bool(self.shear_arrow_width_scales_check.isChecked()),
             arrow_base_width_px=float(self.shear_arrow_base_width_spin.value()),
         )
-        self.pressure_map_widget.update_display(
-            self._latest_normal_force_result,
-            self._latest_pressure_map_result,
-            self._latest_shear_result,
-        )
+        self._update_pressure_map_from_latest()
         self.save_last_shear_settings()
 
     def on_pressure_map_settings_changed(self, _value: object | None = None) -> None:
@@ -1627,6 +1692,12 @@ class PressureMapPanelMixin:
                 "pressure_show_marker_check",
                 DEFAULT_PRESSURE_SHOW_MARKER,
             )
+            package_boundary_shape = self._normalized_pressure_package_boundary_shape(
+                self._combo_text(
+                    "pressure_package_boundary_shape_combo",
+                    DEFAULT_PRESSURE_PACKAGE_BOUNDARY_SHAPE,
+                )
+            )
             max_intensity = self._spin_float(
                 "pressure_max_intensity_spin",
                 DEFAULT_PRESSURE_MAP_MAX_INTENSITY,
@@ -1637,6 +1708,7 @@ class PressureMapPanelMixin:
             )
             if hasattr(self, "pressure_map_widget"):
                 self.pressure_map_widget.configure_markers(show_marker=show_marker)
+                self.pressure_map_widget.configure_package_boundary(boundary_shape=package_boundary_shape)
                 self.pressure_map_widget.configure_intensity(max_intensity=max_intensity)
                 self.pressure_map_widget.configure_mirror(mirror=mirror)
 
@@ -1644,12 +1716,17 @@ class PressureMapPanelMixin:
                 "pressure_sensor_spacing_spin",
                 DEFAULT_PRESSURE_SENSOR_SPACING_MM,
             )
+            circle_diameter_mm = self._spin_float(
+                "pressure_circle_diameter_spin",
+                DEFAULT_CIRCLE_DIAMETER_MM,
+            )
+            show_negative = self._check_bool(
+                "pressure_show_negative_check",
+                DEFAULT_PRESSURE_SHOW_NEGATIVE,
+            )
             self.normal_force_calculator = NormalForceCalculator(sensor_spacing_mm=sensor_spacing_mm)
             self.pressure_map_generator = PressureMapGenerator(
-                circle_diameter_mm=self._spin_float(
-                    "pressure_circle_diameter_spin",
-                    DEFAULT_CIRCLE_DIAMETER_MM,
-                ),
+                circle_diameter_mm=circle_diameter_mm,
                 sensor_spacing_mm=sensor_spacing_mm,
                 grid_margin=self._spin_int("pressure_grid_margin_spin", DEFAULT_PRESSURE_GRID_MARGIN),
                 grid_resolution=self._spin_int(
@@ -1664,10 +1741,17 @@ class PressureMapPanelMixin:
                     "pressure_decay_ref_distance_spin",
                     DEFAULT_PRESSURE_DECAY_REF_DISTANCE_MM,
                 ),
-                show_negative=self._check_bool(
-                    "pressure_show_negative_check",
-                    DEFAULT_PRESSURE_SHOW_NEGATIVE,
+                show_negative=show_negative,
+            )
+            self.pressure_map_array_generator = PressureMapArrayGenerator(
+                circle_diameter_mm=circle_diameter_mm,
+                package_gap_mm=self._spin_float(
+                    "pressure_package_gap_spin",
+                    DEFAULT_PRESSURE_PACKAGE_GAP_MM,
                 ),
+                gap_contrast_gain=DEFAULT_PRESSURE_GAP_CONTRAST_GAIN,
+                gap_fade_width_fraction=DEFAULT_PRESSURE_GAP_FADE_WIDTH_FRACTION,
+                show_negative=show_negative,
             )
             self._update_pressure_map_from_latest()
             self.save_last_shear_settings()
@@ -2148,7 +2232,11 @@ class PressureMapPanelMixin:
                 self._latest_shear_result = first_package.shear_result
                 self._latest_normal_force_result = first_package.normal_force_result
                 self._latest_pressure_map_result = first_package.pressure_result
-                self.pressure_map_widget.update_package_displays(package_displays)
+                array_result = self._build_pressure_map_array_result(package_displays)
+                if array_result is not None:
+                    self.pressure_map_widget.update_array_display(array_result, package_displays)
+                else:
+                    self.pressure_map_widget.update_package_displays(package_displays)
                 return
 
             self._latest_normal_force_result = self.normal_force_calculator.compute(
@@ -2196,10 +2284,42 @@ class PressureMapPanelMixin:
                     shear_result=shear_result,
                     grid_position=layout_item.get("grid_position"),
                     color=self.pressure_map_widget.package_color_for_index(color_slot),
+                    calibrated_values=dict(calibrated_values),
                 )
             )
 
         return package_displays
+
+    def _build_pressure_map_array_result(self, package_displays: list[PressureMapPackageDisplay]):
+        if len(package_displays) <= 1:
+            return None
+        if not hasattr(self, "pressure_map_array_generator"):
+            return None
+
+        array_packages: list[PressureMapArrayPackage] = []
+        for package in package_displays:
+            if package.grid_position is None:
+                return None
+            calibrated_values = package.calibrated_values
+            if not calibrated_values:
+                return None
+            array_packages.append(
+                PressureMapArrayPackage(
+                    sensor_id=str(package.sensor_id),
+                    grid_position=tuple(package.grid_position),
+                    normal_force_result=package.normal_force_result,
+                    pressure_result=package.pressure_result,
+                    calibrated_values=dict(calibrated_values),
+                )
+            )
+
+        try:
+            array_result = self.pressure_map_array_generator.generate(array_packages)
+        except Exception as exc:
+            if hasattr(self, "log_status"):
+                self.log_status(f"Pressure Map array interpolation unavailable: {exc}")
+            return None
+        return array_result if array_result.adjacent_pairs else None
 
     def _calibrate_signal_integration_values_for_shear(
         self,

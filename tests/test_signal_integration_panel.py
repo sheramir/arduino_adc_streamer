@@ -14,6 +14,8 @@ from PyQt6.QtWidgets import QApplication, QScrollArea
 
 from constants.plotting import IADC_RESOLUTION_BITS
 from constants.pressure_map import (
+    DEFAULT_PRESSURE_PACKAGE_GAP_MM,
+    DEFAULT_PRESSURE_PACKAGE_BOUNDARY_SHAPE,
     DEFAULT_PRESSURE_SHOW_MARKER,
     DEFAULT_HPF_CUTOFF_HZ,
     DEFAULT_INTEGRATION_WINDOW_SAMPLES,
@@ -167,7 +169,9 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         harness.pressure_grid_margin_spin = DummySpinBox(3)
         harness.pressure_decay_rate_spin = DummySpinBox(0.9)
         harness.pressure_decay_ref_distance_spin = DummySpinBox(2.25)
+        harness.pressure_package_gap_spin = DummySpinBox(3.5)
         harness.pressure_max_intensity_spin = DummySpinBox(7.5)
+        harness.pressure_package_boundary_shape_combo = DummyComboBox("Square")
         harness.pressure_show_negative_check = DummyCheckBox(True)
         harness.pressure_show_marker_check = DummyCheckBox(False)
         harness.pressure_mirror_check = DummyCheckBox(False)
@@ -517,7 +521,9 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             self.assertEqual(settings["pressure_map"]["grid_margin"], 3)
             self.assertEqual(settings["pressure_map"]["decay_rate"], 0.9)
             self.assertEqual(settings["pressure_map"]["decay_ref_distance_mm"], 2.25)
+            self.assertEqual(settings["pressure_map"]["package_gap_mm"], 3.5)
             self.assertEqual(settings["pressure_map"]["max_intensity"], 7.5)
+            self.assertEqual(settings["pressure_map"]["package_boundary_shape"], "square")
             self.assertTrue(settings["pressure_map"]["show_negative"])
             self.assertFalse(settings["pressure_map"]["show_marker"])
             self.assertFalse(settings["pressure_map"]["mirror"])
@@ -543,7 +549,9 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             harness.pressure_grid_margin_spin.setValue(1)
             harness.pressure_decay_rate_spin.setValue(0.1)
             harness.pressure_decay_ref_distance_spin.setValue(0.5)
+            harness.pressure_package_gap_spin.setValue(DEFAULT_PRESSURE_PACKAGE_GAP_MM)
             harness.pressure_max_intensity_spin.setValue(1.0)
+            harness.pressure_package_boundary_shape_combo.setCurrentText(DEFAULT_PRESSURE_PACKAGE_BOUNDARY_SHAPE.title())
             harness.pressure_show_negative_check.setChecked(DEFAULT_PRESSURE_SHOW_NEGATIVE)
             harness.pressure_show_marker_check.setChecked(DEFAULT_PRESSURE_SHOW_MARKER)
             harness.pressure_mirror_check.setChecked(False)
@@ -567,7 +575,9 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             self.assertEqual(harness.pressure_grid_margin_spin.value(), 3)
             self.assertEqual(harness.pressure_decay_rate_spin.value(), 0.9)
             self.assertEqual(harness.pressure_decay_ref_distance_spin.value(), 2.25)
+            self.assertEqual(harness.pressure_package_gap_spin.value(), 3.5)
             self.assertEqual(harness.pressure_max_intensity_spin.value(), 7.5)
+            self.assertEqual(harness.pressure_package_boundary_shape_combo.currentText(), "Square")
             self.assertTrue(harness.pressure_show_negative_check.isChecked())
             self.assertFalse(harness.pressure_show_marker_check.isChecked())
             self.assertFalse(harness.pressure_mirror_check.isChecked())
@@ -604,7 +614,9 @@ class SignalIntegrationPanelTests(unittest.TestCase):
                 "pressure_grid_margin_spin": "extra grid cells",
                 "pressure_decay_rate_spin": "distance gain",
                 "pressure_decay_ref_distance_spin": "reference distance",
+                "pressure_package_gap_spin": "edge-to-edge distance",
                 "pressure_max_intensity_spin": "upper intensity mapped to white",
+                "pressure_package_boundary_shape_combo": "whole-package boundary shape",
                 "pressure_show_negative_check": "negative release values",
                 "pressure_show_marker_check": "pressure-point marker",
                 "pressure_mirror_check": "mirror",

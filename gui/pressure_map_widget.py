@@ -16,12 +16,13 @@ from dataclasses import dataclass
 import math
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtCore import QPointF, QRectF
+from PyQt6.QtCore import QPointF, QRectF, Qt
 from PyQt6.QtGui import QBrush, QColor, QPen, QPolygonF
 from PyQt6.QtWidgets import (
     QGraphicsEllipseItem,
     QGraphicsLineItem,
     QGraphicsPolygonItem,
+    QGraphicsRectItem,
     QLabel,
     QVBoxLayout,
     QWidget,
@@ -30,6 +31,7 @@ from PyQt6.QtWidgets import (
 from constants.pressure_map import (
     DEFAULT_PRESSURE_MAP_MAX_INTENSITY,
     DEFAULT_PRESSURE_MIRROR,
+    DEFAULT_PRESSURE_PACKAGE_BOUNDARY_SHAPE,
     DEFAULT_PRESSURE_SHOW_MARKER,
     PRESSURE_MAP_BACKGROUND_COLOR,
     PRESSURE_MAP_CIRCLE_Z,
@@ -61,6 +63,7 @@ from constants.pressure_map import (
     PRESSURE_MAP_ZERO_LEVEL_MAX,
     PRESSURE_MAP_ZERO_LEVEL_MIN,
     PRESSURE_GRID_MARGIN_SIDE_COUNT,
+    PRESSURE_PACKAGE_BOUNDARY_SHAPES,
 )
 from constants.shear import (
     DEFAULT_ARROW_BASE_WIDTH_PX,
@@ -88,6 +91,7 @@ from constants.shear import (
     SHEAR_ZERO_VALUE,
 )
 from data_processing.normal_force_calculator import NormalForceResult
+from data_processing.pressure_map_array_generator import PressureMapArrayResult
 from data_processing.pressure_map_generator import PressureMapResult
 from data_processing.shear_detector import ShearResult
 from gui.shear_visualization_widget import ShearArrowGeometry
@@ -103,6 +107,7 @@ class PressureMapPackageDisplay:
     shear_result: ShearResult | None = None
     grid_position: tuple[int, int] | None = None
     color: str = PRESSURE_MAP_OVERLAY_COLOR
+    calibrated_values: dict[str, float] | None = None
 
 
 @dataclass(slots=True)
@@ -131,6 +136,7 @@ class PressureMapWidget(QWidget):
         self.last_normal_force_result: NormalForceResult | None = None
         self.last_shear_result: ShearResult | None = None
         self.last_package_displays: list[PressureMapPackageDisplay] = []
+        self.last_array_result: PressureMapArrayResult | None = None
 
         self.circle_radius_mm = SHEAR_ZERO_VALUE
         self.arrow_gain = DEFAULT_ARROW_GAIN
@@ -140,6 +146,7 @@ class PressureMapWidget(QWidget):
         self.arrow_base_width_px = DEFAULT_ARROW_BASE_WIDTH_PX
         self.arrow_color = DEFAULT_ARROW_COLOR
         self.show_marker = DEFAULT_PRESSURE_SHOW_MARKER
+        self.package_boundary_shape = DEFAULT_PRESSURE_PACKAGE_BOUNDARY_SHAPE
         self.max_intensity = float(DEFAULT_PRESSURE_MAP_MAX_INTENSITY)
         self.mirror = bool(DEFAULT_PRESSURE_MIRROR)
         self.last_arrow_geometry = self._hidden_arrow_geometry()
@@ -165,7 +172,7 @@ class PressureMapWidget(QWidget):
         self.image_item.setLookupTable(self._grayscale_lookup_table())
         self.plot_widget.addItem(self.image_item)
 
-        self.circle_item: QGraphicsEllipseItem | None = None
+        self.circle_item: QGraphicsEllipseItem | QGraphicsRectItem | None = None
         self.sensor_marker_item = pg.ScatterPlotItem()
         self.sensor_marker_item.setZValue(PRESSURE_MAP_SENSOR_Z)
         self.plot_widget.addItem(self.sensor_marker_item)
@@ -178,7 +185,7 @@ class PressureMapWidget(QWidget):
         self._initialize_dynamic_arrow()
 
         self.package_image_items: list[pg.ImageItem] = []
-        self.package_circle_items: list[QGraphicsEllipseItem] = []
+        self.package_circle_items: list[QGraphicsEllipseItem | QGraphicsRectItem] = []
         self.package_sensor_marker_items: list[pg.ScatterPlotItem] = []
         self.package_peak_marker_items: list[pg.ScatterPlotItem] = []
         self.package_arrow_items: list[tuple[QGraphicsLineItem, QGraphicsPolygonItem]] = []
@@ -221,6 +228,18 @@ class PressureMapWidget(QWidget):
             self.show_marker = updated_show_marker
             self._refresh_cached_display()
 
+    def configure_package_boundary(self, *, boundary_shape: str | None = None) -> None:
+        """Update whole-package boundary shape."""
+        if boundary_shape is None:
+            return
+        normalized_shape = str(boundary_shape).strip().lower()
+        if normalized_shape not in PRESSURE_PACKAGE_BOUNDARY_SHAPES:
+            normalized_shape = DEFAULT_PRESSURE_PACKAGE_BOUNDARY_SHAPE
+        if self.package_boundary_shape == normalized_shape:
+            return
+        self.package_boundary_shape = normalized_shape
+        self._refresh_cached_display()
+
     def configure_intensity(self, *, max_intensity: float | None = None) -> None:
         """Update fixed pressure-map upper intensity level."""
         if max_intensity is not None:
@@ -240,6 +259,9 @@ class PressureMapWidget(QWidget):
             self._refresh_cached_display()
 
     def _refresh_cached_display(self) -> None:
+        if self.last_array_result is not None and self.last_package_displays:
+            self.update_array_display(self.last_array_result, self.last_package_displays)
+            return
         if self.last_package_displays:
             self.update_package_displays(self.last_package_displays)
             return
@@ -274,6 +296,7 @@ class PressureMapWidget(QWidget):
         self.last_pressure_result = pressure_result
         self.last_shear_result = shear_result
         self.last_package_displays = []
+        self.last_array_result = None
         if normal_force_result is None or pressure_result is None:
             self._clear_dynamic_items()
             self.readout_label.setText("No Data")
@@ -292,6 +315,7 @@ class PressureMapWidget(QWidget):
         """Render multiple array sensor packages in their configured grid cells."""
         self._clear_dynamic_items()
         self.last_package_displays = list(packages)
+        self.last_array_result = None
         if not packages:
             self.last_normal_force_result = None
             self.last_pressure_result = None
@@ -321,6 +345,46 @@ class PressureMapWidget(QWidget):
 
         self._hide_unused_package_items(len(packages))
         self._set_package_ranges(packages, centers, half_extent)
+        self._update_package_readout(packages)
+        self.plot_widget.getPlotItem().getViewBox().update()
+
+    def update_array_display(
+        self,
+        array_result: PressureMapArrayResult,
+        packages: list[PressureMapPackageDisplay],
+    ) -> None:
+        """Render one array-level pressure image with per-package overlays."""
+        self._clear_dynamic_items()
+        self.last_array_result = array_result
+        self.last_package_displays = list(packages)
+        if not packages:
+            self.last_normal_force_result = None
+            self.last_pressure_result = None
+            self.last_shear_result = None
+            self.readout_label.setText("No Data")
+            self.plot_widget.getPlotItem().getViewBox().update()
+            return
+
+        first_package = packages[0]
+        self.last_normal_force_result = first_package.normal_force_result
+        self.last_pressure_result = first_package.pressure_result
+        self.last_shear_result = first_package.shear_result
+        self._ensure_package_item_count(len(packages))
+        self._update_array_image(array_result, packages)
+
+        for image_item in self.package_image_items:
+            image_item.hide()
+
+        for index, package in enumerate(packages):
+            center_x, center_y = self._array_package_center(array_result, package)
+            self._update_package_boundary(index, package, center_x, center_y)
+            self._update_package_sensor_markers(index, package, center_x, center_y)
+            self._update_package_peak_markers(index, package, center_x, center_y)
+            self._update_package_shear_arrow(index, package, center_x, center_y)
+            self._update_package_label(index, package, center_x, center_y)
+
+        self._hide_unused_package_items(len(packages))
+        self._set_array_ranges(array_result)
         self._update_package_readout(packages)
         self.plot_widget.getPlotItem().getViewBox().update()
 
@@ -366,6 +430,30 @@ class PressureMapWidget(QWidget):
         )
         self.plot_widget.setXRange(-half_extent, half_extent, padding=SHEAR_ZERO_VALUE)
         self.plot_widget.setYRange(-half_extent, half_extent, padding=SHEAR_ZERO_VALUE)
+
+    def _update_array_image(
+        self,
+        array_result: PressureMapArrayResult,
+        packages: list[PressureMapPackageDisplay],
+    ) -> None:
+        level_source = packages[0].normal_force_result
+        grid = array_result.pressure_grid
+        if self.mirror:
+            grid = np.fliplr(grid)
+        levels = self._pressure_levels(level_source, grid)
+        x_min = float(array_result.x_coordinates_mm[0])
+        x_max = float(array_result.x_coordinates_mm[-1])
+        y_min = float(array_result.y_coordinates_mm[0])
+        y_max = float(array_result.y_coordinates_mm[-1])
+        rect_x = -x_max if self.mirror else x_min
+        rect = (rect_x, y_min, x_max - x_min, y_max - y_min)
+        self._image_cache = self._update_cached_image_item(
+            self.image_item,
+            self._image_cache,
+            grid,
+            levels,
+            rect,
+        )
 
     def _update_cached_image_item(
         self,
@@ -453,15 +541,23 @@ class PressureMapWidget(QWidget):
     def _update_boundary(self, pressure_result: PressureMapResult) -> None:
         radius = float(pressure_result.total_extent_mm) / PRESSURE_GRID_MARGIN_SIDE_COUNT
         self.circle_radius_mm = radius
-        if self.circle_item is None:
-            self.circle_item = QGraphicsEllipseItem(-radius, -radius, radius * 2.0, radius * 2.0)
-            circle_pen = QPen(QColor(PRESSURE_MAP_OVERLAY_COLOR))
-            circle_pen.setWidthF(SHEAR_LAYOUT_CIRCLE_LINE_WIDTH_PX)
-            circle_pen.setCosmetic(SHEAR_LAYOUT_PENS_ARE_COSMETIC)
-            self.circle_item.setPen(circle_pen)
-            self.circle_item.setZValue(PRESSURE_MAP_CIRCLE_Z)
-            self.plot_widget.addItem(self.circle_item)
+        if self.package_boundary_shape == "none":
+            if self.circle_item is not None:
+                self.circle_item.setVisible(False)
             return
+        if self.circle_item is None:
+            self.circle_item = self._new_boundary_item()
+            self.plot_widget.addItem(self.circle_item)
+        elif not self._boundary_item_matches_shape(self.circle_item):
+            self.plot_widget.removeItem(self.circle_item)
+            self.circle_item = self._new_boundary_item()
+            self.plot_widget.addItem(self.circle_item)
+        circle_pen = QPen(QColor(PRESSURE_MAP_OVERLAY_COLOR))
+        circle_pen.setWidthF(SHEAR_LAYOUT_CIRCLE_LINE_WIDTH_PX)
+        circle_pen.setStyle(Qt.PenStyle.DotLine)
+        circle_pen.setCosmetic(SHEAR_LAYOUT_PENS_ARE_COSMETIC)
+        self.circle_item.setPen(circle_pen)
+        self.circle_item.setZValue(PRESSURE_MAP_CIRCLE_Z)
         self.circle_item.setRect(-radius, -radius, radius * 2.0, radius * 2.0)
         self.circle_item.setVisible(True)
 
@@ -548,7 +644,7 @@ class PressureMapWidget(QWidget):
             self.package_image_items.append(image_item)
             self._package_image_caches.append(None)
 
-            circle_item = QGraphicsEllipseItem()
+            circle_item = self._new_boundary_item()
             circle_item.setZValue(PRESSURE_MAP_CIRCLE_Z)
             self.plot_widget.addItem(circle_item)
             self.package_circle_items.append(circle_item)
@@ -644,9 +740,20 @@ class PressureMapWidget(QWidget):
         center_y: float,
     ) -> None:
         radius = float(package.pressure_result.total_extent_mm) / PRESSURE_GRID_MARGIN_SIDE_COUNT
+        if self.package_boundary_shape == "none":
+            self.package_circle_items[index].hide()
+            return
+        if not self._boundary_item_matches_shape(self.package_circle_items[index]):
+            old_item = self.package_circle_items[index]
+            self.plot_widget.removeItem(old_item)
+            circle_item = self._new_boundary_item()
+            circle_item.setZValue(PRESSURE_MAP_CIRCLE_Z)
+            self.plot_widget.addItem(circle_item)
+            self.package_circle_items[index] = circle_item
         circle_item = self.package_circle_items[index]
         circle_pen = QPen(QColor(package.color))
         circle_pen.setWidthF(SHEAR_LAYOUT_CIRCLE_LINE_WIDTH_PX)
+        circle_pen.setStyle(Qt.PenStyle.DotLine)
         circle_pen.setCosmetic(SHEAR_LAYOUT_PENS_ARE_COSMETIC)
         circle_item.setPen(circle_pen)
         circle_item.setRect(center_x - radius, center_y - radius, radius * 2.0, radius * 2.0)
@@ -674,6 +781,24 @@ class PressureMapWidget(QWidget):
             for position, (x_coord, y_coord) in self._sensor_positions_from_result(package.pressure_result).items()
         ]
         self.package_sensor_marker_items[index].setData(spots)
+
+    def _new_boundary_item(self) -> QGraphicsEllipseItem | QGraphicsRectItem:
+        if self.package_boundary_shape == "square":
+            return QGraphicsRectItem()
+        return QGraphicsEllipseItem()
+
+    def _boundary_item_matches_shape(self, item: QGraphicsEllipseItem | QGraphicsRectItem) -> bool:
+        if self.package_boundary_shape == "square":
+            return isinstance(item, QGraphicsRectItem)
+        return isinstance(item, QGraphicsEllipseItem)
+
+    def _array_package_center(
+        self,
+        array_result: PressureMapArrayResult,
+        package: PressureMapPackageDisplay,
+    ) -> tuple[float, float]:
+        center_x, center_y = array_result.package_centers.get(package.sensor_id, (0.0, 0.0))
+        return (self._mirror_x(float(center_x)), float(center_y))
 
     def _update_package_peak_markers(
         self,
@@ -808,6 +933,23 @@ class PressureMapWidget(QWidget):
             center_y + range_half_span,
             padding=SHEAR_ZERO_VALUE,
         )
+
+    def _set_array_ranges(self, array_result: PressureMapArrayResult) -> None:
+        x_min = float(array_result.x_coordinates_mm[0])
+        x_max = float(array_result.x_coordinates_mm[-1])
+        y_min = float(array_result.y_coordinates_mm[0])
+        y_max = float(array_result.y_coordinates_mm[-1])
+        if self.mirror:
+            x_min, x_max = -x_max, -x_min
+        span_x = x_max - x_min
+        span_y = y_max - y_min
+        square_span = max(span_x, span_y)
+        center_x = (x_min + x_max) / 2.0
+        center_y = (y_min + y_max) / 2.0
+        half_span = square_span / 2.0
+        padding = max(SHEAR_ZERO_VALUE, half_span * PRESSURE_MAP_PACKAGE_VIEW_PADDING_FRACTION)
+        self.plot_widget.setXRange(center_x - half_span - padding, center_x + half_span + padding, padding=SHEAR_ZERO_VALUE)
+        self.plot_widget.setYRange(center_y - half_span - padding, center_y + half_span + padding, padding=SHEAR_ZERO_VALUE)
 
     def _update_package_readout(self, packages: list[PressureMapPackageDisplay]) -> None:
         total_force = sum(float(package.normal_force_result.total_force) for package in packages)

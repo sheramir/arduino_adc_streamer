@@ -26,6 +26,11 @@ from data_processing.pressure_map_generator import (
     PressureMapResult,
     PressureQuadrantPlane,
 )
+from data_processing.pressure_map_array_generator import (
+    PressureMapArrayGenerator,
+    PressureMapArrayPackage,
+    PressureMapArrayResult,
+)
 from data_processing.shear_detector import ShearDetector, ShearResult
 from data_processing.signal_integrator import SignalIntegrator
 from data_processing.signal_integration_processor import SignalIntegrationProcessorMixin
@@ -48,6 +53,9 @@ __all__ = [
     'PressureMapGenerator',
     'PressureMapResult',
     'PressureQuadrantPlane',
+    'PressureMapArrayGenerator',
+    'PressureMapArrayPackage',
+    'PressureMapArrayResult',
     'ShearDetector',
     'ShearResult',
     'SignalIntegrator',

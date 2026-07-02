@@ -6,10 +6,13 @@ import unittest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import numpy as np
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QGraphicsEllipseItem, QGraphicsRectItem
 
 from constants.pressure_map import PRESSURE_MAP_BACKGROUND_COLOR, PRESSURE_MAP_OVERLAY_COLOR
 from data_processing.normal_force_calculator import NormalForceCalculator
+from data_processing.pressure_map_array_generator import PressureMapArrayGenerator, PressureMapArrayPackage
 from data_processing.pressure_map_generator import PressureMapGenerator
 from data_processing.shear_detector import ShearDetector
 from gui.pressure_map_widget import PressureMapPackageDisplay, PressureMapWidget
@@ -230,6 +233,54 @@ class PressureMapWidgetTests(unittest.TestCase):
 
         self.assertEqual(len(image_uploads), 0)
 
+    def test_array_display_uses_single_image_and_package_overlays(self):
+        first_shear = self.detector.detect({"C": 0.0, "L": 0.0, "R": 5.0, "T": 0.0, "B": 0.0})
+        second_shear = self.detector.detect({"C": 0.0, "L": 2.0, "R": 0.0, "T": 0.0, "B": 0.0})
+        first_normal = self.calculator.compute(first_shear.residual)
+        second_normal = self.calculator.compute(second_shear.residual)
+        first_pressure = self.generator.generate(first_normal.normalized)
+        second_pressure = self.generator.generate(second_normal.normalized)
+        packages = [
+            PressureMapPackageDisplay(
+                sensor_id="PZT3",
+                normal_force_result=first_normal,
+                pressure_result=first_pressure,
+                shear_result=first_shear,
+                grid_position=(0, 0),
+                color=self.widget.package_color_for_index(0),
+                calibrated_values={"C": 0.0, "L": 0.0, "R": 5.0, "T": 0.0, "B": 0.0},
+            ),
+            PressureMapPackageDisplay(
+                sensor_id="PZT6",
+                normal_force_result=second_normal,
+                pressure_result=second_pressure,
+                shear_result=second_shear,
+                grid_position=(0, 1),
+                color=self.widget.package_color_for_index(1),
+                calibrated_values={"C": 0.0, "L": 2.0, "R": 0.0, "T": 0.0, "B": 0.0},
+            ),
+        ]
+        array_result = PressureMapArrayGenerator(circle_diameter_mm=5.0, package_gap_mm=2.0).generate([
+            PressureMapArrayPackage(
+                sensor_id=package.sensor_id,
+                grid_position=package.grid_position,
+                normal_force_result=package.normal_force_result,
+                pressure_result=package.pressure_result,
+                calibrated_values=package.calibrated_values,
+            )
+            for package in packages
+        ])
+
+        self.widget.update_array_display(array_result, packages)
+
+        self.assertEqual(self.widget.last_array_result, array_result)
+        self.assertEqual(len(self.widget.last_package_displays), 2)
+        self.assertFalse(self.widget.package_image_items[0].isVisible())
+        self.assertTrue(self.widget.package_circle_items[0].isVisible())
+        self.assertTrue(self.widget.package_circle_items[1].isVisible())
+        self.assertIn("PZT3", self.widget.readout_label.text())
+        self.assertIn("PZT6", self.widget.readout_label.text())
+
     def test_grayscale_lookup_table_runs_from_black_to_white(self):
         lookup_table = self.widget._grayscale_lookup_table()
 
@@ -285,6 +336,28 @@ class PressureMapWidgetTests(unittest.TestCase):
         self.widget.update_display(normal_result, pressure_result)
 
         self.assertEqual(len(self.widget.peak_marker_item.points()), 0)
+
+    def test_package_boundary_shape_can_be_circle_square_or_none(self):
+        signals = {"C": 0.0, "R": 5.0, "T": 0.0, "L": 0.0, "B": 0.0}
+        normal_result = self.calculator.compute(signals)
+        pressure_result = self.generator.generate(signals)
+
+        self.widget.configure_package_boundary(boundary_shape="circle")
+        self.widget.update_display(normal_result, pressure_result)
+        self.assertIsInstance(self.widget.circle_item, QGraphicsEllipseItem)
+        self.assertTrue(self.widget.circle_item.isVisible())
+        self.assertEqual(self.widget.circle_item.pen().style(), Qt.PenStyle.DotLine)
+        self.assertEqual(len(self.widget.sensor_marker_item.points()), len(pressure_result.sensor_positions))
+
+        self.widget.configure_package_boundary(boundary_shape="square")
+        self.assertIsInstance(self.widget.circle_item, QGraphicsRectItem)
+        self.assertTrue(self.widget.circle_item.isVisible())
+        self.assertEqual(self.widget.circle_item.pen().style(), Qt.PenStyle.DotLine)
+        self.assertEqual(len(self.widget.sensor_marker_item.points()), len(pressure_result.sensor_positions))
+
+        self.widget.configure_package_boundary(boundary_shape="none")
+        self.assertFalse(self.widget.circle_item.isVisible())
+        self.assertEqual(len(self.widget.sensor_marker_item.points()), len(pressure_result.sensor_positions))
 
     def test_mirror_can_be_enabled_and_disabled(self):
         self.widget.configure_mirror(mirror=False)

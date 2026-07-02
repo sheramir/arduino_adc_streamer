@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import numpy as np
 
 from config.adc_config_state import ADCConfigurationState
+from constants.force import X_FORCE_SENSOR_TO_NEWTON, Z_FORCE_SENSOR_TO_NEWTON
 from constants.pzt_force import PZT_FORCE_DEFAULT_SETTINGS
 from data_processing.analysis_workbench import (
     AnalysisSourceSnapshot,
@@ -76,6 +77,30 @@ class AnalysisWorkbenchTests(unittest.TestCase):
         self.assertEqual(snapshot.channel_labels, ["PZT6_B", "PZT6_C"])
         self.assertEqual(snapshot.metadata["configuration"]["channels"], [1, 2])
         np.testing.assert_array_equal(snapshot.data, owner.raw_data_buffer)
+
+    def test_build_in_memory_snapshot_converts_force_counts_to_newtons(self):
+        owner = SimpleNamespace(
+            buffer_lock=threading.Lock(),
+            raw_data_buffer=np.asarray([[1, 2], [3, 4]], dtype=np.float32),
+            sweep_timestamps_buffer=np.asarray([0.0, 0.01], dtype=np.float64),
+            sweep_count=2,
+            buffer_write_index=2,
+            MAX_SWEEPS_BUFFER=10,
+            config=ADCConfigurationState(channels=[1, 2], repeat=1, sample_rate=200),
+            force_state=SimpleNamespace(
+                data=[
+                    (0.0, 2.0 * X_FORCE_SENSOR_TO_NEWTON, 3.0 * Z_FORCE_SENSOR_TO_NEWTON),
+                    (0.1, 4.0 * X_FORCE_SENSOR_TO_NEWTON, 5.0 * Z_FORCE_SENSOR_TO_NEWTON),
+                ]
+            ),
+        )
+        owner.get_display_channel_specs = lambda: []
+        owner.get_rosette_display_channel_specs = lambda: []
+
+        snapshot = build_in_memory_snapshot(owner)
+
+        np.testing.assert_allclose(snapshot.force_x_n, [2.0, 4.0])
+        np.testing.assert_allclose(snapshot.force_z_n, [3.0, 5.0])
 
     def test_build_in_memory_snapshot_hides_unlabeled_buffer_columns_when_specs_exist(self):
         owner = SimpleNamespace(
@@ -291,6 +316,33 @@ class AnalysisWorkbenchTests(unittest.TestCase):
             self.assertEqual(snapshot.data.shape, (2, 2))
             np.testing.assert_allclose(snapshot.timestamps_s, [0.0, 0.01])
             np.testing.assert_allclose(snapshot.force_x_n, [0.5, 0.6])
+
+    def test_load_exported_csv_snapshot_converts_legacy_force_columns_to_newtons(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            csv_path = temp_path / "legacy_force.csv"
+            metadata_path = temp_path / "legacy_force_metadata.json"
+            csv_path.write_text(
+                "Timestamp,CH1,Force_X,Force_Z\n"
+                f"00:00:00.000000,1,{2.0 * X_FORCE_SENSOR_TO_NEWTON},{3.0 * Z_FORCE_SENSOR_TO_NEWTON}\n"
+                f"00:00:00.010000,2,{4.0 * X_FORCE_SENSOR_TO_NEWTON},{5.0 * Z_FORCE_SENSOR_TO_NEWTON}\n",
+                encoding="utf-8",
+            )
+            metadata_path.write_text(
+                json.dumps(
+                    {
+                        "configuration": {"channels": [1], "repeat_count": 1},
+                        "capture_duration_seconds": 0.01,
+                        "timing": {"arduino_sample_rate_hz": 100.0},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            snapshot = load_exported_csv_snapshot(csv_path, metadata_path)
+
+            np.testing.assert_allclose(snapshot.force_x_n, [2.0, 4.0])
+            np.testing.assert_allclose(snapshot.force_z_n, [3.0, 5.0])
 
     def test_load_exported_csv_snapshot_accepts_array_export_force_columns(self):
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -18,6 +18,7 @@ from typing import Iterable, Mapping
 
 import numpy as np
 
+from constants.force import X_FORCE_SENSOR_TO_NEWTON, Z_FORCE_SENSOR_TO_NEWTON
 from constants.plotting import IADC_RESOLUTION_BITS
 from constants.pressure_map import DEFAULT_HPF_CUTOFF_HZ, DEFAULT_INTEGRATION_WINDOW_SAMPLES
 from constants.shear import SHEAR_SENSOR_POSITIONS
@@ -203,8 +204,8 @@ def load_exported_csv_snapshot(csv_path, metadata_path) -> AnalysisSourceSnapsho
         raise ValueError("CSV signal columns contain missing or non-numeric values.")
 
     timestamps = _timestamps_from_export_rows(rows, metadata)
-    force_x = _optional_numeric_column_any(rows, ("Force_X_N", "Force_X"))
-    force_z = _optional_numeric_column_any(rows, ("Force_Z_N", "Force_Z"))
+    force_x = _force_column_newtons(rows, axis="x")
+    force_z = _force_column_newtons(rows, axis="z")
     channels = config.get("channels", [])
     repeat = int(config.get("repeat_count", config.get("repeat", 1)) or 1)
     expected_columns = int(config.get("buffer_total_samples", 0) or 0)
@@ -702,16 +703,6 @@ def _optional_numeric_column(rows: list[dict[str, str]], column_name: str) -> np
     return np.asarray(values, dtype=np.float64)
 
 
-def _optional_numeric_column_any(rows: list[dict[str, str]], column_names: tuple[str, ...]) -> np.ndarray:
-    if not rows:
-        return np.empty(0, dtype=np.float64)
-    available = set(rows[0].keys())
-    for column_name in column_names:
-        if column_name in available:
-            return _optional_numeric_column(rows, column_name)
-    return np.empty(0, dtype=np.float64)
-
-
 def _metadata_sample_rate_hz(metadata: dict, data: np.ndarray, timestamps: np.ndarray) -> float:
     timing = metadata.get("timing", {}) if isinstance(metadata, dict) else {}
     for key in ("arduino_sample_rate_hz", "total_rate_hz"):
@@ -758,11 +749,28 @@ def _force_values(owner, axis: str) -> np.ndarray:
     samples = list(getattr(state, "data", []) if state is not None else [])
     offset = 1 if axis == "x" else 2
     values = [float(sample[offset]) for sample in samples if len(sample) > offset]
-    return np.asarray(values, dtype=np.float64)
+    return _force_raw_to_newtons(np.asarray(values, dtype=np.float64), axis)
 
 
 def _column_key(name: str) -> str:
     return str(name).strip().lower()
+
+
+def _force_column_newtons(rows: list[dict[str, str]], *, axis: str) -> np.ndarray:
+    n_column = "Force_X_N" if axis == "x" else "Force_Z_N"
+    raw_column = "Force_X" if axis == "x" else "Force_Z"
+    values_n = _optional_numeric_column(rows, n_column)
+    if values_n.size:
+        return values_n
+    values_raw = _optional_numeric_column(rows, raw_column)
+    if values_raw.size:
+        return _force_raw_to_newtons(values_raw, axis)
+    return np.empty(0, dtype=np.float64)
+
+
+def _force_raw_to_newtons(values, axis: str) -> np.ndarray:
+    scale = X_FORCE_SENSOR_TO_NEWTON if axis == "x" else Z_FORCE_SENSOR_TO_NEWTON
+    return np.asarray(values, dtype=np.float64) / float(scale)
 
 
 def _optional_float(value) -> float | None:

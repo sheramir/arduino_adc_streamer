@@ -19,7 +19,7 @@ Desktop GUI and firmware workspace for streaming ADC data from MG24 and Teensy b
 2. Install dependencies.
 
    ```bash
-   uv sync
+   uv sync --extra dev
    ```
 
    Or with `pip`:
@@ -27,6 +27,8 @@ Desktop GUI and firmware workspace for streaming ADC data from MG24 and Teensy b
    ```bash
    pip install -r requirements.txt
    ```
+
+   The `--extra dev` install includes `pytest` in the repo `.venv` so both `uv run pytest` and `python -m pytest` work from the workspace interpreter.
 
 3. Launch the GUI.
 
@@ -124,13 +126,13 @@ Despite the `.c` extension, this is not compiled code — it's a scratch file of
 Run the current automated tests with:
 
 ```bash
-python -m pytest
+uv run pytest
 ```
 
-Or:
+The repository pytest config adds the workspace root to `sys.path`, so the plain interpreter path also works after you install the dev dependencies above:
 
 ```bash
-uv run pytest
+python -m pytest
 ```
 
 ## Notes

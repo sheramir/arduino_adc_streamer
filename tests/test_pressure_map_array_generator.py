@@ -65,6 +65,31 @@ class PressureMapArrayGeneratorTests(unittest.TestCase):
         self.assertGreater(float(np.max(values)), 5.5)
         self.assertEqual(result.adjacent_pairs, (("PZT3", "PZT6"),))
 
+    def test_gap_contrast_gain_controls_extrapolated_peak_height(self):
+        packages = [
+            self._package("PZT3", (0, 0), {"C": 0.0, "L": 0.0, "R": 5.0, "T": 0.0, "B": 0.0}),
+            self._package("PZT6", (0, 1), {"C": 0.0, "L": 2.0, "R": 0.0, "T": 0.0, "B": 0.0}),
+        ]
+
+        no_contrast = self._generate(packages, gap_contrast_gain=0.0)
+        high_contrast = self._generate(packages, gap_contrast_gain=1.0)
+
+        self.assertLess(float(np.max(no_contrast.pressure_grid)), float(np.max(high_contrast.pressure_grid)))
+
+    def test_gap_fade_width_controls_lateral_spread(self):
+        packages = [
+            self._package("PZT3", (0, 0), {"C": 0.0, "L": 0.0, "R": 5.0, "T": 0.0, "B": 0.0}),
+            self._package("PZT6", (0, 1), {"C": 0.0, "L": 2.0, "R": 0.0, "T": 0.0, "B": 0.0}),
+        ]
+
+        narrow = self._generate(packages, gap_fade_width_fraction=0.1)
+        wide = self._generate(packages, gap_fade_width_fraction=1.0)
+
+        self.assertLess(
+            int(np.count_nonzero(narrow.pressure_grid > 0.0)),
+            int(np.count_nonzero(wide.pressure_grid > 0.0)),
+        )
+
     def test_vertical_adjacent_facing_sensors_create_gap_pressure(self):
         result = self._generate([
             self._package("PZT6", (0, 0), {"C": 0.0, "L": 0.0, "R": 0.0, "T": 0.0, "B": 2.0}),

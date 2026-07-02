@@ -400,7 +400,7 @@ Tests `PressureMapGenerator`, which interpolates a 2D pressure grid from 5-senso
 
 ### test_pressure_map_widget.py
 
-Tests `PressureMapWidget` (real PyQt6 widget, offscreen platform): readout text, sensor/peak markers, image upload caching, mirroring, intensity-level scaling, and multi-package (multi-sensor) display layout.
+Tests `PressureMapWidget` (real PyQt6 widget, offscreen platform): readout text, sensor/peak markers, image upload caching, mirroring, intensity-level scaling, dotted package-boundary shape, array-level combined display, and multi-package (multi-sensor) display layout.
 
 - test_no_data_clears_readout_and_markers() — clears the readout and markers when given no data.
 - test_update_display_shows_force_readout_and_sensor_markers() — shows force readout text and renders sensor markers.
@@ -409,12 +409,14 @@ Tests `PressureMapWidget` (real PyQt6 widget, offscreen platform): readout text,
 - test_multiple_package_displays_use_grid_positions_and_distinct_colors() — verifies multi-package displays use grid positions and distinct colors.
 - test_multiple_package_display_range_contains_full_circles() — verifies the view range contains all package circles fully.
 - test_multiple_package_displays_skip_unchanged_image_uploads() — skips re-uploading unchanged images across multiple packages.
+- test_array_display_uses_single_image_and_package_overlays() — verifies an array-level pressure result uses one image item while preserving package overlays.
 - test_grayscale_lookup_table_runs_from_black_to_white() — verifies the grayscale colormap LUT spans black to white.
 - test_pressure_levels_use_fixed_max_intensity() — verifies a configured fixed max intensity is used for color levels.
 - test_pressure_levels_use_fixed_max_intensity_for_tension() — verifies fixed max intensity also applies for tension (negative) data.
 - test_pressure_levels_revert_to_normalized_when_max_intensity_is_zero() — verifies fallback to normalized levels when max intensity is zero.
 - test_peak_markers_render_for_peaked_quadrants() — verifies peak markers render when quadrants are peaked.
 - test_peak_markers_can_be_hidden() — verifies peak markers can be hidden via configuration.
+- test_package_boundary_shape_can_be_circle_square_or_none() — verifies package boundary shape changes without hiding internal sensor markers.
 - test_mirror_can_be_enabled_and_disabled() — verifies the mirror flag toggles correctly.
 - test_mirror_flips_sensor_marker_positions() — verifies mirroring negates sensor marker X coordinates.
 - test_mirror_flips_peak_marker_positions() — verifies mirroring negates peak marker X coordinates.
@@ -422,6 +424,22 @@ Tests `PressureMapWidget` (real PyQt6 widget, offscreen platform): readout text,
 - test_configure_mirror_repaints_cached_arrow_geometry() — verifies toggling mirror repaints cached shear arrow geometry.
 - test_multi_package_mirror_flips_all_sensors() — verifies mirroring flips all package centers in multi-package mode.
 - test_configure_mirror_repaints_cached_multi_package_display() — verifies toggling mirror repaints cached multi-package markers and centers.
+
+### test_pressure_map_array_generator.py
+
+Tests `PressureMapArrayGenerator`, the GUI-independent array-level pressure surface generator for adjacent package layouts.
+
+- test_package_centers_use_circle_diameter_plus_gap() — verifies physical package centers use package diameter plus gap.
+- test_horizontal_adjacent_facing_sensors_create_extrapolated_gap_peak() — verifies horizontal adjacent sensors can create an extrapolated gap peak.
+- test_gap_contrast_gain_controls_extrapolated_peak_height() — verifies the exposed contrast gain changes peak height.
+- test_gap_fade_width_controls_lateral_spread() — verifies the exposed fade-width fraction changes lateral pressure spread.
+- test_vertical_adjacent_facing_sensors_create_gap_pressure() — verifies vertical adjacent sensors create gap pressure.
+- test_center_dominant_package_decays_without_new_gap_peak() — verifies center-dominant pressure decays outward rather than creating a separate gap peak.
+- test_gap_peak_moves_closer_to_stronger_facing_sensor() — verifies peak placement moves toward the stronger facing sensor.
+- test_diagonal_packages_do_not_create_gap_bridge() — verifies diagonal-only neighbors do not create gap interpolation.
+- test_opposite_sign_facing_sensors_interpolate_through_zero() — verifies opposite signs transition through zero.
+- test_show_negative_false_clamps_negative_gap_values() — verifies negative gap values are hidden when negative display is disabled.
+- test_one_sided_gap_peak_does_not_warn_on_zero_peak_denominator() — regression test for one-sided gap interpolation without divide-by-zero warnings.
 
 ### test_rosette_plotting.py
 
@@ -521,7 +539,7 @@ Tests `ShearVisualizationWidget` (real PyQt6 widget, offscreen platform): arrow 
 
 ### test_signal_integration_panel.py
 
-Tests the Signal Integration / Pressure Map tab (`PressureMapPanelMixin`, real PyQt6 widget): counts-to-voltage conversion, HPF/integration helper math, reverse-polarity handling, multi-package shear/force aggregation, settings save/load round trip, tooltips, and inner-tab (display vs. settings) refresh/pause behavior.
+Tests the Signal Integration / Pressure Map tab (`PressureMapPanelMixin`, real PyQt6 widget): counts-to-voltage conversion, HPF/integration helper math, reverse-polarity handling, multi-package shear/force aggregation, array pressure-map settings save/load round trip, tooltips, and inner-tab (display vs. settings) refresh/pause behavior.
 
 - test_counts_to_voltage_ignores_time_series_units() — verifies ADC counts convert to voltage independent of time-series unit settings.
 - test_hpf_removes_constant_dc_bias_without_integration() — verifies the HPF removes a constant DC bias signal.
@@ -537,7 +555,7 @@ Tests the Signal Integration / Pressure Map tab (`PressureMapPanelMixin`, real P
 - test_multi_package_force_mode_enabled_only_for_multiple_array_packages() — verifies multi-package force mode activates only with 2+ array packages.
 - test_compute_package_total_force_series_returns_one_force_trace() — verifies a per-package total-force time series is computed correctly.
 - test_compute_package_total_force_series_matches_pipeline_total_force() — verifies the batch total-force series matches per-sample pipeline computation.
-- test_shear_settings_save_and_load_round_trip() — verifies shear/pressure-map tab settings save and reload restores all values, including package gains.
+- test_shear_settings_save_and_load_round_trip() — verifies shear/pressure-map tab settings save and reload restores all values, including package gains, package gap, gap contrast, gap fade width, and package boundary shape.
 - test_pressure_map_tab_controls_expose_tooltips() — verifies key pressure-map tab controls expose descriptive tooltips.
 - test_pressure_map_graph_toggle_defaults_off_and_hides_timeline() — verifies the timeline graph is hidden by default and shown when toggled.
 - test_pressure_map_timeline_controls_follow_pzt_rs_mode() — verifies timeline controls show/hide RS-specific options based on PZT_RS mode.

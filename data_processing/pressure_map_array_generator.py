@@ -11,6 +11,9 @@ from constants.pressure_map import (
     DEFAULT_PRESSURE_GAP_CONTRAST_GAIN,
     DEFAULT_PRESSURE_GAP_FADE_WIDTH_FRACTION,
     DEFAULT_PRESSURE_PACKAGE_GAP_MM,
+    PRESSURE_ARRAY_GRID_PADDING_GAP_FRACTION,
+    PRESSURE_ARRAY_GRID_PADDING_MIN_CELLS,
+    PRESSURE_GAP_MIN_FADE_HALF_WIDTH_EXTENT_FRACTION,
     PRESSURE_GRID_MARGIN_SIDE_COUNT,
 )
 from constants.shear import (
@@ -63,7 +66,15 @@ class _AdjacentPair:
 
 
 class PressureMapArrayGenerator:
-    """Build one world-space pressure surface for adjacent package arrays."""
+    """Build one world-space pressure surface for adjacent package arrays.
+
+    The generator keeps package-local pressure maps intact, places them into a
+    physical array coordinate system, then fills horizontal/vertical gaps
+    between adjacent packages with a center-aware interpolation surface.
+    ``gap_contrast_gain`` controls how far a true inter-package peak may rise
+    above the stronger facing sensor, while ``gap_fade_width_fraction`` controls
+    lateral spread as a fraction of the package footprint diameter.
+    """
 
     def __init__(
         self,
@@ -74,6 +85,20 @@ class PressureMapArrayGenerator:
         gap_fade_width_fraction: float = DEFAULT_PRESSURE_GAP_FADE_WIDTH_FRACTION,
         show_negative: bool = False,
     ) -> None:
+        """Create an array pressure-map generator.
+
+        Args:
+            circle_diameter_mm: Package pressure-footprint diameter.
+            package_gap_mm: Physical edge-to-edge gap between adjacent packages.
+            gap_contrast_gain: Extra peak-height gain for facing-sensor-dominant
+                gap pressure. A value of zero disables extrapolated overshoot.
+            gap_fade_width_fraction: Lateral half-width of gap pressure as a
+                fraction of ``circle_diameter_mm``.
+            show_negative: Whether negative release values may remain visible.
+
+        Raises:
+            ValueError: If the package footprint diameter is not positive.
+        """
         self.circle_diameter_mm = float(circle_diameter_mm)
         self.package_gap_mm = max(0.0, float(package_gap_mm))
         self.package_center_spacing_mm = self.circle_diameter_mm + self.package_gap_mm
@@ -84,6 +109,19 @@ class PressureMapArrayGenerator:
             raise ValueError("circle_diameter_mm must be positive")
 
     def generate(self, packages: Sequence[PressureMapArrayPackage]) -> PressureMapArrayResult:
+        """Generate one combined pressure grid for positioned packages.
+
+        Args:
+            packages: Complete package results with grid positions and
+                calibrated T/R/L/C/B values.
+
+        Returns:
+            Combined array pressure grid and metadata for rendering overlays.
+
+        Raises:
+            ValueError: If no positioned packages are supplied or package
+                pressure grids do not expose a positive cell size.
+        """
         complete_packages = [
             package
             for package in packages
@@ -163,7 +201,13 @@ class PressureMapArrayGenerator:
             min_y = min(min_y, center_y - half_extent)
             max_y = max(max_y, center_y + half_extent)
 
-        padding = max(cell_size_mm, self.package_gap_mm) + cell_size_mm
+        padding = (
+            max(
+                cell_size_mm * PRESSURE_ARRAY_GRID_PADDING_MIN_CELLS,
+                self.package_gap_mm * PRESSURE_ARRAY_GRID_PADDING_GAP_FRACTION,
+            )
+            + cell_size_mm
+        )
         min_x -= padding
         max_x += padding
         min_y -= padding
@@ -243,7 +287,7 @@ class PressureMapArrayGenerator:
 
         lateral_center = (start_lateral + end_lateral) / 2.0
         fade_half_width = max(
-            float(pair.first.pressure_result.total_extent_mm) * 0.25,
+            float(pair.first.pressure_result.total_extent_mm) * PRESSURE_GAP_MIN_FADE_HALF_WIDTH_EXTENT_FRACTION,
             self.circle_diameter_mm * self.gap_fade_width_fraction,
         )
         mask = (axis_values >= axis_min) & (axis_values <= axis_max)

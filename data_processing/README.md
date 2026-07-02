@@ -1,6 +1,6 @@
 # Data Processing
 
-This folder implements the data pipeline that sits between the serial/binary input stream and the GUI plots. It covers binary ADC block parsing into circular numpy buffers, the live and static IIR filter pipeline, ADC and Rosette (RS) curve rendering, force-sensor ingestion/calibration/overlay, offline Analysis tab preparation, spectrum (FFT/Welch) computation on a background thread, the piezo and 555-resistance heatmap pipelines (including shear detection, normal-force computation, and pressure-map surface generation), capture lifecycle/archival (JSONL archive writer plus block-timing CSV), capture-cache cleanup, and capture timing bookkeeping. Most files are PyQt6 mixins composed together in `processing_stack.py` into the single `DataProcessorMixin` consumed by the main GUI class; a smaller set of files (`shear_detector.py`, `normal_force_calculator.py`, `pressure_map_generator.py`, `signal_integrator.py`, `heatmap_signal_processing.py`, `pzt_force_calculation.py`) are GUI-independent, unit-testable signal-processing classes. `__init__.py` re-exports the mixins and key classes as the public surface of the package.
+This folder implements the data pipeline that sits between the serial/binary input stream and the GUI plots. It covers binary ADC block parsing into circular numpy buffers, the live and static IIR filter pipeline, ADC and Rosette (RS) curve rendering, force-sensor ingestion/calibration/overlay, offline Analysis tab preparation, spectrum (FFT/Welch) computation on a background thread, the piezo and 555-resistance heatmap pipelines (including shear detection, normal-force computation, and pressure-map surface generation), capture lifecycle/archival (JSONL archive writer plus block-timing CSV), capture-cache cleanup, and capture timing bookkeeping. Most files are PyQt6 mixins composed together in `processing_stack.py` into the single `DataProcessorMixin` consumed by the main GUI class; a smaller set of files (`shear_detector.py`, `normal_force_calculator.py`, `pressure_map_generator.py`, `pressure_map_array_generator.py`, `signal_integrator.py`, `heatmap_signal_processing.py`, `pzt_force_calculation.py`) are GUI-independent, unit-testable signal-processing classes. `__init__.py` re-exports the mixins and key classes as the public surface of the package.
 
 ## Files
 
@@ -307,6 +307,17 @@ GUI-independent generator that builds a piecewise-linear 2D pressure surface (pe
 - PressureMapGenerator._evaluate_unmatched_peak_points / _nearest_triangle — fallback assignment for points missed by triangle tests.
 - PressureMapGenerator._evaluate_plane(a, b, c, x, y) — evaluates a linear plane.
 - PressureMapGenerator._clamp_values(values, sign) — clamps grid values to the quadrant's dominant sign.
+
+### pressure_map_array_generator.py
+
+GUI-independent generator that combines multiple package-local pressure maps into one array-level surface and fills the gap between adjacent package footprints.
+
+- PressureMapArrayPackage / PressureMapArrayResult (dataclasses) — package input payloads and combined-grid output metadata.
+- PressureMapArrayGenerator.__init__(circle_diameter_mm=..., package_gap_mm=..., gap_contrast_gain=..., gap_fade_width_fraction=..., show_negative=...) — configures physical package spacing and adjacent-gap interpolation tuning.
+- PressureMapArrayGenerator.generate(packages) — places package grids into world coordinates, detects horizontal/vertical neighbors, and renders center-aware gap pressure.
+- PressureMapArrayGenerator._package_centers(...) — converts array row/column positions into physical package centers using package diameter plus gap.
+- PressureMapArrayGenerator._adjacent_pairs(...) — finds directly adjacent horizontal and vertical package pairs; diagonal pairs do not create gap bridges.
+- PressureMapArrayGenerator._apply_pair_gap_pressure(...) / _gap_axial_values(...) — applies the pressure-point-aware gap model, including extrapolated inter-package peaks and center-dominant package decay.
 
 ### processing_stack.py
 

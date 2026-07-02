@@ -8,6 +8,10 @@ removal. It then applies a display-only rectangular moving-sum integrator. The
 live acquisition loop still does not run the streaming integrator, so
 responsiveness can be evaluated one processing stage at a time.
 
+Array configurations can additionally render one combined pressure surface
+across adjacent packages. The Settings tab exposes the physical package gap,
+gap contrast, and gap fade width used by that array interpolation path.
+
 Dependencies:
     PyQt6, pyqtgraph, numpy, existing ADC plotting helpers, and config constants.
 """
@@ -82,6 +86,14 @@ from constants.pressure_map import (
     PRESSURE_DECAY_REF_DISTANCE_MAX_MM,
     PRESSURE_DECAY_REF_DISTANCE_MIN_MM,
     PRESSURE_DECAY_REF_DISTANCE_STEP_MM,
+    PRESSURE_GAP_CONTRAST_GAIN_DECIMALS,
+    PRESSURE_GAP_CONTRAST_GAIN_MAX,
+    PRESSURE_GAP_CONTRAST_GAIN_MIN,
+    PRESSURE_GAP_CONTRAST_GAIN_STEP,
+    PRESSURE_GAP_FADE_WIDTH_FRACTION_DECIMALS,
+    PRESSURE_GAP_FADE_WIDTH_FRACTION_MAX,
+    PRESSURE_GAP_FADE_WIDTH_FRACTION_MIN,
+    PRESSURE_GAP_FADE_WIDTH_FRACTION_STEP,
     PRESSURE_GRID_MARGIN_MAX,
     PRESSURE_GRID_MARGIN_STEP,
     PRESSURE_GRID_MIN_MARGIN,
@@ -735,6 +747,13 @@ class PressureMapPanelMixin:
         return group
 
     def _create_pressure_map_settings_group(self) -> QGroupBox:
+        """Build persistent Pressure Map geometry and rendering controls.
+
+        The group includes package-local pressure-map parameters, array
+        adjacent-gap interpolation controls with hover explanations, fixed
+        intensity display scaling, package-boundary shape, and mirror/negative
+        display toggles.
+        """
         group = QGroupBox("Pressure Map Settings")
         layout = QGridLayout(group)
         layout.setHorizontalSpacing(SHEAR_SETTINGS_HORIZONTAL_SPACING_PX)
@@ -858,11 +877,50 @@ class PressureMapPanelMixin:
         self.pressure_package_gap_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
         layout.addWidget(self.pressure_package_gap_spin, 1, 5)
 
+        gap_contrast_tooltip = (
+            "Array gap interpolation tuning. When facing edge sensors indicate a pressure point "
+            "between packages, this gain controls how much the estimated gap peak can rise above "
+            "the stronger facing sensor. 0 disables extra peak lift; larger values make between-package "
+            "pressure appear brighter."
+        )
+        layout.addWidget(self._create_tooltip_label("Gap contrast:", gap_contrast_tooltip), 1, 6)
+        self.pressure_gap_contrast_gain_spin = QDoubleSpinBox()
+        self.pressure_gap_contrast_gain_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
+        self.pressure_gap_contrast_gain_spin.setRange(
+            PRESSURE_GAP_CONTRAST_GAIN_MIN,
+            PRESSURE_GAP_CONTRAST_GAIN_MAX,
+        )
+        self.pressure_gap_contrast_gain_spin.setDecimals(PRESSURE_GAP_CONTRAST_GAIN_DECIMALS)
+        self.pressure_gap_contrast_gain_spin.setSingleStep(PRESSURE_GAP_CONTRAST_GAIN_STEP)
+        self.pressure_gap_contrast_gain_spin.setValue(DEFAULT_PRESSURE_GAP_CONTRAST_GAIN)
+        self.pressure_gap_contrast_gain_spin.setToolTip(gap_contrast_tooltip)
+        self.pressure_gap_contrast_gain_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_gap_contrast_gain_spin, 1, 7)
+
+        gap_fade_tooltip = (
+            "Array gap interpolation tuning. This sets the lateral half-width of pressure in the gap "
+            "as a fraction of the package footprint diameter. Smaller values create a narrow bridge "
+            "between facing sensors; larger values spread the gap pressure wider."
+        )
+        layout.addWidget(self._create_tooltip_label("Gap fade width:", gap_fade_tooltip), 2, 0)
+        self.pressure_gap_fade_width_spin = QDoubleSpinBox()
+        self.pressure_gap_fade_width_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
+        self.pressure_gap_fade_width_spin.setRange(
+            PRESSURE_GAP_FADE_WIDTH_FRACTION_MIN,
+            PRESSURE_GAP_FADE_WIDTH_FRACTION_MAX,
+        )
+        self.pressure_gap_fade_width_spin.setDecimals(PRESSURE_GAP_FADE_WIDTH_FRACTION_DECIMALS)
+        self.pressure_gap_fade_width_spin.setSingleStep(PRESSURE_GAP_FADE_WIDTH_FRACTION_STEP)
+        self.pressure_gap_fade_width_spin.setValue(DEFAULT_PRESSURE_GAP_FADE_WIDTH_FRACTION)
+        self.pressure_gap_fade_width_spin.setToolTip(gap_fade_tooltip)
+        self.pressure_gap_fade_width_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_gap_fade_width_spin, 2, 1)
+
         max_intensity_tooltip = (
             "Fixed upper intensity mapped to white in the pressure-map heatmap. "
             "Values below this appear as proportional gray levels; values at or above this saturate to white."
         )
-        layout.addWidget(self._create_tooltip_label("Max intensity:", max_intensity_tooltip), 2, 0)
+        layout.addWidget(self._create_tooltip_label("Max intensity:", max_intensity_tooltip), 2, 2)
         self.pressure_max_intensity_spin = QDoubleSpinBox()
         self.pressure_max_intensity_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
         self.pressure_max_intensity_spin.setRange(
@@ -874,19 +932,19 @@ class PressureMapPanelMixin:
         self.pressure_max_intensity_spin.setValue(DEFAULT_PRESSURE_MAP_MAX_INTENSITY)
         self.pressure_max_intensity_spin.setToolTip(max_intensity_tooltip)
         self.pressure_max_intensity_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
-        layout.addWidget(self.pressure_max_intensity_spin, 2, 1)
+        layout.addWidget(self.pressure_max_intensity_spin, 2, 3)
 
         boundary_shape_tooltip = (
             "Whole-package boundary shape on the pressure map. "
             "This does not affect the small T/R/L/C/B sensor markers or the pressure-point marker."
         )
-        layout.addWidget(self._create_tooltip_label("Package boundary:", boundary_shape_tooltip), 2, 2)
+        layout.addWidget(self._create_tooltip_label("Package boundary:", boundary_shape_tooltip), 2, 4)
         self.pressure_package_boundary_shape_combo = QComboBox()
         self.pressure_package_boundary_shape_combo.addItems(["Circle", "Square", "None"])
         self.pressure_package_boundary_shape_combo.setCurrentText(DEFAULT_PRESSURE_PACKAGE_BOUNDARY_SHAPE.title())
         self.pressure_package_boundary_shape_combo.setToolTip(boundary_shape_tooltip)
         self.pressure_package_boundary_shape_combo.currentTextChanged.connect(self.on_pressure_map_settings_changed)
-        layout.addWidget(self.pressure_package_boundary_shape_combo, 2, 3)
+        layout.addWidget(self.pressure_package_boundary_shape_combo, 2, 5)
 
         show_negative_tooltip = (
             "When enabled, pressure-point placement uses absolute signal magnitude so "
@@ -1147,6 +1205,14 @@ class PressureMapPanelMixin:
                 "package_gap_mm": self._spin_float(
                     "pressure_package_gap_spin",
                     DEFAULT_PRESSURE_PACKAGE_GAP_MM,
+                ),
+                "gap_contrast_gain": self._spin_float(
+                    "pressure_gap_contrast_gain_spin",
+                    DEFAULT_PRESSURE_GAP_CONTRAST_GAIN,
+                ),
+                "gap_fade_width_fraction": self._spin_float(
+                    "pressure_gap_fade_width_spin",
+                    DEFAULT_PRESSURE_GAP_FADE_WIDTH_FRACTION,
                 ),
                 "max_intensity": self._spin_float(
                     "pressure_max_intensity_spin",
@@ -1438,6 +1504,13 @@ class PressureMapPanelMixin:
             float,
         )
         changed |= self._set_spin_value("pressure_package_gap_spin", pressure_map, "package_gap_mm", float)
+        changed |= self._set_spin_value("pressure_gap_contrast_gain_spin", pressure_map, "gap_contrast_gain", float)
+        changed |= self._set_spin_value(
+            "pressure_gap_fade_width_spin",
+            pressure_map,
+            "gap_fade_width_fraction",
+            float,
+        )
         changed |= self._set_spin_value(
             "pressure_max_intensity_spin",
             pressure_map,
@@ -1677,6 +1750,10 @@ class PressureMapPanelMixin:
     def on_pressure_map_settings_changed(self, _value: object | None = None) -> None:
         """Rebuild pressure-map processors after map parameter changes.
 
+        This updates the single-package generator, the array-level adjacent-gap
+        generator, and immediate widget-only options such as package boundary
+        shape, peak-marker visibility, fixed intensity, and mirroring.
+
         Args:
             _value: Qt signal payload from the changed control.
 
@@ -1749,8 +1826,14 @@ class PressureMapPanelMixin:
                     "pressure_package_gap_spin",
                     DEFAULT_PRESSURE_PACKAGE_GAP_MM,
                 ),
-                gap_contrast_gain=DEFAULT_PRESSURE_GAP_CONTRAST_GAIN,
-                gap_fade_width_fraction=DEFAULT_PRESSURE_GAP_FADE_WIDTH_FRACTION,
+                gap_contrast_gain=self._spin_float(
+                    "pressure_gap_contrast_gain_spin",
+                    DEFAULT_PRESSURE_GAP_CONTRAST_GAIN,
+                ),
+                gap_fade_width_fraction=self._spin_float(
+                    "pressure_gap_fade_width_spin",
+                    DEFAULT_PRESSURE_GAP_FADE_WIDTH_FRACTION,
+                ),
                 show_negative=show_negative,
             )
             self._update_pressure_map_from_latest()

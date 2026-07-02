@@ -2,12 +2,14 @@
 Pressure-map visualization widget for the five-sensor piezo package.
 
 The widget renders the Step 6 backend pressure grid as a heatmap with static
-sensor markers, the extended circular map boundary, and a numeric normal-force
-readout. It also draws the live shear arrow over the pressure map.
+sensor markers, a configurable dotted package boundary, and a numeric
+normal-force readout. It also draws the live shear arrow over the pressure map
+and can render one combined array-level pressure image for adjacent packages.
 
 Dependencies:
     PyQt6, pyqtgraph, constants.shear, data_processing.normal_force_calculator,
-    and data_processing.pressure_map_generator.
+    data_processing.pressure_map_generator, and
+    data_processing.pressure_map_array_generator.
 """
 
 from __future__ import annotations

@@ -164,6 +164,16 @@ right edge of the left package
 
 The same package gap applies to all directly adjacent packages in the array.
 
+Add two additional Pressure Map tuning settings:
+
+| Setting | Default | Description |
+| --- | --- | --- |
+| Gap contrast | 0.33 | Controls how much an estimated inter-package pressure point may rise above the stronger facing sensor. A value of `0` disables extra peak lift. |
+| Gap fade width | 0.5 | Controls the lateral half-width of gap pressure as a fraction of the package footprint diameter. Smaller values create a narrow bridge; larger values spread pressure wider. |
+
+These tuning settings shall have hover/tool-tip explanations in the UI and
+shall persist with the other Pressure Map settings.
+
 ### 4.2 Geometry Assumption
 
 The existing `Circle diameter` setting represents the package pressure
@@ -441,7 +451,15 @@ Recommended initial constants:
 
 ```text
 DEFAULT_PRESSURE_GAP_CONTRAST_GAIN = 0.33
+PRESSURE_GAP_CONTRAST_GAIN_MIN = 0.0
+PRESSURE_GAP_CONTRAST_GAIN_MAX = 10.0
+PRESSURE_GAP_CONTRAST_GAIN_STEP = 0.05
+PRESSURE_GAP_CONTRAST_GAIN_DECIMALS = 3
 DEFAULT_PRESSURE_GAP_FADE_WIDTH_FRACTION = 0.5
+PRESSURE_GAP_FADE_WIDTH_FRACTION_MIN = 0.01
+PRESSURE_GAP_FADE_WIDTH_FRACTION_MAX = 10.0
+PRESSURE_GAP_FADE_WIDTH_FRACTION_STEP = 0.05
+PRESSURE_GAP_FADE_WIDTH_FRACTION_DECIMALS = 3
 ```
 
 This creates a bridge of pressure through the gap that can either:
@@ -542,7 +560,15 @@ PRESSURE_PACKAGE_GAP_STEP_MM = 0.1
 PRESSURE_PACKAGE_GAP_DECIMALS = 3
 
 DEFAULT_PRESSURE_GAP_CONTRAST_GAIN = 0.33
+PRESSURE_GAP_CONTRAST_GAIN_MIN = 0.0
+PRESSURE_GAP_CONTRAST_GAIN_MAX = 10.0
+PRESSURE_GAP_CONTRAST_GAIN_STEP = 0.05
+PRESSURE_GAP_CONTRAST_GAIN_DECIMALS = 3
 DEFAULT_PRESSURE_GAP_FADE_WIDTH_FRACTION = 0.5
+PRESSURE_GAP_FADE_WIDTH_FRACTION_MIN = 0.01
+PRESSURE_GAP_FADE_WIDTH_FRACTION_MAX = 10.0
+PRESSURE_GAP_FADE_WIDTH_FRACTION_STEP = 0.05
+PRESSURE_GAP_FADE_WIDTH_FRACTION_DECIMALS = 3
 ```
 
 ### Step 2 - Extend Pressure Map Settings UI
@@ -551,15 +577,20 @@ Update `gui/signal_integration_panel.py`:
 
 - Add a `QComboBox` for package boundary shape in the Pressure Map settings group.
 - Add a `QDoubleSpinBox` for package gap in millimeters.
-- Save both settings in the existing `pressure_map` settings payload.
-- Load both settings from saved Pressure Map settings.
-- Pass marker shape to `PressureMapWidget`.
-- Rebuild the pressure-map generator or array generator when package gap changes.
+- Add `QDoubleSpinBox` controls for gap contrast and gap fade width.
+- Save the new settings in the existing `pressure_map` settings payload.
+- Save and load all three gap settings from saved Pressure Map settings.
+- Pass package boundary shape to `PressureMapWidget`.
+- Rebuild the pressure-map generator or array generator when package gap,
+  contrast, or fade width changes.
 
-The marker shape setting applies always.
+The package boundary shape setting applies always.
 
 The package gap setting should be visible always, but its tooltip should state
 that it only affects array layouts with adjacent packages.
+
+Gap contrast and gap fade width should be visible always, with tooltips stating
+that they only affect adjacent-package interpolation in array layouts.
 
 ### Step 3 - Update Physical Sensor Marker Rendering
 
@@ -661,7 +692,8 @@ Add or update tests:
   - mirror still flips package overlays in array display
 
 - `tests/test_signal_integration_panel.py`
-  - marker shape and package gap save/load round trip
+  - package boundary shape and package gap save/load round trip
+  - gap contrast and gap fade width save/load round trip
   - package gap defaults to `2.0`
   - array generator is used only for multiple array packages
   - single-package path remains unchanged
@@ -687,6 +719,8 @@ Add or update tests:
 - User can configure package gap in millimeters.
 - Package gap defaults to `2 mm`.
 - Package gap persists across app restarts.
+- Gap contrast and gap fade width are configurable in the UI, documented with
+  tooltips, and persist across app restarts.
 - In array mode, adjacent packages are positioned using physical package gap.
 - Horizontally adjacent packages display pressure in the space between their
   facing sensors.

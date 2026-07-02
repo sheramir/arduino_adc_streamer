@@ -8,6 +8,7 @@ Desktop GUI and firmware workspace for streaming ADC data from MG24 and Teensy b
 - Shared live filtering for time-series and spectrum views
 - Spectrum tab with FFT and Welch PSD modes
 - Heatmap tab using the promoted legacy PZT/PZR heatmap calculation path, with per-package display plus array-wide point tracking
+- Pressure Map tab with per-package shear/normal visualization, array adjacent-package interpolation, package-boundary shape controls, and gap tuning
 - Force-sensor overlay with timestamp alignment against ADC capture timing
 - Editable sensor library with both 5-channel layouts and 3x3 array layouts
 - Archive-backed capture flow with full-view reload for captures larger than RAM

@@ -170,6 +170,8 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         harness.pressure_decay_rate_spin = DummySpinBox(0.9)
         harness.pressure_decay_ref_distance_spin = DummySpinBox(2.25)
         harness.pressure_package_gap_spin = DummySpinBox(3.5)
+        harness.pressure_gap_contrast_gain_spin = DummySpinBox(0.42)
+        harness.pressure_gap_fade_width_spin = DummySpinBox(0.65)
         harness.pressure_max_intensity_spin = DummySpinBox(7.5)
         harness.pressure_package_boundary_shape_combo = DummyComboBox("Square")
         harness.pressure_show_negative_check = DummyCheckBox(True)
@@ -522,6 +524,8 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             self.assertEqual(settings["pressure_map"]["decay_rate"], 0.9)
             self.assertEqual(settings["pressure_map"]["decay_ref_distance_mm"], 2.25)
             self.assertEqual(settings["pressure_map"]["package_gap_mm"], 3.5)
+            self.assertEqual(settings["pressure_map"]["gap_contrast_gain"], 0.42)
+            self.assertEqual(settings["pressure_map"]["gap_fade_width_fraction"], 0.65)
             self.assertEqual(settings["pressure_map"]["max_intensity"], 7.5)
             self.assertEqual(settings["pressure_map"]["package_boundary_shape"], "square")
             self.assertTrue(settings["pressure_map"]["show_negative"])
@@ -550,6 +554,8 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             harness.pressure_decay_rate_spin.setValue(0.1)
             harness.pressure_decay_ref_distance_spin.setValue(0.5)
             harness.pressure_package_gap_spin.setValue(DEFAULT_PRESSURE_PACKAGE_GAP_MM)
+            harness.pressure_gap_contrast_gain_spin.setValue(0.0)
+            harness.pressure_gap_fade_width_spin.setValue(1.0)
             harness.pressure_max_intensity_spin.setValue(1.0)
             harness.pressure_package_boundary_shape_combo.setCurrentText(DEFAULT_PRESSURE_PACKAGE_BOUNDARY_SHAPE.title())
             harness.pressure_show_negative_check.setChecked(DEFAULT_PRESSURE_SHOW_NEGATIVE)
@@ -576,6 +582,8 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             self.assertEqual(harness.pressure_decay_rate_spin.value(), 0.9)
             self.assertEqual(harness.pressure_decay_ref_distance_spin.value(), 2.25)
             self.assertEqual(harness.pressure_package_gap_spin.value(), 3.5)
+            self.assertEqual(harness.pressure_gap_contrast_gain_spin.value(), 0.42)
+            self.assertEqual(harness.pressure_gap_fade_width_spin.value(), 0.65)
             self.assertEqual(harness.pressure_max_intensity_spin.value(), 7.5)
             self.assertEqual(harness.pressure_package_boundary_shape_combo.currentText(), "Square")
             self.assertTrue(harness.pressure_show_negative_check.isChecked())
@@ -615,6 +623,8 @@ class SignalIntegrationPanelTests(unittest.TestCase):
                 "pressure_decay_rate_spin": "distance gain",
                 "pressure_decay_ref_distance_spin": "reference distance",
                 "pressure_package_gap_spin": "edge-to-edge distance",
+                "pressure_gap_contrast_gain_spin": "estimated gap peak",
+                "pressure_gap_fade_width_spin": "lateral half-width",
                 "pressure_max_intensity_spin": "upper intensity mapped to white",
                 "pressure_package_boundary_shape_combo": "whole-package boundary shape",
                 "pressure_show_negative_check": "negative release values",

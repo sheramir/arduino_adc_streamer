@@ -271,7 +271,8 @@ class PiezoHeatmapProcessorMixin:
             return None
 
         channel_to_sensor = settings.get('channel_sensor_map', [])
-        channel_to_baseline = settings.get('channel_to_baseline', {})
+        use_time_series_median_baseline = bool(settings.get('use_time_series_median_baseline', False))
+        channel_to_baseline = settings.get('channel_to_baseline', {}) if use_time_series_median_baseline else {}
         sensor_labels = self._threshold_label_order()
         package_samples = {}
         package_order = []
@@ -381,7 +382,8 @@ class PiezoHeatmapProcessorMixin:
         per_channel_rate_hz = sample_rate_hz / max(len(channels), 1)
         window_end_time_sec = float(timestamps[-1]) if timestamps.size else None
         channel_to_sensor = settings.get('channel_sensor_map', [])
-        channel_to_baseline = settings.get('channel_to_baseline', {})
+        use_time_series_median_baseline = bool(settings.get('use_time_series_median_baseline', False))
+        channel_to_baseline = settings.get('channel_to_baseline', {}) if use_time_series_median_baseline else {}
         sensor_labels = ['T', 'B', 'R', 'L', 'C']
         package_sensor_values = []
 

@@ -357,6 +357,18 @@ class PressureMapPanelMixin:
         )
         controls_layout.addWidget(self.signal_integration_show_graph_check, 2, 0, 1, 2)
 
+        median_baseline_tooltip = (
+            "Subtract the latest Time Series median baseline from each channel before HPF/integration. "
+            "Baselines come from the first auto-capture window or Time Series Zero Signals."
+        )
+        self.signal_integration_use_median_baseline_check = QCheckBox("Use Time Series median baseline")
+        self.signal_integration_use_median_baseline_check.setChecked(
+            bool(getattr(self, "signal_integration_use_median_baseline", False))
+        )
+        self.signal_integration_use_median_baseline_check.setToolTip(median_baseline_tooltip)
+        self.signal_integration_use_median_baseline_check.toggled.connect(self.on_signal_integration_settings_changed)
+        controls_layout.addWidget(self.signal_integration_use_median_baseline_check, 2, 2, 1, 3)
+
         timeline_mode_tooltip = (
             "Choose whether the Pressure Map timeline shows integrated PZT signals "
             "or the held Rosette (PZR) values available in PZT_RS mode."
@@ -1142,6 +1154,10 @@ class PressureMapPanelMixin:
                     "signal_integration_show_graph_check",
                     bool(getattr(self, "signal_integration_show_graph", DEFAULT_SIGNAL_INTEGRATION_SHOW_GRAPH)),
                 ),
+                "use_time_series_median_baseline": self._check_bool(
+                    "signal_integration_use_median_baseline_check",
+                    bool(getattr(self, "signal_integration_use_median_baseline", False)),
+                ),
             },
             "processing": {
                 "noise_threshold": self._spin_float(
@@ -1446,6 +1462,11 @@ class PressureMapPanelMixin:
             signal_integration,
             "show_graph",
         )
+        changed |= self._set_check_value(
+            "signal_integration_use_median_baseline_check",
+            signal_integration,
+            "use_time_series_median_baseline",
+        )
         legacy_rosette_channel = str(signal_integration.get("rosette_channel", "")).strip().upper()
         if legacy_rosette_channel in {"RS1", "RS2"}:
             changed |= self._set_check_value(
@@ -1680,6 +1701,7 @@ class PressureMapPanelMixin:
         self.signal_integration_window_samples = int(self.signal_integration_window_spin.value())
         self.signal_integration_display_window_sec = float(self.signal_integration_display_window_spin.value())
         self.signal_integration_show_graph = self._get_signal_integration_show_graph()
+        self.signal_integration_use_median_baseline = self._get_signal_integration_use_median_baseline()
         self._apply_signal_integration_graph_visibility()
         self._signal_integration_filter_warning = ""
         self.update_signal_integration_plot()
@@ -2068,6 +2090,12 @@ class PressureMapPanelMixin:
         if graph_check is not None and hasattr(graph_check, "isChecked"):
             return bool(graph_check.isChecked())
         return bool(getattr(self, "signal_integration_show_graph", DEFAULT_SIGNAL_INTEGRATION_SHOW_GRAPH))
+
+    def _get_signal_integration_use_median_baseline(self) -> bool:
+        baseline_check = getattr(self, "signal_integration_use_median_baseline_check", None)
+        if baseline_check is not None and hasattr(baseline_check, "isChecked"):
+            return bool(baseline_check.isChecked())
+        return bool(getattr(self, "signal_integration_use_median_baseline", False))
 
     def _apply_signal_integration_graph_visibility(self) -> None:
         graph_visible = self._get_signal_integration_show_graph()
@@ -2527,6 +2555,17 @@ class PressureMapPanelMixin:
 
         sample_index_array = np.asarray(sample_indices, dtype=np.int32)
         channel_counts = data_array[:, sample_index_array].reshape(-1).astype(np.float64, copy=False)
+
+        if self._get_signal_integration_use_median_baseline() and hasattr(self, "plot_baselines"):
+            spec_key = spec.get("key")
+            if spec_key not in getattr(self, "plot_baselines", {}):
+                if hasattr(self, "capture_current_plot_baselines"):
+                    self.capture_current_plot_baselines(
+                        log_message=False,
+                        min_elapsed_sec=getattr(self, "PZR_AUTO_BASELINE_DELAY_SEC", 1.5),
+                    )
+            if spec_key in getattr(self, "plot_baselines", {}):
+                channel_counts = channel_counts - float(self.plot_baselines[spec_key])
 
         time_offsets = sample_index_array.astype(np.float64) * avg_sample_time_sec
         channel_times = (timestamps_array.reshape(-1, 1) + time_offsets.reshape(1, -1)).reshape(-1)

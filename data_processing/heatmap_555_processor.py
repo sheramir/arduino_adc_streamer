@@ -190,7 +190,8 @@ class Heatmap555ProcessorMixin:
             return None
 
         sensor_calibration_dict = settings.get('sensor_calibration_dict', {})
-        channel_to_baseline = settings.get('channel_to_baseline', {})
+        use_time_series_median_baseline = bool(settings.get('use_time_series_median_baseline', False))
+        channel_to_baseline = settings.get('channel_to_baseline', {}) if use_time_series_median_baseline else {}
         global_noise_threshold = self._get_r555_global_noise_threshold(settings)
         
         coord_x = settings.get('sensor_pos_x', list(R_HEATMAP_SENSOR_POS_X))

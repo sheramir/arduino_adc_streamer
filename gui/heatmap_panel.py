@@ -229,6 +229,7 @@ class HeatmapPanelMixin:
                 "heatmap_colormap",
                 "point_tracking_enabled",
                 "gap_mm",
+                "use_time_series_median_baseline",
             }
         return {
             "sensor_calibration",
@@ -253,6 +254,7 @@ class HeatmapPanelMixin:
             "heatmap_colormap",
             "point_tracking_enabled",
             "gap_mm",
+            "use_time_series_median_baseline",
         }
 
     def _filter_heatmap_settings_for_mode(self, settings: dict, mode_key: str | None = None) -> dict:
@@ -494,6 +496,9 @@ class HeatmapPanelMixin:
             elif dc_mode == "highpass":
                 self.dc_removal_combo.setCurrentIndex(1)
                 changed = True
+            if "use_time_series_median_baseline" in mode_settings and hasattr(self, "heatmap_use_median_baseline_check"):
+                self.heatmap_use_median_baseline_check.setChecked(bool(mode_settings["use_time_series_median_baseline"]))
+                changed = True
             if "show_circle_overlay" in mode_settings and hasattr(self, "show_heatmap_circle_check"):
                 self.show_heatmap_circle_check.setChecked(bool(mode_settings["show_circle_overlay"]))
                 changed = True
@@ -593,6 +598,7 @@ class HeatmapPanelMixin:
         self.ellipse_shape_check.stateChanged.connect(self._on_heatmap_ellipse_shape_toggled)
         self.heatmap_mirror_check.stateChanged.connect(self._on_heatmap_mirror_toggled)
         self.remove_negatives_check.stateChanged.connect(self._on_heatmap_remove_negatives_toggled)
+        self.heatmap_use_median_baseline_check.stateChanged.connect(self._on_heatmap_median_baseline_toggled)
         self.sensor_size_spin.valueChanged.connect(self._on_heatmap_geometry_changed)
         self.heatmap_gap_spin.valueChanged.connect(self._on_heatmap_geometry_changed)
         self.heatmap_point_tracking_check.stateChanged.connect(self._on_heatmap_point_tracking_toggled)
@@ -616,6 +622,13 @@ class HeatmapPanelMixin:
             self.trigger_heatmap_update()
 
     def _on_heatmap_remove_negatives_toggled(self, _state=False):
+        if getattr(self, "_heatmap_settings_loading", False):
+            return
+        self.save_last_heatmap_settings()
+        if hasattr(self, "trigger_heatmap_update"):
+            self.trigger_heatmap_update()
+
+    def _on_heatmap_median_baseline_toggled(self, _state=False):
         if getattr(self, "_heatmap_settings_loading", False):
             return
         self.save_last_heatmap_settings()
@@ -1228,6 +1241,12 @@ class HeatmapPanelMixin:
             "Set negative samples to zero after DC removal before calculating RMS"
         )
         signal_layout.addWidget(self.remove_negatives_check, 1, 2, 1, 2)
+        self.heatmap_use_median_baseline_check = QCheckBox("Use Time Series median baseline")
+        self.heatmap_use_median_baseline_check.setChecked(False)
+        self.heatmap_use_median_baseline_check.setToolTip(
+            "Use the last Time Series median baseline (auto-captured or Zero Signals) instead of fixed bias initialization"
+        )
+        signal_layout.addWidget(self.heatmap_use_median_baseline_check, 1, 4, 1, 2)
         self.dc_removal_combo.currentIndexChanged.connect(self._on_dc_mode_changed)
         self._on_dc_mode_changed(self.dc_removal_combo.currentIndex())
         self.heatmap_signal_group = signal_group
@@ -1406,7 +1425,11 @@ class HeatmapPanelMixin:
         self.hpf_cutoff_spin.setEnabled(index == 1)
 
     def get_heatmap_settings(self):
-        if self._get_heatmap_mode_key() == "pzr" and not getattr(self, 'plot_baselines', {}):
+        use_time_series_median_baseline = bool(
+            hasattr(self, "heatmap_use_median_baseline_check")
+            and self.heatmap_use_median_baseline_check.isChecked()
+        )
+        if use_time_series_median_baseline and not getattr(self, 'channel_plot_baselines', {}):
             if hasattr(self, 'capture_current_plot_baselines'):
                 self.capture_current_plot_baselines(
                     log_message=False,
@@ -1420,16 +1443,9 @@ class HeatmapPanelMixin:
         
         # Build channel-to-baseline mapping from plot_baselines if available
         channel_to_baseline = {}
-        if hasattr(self, 'plot_baselines') and hasattr(self, 'get_display_channel_specs'):
-            display_specs = self.get_display_channel_specs()
-            for spec in display_specs:
-                spec_key = spec.get('key')
-                if spec_key in self.plot_baselines:
-                    # Extract channel from spec key
-                    # Key format: ('adc', channel) or ('mux', mux_num, channel) or ('sensor', sensor_id, placement, channel, mux_num)
-                    if isinstance(spec_key, tuple) and len(spec_key) >= 2:
-                        channel = spec_key[-2] if len(spec_key) >= 3 and isinstance(spec_key[-1], int) and spec_key[0] == 'sensor' else spec_key[-1]
-                        channel_to_baseline[channel] = self.plot_baselines[spec_key]
+        if use_time_series_median_baseline and hasattr(self, 'channel_plot_baselines'):
+            for channel, baseline in getattr(self, 'channel_plot_baselines', {}).items():
+                channel_to_baseline[channel] = float(baseline)
         
         # Build per-sensor calibration dict from dynamic spinboxes
         sensor_calibration_dict = {}
@@ -1479,6 +1495,7 @@ class HeatmapPanelMixin:
                 if hasattr(self, "remove_negatives_check")
                 else REMOVE_NEGATIVES
             ),
+            "use_time_series_median_baseline": use_time_series_median_baseline,
             "channel_sensor_map": channel_sensor_map,
             "channel_to_baseline": channel_to_baseline,
             "confidence_intensity_ref": CONFIDENCE_INTENSITY_REF,

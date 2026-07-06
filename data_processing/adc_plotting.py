@@ -14,6 +14,8 @@ from constants.plotting import (
     IADC_RESOLUTION_BITS,
     MAX_PLOT_SWEEPS,
     MAX_TOTAL_POINTS_TO_DISPLAY,
+    PZR_ZERO_BASELINE_WINDOW_SEC as PLOTTING_PZR_ZERO_BASELINE_WINDOW_SEC,
+    PZR_AUTO_BASELINE_DELAY_SEC as PLOTTING_PZR_AUTO_BASELINE_DELAY_SEC,
     PLOT_COLORS,
     ROSETTE_BASELINE_SAMPLE_COUNT,
     ROSETTE_FIXED_Y_MAX_DEFAULT_OHMS,
@@ -28,8 +30,24 @@ from constants.sensor_config import (
 class ADCPlottingMixin:
     """ADC plot snapshotting and curve rendering helpers."""
 
-    PZR_ZERO_BASELINE_WINDOW_SEC = 0.5
-    PZR_AUTO_BASELINE_DELAY_SEC = 1.5
+    PZR_ZERO_BASELINE_WINDOW_SEC = PLOTTING_PZR_ZERO_BASELINE_WINDOW_SEC
+    PZR_AUTO_BASELINE_DELAY_SEC = PLOTTING_PZR_AUTO_BASELINE_DELAY_SEC
+
+    @staticmethod
+    def _extract_channel_from_spec_key(spec_key):
+        """Extract physical channel index/identifier from a display spec key."""
+        if isinstance(spec_key, tuple):
+            if len(spec_key) >= 5 and spec_key[0] == 'sensor':
+                candidate = spec_key[-2]
+                if isinstance(candidate, (int, np.integer, str)):
+                    return candidate
+            candidate = spec_key[-1]
+            if isinstance(candidate, (int, np.integer, str)):
+                return candidate
+            return None
+        if isinstance(spec_key, (int, np.integer, str)):
+            return spec_key
+        return None
 
     def _get_ordered_active_buffer_snapshot(self):
         active_data_buffer = self.get_active_data_buffer()
@@ -82,6 +100,7 @@ class ADCPlottingMixin:
 
         baseline_window_sec = max(0.05, float(window_sec or self.PZR_ZERO_BASELINE_WINDOW_SEC))
         self.plot_baselines = {}
+        self.channel_plot_baselines = {}
 
         for spec in display_specs:
             sample_indices = spec.get('sample_indices', [])
@@ -99,7 +118,12 @@ class ADCPlottingMixin:
 
             recent_mask = channel_times >= (latest_time - baseline_window_sec)
             baseline_samples = channel_data[recent_mask] if np.any(recent_mask) else channel_data
-            self.plot_baselines[spec['key']] = float(np.mean(baseline_samples)) if baseline_samples.size else 0.0
+            baseline_value = float(np.median(baseline_samples)) if baseline_samples.size else 0.0
+            self.plot_baselines[spec['key']] = baseline_value
+
+            channel = self._extract_channel_from_spec_key(spec.get('key'))
+            if channel is not None:
+                self.channel_plot_baselines[channel] = baseline_value
 
         if getattr(self, 'subtract_baseline_check', None) is not None and not self.subtract_baseline_check.isChecked():
             self.subtract_baseline_check.setChecked(True)
@@ -108,7 +132,7 @@ class ADCPlottingMixin:
             self.reset_555_heatmap_state()
 
         if log_message:
-            self.log_status(f"Zeroed signals using last {baseline_window_sec:.2f}s baseline window")
+            self.log_status(f"Zeroed signals using last {baseline_window_sec:.2f}s median baseline window")
         return True
 
     def zero_plot_baselines(self):
@@ -380,7 +404,17 @@ class ADCPlottingMixin:
                 )
 
             if spec['key'] in self.plot_baselines:
-                channel_data = channel_data - self.plot_baselines[spec['key']]
+                baseline_value = float(self.plot_baselines[spec['key']])
+                if (
+                    getattr(self, 'device_mode', 'adc') != '555'
+                    and self.yaxis_units_combo.currentText() == "Voltage"
+                ):
+                    # Baselines are captured from raw ADC counts; convert to volts
+                    # before subtracting from voltage-domain display data.
+                    vref = self.get_vref_voltage()
+                    max_adc_value = (2 ** IADC_RESOLUTION_BITS) - 1
+                    baseline_value = (baseline_value / max_adc_value) * vref
+                channel_data = channel_data - baseline_value
 
         channel_data = self._apply_active_sensor_polarity(spec, channel_data)
         if getattr(self, 'device_mode', 'adc') != '555':

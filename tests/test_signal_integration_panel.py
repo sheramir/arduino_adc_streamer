@@ -95,12 +95,14 @@ class SignalIntegrationPanelHarness(PressureMapPanelMixin):
         self.active_sensor_configuration = {"array_layout": {"cells": []}}
         self.signal_integration_display_enabled = True
         self.signal_integration_show_graph = DEFAULT_SIGNAL_INTEGRATION_SHOW_GRAPH
+        self.signal_integration_use_median_baseline = False
         self.pressure_map_pzt_rs_mode = False
         self.signal_integration_timeline_mode = "PZT"
         self.signal_integration_rosette_rs1_enabled = True
         self.signal_integration_rosette_rs2_enabled = False
         self.signal_integration_rosette_y_min_ohms = 0.0
         self.signal_integration_rosette_y_max_ohms = 65500.0
+        self.plot_baselines = {}
 
     def get_vref_voltage(self):
         return self.VREF_VOLTS
@@ -154,6 +156,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         harness.signal_integration_rosette_y_min_spin = DummySpinBox(100.0)
         harness.signal_integration_rosette_y_max_spin = DummySpinBox(2500.0)
         harness.signal_integration_show_graph_check = DummyCheckBox(True)
+        harness.signal_integration_use_median_baseline_check = DummyCheckBox(True)
         harness.shear_noise_threshold_spin = DummySpinBox(0.75)
         harness._pressure_package_sensor_gains = {
             "PZT3": {position: float(index + 1.25) for index, position in enumerate(SHEAR_SENSOR_POSITIONS)}
@@ -266,6 +269,32 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         ])
         np.testing.assert_allclose(integrated_data, expected_integrated, rtol=1e-6, atol=1e-6)
         self.assertAlmostEqual(latest_value, expected_integrated[-1])
+
+    def test_prepare_integrated_series_can_subtract_time_series_median_baseline(self):
+        harness = SignalIntegrationPanelHarness()
+        harness.signal_integration_window_samples = 1
+        harness.signal_integration_hpf_cutoff_hz = SIGNAL_INTEGRATION_DISABLED_HPF_CUTOFF_HZ
+        harness.signal_integration_use_median_baseline_check = DummyCheckBox(True)
+        max_adc_value = (2 ** IADC_RESOLUTION_BITS) - 1
+        one_volt_count = max_adc_value / harness.VREF_VOLTS
+        data = np.asarray(
+            [[one_volt_count], [2.0 * one_volt_count]],
+            dtype=np.float32,
+        )
+        timestamps = np.asarray([0.0, 0.001], dtype=np.float64)
+        spec = {"key": ("adc", 3), "sample_indices": [0]}
+        harness.plot_baselines[("adc", 3)] = float(one_volt_count)
+
+        integrated_data, _integrated_times, latest_value = harness._prepare_signal_integration_integrated_series(
+            spec,
+            data,
+            timestamps,
+            avg_sample_time_sec=0.001,
+            max_samples_per_series=self.SAMPLE_COUNT,
+        )
+
+        np.testing.assert_allclose(integrated_data, np.asarray([0.0, 1.0], dtype=np.float64), rtol=1e-6, atol=1e-6)
+        self.assertAlmostEqual(latest_value, 1.0, places=6)
 
     def test_prepare_integrated_series_uses_history_before_visible_start(self):
         harness = SignalIntegrationPanelHarness()
@@ -514,6 +543,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             self.assertEqual(settings["signal_integration"]["rosette_y_min_ohms"], 100.0)
             self.assertEqual(settings["signal_integration"]["rosette_y_max_ohms"], 2500.0)
             self.assertTrue(settings["signal_integration"]["show_graph"])
+            self.assertTrue(settings["signal_integration"]["use_time_series_median_baseline"])
             self.assertEqual(settings["processing"]["noise_threshold"], 0.75)
             self.assertEqual(settings["processing"]["package_sensor_gains"]["PZT3"]["C"], 1.25)
             self.assertFalse(settings["visualization"]["arrow_width_scales"])
@@ -545,6 +575,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             harness.signal_integration_rosette_y_min_spin.setValue(-10.0)
             harness.signal_integration_rosette_y_max_spin.setValue(10.0)
             harness.signal_integration_show_graph_check.setChecked(False)
+            harness.signal_integration_use_median_baseline_check.setChecked(False)
             harness.shear_noise_threshold_spin.setValue(3.0)
             harness.shear_arrow_width_scales_check.setChecked(True)
             harness.pressure_sensor_spacing_spin.setValue(2.0)
@@ -573,6 +604,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             self.assertEqual(harness.signal_integration_rosette_y_min_spin.value(), 100.0)
             self.assertEqual(harness.signal_integration_rosette_y_max_spin.value(), 2500.0)
             self.assertTrue(harness.signal_integration_show_graph_check.isChecked())
+            self.assertTrue(harness.signal_integration_use_median_baseline_check.isChecked())
             self.assertEqual(harness.shear_noise_threshold_spin.value(), 0.75)
             self.assertFalse(harness.shear_arrow_width_scales_check.isChecked())
             self.assertEqual(harness.pressure_sensor_spacing_spin.value(), 1.75)

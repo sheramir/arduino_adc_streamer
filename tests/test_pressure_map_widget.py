@@ -287,6 +287,27 @@ class PressureMapWidgetTests(unittest.TestCase):
         self.assertTrue(np.array_equal(lookup_table[0], np.array([0, 0, 0], dtype=np.uint8)))
         self.assertTrue(np.array_equal(lookup_table[-1], np.array([255, 255, 255], dtype=np.uint8)))
 
+    def test_color_scale_updates_single_and_package_image_lookup_tables(self):
+        self.widget._ensure_package_item_count(1)
+        grayscale_lookup = self.widget.image_item.lut.copy()
+
+        self.widget.configure_color_scale(color_scale="Viridis")
+
+        self.assertEqual(self.widget.color_scale, "Viridis")
+        self.assertFalse(np.array_equal(self.widget.image_item.lut, grayscale_lookup))
+        np.testing.assert_array_equal(self.widget.package_image_items[0].lut, self.widget.image_item.lut)
+
+    def test_red_heavy_color_scales_use_white_shear_arrows(self):
+        shear_result = self.detector.detect({"C": 0.0, "L": -1.0, "R": 1.0, "T": 0.0, "B": 0.0})
+        normal_result = self.calculator.compute(shear_result.residual)
+        pressure_result = self.generator.generate(normal_result.normalized)
+        self.widget.update_display(normal_result, pressure_result, shear_result)
+
+        self.widget.configure_color_scale(color_scale="Thermal")
+
+        self.assertEqual(self.widget.arrow_color, "#FFFFFF")
+        self.assertEqual(self.widget.arrow_line_item.pen().color().name().upper(), "#FFFFFF")
+
     def test_pressure_levels_use_fixed_max_intensity(self):
         pressure_grid = np.array([[6.0, 0.0], [3.0, 1.0]], dtype=np.float64)
         single_sensor_result = self.calculator.compute({"C": 0.0, "R": 6.0, "T": 0.0, "L": 0.0, "B": 0.0})
@@ -298,6 +319,14 @@ class PressureMapWidgetTests(unittest.TestCase):
 
         self.assertEqual(single_levels, (0.0, 7.5))
         self.assertEqual(all_levels, (0.0, 7.5))
+
+    def test_noise_floor_sets_first_color_value(self):
+        pressure_grid = np.array([[6.0, 0.0], [3.0, 1.0]], dtype=np.float64)
+        result = self.calculator.compute({"C": 0.0, "R": 6.0, "T": 0.0, "L": 0.0, "B": 0.0})
+        self.widget.configure_intensity(max_intensity=7.5)
+        self.widget.configure_noise_floor(noise_floor=0.8)
+
+        self.assertEqual(self.widget._pressure_levels(result, pressure_grid), (0.8, 7.5))
 
     def test_pressure_levels_use_fixed_max_intensity_for_tension(self):
         pressure_grid = np.array([[-4.0, 0.0], [-2.0, -1.0]], dtype=np.float64)

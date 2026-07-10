@@ -32,6 +32,7 @@ from PyQt6.QtWidgets import (
     QGridLayout,
     QGroupBox,
     QLabel,
+    QLineEdit,
     QFileDialog,
     QPushButton,
     QScrollArea,
@@ -109,6 +110,7 @@ from constants.pressure_map import (
     PRESSURE_MAP_MAX_INTENSITY_MAX,
     PRESSURE_MAP_MAX_INTENSITY_MIN,
     PRESSURE_MAP_MAX_INTENSITY_STEP,
+    PRESSURE_MAP_LEVEL_EPSILON,
     PRESSURE_PACKAGE_BOUNDARY_SHAPES,
     PRESSURE_SENSOR_SPACING_DECIMALS,
     PRESSURE_SENSOR_SPACING_MAX_MM,
@@ -454,6 +456,7 @@ class PressureMapPanelMixin:
             self.on_signal_integration_timeline_settings_changed
         )
         controls_layout.addWidget(self.signal_integration_rosette_y_max_spin, 1, 8)
+        settings_layout.addLayout(self._create_pressure_map_settings_actions())
         settings_layout.addWidget(controls_group)
 
         self.signal_integration_plot_widget = pg.PlotWidget()
@@ -481,6 +484,7 @@ class PressureMapPanelMixin:
         display_layout.addWidget(self.pressure_map_widget, stretch=PRESSURE_MAP_STRETCH)
         settings_layout.addWidget(self._create_shear_visualization_settings_group())
         settings_layout.addWidget(self._create_pressure_map_settings_group())
+        settings_layout.addWidget(self._create_pressure_map_color_scale_settings_group())
         settings_layout.addWidget(self._create_pressure_package_gain_settings_group())
         settings_layout.addStretch()
 
@@ -741,22 +745,26 @@ class PressureMapPanelMixin:
         )
         self.shear_arrow_width_scales_check.stateChanged.connect(self.on_shear_visualization_settings_changed)
         layout.addWidget(self.shear_arrow_width_scales_check, arrow_row + 1, 0)
+        return group
 
+    def _create_pressure_map_settings_actions(self) -> QHBoxLayout:
+        """Build the Pressure Map settings file actions shown at the tab top."""
+        actions = QHBoxLayout()
         self.shear_save_settings_btn = QPushButton("Save Settings...")
         self.shear_save_settings_btn.setToolTip(
             "Save the current Pressure Map tab settings to a JSON file."
         )
         self.shear_save_settings_btn.clicked.connect(self.on_save_shear_settings_clicked)
-        layout.addWidget(self.shear_save_settings_btn, arrow_row + 1, 1)
+        actions.addWidget(self.shear_save_settings_btn)
 
         self.shear_load_settings_btn = QPushButton("Load Settings...")
         self.shear_load_settings_btn.setToolTip(
             "Load Pressure Map tab settings from a JSON file and apply them immediately."
         )
         self.shear_load_settings_btn.clicked.connect(self.on_load_shear_settings_clicked)
-        layout.addWidget(self.shear_load_settings_btn, arrow_row + 1, 2)
-
-        return group
+        actions.addWidget(self.shear_load_settings_btn)
+        actions.addStretch()
+        return actions
 
     def _create_pressure_map_settings_group(self) -> QGroupBox:
         """Build persistent Pressure Map geometry and rendering controls.
@@ -928,17 +936,10 @@ class PressureMapPanelMixin:
         self.pressure_gap_fade_width_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
         layout.addWidget(self.pressure_gap_fade_width_spin, 2, 1)
 
-        max_intensity_tooltip = (
-            "Fixed upper intensity mapped to white in the pressure-map heatmap. "
-            "Values below this appear as proportional gray levels; values at or above this saturate to white."
-        )
+        max_intensity_tooltip = "Fixed upper intensity mapped to white or the final pressure-map color."
         layout.addWidget(self._create_tooltip_label("Max intensity:", max_intensity_tooltip), 2, 2)
         self.pressure_max_intensity_spin = QDoubleSpinBox()
-        self.pressure_max_intensity_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
-        self.pressure_max_intensity_spin.setRange(
-            PRESSURE_MAP_MAX_INTENSITY_MIN,
-            PRESSURE_MAP_MAX_INTENSITY_MAX,
-        )
+        self.pressure_max_intensity_spin.setRange(PRESSURE_MAP_MAX_INTENSITY_MIN, PRESSURE_MAP_MAX_INTENSITY_MAX)
         self.pressure_max_intensity_spin.setDecimals(PRESSURE_MAP_MAX_INTENSITY_DECIMALS)
         self.pressure_max_intensity_spin.setSingleStep(PRESSURE_MAP_MAX_INTENSITY_STEP)
         self.pressure_max_intensity_spin.setValue(DEFAULT_PRESSURE_MAP_MAX_INTENSITY)
@@ -999,6 +1000,113 @@ class PressureMapPanelMixin:
         self.pressure_package_gain_spins: dict[str, dict[str, QDoubleSpinBox]] = {}
         self._refresh_pressure_package_gain_controls([])
         return group
+
+    def _create_pressure_map_color_scale_settings_group(self) -> QGroupBox:
+        """Build pressure-map palette controls and a presentation-ready vertical legend."""
+        group = QGroupBox("Color Scale")
+        layout = QGridLayout(group)
+        color_scale_tooltip = "Choose the color scheme used to render pressure intensity."
+        layout.addWidget(self._create_tooltip_label("Color Scheme:", color_scale_tooltip), 0, 0)
+        self.pressure_map_color_scale_combo = QComboBox()
+        self.pressure_map_color_scale_combo.addItems(list(PressureMapWidget.COLOR_MAPS))
+        self.pressure_map_color_scale_combo.setCurrentText("Grayscale")
+        self.pressure_map_color_scale_combo.setToolTip(color_scale_tooltip)
+        self.pressure_map_color_scale_combo.currentTextChanged.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_map_color_scale_combo, 0, 1)
+
+        minimum_tooltip = "Custom minimum used only when Unit is specified."
+        layout.addWidget(self._create_tooltip_label("Minimum:", minimum_tooltip), 0, 2)
+        self.pressure_color_min_spin = QDoubleSpinBox()
+        self.pressure_color_min_spin.setRange(PRESSURE_MAP_MAX_INTENSITY_MIN, PRESSURE_MAP_MAX_INTENSITY_MAX)
+        self.pressure_color_min_spin.setDecimals(PRESSURE_MAP_MAX_INTENSITY_DECIMALS)
+        self.pressure_color_min_spin.setSingleStep(PRESSURE_MAP_MAX_INTENSITY_STEP)
+        self.pressure_color_min_spin.setValue(DEFAULT_SHEAR_NOISE_THRESHOLD)
+        self.pressure_color_min_spin.setToolTip(minimum_tooltip)
+        self.pressure_color_min_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_color_min_spin, 0, 3)
+
+        maximum_tooltip = "Custom maximum used only when Unit is specified."
+        layout.addWidget(self._create_tooltip_label("Maximum:", maximum_tooltip), 0, 4)
+        self.pressure_color_max_spin = QDoubleSpinBox()
+        self.pressure_color_max_spin.setRange(PRESSURE_MAP_MAX_INTENSITY_MIN, PRESSURE_MAP_MAX_INTENSITY_MAX)
+        self.pressure_color_max_spin.setDecimals(PRESSURE_MAP_MAX_INTENSITY_DECIMALS)
+        self.pressure_color_max_spin.setSingleStep(PRESSURE_MAP_MAX_INTENSITY_STEP)
+        self.pressure_color_max_spin.setValue(DEFAULT_PRESSURE_MAP_MAX_INTENSITY)
+        self.pressure_color_max_spin.setToolTip(maximum_tooltip)
+        self.pressure_color_max_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_color_max_spin, 0, 5)
+
+        layout.addWidget(self._create_tooltip_label("Ranges:", "Number of evenly spaced legend ranges."), 0, 6)
+        self.pressure_map_color_range_count_spin = QSpinBox()
+        self.pressure_map_color_range_count_spin.setRange(2, 100)
+        self.pressure_map_color_range_count_spin.setValue(10)
+        self.pressure_map_color_range_count_spin.setToolTip("Number of evenly spaced legend ranges.")
+        self.pressure_map_color_range_count_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_map_color_range_count_spin, 0, 7)
+
+        layout.addWidget(self._create_tooltip_label("Unit:", "Optional unit displayed in the legend; blank uses V."), 0, 8)
+        self.pressure_map_color_unit_edit = QLineEdit()
+        self.pressure_map_color_unit_edit.setPlaceholderText("V")
+        self.pressure_map_color_unit_edit.setToolTip("Optional unit displayed in the legend; blank uses V.")
+        self.pressure_map_color_unit_edit.textChanged.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_map_color_unit_edit, 0, 9)
+
+        self.pressure_map_color_scale_bar = QLabel()
+        self.pressure_map_color_scale_bar.setFixedWidth(42)
+        self.pressure_map_color_scale_bar.setToolTip(
+            "Colors map linearly from the configured minimum to maximum value."
+        )
+        layout.addWidget(self.pressure_map_color_scale_bar, 1, 0, 1, 1, Qt.AlignmentFlag.AlignVCenter)
+        self.pressure_map_color_scale_ranges_label = QLabel()
+        self.pressure_map_color_scale_ranges_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        layout.addWidget(self.pressure_map_color_scale_ranges_label, 1, 1, 1, 4)
+        self.update_pressure_map_color_scale_legend()
+        return group
+
+    def update_pressure_map_color_scale_legend(self) -> None:
+        """Refresh legend colors and endpoint labels from active map settings."""
+        bar = getattr(self, "pressure_map_color_scale_bar", None)
+        if bar is None:
+            return
+        color_scale = self._combo_text("pressure_map_color_scale_combo", "Grayscale")
+        colors = PressureMapWidget.COLOR_MAPS.get(
+            color_scale,
+            PressureMapWidget.COLOR_MAPS["Grayscale"],
+        )
+        stops = (0.0, 0.18, 0.42, 0.72, 1.0)
+        gradient_stops = ", ".join(
+            f"stop:{position:.2f} rgb({red}, {green}, {blue})"
+            for position, (red, green, blue, _alpha) in zip(stops, colors)
+        )
+        bar.setStyleSheet(
+            "border: 1px solid #666; "
+            f"background: qlineargradient(x1:0, y1:1, x2:0, y2:0, {gradient_stops});"
+        )
+        min_intensity, max_intensity, unit = self._get_pressure_map_color_scale_limits()
+        range_count = max(2, self._spin_int("pressure_map_color_range_count_spin", 10))
+        step = (max_intensity - min_intensity) / range_count
+        ranges = [f"≥ {max_intensity:.4g} {unit}"]
+        ranges.extend(
+            f"{min_intensity + step * index:.4g}–{min_intensity + step * (index + 1):.4g} {unit}"
+            for index in range(range_count - 1, 0, -1)
+        )
+        ranges.append(f"≤ {min_intensity:.4g} {unit}")
+        self.pressure_map_color_scale_ranges_label.setText("\n".join(ranges))
+        self.pressure_map_color_scale_bar.setFixedHeight(
+            self.pressure_map_color_scale_ranges_label.sizeHint().height()
+        )
+
+    def _get_pressure_map_color_scale_limits(self) -> tuple[float, float, str]:
+        """Return active scale values, using custom endpoints only with a unit override."""
+        unit = self._line_edit_text("pressure_map_color_unit_edit").strip()
+        if unit:
+            minimum = self._spin_float("pressure_color_min_spin", DEFAULT_SHEAR_NOISE_THRESHOLD)
+            maximum = self._spin_float("pressure_color_max_spin", DEFAULT_PRESSURE_MAP_MAX_INTENSITY)
+        else:
+            minimum = self._spin_float("shear_noise_threshold_spin", DEFAULT_SHEAR_NOISE_THRESHOLD)
+            maximum = self._spin_float("pressure_max_intensity_spin", DEFAULT_PRESSURE_MAP_MAX_INTENSITY)
+            unit = "V"
+        return minimum, max(maximum, minimum + PRESSURE_MAP_LEVEL_EPSILON), unit
 
     def _refresh_pressure_package_gain_controls(
         self,
@@ -1234,6 +1342,11 @@ class PressureMapPanelMixin:
                     "pressure_max_intensity_spin",
                     DEFAULT_PRESSURE_MAP_MAX_INTENSITY,
                 ),
+                "legend_min_value": self._spin_float("pressure_color_min_spin", DEFAULT_SHEAR_NOISE_THRESHOLD),
+                "legend_max_value": self._spin_float("pressure_color_max_spin", DEFAULT_PRESSURE_MAP_MAX_INTENSITY),
+                "color_scale": self._combo_text("pressure_map_color_scale_combo", "Grayscale"),
+                "legend_range_count": self._spin_int("pressure_map_color_range_count_spin", 10),
+                "legend_unit": self._line_edit_text("pressure_map_color_unit_edit"),
                 "package_boundary_shape": self._normalized_pressure_package_boundary_shape(
                     self._combo_text(
                         "pressure_package_boundary_shape_combo",
@@ -1538,6 +1651,18 @@ class PressureMapPanelMixin:
             "max_intensity",
             float,
         )
+        changed |= self._set_spin_value("pressure_color_min_spin", pressure_map, "legend_min_value", float)
+        changed |= self._set_spin_value("pressure_color_max_spin", pressure_map, "legend_max_value", float)
+        changed |= self._set_combo_value("pressure_map_color_scale_combo", pressure_map, "color_scale")
+        changed |= self._set_spin_value(
+            "pressure_map_color_range_count_spin",
+            pressure_map,
+            "legend_range_count",
+            int,
+        )
+        if "legend_unit" in pressure_map and hasattr(self, "pressure_map_color_unit_edit"):
+            self.pressure_map_color_unit_edit.setText(str(pressure_map["legend_unit"]))
+            changed = True
         boundary_shape_key = "package_boundary_shape" if "package_boundary_shape" in pressure_map else "sensor_marker_shape"
         if boundary_shape_key in pressure_map:
             changed |= self._set_combo_value(
@@ -1584,6 +1709,12 @@ class PressureMapPanelMixin:
         if widget is None or not hasattr(widget, "currentText"):
             return str(fallback)
         return str(widget.currentText())
+
+    def _line_edit_text(self, widget_name: str, fallback: str = "") -> str:
+        widget = getattr(self, widget_name, None)
+        if widget is None or not hasattr(widget, "text"):
+            return fallback
+        return str(widget.text())
 
     def _normalized_pressure_package_boundary_shape(self, value: object) -> str:
         normalized = str(value).strip().lower()
@@ -1797,10 +1928,8 @@ class PressureMapPanelMixin:
                     DEFAULT_PRESSURE_PACKAGE_BOUNDARY_SHAPE,
                 )
             )
-            max_intensity = self._spin_float(
-                "pressure_max_intensity_spin",
-                DEFAULT_PRESSURE_MAP_MAX_INTENSITY,
-            )
+            min_intensity, max_intensity, _unit = self._get_pressure_map_color_scale_limits()
+            color_scale = self._combo_text("pressure_map_color_scale_combo", "Grayscale")
             mirror = self._check_bool(
                 "pressure_mirror_check",
                 DEFAULT_PRESSURE_MIRROR,
@@ -1809,7 +1938,12 @@ class PressureMapPanelMixin:
                 self.pressure_map_widget.configure_markers(show_marker=show_marker)
                 self.pressure_map_widget.configure_package_boundary(boundary_shape=package_boundary_shape)
                 self.pressure_map_widget.configure_intensity(max_intensity=max_intensity)
+                self.pressure_map_widget.configure_noise_floor(
+                    noise_floor=min_intensity
+                )
+                self.pressure_map_widget.configure_color_scale(color_scale=color_scale)
                 self.pressure_map_widget.configure_mirror(mirror=mirror)
+            self.update_pressure_map_color_scale_legend()
 
             sensor_spacing_mm = self._spin_float(
                 "pressure_sensor_spacing_spin",

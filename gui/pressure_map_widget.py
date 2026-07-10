@@ -37,8 +37,6 @@ from constants.pressure_map import (
     DEFAULT_PRESSURE_SHOW_MARKER,
     PRESSURE_MAP_BACKGROUND_COLOR,
     PRESSURE_MAP_CIRCLE_Z,
-    PRESSURE_MAP_COLORMAP_MAX_COLOR,
-    PRESSURE_MAP_COLORMAP_MIN_COLOR,
     PRESSURE_MAP_COLORMAP_POINTS,
     PRESSURE_MAP_IMAGE_Z,
     PRESSURE_MAP_LEVEL_EPSILON,
@@ -130,6 +128,43 @@ class PressureMapWidget(QWidget):
         widget.update_display(normal_result, pressure_result)
     """
 
+    COLOR_MAPS = {
+        "Thermal": [
+            (0, 0, 0, 0),
+            (0, 32, 96, 255),
+            (0, 180, 160, 255),
+            (255, 220, 64, 255),
+            (255, 48, 32, 255),
+        ],
+        "Grayscale": [
+            (0, 0, 0, 0),
+            (70, 70, 70, 255),
+            (140, 140, 140, 255),
+            (210, 210, 210, 255),
+            (255, 255, 255, 255),
+        ],
+        "Viridis": [
+            (0, 0, 0, 0),
+            (68, 1, 84, 255),
+            (59, 82, 139, 255),
+            (33, 145, 140, 255),
+            (253, 231, 37, 255),
+        ],
+        "Magma": [
+            (0, 0, 0, 0),
+            (80, 18, 123, 255),
+            (182, 54, 121, 255),
+            (251, 136, 97, 255),
+            (252, 253, 191, 255),
+        ],
+    }
+    ARROW_COLORS = {
+        "Thermal": "#FFFFFF",
+        "Grayscale": DEFAULT_ARROW_COLOR,
+        "Viridis": DEFAULT_ARROW_COLOR,
+        "Magma": "#FFFFFF",
+    }
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
 
@@ -150,7 +185,10 @@ class PressureMapWidget(QWidget):
         self.show_marker = DEFAULT_PRESSURE_SHOW_MARKER
         self.package_boundary_shape = DEFAULT_PRESSURE_PACKAGE_BOUNDARY_SHAPE
         self.max_intensity = float(DEFAULT_PRESSURE_MAP_MAX_INTENSITY)
+        self.noise_floor = PRESSURE_MAP_ZERO_LEVEL_MIN
         self.mirror = bool(DEFAULT_PRESSURE_MIRROR)
+        self.color_scale = "Grayscale"
+        self._color_maps: dict[str, pg.ColorMap] = {}
         self.last_arrow_geometry = self._hidden_arrow_geometry()
 
         layout = QVBoxLayout(self)
@@ -171,7 +209,7 @@ class PressureMapWidget(QWidget):
 
         self.image_item = pg.ImageItem()
         self.image_item.setZValue(PRESSURE_MAP_IMAGE_Z)
-        self.image_item.setLookupTable(self._grayscale_lookup_table())
+        self.image_item.setLookupTable(self._color_lookup_table())
         self.plot_widget.addItem(self.image_item)
 
         self.circle_item: QGraphicsEllipseItem | QGraphicsRectItem | None = None
@@ -250,6 +288,28 @@ class PressureMapWidget(QWidget):
                 return
             self.max_intensity = updated_max_intensity
             self._refresh_cached_display()
+
+    def configure_noise_floor(self, *, noise_floor: float | None = None) -> None:
+        """Set the value represented by the first pressure-map palette color."""
+        if noise_floor is None:
+            return
+        updated_noise_floor = max(float(noise_floor), PRESSURE_MAP_ZERO_LEVEL_MIN)
+        if self.noise_floor == updated_noise_floor:
+            return
+        self.noise_floor = updated_noise_floor
+        self._refresh_cached_display()
+
+    def configure_color_scale(self, *, color_scale: str | None = None) -> None:
+        """Update the pressure-map color scale and its contrasting shear arrow."""
+        if color_scale not in self.COLOR_MAPS or color_scale == self.color_scale:
+            return
+        self.color_scale = color_scale
+        self.arrow_color = self.ARROW_COLORS[color_scale]
+        lookup_table = self._color_lookup_table()
+        self.image_item.setLookupTable(lookup_table)
+        for image_item in self.package_image_items:
+            image_item.setLookupTable(lookup_table)
+        self._refresh_cached_display()
 
     def configure_mirror(self, *, mirror: bool | None = None) -> None:
         """Update pressure-map horizontal mirror display."""
@@ -495,7 +555,8 @@ class PressureMapWidget(QWidget):
             return self._normalized_pressure_levels(normal_force_result, pressure_grid)
 
         level_max = max(float(self.max_intensity), PRESSURE_MAP_LEVEL_EPSILON)
-        return (PRESSURE_MAP_ZERO_LEVEL_MIN, level_max)
+        level_min = min(self.noise_floor, level_max - PRESSURE_MAP_LEVEL_EPSILON)
+        return (level_min, level_max)
 
     def _normalized_pressure_levels(
         self,
@@ -516,10 +577,21 @@ class PressureMapWidget(QWidget):
         """Apply horizontal mirror transformation if enabled."""
         return -x if self.mirror else x
 
+    def _color_lookup_table(self) -> np.ndarray:
+        color_map = self._color_maps.get(self.color_scale)
+        if color_map is None:
+            color_map = pg.ColorMap(
+                [0.0, 0.18, 0.42, 0.72, 1.0],
+                self.COLOR_MAPS[self.color_scale],
+            )
+            self._color_maps[self.color_scale] = color_map
+        return color_map.getLookupTable(nPts=PRESSURE_MAP_COLORMAP_POINTS)
+
     def _grayscale_lookup_table(self) -> np.ndarray:
+        """Return the legacy grayscale LUT for compatibility with callers/tests."""
         color_map = pg.ColorMap(
             [PRESSURE_MAP_ZERO_LEVEL_MIN, PRESSURE_MAP_ZERO_LEVEL_MAX],
-            [PRESSURE_MAP_COLORMAP_MIN_COLOR, PRESSURE_MAP_COLORMAP_MAX_COLOR],
+            ["#000000", "#FFFFFF"],
         )
         return color_map.getLookupTable(nPts=PRESSURE_MAP_COLORMAP_POINTS)
 
@@ -641,7 +713,7 @@ class PressureMapWidget(QWidget):
         while len(self.package_image_items) < count:
             image_item = pg.ImageItem()
             image_item.setZValue(PRESSURE_MAP_IMAGE_Z)
-            image_item.setLookupTable(self._grayscale_lookup_table())
+            image_item.setLookupTable(self._color_lookup_table())
             self.plot_widget.addItem(image_item)
             self.package_image_items.append(image_item)
             self._package_image_caches.append(None)

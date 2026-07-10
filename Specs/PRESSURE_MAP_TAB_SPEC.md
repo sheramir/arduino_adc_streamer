@@ -2,7 +2,7 @@
 
 Owner: Host application GUI/pressure-processing stack  
 Status: Implemented  
-Date: 2026-07-08
+Date: 2026-07-10
 
 ## Purpose
 
@@ -19,9 +19,15 @@ The Pressure Map tab converts recent live ADC data into integrated sensor values
 - Settings tab includes groups for:
   - Shear Visualization Settings.
   - Pressure Map Settings.
+  - Color Scale.
   - Per-Package Gain Calibration.
 - Timeline/source controls support both PZT and PZR-oriented display paths, including Rosette-specific display selection where applicable.
 - Pressure-map settings include package-boundary shape options and array gap/interpolation tuning.
+- The Color Scale group provides Thermal, Grayscale, Viridis, and Magma color schemes.
+- The Color Scale group provides a configurable range count (default 10), custom minimum/maximum values, and an optional unit string.
+- With no unit entered, the legend and image scale use the live Noise Level as the lower bound and Max Intensity as the upper bound, labeled in volts (`V`). When a unit is entered, the user-defined minimum and maximum become active.
+- The legend is a vertical gradient with stacked, linearly spaced ranges. Its `≤ minimum` and `≥ maximum` labels align with the bottom and top colors for presentation capture; the Settings scroll area accommodates taller legends.
+- Shear arrows remain visible over each scheme: red is used on neutral palettes and white is used on red-heavy palettes such as Thermal and Magma.
 
 ## Data Pipeline
 
@@ -43,12 +49,14 @@ The Pressure Map tab converts recent live ADC data into integrated sensor values
 
 - Pressure Map and shear settings persist under the user `.adc_streamer` settings path.
 - Save/load actions support explicit settings files in addition to autosave/restore of the last-used state.
+- Color scheme, custom legend endpoints, range count, and unit are included in the persisted Pressure Map settings.
 
 ## Acceptance Criteria
 
 - Integrated timeline and pressure-map displays update from live buffered data.
 - Users can adjust display and processing settings without restarting capture.
 - Array layouts can render a combined pressure surface with package-gap tuning.
+- Users can produce a readable color-to-value legend in volts or a custom unit without obscuring the palette endpoints.
 - Status messaging is actionable when channels, data, or compatible selections are unavailable.
 
 ## Out Of Scope

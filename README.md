@@ -8,7 +8,7 @@ Desktop GUI and firmware workspace for streaming ADC data from MG24 and Teensy b
 - Shared live filtering for time-series and spectrum views
 - Spectrum tab with FFT and Welch PSD modes
 - Heatmap tab using the promoted legacy PZT/PZR heatmap calculation path, with per-package display plus array-wide point tracking
-- Pressure Map tab with per-package shear/normal visualization, array adjacent-package interpolation, package-boundary shape controls, and gap tuning
+- Pressure Map tab with per-package shear/normal visualization, array adjacent-package interpolation, package-boundary shape controls, gap tuning, selectable color schemes, and a presentation-ready voltage/unit legend
 - Force-sensor overlay with timestamp alignment against ADC capture timing
 - Editable sensor library with both 5-channel layouts and 3x3 array layouts
 - Archive-backed capture flow with full-view reload for captures larger than RAM
@@ -120,6 +120,7 @@ Despite the `.c` extension, this is not compiled code — it's a scratch file of
 - [Arduino_Sketches/README.md](Arduino_Sketches/README.md): current firmware sketch map and serial protocol summary
 - [docs/user/ARRAY_CONFIGURATION_GUIDE.md](docs/user/ARRAY_CONFIGURATION_GUIDE.md): configuring bundled and custom sensor layouts
 - [docs/user/HEATMAP_README.md](docs/user/HEATMAP_README.md): current heatmap modes, array point tracking, geometry controls, and saved settings behavior
+- [Specs/PRESSURE_MAP_TAB_SPEC.md](Specs/PRESSURE_MAP_TAB_SPEC.md): Pressure Map controls, color-scale legend behavior, and acceptance criteria
 - [docs/history/FORCE_SENSOR_REFACTOR_PLAN.md](docs/history/FORCE_SENSOR_REFACTOR_PLAN.md): future force-path cleanup roadmap
 
 ## Testing

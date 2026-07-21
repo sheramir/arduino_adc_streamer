@@ -57,6 +57,11 @@ class BinaryStatusHarness(BinaryProcessorMixin):
             'mcu_block_end_us': [],
             'mcu_block_gap_us': [],
             'mcu_last_block_end_us': None,
+            'adc_active_capture_duration_us': 0,
+            'adc_emitted_sample_count': 0,
+            'adc_block_count': 0,
+            'adc_block_gap_total_us': 0,
+            'adc_block_gap_count': 0,
             'capture_start_time': None,
             'last_buffer_time': None,
             'block_sample_counts': [],
@@ -108,6 +113,9 @@ class BinaryStatusTests(unittest.TestCase):
         self.assertIn('ADC - Sweeps: 60002', harness.plot_info_label.text)
         self.assertIn('Samples: 300010', harness.plot_info_label.text)
         self.assertIn('(showing last 2000)', harness.plot_info_label.text)
+        self.assertEqual(harness.timing_state.adc_active_capture_duration_us, 900)
+        self.assertEqual(harness.timing_state.adc_emitted_sample_count, 10)
+        self.assertEqual(harness.timing_state.adc_block_count, 1)
 
     def test_pressure_map_refresh_is_queued_from_binary_handler(self):
         harness = BinaryStatusHarness()

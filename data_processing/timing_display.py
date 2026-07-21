@@ -35,6 +35,11 @@ class TimingState:
     mcu_block_start_us: list = field(default_factory=list)
     mcu_block_end_us: list = field(default_factory=list)
     mcu_block_gap_us: list = field(default_factory=list)
+    adc_active_capture_duration_us: int = 0
+    adc_emitted_sample_count: int = 0
+    adc_block_count: int = 0
+    adc_block_gap_total_us: int = 0
+    adc_block_gap_count: int = 0
 
     def reset(self, empty_timing_data):
         """Clear scalar fields and keep dict/list identities stable."""
@@ -54,6 +59,11 @@ class TimingState:
         self.mcu_block_start_us.clear()
         self.mcu_block_end_us.clear()
         self.mcu_block_gap_us.clear()
+        self.adc_active_capture_duration_us = 0
+        self.adc_emitted_sample_count = 0
+        self.adc_block_count = 0
+        self.adc_block_gap_total_us = 0
+        self.adc_block_gap_count = 0
 
     def trim_recent(self, attr_name, max_items):
         """Keep only the newest items in a history list without replacing the list object."""

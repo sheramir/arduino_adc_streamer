@@ -76,11 +76,21 @@ class BinaryProcessorMixin:
                 timing.trim_recent('mcu_block_start_us', MAX_TIMING_SAMPLES)
                 timing.trim_recent('mcu_block_end_us', MAX_TIMING_SAMPLES)
 
+                # Capture-wide MCU timing accumulators are deliberately not trimmed.
+                # The block footer spans acquisition only; the inter-block gap below
+                # accounts for time between acquisition windows.
+                block_capture_duration_us = (int(block_end_us) - int(block_start_us)) & 0xFFFFFFFF
+                timing.adc_active_capture_duration_us += block_capture_duration_us
+                timing.adc_emitted_sample_count += int(len(samples))
+                timing.adc_block_count += 1
+
                 # MCU gap between blocks (wrap-safe unsigned math)
                 if timing.mcu_last_block_end_us is not None:
                     gap_us = (block_start_us - timing.mcu_last_block_end_us) & 0xFFFFFFFF
                     timing.mcu_block_gap_us.append(gap_us)
                     timing.trim_recent('mcu_block_gap_us', MAX_TIMING_SAMPLES)
+                    timing.adc_block_gap_total_us += gap_us
+                    timing.adc_block_gap_count += 1
                 timing.mcu_last_block_end_us = block_end_us
                 
                 # Calculate samples per sweep from the same physical-width rule

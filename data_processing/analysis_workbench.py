@@ -854,7 +854,7 @@ def _optional_numeric_column(rows: list[dict[str, str]], column_name: str) -> np
 
 def _metadata_sample_rate_hz(metadata: dict, data: np.ndarray, timestamps: np.ndarray) -> float:
     timing = metadata.get("timing", {}) if isinstance(metadata, dict) else {}
-    for key in ("arduino_sample_rate_hz", "total_rate_hz"):
+    for key in ("adc_effective_total_sample_rate_hz", "arduino_sample_rate_hz", "total_rate_hz"):
         value = timing.get(key)
         if isinstance(value, (int, float)) and float(value) > 0:
             return float(value)
@@ -937,9 +937,13 @@ def _auto_pzt_mux_connected_time_s(snapshot: AnalysisSourceSnapshot) -> tuple[fl
         return sidecar_value, "block_timing_csv avg_dt_us"
 
     if isinstance(timing, Mapping):
-        value_us = _optional_float(timing.get("arduino_sample_time_us"))
+        value_us = _optional_float(timing.get("adc_active_sample_interval_us"))
+        source_key = "adc_active_sample_interval_us"
+        if value_us is None or value_us <= 0.0:
+            value_us = _optional_float(timing.get("arduino_sample_time_us"))
+            source_key = "arduino_sample_time_us"
         if value_us is not None and value_us > 0.0:
-            return value_us / 1_000_000.0, "metadata timing.arduino_sample_time_us"
+            return value_us / 1_000_000.0, f"metadata timing.{source_key}"
     return None, ""
 
 

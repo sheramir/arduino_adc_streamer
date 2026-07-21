@@ -28,6 +28,93 @@ from file_operations.export_metadata import build_vmid_noise_metadata
 class DataExporterMixin:
     """Mixin class for data export operations."""
 
+    @staticmethod
+    def _round_timing_value(value):
+        """Return a JSON-safe timing value rounded to at most three decimals."""
+        if value is None:
+            return None
+        try:
+            numeric_value = float(value)
+        except (TypeError, ValueError):
+            return None
+        if not np.isfinite(numeric_value):
+            return None
+        return round(numeric_value, 3)
+
+    def _build_capture_timing_metadata(self, signal_header):
+        """Build non-duplicated, capture-wide ADC timing metadata.
+
+        Active acquisition time comes from MCU block timestamps. Effective rates include
+        the MCU-measured gaps between acquisition blocks, which makes them representative
+        of the data stream over the whole capture rather than a single recent block.
+        """
+        timing = self.timing_state
+        active_duration_us = int(getattr(timing, "adc_active_capture_duration_us", 0) or 0)
+        emitted_sample_count = int(getattr(timing, "adc_emitted_sample_count", 0) or 0)
+        block_count = int(getattr(timing, "adc_block_count", 0) or 0)
+        gap_total_us = int(getattr(timing, "adc_block_gap_total_us", 0) or 0)
+        gap_count = int(getattr(timing, "adc_block_gap_count", 0) or 0)
+
+        active_sample_interval_us = None
+        effective_total_rate_hz = None
+        if active_duration_us > 0 and emitted_sample_count > 0:
+            active_sample_interval_us = active_duration_us / emitted_sample_count
+            total_capture_span_us = active_duration_us + gap_total_us
+            if total_capture_span_us > 0:
+                effective_total_rate_hz = (emitted_sample_count * 1_000_000.0) / total_capture_span_us
+
+        per_channel_rates = {}
+        samples_per_sweep = 0
+        try:
+            samples_per_sweep = int(self.get_effective_samples_per_sweep())
+        except (AttributeError, TypeError, ValueError):
+            samples_per_sweep = 0
+
+        if effective_total_rate_hz is not None and samples_per_sweep > 0:
+            try:
+                display_specs = self.get_display_channel_specs()
+            except (AttributeError, TypeError):
+                display_specs = []
+            for spec in display_specs or []:
+                label = str(spec.get("label", "")).strip()
+                sample_indices = spec.get("sample_indices", [])
+                if not label or not sample_indices:
+                    continue
+                per_channel_rates[label] = self._round_timing_value(
+                    effective_total_rate_hz * (len(sample_indices) / samples_per_sweep)
+                )
+
+        # A normal export has display specs, but retain useful rate metadata for a
+        # minimal/legacy export harness where only signal names are available.
+        if not per_channel_rates and effective_total_rate_hz is not None and signal_header:
+            fallback_rate = effective_total_rate_hz / len(signal_header)
+            per_channel_rates = {
+                str(label): self._round_timing_value(fallback_rate)
+                for label in signal_header
+            }
+
+        ground_sample_enabled = bool(self.config.get("use_ground", False))
+        return {
+            "adc_active_sample_interval_us": self._round_timing_value(active_sample_interval_us),
+            "adc_mean_block_capture_time_us": self._round_timing_value(
+                active_duration_us / block_count if block_count > 0 else None
+            ),
+            "adc_effective_total_sample_rate_hz": self._round_timing_value(effective_total_rate_hz),
+            "per_channel_sample_rates_hz": per_channel_rates,
+            "adc_mean_block_gap_ms": self._round_timing_value(
+                (gap_total_us / gap_count) / 1_000.0 if gap_count > 0 else None
+            ),
+            "ground_sample_enabled": ground_sample_enabled,
+            "adc_timing_includes_ground_samples": ground_sample_enabled,
+            "ground_sample_timing_note": (
+                "Active ADC timing includes ground reads and their channel-switching overhead; "
+                "ground readings are not exported as signal samples."
+                if ground_sample_enabled
+                else "Ground sampling was disabled, so no ground-read time is included."
+            ),
+            "timing_source": "Capture-wide MCU block timestamps",
+        }
+
     def _show_save_data_notice(self, label_text: str = "Saving data...") -> None:
         """Show a modal busy notice while data export is running."""
         from PyQt6.QtCore import QEventLoop, Qt
@@ -618,19 +705,6 @@ class DataExporterMixin:
             if self.timing_state.capture_start_time and self.timing_state.capture_end_time:
                 capture_duration_s = self.timing_state.capture_end_time - self.timing_state.capture_start_time
 
-            pzt_mux_connected_time_us = None
-            pzt_mux_connected_time_source = None
-            cached_sample_time_s = float(getattr(self, "_cached_avg_sample_time_sec", 0.0) or 0.0)
-            if cached_sample_time_s > 0.0:
-                pzt_mux_connected_time_us = cached_sample_time_s * 1_000_000.0
-                pzt_mux_connected_time_source = "_cached_avg_sample_time_sec"
-            else:
-                arduino_sample_times = getattr(self.timing_state, "arduino_sample_times", [])
-                latest_sample_time_us = float(arduino_sample_times[-1] or 0.0) if arduino_sample_times else 0.0
-                if latest_sample_time_us > 0.0:
-                    pzt_mux_connected_time_us = latest_sample_time_us
-                    pzt_mux_connected_time_source = "timing_state.arduino_sample_times"
-            
             metadata = {
                 "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 "mcu_type": self.current_mcu if self.current_mcu else "Unknown",
@@ -653,15 +727,7 @@ class DataExporterMixin:
                     "exported_signal_columns": list(signal_header),
                 },
                 "block_timing_csv": self._block_timing_path,
-                "timing": {
-                    "per_channel_rate_hz": self.timing_state.timing_data.get('per_channel_rate_hz'),
-                    "total_rate_hz": self.timing_state.timing_data.get('total_rate_hz'),
-                    "arduino_sample_time_us": self.timing_state.timing_data.get('arduino_sample_time_us'),
-                    "arduino_sample_rate_hz": self.timing_state.timing_data.get('arduino_sample_rate_hz'),
-                    "buffer_gap_time_ms": self.timing_state.timing_data.get('buffer_gap_time_ms'),
-                    "pzt_mux_connected_time_us": pzt_mux_connected_time_us,
-                    "pzt_mux_connected_time_source": pzt_mux_connected_time_source,
-                },
+                "timing": self._build_capture_timing_metadata(signal_header),
                 "force_data": {
                     "available": len(force_state.data) > 0,
                     "x_force_available": has_force_x,
@@ -708,6 +774,10 @@ class DataExporterMixin:
                     applied=applied_filter_to_csv,
                     sweep_timestamps_sec=selected_timestamps,
                 )
+                # Rates describe acquisition timing, not filter settings. Keep one
+                # authoritative copy in ``timing`` instead of duplicating them here.
+                metadata["filtering"].pop("total_sample_rate_hz", None)
+                metadata["filtering"].pop("per_channel_sample_rates_hz", None)
                 metadata["filtering"]["applied_to_csv"] = bool(applied_filter_to_csv)
 
             # Add user notes if provided

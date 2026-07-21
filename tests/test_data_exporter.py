@@ -213,6 +213,37 @@ class ArrayFilterMetadataTests(unittest.TestCase):
             values = list(rates.values())
             self.assertTrue(all(abs(v - values[0]) < 1e-6 for v in values))
 
+    def test_capture_timing_uses_capture_wide_measurements_and_reports_ground_reads(self):
+        with workspace_tempdir("array_capture_timing") as tmpdir:
+            harness = ArrayExportHarness(tmpdir)
+            harness.config["use_ground"] = True
+            harness.timing_state.adc_active_capture_duration_us = 10_000
+            harness.timing_state.adc_emitted_sample_count = 100
+            harness.timing_state.adc_block_count = 4
+            harness.timing_state.adc_block_gap_total_us = 1_000
+            harness.timing_state.adc_block_gap_count = 2
+
+            timing = harness._build_capture_timing_metadata([
+                "PZT3_B", "PZT3_L", "PZT3_C", "PZT3_R", "PZT3_T",
+            ])
+
+            self.assertEqual(timing["adc_active_sample_interval_us"], 100.0)
+            self.assertEqual(timing["adc_mean_block_capture_time_us"], 2500.0)
+            self.assertEqual(timing["adc_effective_total_sample_rate_hz"], 9090.909)
+            self.assertEqual(timing["adc_mean_block_gap_ms"], 0.5)
+            self.assertEqual(
+                timing["per_channel_sample_rates_hz"],
+                {
+                    "PZT3_B": 909.091,
+                    "PZT3_L": 909.091,
+                    "PZT3_C": 909.091,
+                    "PZT3_R": 909.091,
+                    "PZT3_T": 909.091,
+                },
+            )
+            self.assertTrue(timing["adc_timing_includes_ground_samples"])
+            self.assertIn("ground reads", timing["ground_sample_timing_note"])
+
     def test_stream_map_keeps_reused_pins_separate(self):
         with workspace_tempdir("array_filter_streams") as tmpdir:
             harness = ArrayExportHarness(tmpdir)
@@ -326,6 +357,8 @@ class DataExporterTests(unittest.TestCase):
             self.assertTrue(metadata["filtering"]["enabled"])
             self.assertTrue(metadata["filtering"]["applied"])
             self.assertTrue(metadata["filtering"]["applied_to_csv"])
+            self.assertNotIn("total_sample_rate_hz", metadata["filtering"])
+            self.assertNotIn("per_channel_sample_rates_hz", metadata["filtering"])
             self.assertEqual(metadata["filtering"]["settings"]["main_type"], "lowpass")
             self.assertEqual(metadata["filtering"]["settings"]["notches"], [])
             self.assertEqual(metadata["export_source"], "full_view")

@@ -21,9 +21,9 @@
  *   D5        → MUX A2
  *   D6        → MUX A3
  *   D7        → DRDY (Signal Teensy Signal-Ready. New in PCB_Ver1.5. Not implemented yet)
- *   D8  (PA3) ← SCK   
- *   D9  (PA4) → MISO  
- *   D10 (PA5) ← MOSI 
+ *   D8  (PA3) ← SCK
+ *   D9  (PA4) → MISO
+ *   D10 (PA5) ← MOSI
  *
  * ── SPI settings (identical to SPI_Slave_test3_Claude) ───────────────
  *   Peripheral : EUSART1

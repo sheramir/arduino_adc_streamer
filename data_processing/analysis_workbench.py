@@ -882,6 +882,30 @@ def _owner_analysis_timing_metadata(owner) -> dict:
     timing_data = getattr(timing_state, "timing_data", {}) if timing_state is not None else {}
     result = dict(timing_data) if isinstance(timing_data, dict) else {}
 
+    # The current run may be analysed before export.  Preserve the same compact
+    # calculator payload that is written to capture JSON so Auto timing uses the
+    # physical sensor-to-MUX connected interval in either workflow.
+    try:
+        from data_processing.adc_mux_timing import (
+            adc_mux_timing_log,
+            calculate_adc_mux_timing_for_acquisition,
+        )
+
+        calculated = calculate_adc_mux_timing_for_acquisition(
+            getattr(owner, "current_mcu", None),
+            getattr(owner, "config", {}),
+        )
+        if calculated is not None:
+            result["adc_mux_timing"] = adc_mux_timing_log(calculated)
+            # Keep the full-precision seconds value outside the display-oriented
+            # timing JSON. Force reconstruction must never consume rounded JSON.
+            result["pzt_mux_connected_time_s"] = calculated.sensor_connected_s
+            result["pzt_mux_connected_time_source"] = "adc_mux_timing.t_connected_s"
+    except (AttributeError, TypeError, ValueError):
+        # Timing support is optional and must not prevent generic acquisition
+        # analysis for unsupported devices or incomplete legacy owners.
+        pass
+
     cached_sample_time = _optional_float(getattr(owner, "_cached_avg_sample_time_sec", None))
     if cached_sample_time is not None and cached_sample_time > 0.0:
         result["pzt_mux_connected_time_s"] = cached_sample_time
@@ -927,10 +951,17 @@ def _normalize_pzt_mux_timing_mode(value) -> str:
 
 def _auto_pzt_mux_connected_time_s(snapshot: AnalysisSourceSnapshot) -> tuple[float | None, str]:
     timing = snapshot.metadata.get("timing", {}) if isinstance(snapshot.metadata, dict) else {}
+    direct_value = _optional_float(snapshot.metadata.get("pzt_mux_connected_time_s")) if isinstance(snapshot.metadata, Mapping) else None
+    if direct_value is not None and direct_value > 0.0:
+        return direct_value, str(snapshot.metadata.get("pzt_mux_connected_time_source") or "metadata timing")
     if isinstance(timing, Mapping):
         value = _optional_float(timing.get("pzt_mux_connected_time_s"))
         if value is not None and value > 0.0:
             return value, str(timing.get("pzt_mux_connected_time_source") or "metadata timing")
+
+    calculated = _adc_mux_sensor_connected_time_s(snapshot.metadata)
+    if calculated is not None:
+        return calculated, "adc_mux_timing.calculated_timing.t_connected_us"
 
     sidecar_value = _pzt_mux_connected_time_from_block_timing(snapshot)
     if sidecar_value is not None and sidecar_value > 0.0:
@@ -945,6 +976,26 @@ def _auto_pzt_mux_connected_time_s(snapshot: AnalysisSourceSnapshot) -> tuple[fl
         if value_us is not None and value_us > 0.0:
             return value_us / 1_000_000.0, f"metadata timing.{source_key}"
     return None, ""
+
+
+def _adc_mux_sensor_connected_time_s(metadata: Mapping[str, object]) -> float | None:
+    """Read the calculated physical MUX connection duration from capture metadata."""
+    candidates = []
+    if isinstance(metadata, Mapping):
+        candidates.append(metadata.get("adc_mux_timing"))
+        timing = metadata.get("timing")
+        if isinstance(timing, Mapping):
+            candidates.append(timing.get("adc_mux_timing"))
+    for candidate in candidates:
+        if not isinstance(candidate, Mapping):
+            continue
+        calculated_timing = candidate.get("calculated_timing")
+        if not isinstance(calculated_timing, Mapping):
+            continue
+        value = _optional_float(calculated_timing.get("t_connected_us"))
+        if value is not None and value > 0.0:
+            return value / 1_000_000.0
+    return None
 
 
 def _pzt_mux_connected_time_from_block_timing(snapshot: AnalysisSourceSnapshot) -> float | None:

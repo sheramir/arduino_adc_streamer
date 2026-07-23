@@ -390,6 +390,26 @@ class DataExporterTests(unittest.TestCase):
                 {"CH0": {"vmid_v": 1.235, "noise_threshold_v": 0.04568}},
             )
 
+    def test_save_data_includes_calculated_mg24_mux_timing_once(self):
+        with workspace_tempdir("data_exporter_mg24_timing") as tmpdir:
+            harness = ExportHarness(tmpdir)
+            harness.current_mcu = "Array_PPZT_PZR1.7"
+            harness.config.update({"osr": 2, "gain": 1, "repeat": 1, "use_ground": True})
+
+            with patch("file_operations.data_exporter.QMessageBox.information"), patch(
+                "file_operations.data_exporter.QMessageBox.warning"
+            ), patch("file_operations.data_exporter.QMessageBox.critical"):
+                harness.save_data()
+
+            metadata_path = next(tmpdir.glob("capture_*_metadata.json"))
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            timing = metadata["adc_mux_timing"]
+            self.assertEqual(timing["adc"], "mg24_dual_mux_v1")
+            self.assertEqual(timing["inputs"]["gain"], 1)
+            self.assertTrue(timing["inputs"]["use_ground_between_channels"])
+            self.assertAlmostEqual(timing["calculated_timing"]["t_connected_us"], 6.4)
+            self.assertAlmostEqual(metadata["timing"]["pzt_mux_connected_time_s"], 6.4e-6)
+
     def test_save_data_shows_and_hides_progress_notice(self):
         with workspace_tempdir("data_exporter_notice") as tmpdir:
             harness = ExportHarness(tmpdir)

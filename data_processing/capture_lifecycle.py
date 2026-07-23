@@ -19,6 +19,7 @@ from constants.force import FORCE_CALIBRATION_SAMPLES
 from constants.pzt_rs import PZT_RS_RS_UNITS_LABEL
 from data_processing.archive_writer import ArchiveWriterThread
 from data_processing.force_state import get_force_runtime_state
+from data_processing.adc_mux_timing import adc_mux_timing_log, calculate_adc_mux_timing_for_acquisition
 
 
 class CaptureLifecycleMixin:
@@ -135,6 +136,11 @@ class CaptureLifecycleMixin:
         self._reset_signal_processing_state(reset_shear=False)
         self._reset_force_capture_state()
         self._reset_timing_measurements(reset_labels=True)
+        # Recalculate immediately before the run so metadata reflects the exact
+        # configured device and acquisition settings, not a stale widget value.
+        self.adc_mux_timing = calculate_adc_mux_timing_for_acquisition(
+            getattr(self, "current_mcu", None), self.config
+        )
 
         self.plot_widget.setMouseEnabled(x=False, y=False)
         self.plot_widget.setMenuEnabled(False)
@@ -152,24 +158,28 @@ class CaptureLifecycleMixin:
         timing_path = cache_dir / timing_name
 
         try:
-            archive_metadata = {
-                'metadata': {
-                    'channels': self.config.get('channels', []),
-                    'repeat': self.config.get('repeat', 1),
-                    'ground_pin': self.config.get('ground_pin'),
-                    'use_ground': self.config.get('use_ground'),
-                    'osr': self.config.get('osr'),
-                    'gain': self.config.get('gain'),
-                    'reference': self.config.get('reference'),
-                    'pzt_rs_rs_units': (
-                        PZT_RS_RS_UNITS_LABEL
-                        if hasattr(self, 'is_array_pzt_rs_mode') and self.is_array_pzt_rs_mode()
-                        else None
-                    ),
-                    'notes': self.notes_input.toPlainText() if hasattr(self, 'notes_input') else None,
-                    'start_time': datetime.now().isoformat()
-                }
+            capture_metadata = {
+                'channels': self.config.get('channels', []),
+                'repeat': self.config.get('repeat', 1),
+                'ground_pin': self.config.get('ground_pin'),
+                'use_ground': self.config.get('use_ground'),
+                'osr': self.config.get('osr'),
+                'gain': self.config.get('gain'),
+                'reference': self.config.get('reference'),
+                'pzt_rs_rs_units': (
+                    PZT_RS_RS_UNITS_LABEL
+                    if hasattr(self, 'is_array_pzt_rs_mode') and self.is_array_pzt_rs_mode()
+                    else None
+                ),
+                'notes': self.notes_input.toPlainText() if hasattr(self, 'notes_input') else None,
+                'start_time': datetime.now().isoformat()
             }
+            timing_metadata = adc_mux_timing_log(self.adc_mux_timing)
+            if timing_metadata is not None:
+                capture_metadata['adc_mux_timing'] = timing_metadata
+                capture_metadata['pzt_mux_connected_time_s'] = self.adc_mux_timing.sensor_connected_s
+                capture_metadata['pzt_mux_connected_time_source'] = 'adc_mux_timing.t_connected_s'
+            archive_metadata = {'metadata': capture_metadata}
             self._archive_writer = ArchiveWriterThread(str(archive_path), archive_metadata)
             self._archive_writer.start()
             self._archive_path = str(archive_path)

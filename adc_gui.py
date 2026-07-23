@@ -193,6 +193,7 @@ class ADCStreamerGUI(
 
     def _init_timing_state(self):
         """Initialize timing measurement state."""
+        self.adc_mux_timing = None
         self._reset_timing_measurements(reset_labels=False)
 
     def _init_config_state(self):

@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import QMessageBox
 from constants.plotting import IADC_RESOLUTION_BITS
 from constants.pzt_rs import get_pzt_rs_ohms_per_wire_unit
 from data_processing.force_state import get_force_runtime_state
+from data_processing.adc_mux_timing import adc_mux_timing_log, calculate_adc_mux_timing_for_acquisition
 from file_operations.force_export_alignment import (
     build_export_row_timestamps,
     build_force_export_series,
@@ -705,6 +706,17 @@ class DataExporterMixin:
             if self.timing_state.capture_start_time and self.timing_state.capture_end_time:
                 capture_duration_s = self.timing_state.capture_end_time - self.timing_state.capture_start_time
 
+            adc_mux_timing = calculate_adc_mux_timing_for_acquisition(
+                self.current_mcu if hasattr(self, "current_mcu") else None,
+                self.config,
+            )
+            adc_mux_timing_metadata = adc_mux_timing_log(adc_mux_timing)
+            capture_timing_metadata = self._build_capture_timing_metadata(signal_header)
+            if adc_mux_timing is not None:
+                # This value remains full precision for PZT force reconstruction;
+                # the adjacent adc_mux_timing section is intentionally rounded for display.
+                capture_timing_metadata["pzt_mux_connected_time_s"] = adc_mux_timing.sensor_connected_s
+                capture_timing_metadata["pzt_mux_connected_time_source"] = "adc_mux_timing.t_connected_s"
             metadata = {
                 "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 "mcu_type": self.current_mcu if self.current_mcu else "Unknown",
@@ -727,7 +739,7 @@ class DataExporterMixin:
                     "exported_signal_columns": list(signal_header),
                 },
                 "block_timing_csv": self._block_timing_path,
-                "timing": self._build_capture_timing_metadata(signal_header),
+                "timing": capture_timing_metadata,
                 "force_data": {
                     "available": len(force_state.data) > 0,
                     "x_force_available": has_force_x,
@@ -768,6 +780,8 @@ class DataExporterMixin:
                     ),
                 ),
             }
+            if adc_mux_timing_metadata is not None:
+                metadata["adc_mux_timing"] = adc_mux_timing_metadata
 
             if hasattr(self, 'build_filter_metadata'):
                 metadata["filtering"] = self.build_filter_metadata(

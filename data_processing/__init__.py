@@ -35,6 +35,12 @@ from data_processing.shear_detector import ShearDetector, ShearResult
 from data_processing.signal_integrator import SignalIntegrator
 from data_processing.signal_integration_processor import SignalIntegrationProcessorMixin
 from data_processing.timing_display import TimingDisplayMixin
+from data_processing.adc_mux_timing import (
+    AdcMuxTiming,
+    AdcMuxTimingCalculator,
+    Mg24DualMuxTimingCalculator,
+    calculate_adc_mux_timing_for_acquisition,
+)
 from data_processing.spectrum_processor import SpectrumProcessorMixin
 from data_processing.processing_stack import DataProcessorMixin
 
@@ -61,5 +67,9 @@ __all__ = [
     'SignalIntegrator',
     'SignalIntegrationProcessorMixin',
     'TimingDisplayMixin',
+    'AdcMuxTiming',
+    'AdcMuxTimingCalculator',
+    'Mg24DualMuxTimingCalculator',
+    'calculate_adc_mux_timing_for_acquisition',
     'SpectrumProcessorMixin',
 ]

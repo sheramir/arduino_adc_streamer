@@ -782,6 +782,16 @@ class ConfigurationMixin:
     # ========================================================================
     # Configuration Event Handlers (on_*_changed methods)
     # ========================================================================
+
+    def refresh_adc_mux_timing(self):
+        """Refresh supported device timing from the current plain acquisition state."""
+        from data_processing.adc_mux_timing import calculate_adc_mux_timing_for_acquisition
+
+        self.adc_mux_timing = calculate_adc_mux_timing_for_acquisition(
+            getattr(self, "current_mcu", None),
+            self.config,
+        )
+        return self.adc_mux_timing
     
     def on_vref_changed(self, text: str):
         """Handle voltage reference change."""
@@ -798,6 +808,7 @@ class ConfigurationMixin:
         """Handle OSR (oversampling ratio) change."""
         if text.strip():  # Only update if text is not empty
             self.config['osr'] = int(text)
+            self.refresh_adc_mux_timing()
             self.config_is_valid = False
             self.update_start_button_state()
     
@@ -805,6 +816,7 @@ class ConfigurationMixin:
         """Handle gain change."""
         gain_value = int(text.replace('×', ''))
         self.config['gain'] = gain_value
+        self.refresh_adc_mux_timing()
         self.config_is_valid = False
         self.update_start_button_state()
 
@@ -898,12 +910,14 @@ class ConfigurationMixin:
         """Handle use ground checkbox change."""
         use_ground = state == Qt.CheckState.Checked.value
         self.config['use_ground'] = use_ground
+        self.refresh_adc_mux_timing()
         self.config_is_valid = False
         self.update_start_button_state()
 
     def on_repeat_changed(self, value: int):
         """Handle repeat count change."""
         self.config['repeat'] = value
+        self.refresh_adc_mux_timing()
         self.config_is_valid = False
         self.update_start_button_state()
     
@@ -985,6 +999,7 @@ class ConfigurationMixin:
         )
 
         snapshot.apply_to_config(self.config)
+        self.refresh_adc_mux_timing()
         buffer_size = int(self.buffer_spin.value()) if hasattr(self, 'buffer_spin') else 128
 
         return ADCConfigurationRequest(

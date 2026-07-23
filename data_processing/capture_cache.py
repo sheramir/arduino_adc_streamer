@@ -38,22 +38,7 @@ class CaptureCacheMixin:
             self._reset_signal_processing_state(reset_shear=True)
             self._reset_full_view_state(button_enabled=False, trigger_plot_update=False)
 
-            for curve in self._adc_curves.values():
-                self.plot_widget.removeItem(curve)
-            self._adc_curves.clear()
-
-            if self._force_x_curve is not None:
-                self.force_viewbox.removeItem(self._force_x_curve)
-                self._force_x_curve = None
-            if self._force_z_curve is not None:
-                self.force_viewbox.removeItem(self._force_z_curve)
-                self._force_z_curve = None
-            if getattr(self, '_rosette_force_x_curve', None) is not None and hasattr(self, 'rosette_force_viewbox'):
-                self.rosette_force_viewbox.removeItem(self._rosette_force_x_curve)
-                self._rosette_force_x_curve = None
-            if getattr(self, '_rosette_force_z_curve', None) is not None and hasattr(self, 'rosette_force_viewbox'):
-                self.rosette_force_viewbox.removeItem(self._rosette_force_z_curve)
-                self._rosette_force_z_curve = None
+            self._clear_all_plot_curves()
 
             self.plot_widget.removeItem(self.adc_legend)
             self.adc_legend = self.plot_widget.addLegend(offset=(10, 10))

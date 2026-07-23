@@ -1367,7 +1367,6 @@ class ConfigurationMixin:
         """Deselect all channel checkboxes."""
         for checkbox in self.channel_checkboxes.values():
             checkbox.setChecked(False)
-        self._set_force_channel_checkboxes_checked(False)
 
     def select_all_rosette_channels(self):
         """Select all Rosette channel checkboxes."""

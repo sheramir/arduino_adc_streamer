@@ -1,9 +1,13 @@
-﻿import threading
+import threading
 import unittest
 
 import numpy as np
 
-from data_processing.force_overlay import ForceOverlayMixin, apply_force_plot_zero_threshold
+from data_processing.force_overlay import (
+    ForceOverlayMixin,
+    ForcePlotTarget,
+    apply_force_plot_zero_threshold,
+)
 
 
 class FakeSpinBox:
@@ -50,11 +54,12 @@ class ForceOverlayTests(unittest.TestCase):
     def test_force_plot_target_uses_main_timeseries_by_default(self):
         harness = ForceOverlayHarness()
 
-        target = harness._get_force_plot_target()
+        target = harness._resolve_force_plot_target()
 
-        self.assertIs(target["viewbox"], harness.force_viewbox)
-        self.assertEqual(target["x_curve_attr"], "_force_x_curve")
-        self.assertIs(target["x_checkbox"], harness.force_x_checkbox)
+        self.assertIs(target.viewbox, harness.force_viewbox)
+        self.assertEqual(target.x_curve_attr, "_force_x_curve")
+        self.assertIs(target.x_checkbox, harness.force_x_checkbox)
+        self.assertEqual(target.kind, ForcePlotTarget.MAIN)
 
     def test_force_plot_target_uses_rosette_overlay_on_rosette_tab(self):
         harness = ForceOverlayHarness()
@@ -63,11 +68,12 @@ class ForceOverlayTests(unittest.TestCase):
         harness.rosette_force_z_checkbox = FakeCheckbox(True)
         harness.get_current_visualization_tab_name = lambda: "Rosette (RS)"
 
-        target = harness._get_force_plot_target()
+        target = harness._resolve_force_plot_target()
 
-        self.assertIs(target["viewbox"], harness.rosette_force_viewbox)
-        self.assertEqual(target["x_curve_attr"], "_rosette_force_x_curve")
-        self.assertIs(target["z_checkbox"], harness.rosette_force_z_checkbox)
+        self.assertIs(target.viewbox, harness.rosette_force_viewbox)
+        self.assertEqual(target.x_curve_attr, "_rosette_force_x_curve")
+        self.assertIs(target.z_checkbox, harness.rosette_force_z_checkbox)
+        self.assertEqual(target.kind, ForcePlotTarget.ROSETTE)
 
     def test_time_window_uses_trailing_capture_window_before_wrap(self):
         harness = ForceOverlayHarness()

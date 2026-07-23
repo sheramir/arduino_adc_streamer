@@ -58,9 +58,12 @@ from constants.heatmap import HEATMAP_FPS
 # Import mixin modules
 from serial_communication import ADCSerialMixin, ForceSerialMixin
 from serial_communication.adc_connection_state import (
+    ADCConnectionState,
     build_default_arduino_status,
     build_default_last_sent_config,
 )
+from serial_communication.force_connection_state import ForceConnectionState
+from serial_communication.device_config import load_device_config
 from serial_communication.adc_connection_workflow import ADCConnectionWorkflow
 from serial_communication.force_connection_workflow import ForceConnectionWorkflow
 from serial_communication.serial_threads import SerialReaderThread
@@ -151,6 +154,12 @@ class ADCStreamerGUI(
         self.update_port_list()
         self._log_startup_message()
 
+        # Auto-connect on startup (configurable via adc_devices.json)
+        cfg = load_device_config()
+        if cfg.get("auto_connect", True):
+            QTimer.singleShot(300, self._auto_connect_adc)
+            QTimer.singleShot(600, self._auto_connect_force)
+
     def _init_serial_state(self):
         """Initialize serial connection state."""
         self.serial_port: Optional[serial.Serial] = None
@@ -158,6 +167,7 @@ class ADCStreamerGUI(
         self.current_mcu: Optional[str] = None
         self.adc_session = None
         self.adc_connection_workflow = ADCConnectionWorkflow()
+        self.adc_conn_state = ADCConnectionState.DISCONNECTED
 
     def _init_data_buffers(self):
         """Initialize data storage buffers."""
@@ -190,6 +200,7 @@ class ADCStreamerGUI(
         self.force_serial_port: Optional[serial.Serial] = None
         self.force_serial_thread: Optional[QThread] = None
         self.force_state = build_default_force_runtime_state()
+        self.force_conn_state = ForceConnectionState.DISCONNECTED
 
     def _init_timing_state(self):
         """Initialize timing measurement state."""

@@ -18,10 +18,11 @@ is below the selected threshold are set to zero before integration.
 
 For each sample, the leakage decay over the elapsed time is:
 ``alpha = exp(-dt / (Rleak * Cpzt))``. The generated charge increment is then
-estimated as ``dQ = Cpzt * (v[n] - alpha * v[n-1])`` and converted to a force
-increment with ``dF = dQ / d33``. The returned force trace is the accumulated
-sum of those increments. After a positive/negative bipolar event returns below
-the noise threshold, the accumulator is reset to reduce drift.
+estimated as ``dQ = Cpzt * beta * (v[n] - alpha * v[n-1])``, where ``beta``
+optionally corrects charge that decays between physical MUX connection and the
+effective ADC sample. The returned force trace is the accumulated sum of those
+increments. After a positive/negative bipolar event returns below the noise
+threshold, the accumulator is reset to reduce drift.
 
 All low-level calculation inputs use SI units:
 
@@ -67,6 +68,7 @@ def calculate_pzt_force_from_settings(
     vmid_v: float | None = None,
     noise_threshold_v: float | None = None,
     leak_dt_s=None,
+    pre_sample_decay_dt_s=None,
 ) -> np.ndarray:
     """Calculate PZT force from voltage using persisted/UI-style settings.
 
@@ -110,6 +112,7 @@ def calculate_pzt_force_from_settings(
         noise_threshold_v=float(noise_threshold_v if noise_threshold_v is not None else resolved["noise_threshold_v"]),
         vmid_v=vmid_v,
         leak_dt_s=leak_dt_s,
+        pre_sample_decay_dt_s=pre_sample_decay_dt_s,
         off_mux_rleak_ohm=_optional_positive_float(resolved.get("off_mux_rleak_ohm"))
         if bool(resolved.get("off_mux_leak_enabled", False))
         else None,
@@ -216,6 +219,7 @@ def calculate_pzt_force_from_voltage(
     noise_threshold_v: float,
     vmid_v: float | None = None,
     leak_dt_s=None,
+    pre_sample_decay_dt_s=None,
     off_mux_rleak_ohm: float | None = None,
 ) -> np.ndarray:
     """Reconstruct force from centered PZT voltage dynamics.
@@ -250,6 +254,10 @@ def calculate_pzt_force_from_voltage(
         modeled continuously over the elapsed timestamp delta for backward
         compatibility. A scalar applies to every interval; an array may either
         match ``time_s`` length or the interval count ``len(time_s) - 1``.
+    pre_sample_decay_dt_s:
+        Optional physical MUX-connection-to-effective-sample decay in seconds.
+        This independently corrects newly accumulated charge before the ADC
+        sample; it does not replace the previous-sample leakage interval.
 
     Returns
     -------
@@ -273,6 +281,9 @@ def calculate_pzt_force_from_voltage(
     if voltage.size > 1 and not np.all(np.diff(times) > 0.0):
         raise ValueError("PZT force timestamps must be strictly increasing")
     leak_intervals = _normalize_leak_intervals(leak_dt_s, voltage.size)
+    pre_sample_intervals = _normalize_leak_intervals(pre_sample_decay_dt_s, voltage.size)
+    if pre_sample_intervals is not None and np.any(pre_sample_intervals < 0.0):
+        raise ValueError("PZT force pre_sample_decay_dt_s must not be negative")
 
     v_mid = float(np.median(voltage) if vmid_v is None else vmid_v)
     active_centered = voltage - v_mid
@@ -306,8 +317,14 @@ def calculate_pzt_force_from_voltage(
         if tau_off is not None:
             decay_exponent += max(dt - leak_dt, 0.0) / tau_off
         alpha = float(np.exp(-decay_exponent))
+        pre_sample_decay = (
+            0.0 if pre_sample_intervals is None else float(pre_sample_intervals[index - 1])
+        )
+        new_charge_decay_correction = float(np.exp(pre_sample_decay / tau))
         current_v = float(active_centered[index])
-        accumulator += scale * (current_v - (alpha * previous_v))
+        accumulator += scale * new_charge_decay_correction * (
+            current_v - (alpha * previous_v)
+        )
 
         current_polarity = _polarity(current_v, threshold)
         if current_polarity:

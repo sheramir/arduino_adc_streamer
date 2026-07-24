@@ -285,6 +285,10 @@ def prepare_analysis_data(
             snapshot,
             pzt_force_settings or {},
         )
+        pzt_pre_sample_decay_by_label = resolve_analysis_pzt_pre_sample_decay_dt_s(
+            snapshot,
+            pzt_force_settings or {},
+        )
         force_traces.extend(
             build_calculated_pzt_force_traces(
                 snapshot,
@@ -293,6 +297,7 @@ def prepare_analysis_data(
                 voltage_by_label,
                 pzt_force_settings or {},
                 leak_dt_s=pzt_leak_dt_s,
+                pre_sample_decay_dt_s_by_label=pzt_pre_sample_decay_by_label,
             )
         )
         if pzt_timing_status:
@@ -320,6 +325,7 @@ def build_calculated_pzt_force_traces(
     settings: Mapping[str, object],
     *,
     leak_dt_s=None,
+    pre_sample_decay_dt_s_by_label: Mapping[str, float] | None = None,
 ) -> list[AnalysisTrace]:
     if not bool(settings.get("enabled", False)):
         return []
@@ -349,6 +355,7 @@ def build_calculated_pzt_force_traces(
             vmid_v=_optional_float(calibration.get("vmid_v")),
             noise_threshold_v=_optional_float(calibration.get("noise_threshold_v")),
             leak_dt_s=leak_dt_s,
+            pre_sample_decay_dt_s=(pre_sample_decay_dt_s_by_label or {}).get(label),
         )
         traces.append(AnalysisTrace(f"Calculated Force - {label} [N]", x_values, force_n, "force"))
     return traces
@@ -383,6 +390,48 @@ def resolve_analysis_pzt_mux_leak_dt_s(
     if value is None or value <= 0.0:
         raise ValueError("PZT MUX connected time unavailable; choose Manual or Infer from total sample rate")
     return value, f"PZT MUX timing: Auto {value * 1000.0:.3f} ms from {source}."
+
+
+def resolve_analysis_pzt_pre_sample_decay_dt_s(
+    snapshot: AnalysisSourceSnapshot,
+    settings: Mapping[str, object],
+) -> dict[str, float]:
+    """Return exact per-label PZT pre-sample decay from the physical MUX map.
+
+    Unknown mappings intentionally receive no correction; column position is
+    not a physical ADC-input mapping.
+    """
+    if not bool(settings.get("enabled", False)):
+        return {}
+    metadata = snapshot.metadata if isinstance(snapshot.metadata, Mapping) else {}
+    timing = metadata.get("timing", {}) if isinstance(metadata, Mapping) else {}
+    if not isinstance(timing, Mapping):
+        return {}
+    by_label_exact = timing.get("pzt_pre_sample_decay_s_by_label", {})
+    if isinstance(by_label_exact, Mapping):
+        result: dict[str, float] = {}
+        for label, value in by_label_exact.items():
+            try:
+                parsed = float(value)
+            except (TypeError, ValueError):
+                continue
+            if parsed >= 0.0:
+                result[str(label)] = parsed
+        if result:
+            return result
+    by_input = timing.get("pzt_pre_sample_decay_s_by_adc_input", {})
+    by_label = timing.get("pzt_adc_input_by_label", {})
+    if not isinstance(by_input, Mapping) or not isinstance(by_label, Mapping):
+        return {}
+    result: dict[str, float] = {}
+    for label, adc_input in by_label.items():
+        try:
+            value = float(by_input[str(int(adc_input))])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if value >= 0.0:
+            result[str(label)] = value
+    return result
 
 
 def estimate_analysis_pzt_force_calibration(
@@ -901,6 +950,14 @@ def _owner_analysis_timing_metadata(owner) -> dict:
             # timing JSON. Force reconstruction must never consume rounded JSON.
             result["pzt_mux_connected_time_s"] = calculated.sensor_connected_s
             result["pzt_mux_connected_time_source"] = "adc_mux_timing.t_connected_s"
+            result["pzt_pre_sample_decay_s_by_adc_input"] = {
+                "1": calculated.decay_before_effective_sample_s(adc_input=1),
+                "2": calculated.decay_before_effective_sample_s(adc_input=2),
+            }
+            result["pzt_pre_sample_decay_s_by_label"] = (
+                _owner_pzt_pre_sample_decay_s_by_label(owner, calculated)
+            )
+            result["pzt_adc_input_by_label"] = _owner_pzt_adc_input_by_label(owner)
     except (AttributeError, TypeError, ValueError):
         # Timing support is optional and must not prevent generic acquisition
         # analysis for unsupported devices or incomplete legacy owners.
@@ -922,6 +979,70 @@ def _owner_analysis_timing_metadata(owner) -> dict:
     block_timing_path = getattr(owner, "_block_timing_path", None)
     if block_timing_path:
         result["block_timing_csv"] = str(block_timing_path)
+    return result
+
+
+def _owner_pzt_adc_input_by_label(owner) -> dict[str, int]:
+    """Extract the actual physical ADC input from display-channel MUX keys."""
+    if not hasattr(owner, "get_display_channel_specs"):
+        return {}
+    try:
+        specs = owner.get_display_channel_specs() or []
+    except Exception:
+        return {}
+    mapping: dict[str, int] = {}
+    for spec in specs:
+        if not isinstance(spec, Mapping):
+            continue
+        label = str(spec.get("label", "")).strip()
+        key = spec.get("key")
+        if not label or not isinstance(key, tuple):
+            continue
+        # Array_PZT_PZR1 specs encode the physical MUX number in element 4.
+        if len(key) >= 5 and key[0] == "sensor":
+            try:
+                adc_input = int(key[4])
+            except (TypeError, ValueError):
+                continue
+            if adc_input in (1, 2):
+                mapping[label] = adc_input
+    return mapping
+
+
+def _owner_pzt_pre_sample_decay_s_by_label(owner, timing) -> dict[str, float]:
+    """Map display labels to exact timing for their physical MUX and repeat."""
+    if not hasattr(owner, "get_display_channel_specs"):
+        return {}
+    try:
+        specs = owner.get_display_channel_specs() or []
+    except Exception:
+        return {}
+    result: dict[str, float] = {}
+    for spec in specs:
+        if not isinstance(spec, Mapping):
+            continue
+        label = str(spec.get("label", "")).strip()
+        key = spec.get("key")
+        sample_indices = list(spec.get("sample_indices", []) or [])
+        if not label or not sample_indices or not isinstance(key, tuple):
+            continue
+        if len(key) < 5 or key[0] != "sensor":
+            continue
+        try:
+            adc_input = int(key[4])
+        except (TypeError, ValueError):
+            continue
+        if adc_input not in (1, 2):
+            continue
+        for repeat_index, _sample_index in enumerate(sample_indices):
+            try:
+                value = timing.decay_before_effective_sample_s(
+                    adc_input=adc_input, repeat_index=repeat_index
+                )
+            except ValueError:
+                break
+            mapped_label = label if len(sample_indices) == 1 else f"{label}.{repeat_index + 1}"
+            result[mapped_label] = value
     return result
 
 

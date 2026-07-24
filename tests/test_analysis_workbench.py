@@ -201,6 +201,24 @@ class AnalysisWorkbenchTests(unittest.TestCase):
         expected_second = (1e-9 / 600e-12) * (centered[1] - (np.exp(-0.030 / 1.0) * centered[0]))
         np.testing.assert_allclose(force, [0.0, expected_second])
 
+    def test_calculate_pzt_force_corrects_new_charge_for_pre_sample_decay(self):
+        force = calculate_pzt_force_from_voltage(
+            np.asarray([1.0, 1.5], dtype=np.float64),
+            np.asarray([0.0, 0.320], dtype=np.float64),
+            capacitance_f=1e-9,
+            rleak_ohm=1e9,
+            d33_c_per_n=600e-12,
+            noise_threshold_v=0.1,
+            leak_dt_s=0.030,
+            pre_sample_decay_dt_s=20.80e-6,
+        )
+
+        centered = np.asarray([-0.25, 0.25], dtype=np.float64)
+        expected_second = (1e-9 / 600e-12) * np.exp(20.80e-6 / 1.0) * (
+            centered[1] - (np.exp(-0.030 / 1.0) * centered[0])
+        )
+        np.testing.assert_allclose(force, [0.0, expected_second])
+
     def test_calculated_pzt_force_zeroes_after_bipolar_event(self):
         force = calculate_pzt_force_from_voltage(
             np.asarray([0.0, 1.0, -1.0, 0.0], dtype=np.float64),

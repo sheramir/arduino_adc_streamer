@@ -404,11 +404,11 @@ class DataExporterTests(unittest.TestCase):
             metadata_path = next(tmpdir.glob("capture_*_metadata.json"))
             metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
             timing = metadata["adc_mux_timing"]
-            self.assertEqual(timing["adc"], "mg24_dual_mux_v1")
+            self.assertEqual(timing["adc"], "mg24_dual_mux_v3")
             self.assertEqual(timing["inputs"]["gain"], 1)
             self.assertTrue(timing["inputs"]["use_ground_between_channels"])
-            self.assertAlmostEqual(timing["calculated_timing"]["t_connected_us"], 6.4)
-            self.assertAlmostEqual(metadata["timing"]["pzt_mux_connected_time_s"], 6.4e-6)
+            self.assertAlmostEqual(timing["calculated_timing"]["t_connected_us"], 38.8)
+            self.assertAlmostEqual(metadata["timing"]["pzt_mux_connected_time_s"], 38.8e-6)
 
     def test_save_data_shows_and_hides_progress_notice(self):
         with workspace_tempdir("data_exporter_notice") as tmpdir:

@@ -41,6 +41,16 @@ from data_processing.adc_mux_timing import (
     Mg24DualMuxTimingCalculator,
     calculate_adc_mux_timing_for_acquisition,
 )
+from data_processing.pzt_decay import (
+    PztDecayAnalyzer,
+    PztDecayResult,
+    PztDecaySettings,
+    PztDecaySignalMapping,
+    PztDecayState,
+    PztDecayTimestampBasis,
+    PztDecayTimingContext,
+    resolve_pzt_decay_signal_mapping,
+)
 from data_processing.spectrum_processor import SpectrumProcessorMixin
 from data_processing.processing_stack import DataProcessorMixin
 
@@ -69,6 +79,14 @@ __all__ = [
     'TimingDisplayMixin',
     'AdcMuxTiming',
     'AdcMuxTimingCalculator',
+    'PztDecayAnalyzer',
+    'PztDecayResult',
+    'PztDecaySettings',
+    'PztDecaySignalMapping',
+    'PztDecayState',
+    'PztDecayTimestampBasis',
+    'PztDecayTimingContext',
+    'resolve_pzt_decay_signal_mapping',
     'Mg24DualMuxTimingCalculator',
     'calculate_adc_mux_timing_for_acquisition',
     'SpectrumProcessorMixin',

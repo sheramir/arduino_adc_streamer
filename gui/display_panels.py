@@ -87,10 +87,14 @@ class DisplayPanelsMixin:
         self.visualization_tabs.addTab(analysis_tab, ANALYSIS_TAB_NAME)
         self.analysis_tab_index = 6
 
+        pzt_decay_tab = self.create_pzt_decay_tab()
+        self.visualization_tabs.addTab(pzt_decay_tab, "PZT_Decay_Calc")
+        self.pzt_decay_tab_index = 7
+
         # Create sensor tab last (from SensorPanelMixin)
         sensor_tab = self.create_sensor_tab()
         self.visualization_tabs.addTab(sensor_tab, SENSOR_TAB_NAME)
-        self.sensor_tab_index = 7
+        self.sensor_tab_index = 8
         
         return self.visualization_tabs
     

@@ -17,7 +17,9 @@ before force extraction.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Mapping
+from typing import Mapping, Sequence
+
+import numpy as np
 
 
 # Empirically calibrated for the current MG24 firmware, Arduino core,
@@ -34,13 +36,22 @@ MG24_TIMING_PROFILE = {
         4: 2_500_000,
     },
     "digital_average": 1,
-    "mux_settle_us": 20.0,
+    "mux_settle_us": 3.0, # 20us is optimal for ghosting. 3us is minimal but faster sampling rate.
     "mux_turn_on_us": 0.15,
     "mux_address_overhead_us": 0.25,
     # Used only to place the ADC-start event in the timeline. It is already
     # included in pair_software_overhead_us and must not be added twice.
     "adc_start_overhead_us": 0.15,
+    # The legacy loop used one identical cost for the first pair and retained
+    # repeats.  Keep that measured value as the compatibility fallback; a
+    # firmware with an optimized repeat loop may override the two values.
     "pair_software_overhead_us": 10.11,
+    "first_pair_software_overhead_us": None,
+    "repeat_pair_software_overhead_us": None,
+    "burst_finalize_overhead_us": None,
+    "repeat_pair_interval_calibrated": False,
+    "firmware_timing_version": "MG24_Dual_MUX_SPI_Slave1.7b",
+    "repeat_implementation": "retained_pair_repeat_estimated",
     "per_mux_selection_overhead_us": 6.64,
     "block_fixed_overhead_us": 9.23,
     "ground_dummy_software_overhead_us": 14.25,
@@ -50,6 +61,9 @@ MG24_TIMING_PROFILE = {
     "warmup_us": 0.0,
     "calibration": {
         "version": "2026-07-24",
+        "date": "2026-07-24",
+        "firmware_timing_version": "MG24_Dual_MUX_SPI_Slave1.7b",
+        "compiler_core_version": "not recorded",
         "method": (
             "repeat-count linear fit, 15-selection no-ground measurement, "
             "and matched 15-selection dummy-ground measurement"
@@ -93,6 +107,12 @@ class AdcMuxTiming:
     t_slot_us: float
     t_iadc_input_switch_us: float
     t_pair_hardware_us: float
+    # These three fields distinguish first-pair work, retained-repeat work,
+    # and finalization.  ``t_pair_total_us`` remains a compatibility alias
+    # for the first pair total.
+    t_first_pair_total_us: float
+    t_repeat_pair_interval_us: float
+    t_burst_finalize_overhead_us: float
     t_pair_total_us: float
     ground_phase_us: float
     signal_sequence_us: float
@@ -121,6 +141,8 @@ class AdcMuxTiming:
     t_connected_after_effective_sample_ch2_s: float
     calculated_hardware_timing: bool
     estimated_software_overhead: bool
+    repeat_pair_interval_calibrated: bool
+    calibration_metadata: Mapping[str, object]
 
     def decay_before_effective_sample_s(
         self, *, adc_input: int, repeat_index: int = 0
@@ -137,7 +159,7 @@ class AdcMuxTiming:
             if adc_input == 1
             else self.t_decay_before_effective_sample_ch2_us
         )
-        return (base_us + repeat_index * self.t_pair_total_us) * 1e-6
+        return (base_us + repeat_index * self.t_repeat_pair_interval_us) * 1e-6
 
     def connected_after_effective_sample_s(
         self, *, adc_input: int, repeat_index: int = 0
@@ -209,7 +231,16 @@ class Mg24DualMuxTimingCalculator(AdcMuxTimingCalculator):
         mux_address_overhead_us = float(self.profile["mux_address_overhead_us"])
         adc_start_overhead_us = float(self.profile["adc_start_overhead_us"])
         pair_software_overhead_us = float(self.profile["pair_software_overhead_us"])
+        first_pair_software_overhead_us = float(
+            self.profile.get("first_pair_software_overhead_us") or pair_software_overhead_us
+        )
+        repeat_pair_software_overhead_us = float(
+            self.profile.get("repeat_pair_software_overhead_us") or pair_software_overhead_us
+        )
         per_mux_selection_overhead_us = float(self.profile["per_mux_selection_overhead_us"])
+        burst_finalize_overhead_us = float(
+            self.profile.get("burst_finalize_overhead_us") or per_mux_selection_overhead_us
+        )
         block_fixed_overhead_us = float(self.profile["block_fixed_overhead_us"])
         ground_dummy_software_overhead_us = float(
             self.profile["ground_dummy_software_overhead_us"]
@@ -222,7 +253,11 @@ class Mg24DualMuxTimingCalculator(AdcMuxTimingCalculator):
         t_slot_us = t_conv_us * average
         t_iadc_input_switch_us = iadc_input_switch_cycles / adc_clk_mhz
         t_pair_hardware_us = 2.0 * t_slot_us + t_iadc_input_switch_us
-        t_pair_total_us = t_pair_hardware_us + pair_software_overhead_us
+        t_first_pair_total_us = t_pair_hardware_us + first_pair_software_overhead_us
+        t_repeat_pair_interval_us = t_pair_hardware_us + repeat_pair_software_overhead_us
+        # Kept for callers that used the old name. It always means the first
+        # pair, never the interval of a later retained repeat.
+        t_pair_total_us = t_first_pair_total_us
 
         adc_start_from_signal_switch_us = (
             mux_address_overhead_us + mux_settle_us + adc_start_overhead_us
@@ -271,13 +306,15 @@ class Mg24DualMuxTimingCalculator(AdcMuxTimingCalculator):
         signal_sequence_us = (
             mux_address_overhead_us
             + mux_settle_us
-            + per_mux_selection_overhead_us
-            + repeat_count * t_pair_total_us
+            + t_first_pair_total_us
+            + (repeat_count - 1) * t_repeat_pair_interval_us
+            + burst_finalize_overhead_us
         )
         sensor_connected_us = (
             max(0.0, mux_settle_us - mux_turn_on_us)
-            + per_mux_selection_overhead_us
-            + repeat_count * t_pair_total_us
+            + t_first_pair_total_us
+            + (repeat_count - 1) * t_repeat_pair_interval_us
+            + burst_finalize_overhead_us
         )
         t_connected_after_effective_sample_ch1_us = (
             sensor_connected_us - t_decay_before_effective_sample_ch1_us
@@ -313,6 +350,9 @@ class Mg24DualMuxTimingCalculator(AdcMuxTimingCalculator):
             t_slot_us=t_slot_us,
             t_iadc_input_switch_us=t_iadc_input_switch_us,
             t_pair_hardware_us=t_pair_hardware_us,
+            t_first_pair_total_us=t_first_pair_total_us,
+            t_repeat_pair_interval_us=t_repeat_pair_interval_us,
+            t_burst_finalize_overhead_us=burst_finalize_overhead_us,
             t_pair_total_us=t_pair_total_us,
             ground_phase_us=ground_phase_us,
             signal_sequence_us=signal_sequence_us,
@@ -339,6 +379,12 @@ class Mg24DualMuxTimingCalculator(AdcMuxTimingCalculator):
             t_connected_after_effective_sample_ch2_s=t_connected_after_effective_sample_ch2_us * 1e-6,
             calculated_hardware_timing=True,
             estimated_software_overhead=True,
+            repeat_pair_interval_calibrated=bool(self.profile.get("repeat_pair_interval_calibrated", False)),
+            calibration_metadata=dict(self.profile.get("calibration", {})) | {
+                "firmware_timing_version": self.profile.get("firmware_timing_version", "unknown"),
+                "repeat_implementation": self.profile.get("repeat_implementation", "unknown"),
+                "osr": osr, "gain": gain, "mux_settle_us": mux_settle_us,
+            },
         )
 
 
@@ -378,6 +424,31 @@ def calculate_adc_mux_timing_for_acquisition(
     )
 
 
+def estimate_repeat_pair_interval_from_measurements(
+    repeat_counts: Sequence[int], burst_durations_us: Sequence[float],
+) -> dict[str, float]:
+    """Fit the calibrated repeat-pair interval from measured burst timings.
+
+    The intercept contains fixed/first-pair/finalize terms; the slope against
+    ``repeat_count - 1`` is the retained-pair interval requested by the PZT
+    decay model. Call this with measurements at e.g. 1, 2, 5, 10, and 20.
+    """
+    if len(repeat_counts) != len(burst_durations_us) or len(repeat_counts) < 2:
+        raise ValueError("at least two matched repeat-count timing measurements are required")
+    repeats = np.asarray(repeat_counts, dtype=float)
+    durations = np.asarray(burst_durations_us, dtype=float)
+    if (not np.all(np.isfinite(repeats)) or not np.all(np.isfinite(durations))
+            or np.any(repeats < 1)):
+        raise ValueError("repeat counts must be positive and durations finite")
+    slope, intercept = np.polyfit(repeats - 1.0, durations, 1)
+    predicted = intercept + slope * (repeats - 1.0)
+    return {
+        "fixed_plus_first_pair_plus_finalize_us": float(intercept),
+        "repeat_pair_interval_us": float(slope),
+        "rmse_us": float(np.sqrt(np.mean((durations - predicted) ** 2))),
+    }
+
+
 def round_timing_json_values(value):
     """Round floats only while preparing the human-readable timing JSON payload."""
     if isinstance(value, float):
@@ -400,10 +471,11 @@ def _append_pair_timeline(
 ) -> tuple[float, float]:
     """Append one pair timeline, returning pair-software and total completion times."""
     pair_post_hardware_overhead_us = (
-        timing.t_pair_software_overhead_us - timing.adc_start_overhead_us
+        timing.t_first_pair_total_us - timing.t_pair_hardware_us - timing.adc_start_overhead_us
+        if first_pair else timing.t_repeat_pair_interval_us - timing.t_pair_hardware_us
     )
     if pair_post_hardware_overhead_us < 0.0:
-        raise ValueError("pair software overhead must include ADC-start overhead")
+        raise ValueError("pair timing cannot be shorter than its ADC hardware time")
 
     if first_pair:
         timeline.append({"t_us": t, "event": "first_input_observation_start"})
@@ -474,9 +546,9 @@ def _build_timeline(timing: AdcMuxTiming) -> list[dict[str, float | str]]:
     if timing.repeat_count > 1:
         timeline.append({"t_us": t, "event": "first_retained_adc_pair_complete"})
         timeline.append({"t_us": t, "event": "additional_retained_pairs_start"})
-        t += (timing.repeat_count - 1) * timing.t_pair_total_us
+        t += (timing.repeat_count - 1) * timing.t_repeat_pair_interval_us
         timeline.append({"t_us": t, "event": "all_retained_adc_pairs_complete"})
-    t += timing.t_per_mux_selection_overhead_us
+    t += timing.t_burst_finalize_overhead_us
     timeline.append({"t_us": t, "event": "mux_selection_processing_complete"})
     # The complete-sequence value is authoritative, including any future profile additions.
     timeline.append({"t_us": timing.complete_sequence_us, "event": "next_mux_switch_start"})
@@ -505,6 +577,8 @@ def adc_mux_timing_log(timing: AdcMuxTiming | None) -> dict | None:
             "mux_address_overhead_us": timing.mux_address_overhead_us,
             "adc_start_overhead_us": timing.adc_start_overhead_us,
             "pair_software_overhead_us": timing.t_pair_software_overhead_us,
+            "first_pair_software_overhead_us": timing.t_first_pair_total_us - timing.t_pair_hardware_us,
+            "repeat_pair_software_overhead_us": timing.t_repeat_pair_interval_us - timing.t_pair_hardware_us,
             "per_mux_selection_overhead_us": timing.t_per_mux_selection_overhead_us,
             "block_fixed_overhead_us": timing.t_block_fixed_overhead_us,
             "ground_dummy_software_overhead_us": timing.t_ground_dummy_software_overhead_us,
@@ -517,6 +591,9 @@ def adc_mux_timing_log(timing: AdcMuxTiming | None) -> dict | None:
             "t_pair_hardware_us": timing.t_pair_hardware_us,
             "t_pair_software_overhead_us": timing.t_pair_software_overhead_us,
             "t_pair_total_us": timing.t_pair_total_us,
+            "t_first_pair_total_us": timing.t_first_pair_total_us,
+            "t_repeat_pair_interval_us": timing.t_repeat_pair_interval_us,
+            "t_burst_finalize_overhead_us": timing.t_burst_finalize_overhead_us,
             "t_ground_dummy_software_overhead_us": timing.t_ground_dummy_software_overhead_us,
             "t_per_mux_selection_overhead_us": timing.t_per_mux_selection_overhead_us,
             "t_block_fixed_overhead_us": timing.t_block_fixed_overhead_us,
@@ -528,6 +605,10 @@ def adc_mux_timing_log(timing: AdcMuxTiming | None) -> dict | None:
             "t_connected_after_effective_sample_ch1_us": timing.t_connected_after_effective_sample_ch1_us,
             "t_decay_before_effective_sample_ch2_us": timing.t_decay_before_effective_sample_ch2_us,
             "t_connected_after_effective_sample_ch2_us": timing.t_connected_after_effective_sample_ch2_us,
+        },
+        "calibration": {
+            "repeat_pair_interval_calibrated": timing.repeat_pair_interval_calibrated,
+            "metadata": dict(timing.calibration_metadata),
         },
         "timeline": _build_timeline(timing),
     }

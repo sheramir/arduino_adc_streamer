@@ -79,6 +79,7 @@ from gui import (
     SensorPanelMixin,
     SpectrumPanelMixin,
     StatusLoggingMixin,
+    PztDecayPanelMixin,
 )
 from data_processing import (
     DataProcessorMixin,
@@ -107,6 +108,7 @@ class ADCStreamerGUI(
     AnalysisPanelMixin,         # Offline Analysis tab
     ForceCalibrationPanelMixin, # Force Calibration tab and controls
     SpectrumPanelMixin,         # Spectrum panel UI
+    PztDecayPanelMixin,         # PZT decay characterization tab
     ConfigurationMixin,         # Configuration management
     DataProcessorMixin,         # Data processing
     SpectrumProcessorMixin,     # Spectrum processing
@@ -136,6 +138,7 @@ class ADCStreamerGUI(
         self.init_force_calibration_state()
         self._init_spectrum_state()
         self._init_analysis_state()
+        self.init_pzt_decay_state()
         self._init_timers()
 
         # Build user interface
@@ -439,7 +442,10 @@ class ADCStreamerGUI(
 
     def should_store_capture_data(self) -> bool:
         """Return True when capture should persist/archive time-series data."""
-        return bool(self.is_capturing)
+        # A decay-characterization run has exclusive hardware ownership, but
+        # its samples are written by PztDecayExporter rather than the normal
+        # capture archive.  This keeps it out of normal-capture history.
+        return bool(self.is_capturing) and not bool(getattr(self, "pzt_decay_active", False))
 
     def should_update_live_timeseries_display(self) -> bool:
         """Return True when live ADC/force plot redraws should run."""

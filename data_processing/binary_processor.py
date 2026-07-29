@@ -200,6 +200,12 @@ class BinaryProcessorMixin:
                 delta_us = (sweep_timestamps_us - self.first_sweep_timestamp_us) & 0xFFFFFFFF
                 sweep_timestamps_sec = delta_us / 1_000_000.0
 
+                # PZT_Decay_Calc receives the same decoded sweeps as the normal
+                # pipeline.  It retains only its mapped physical CH1/CH2 signal;
+                # no parallel serial parser or duplicate channel map is used.
+                if hasattr(self, 'process_pzt_decay_block'):
+                    self.process_pzt_decay_block(block_samples_array, sweep_timestamps_sec)
+
                 # --- Vectorized circular buffer write (single lock per block) ---
                 with self.buffer_lock:
                     block_write_base = self.buffer_write_index

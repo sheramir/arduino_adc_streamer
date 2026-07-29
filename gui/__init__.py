@@ -15,6 +15,7 @@ from gui.pressure_map_widget import PressureMapWidget
 from gui.sensor_panel import SensorPanelMixin
 from gui.spectrum_panel import SpectrumPanelMixin
 from gui.status_logging import StatusLoggingMixin
+from gui.pzt_decay_panel import PztDecayPanelMixin
 
 __all__ = [
     'ControlPanelsMixin',
@@ -29,4 +30,5 @@ __all__ = [
     'SignalIntegrationPanelMixin',
     'SpectrumPanelMixin',
     'StatusLoggingMixin',
+    'PztDecayPanelMixin',
 ]

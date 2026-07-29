@@ -245,12 +245,37 @@ def test_repeat_burst_uses_pair_time_inside_the_burst_and_connection_time_betwee
         osr=4, gain=1, repeat_count=30, use_ground_between_channels=True
     )
     context = PztDecayTimingContext.from_adc_mux_timing(timing, 1)
-    assert context.observation_offset_s(1) - context.observation_offset_s(0) == pytest.approx(context.pair_interval_s)
-    assert context.connected_exposure_between(0, 1) == pytest.approx(context.pair_interval_s)
+    assert context.observation_offset_s(1) - context.observation_offset_s(0) == pytest.approx(context.pair_loop_interval_s)
+    assert context.connected_exposure_between(0, 1) == pytest.approx(context.pair_loop_interval_s)
     assert context.connected_exposure_between(29, 0) == pytest.approx(
         timing.connected_after_effective_sample_s(adc_input=1, repeat_index=29)
         + timing.decay_before_effective_sample_s(adc_input=1, repeat_index=0)
     )
+
+
+@pytest.mark.parametrize("adc_input", [1, 2])
+def test_effective_same_input_repeat_spacing_uses_uniform_pair_loop(adc_input):
+    timing = Mg24DualMuxTimingCalculator().calculate(
+        osr=4, gain=1, repeat_count=2, use_ground_between_channels=False,
+    )
+    context = PztDecayTimingContext.from_adc_mux_timing(timing, adc_input)
+
+    assert (
+        timing.decay_before_effective_sample_s(adc_input=adc_input, repeat_index=1)
+        - timing.decay_before_effective_sample_s(adc_input=adc_input, repeat_index=0)
+    ) == pytest.approx(12.093e-6)
+    assert context.observation_offset_s(1) - context.observation_offset_s(0) == pytest.approx(12.093e-6)
+
+
+def test_osr4_interleaved_adc_observations_are_not_evenly_spaced():
+    timing = Mg24DualMuxTimingCalculator().calculate(
+        osr=4, gain=1, repeat_count=2, use_ground_between_channels=False,
+    )
+
+    assert timing.second_sample_effective_us - timing.first_sample_effective_us == pytest.approx(2.0)
+    assert timing.t_pair_loop_total_us - (
+        timing.second_sample_effective_us - timing.first_sample_effective_us
+    ) == pytest.approx(10.093)
 
 
 @pytest.mark.parametrize("repeat_count", [1, 2, 5, 10])
@@ -260,7 +285,7 @@ def test_burst_connected_exposure_accounts_for_one_complete_mux_selection(repeat
         osr=4, gain=1, repeat_count=repeat_count, use_ground_between_channels=True,
     )
     context = PztDecayTimingContext.from_adc_mux_timing(timing, adc_input)
-    within = (repeat_count - 1) * context.repeat_pair_interval_s
+    within = (repeat_count - 1) * context.pair_loop_interval_s
     boundary = context.connected_exposure_between(repeat_count - 1, 0)
     assert within + boundary == pytest.approx(timing.sensor_connected_s)
 
@@ -279,8 +304,8 @@ def test_analyzer_derives_burst_exposure_and_expands_burst_start_timestamps():
                 timestamp_basis=PztDecayTimestampBasis.BURST_START,
             )
     samples = analyzer.samples
-    assert samples[1].timestamp_s - samples[0].timestamp_s == pytest.approx(context.repeat_pair_interval_s)
-    assert samples[1].connected_exposure_since_previous_s == pytest.approx(context.repeat_pair_interval_s)
+    assert samples[1].timestamp_s - samples[0].timestamp_s == pytest.approx(context.pair_loop_interval_s)
+    assert samples[1].connected_exposure_since_previous_s == pytest.approx(context.pair_loop_interval_s)
     assert samples[3].connected_exposure_since_previous_s == pytest.approx(
         context.connected_exposure_between(2, 0)
     )

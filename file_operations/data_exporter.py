@@ -48,6 +48,8 @@ class DataExporterMixin:
         Active acquisition time comes from MCU block timestamps. Effective rates include
         the MCU-measured gaps between acquisition blocks, which makes them representative
         of the data stream over the whole capture rather than a single recent block.
+        ``adc_active_sample_interval_us`` is therefore an amortized complete-block
+        duration per exported sample, not physical same-input spacing within a burst.
         """
         timing = self.timing_state
         active_duration_us = int(getattr(timing, "adc_active_capture_duration_us", 0) or 0)
@@ -97,6 +99,10 @@ class DataExporterMixin:
         ground_sample_enabled = bool(self.config.get("use_ground", False))
         return {
             "adc_active_sample_interval_us": self._round_timing_value(active_sample_interval_us),
+            "adc_active_sample_interval_note": (
+                "Amortized complete-block duration per exported sample; do not use "
+                "for same-input PZT decay spacing within a retained-pair burst."
+            ),
             "adc_mean_block_capture_time_us": self._round_timing_value(
                 active_duration_us / block_count if block_count > 0 else None
             ),

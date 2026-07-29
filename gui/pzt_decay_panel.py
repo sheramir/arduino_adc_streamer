@@ -336,7 +336,7 @@ class PztDecayPanelMixin:
                     f"CH{mapping.physical_adc_input}: waiting with 1 repeat; after target, "
                     f"{self.pzt_decay_repeat_spin.value()} connected repeats per selected MUX pair. "
                     "No dummy-ground ADC conversion occurs before bursts; existing firmware parking remains enabled. "
-                    f"Dense pair interval {context.repeat_pair_interval_s * 1e6:.2f} µs; "
+                    f"Dense pair-loop interval {context.pair_loop_interval_s * 1e6:.2f} µs; "
                     f"first effective sample {context.pre_sample_decay_s * 1e6:.2f} µs after connection."
                 )
                 self.pzt_decay_result_label.setText("Waiting for the required applied voltage. Sampling is live; Start is disabled.")

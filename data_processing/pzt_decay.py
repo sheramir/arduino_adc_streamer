@@ -116,8 +116,7 @@ class PztDecayTimingContext:
     pre_sample_decay_s: float
     post_sample_connected_s: float
     repeat_count: int = 1
-    pair_interval_s: float = 0.0
-    repeat_pair_interval_s: float = 0.0
+    pair_loop_interval_s: float = 0.0
     # From sweep/sequence start to the centre of the selected IADC observation.
     effective_sample_offset_s: float = 0.0
     mean_wall_sample_interval_s: float = 0.0
@@ -149,8 +148,7 @@ class PztDecayTimingContext:
             pre_sample_decay_s=pre,
             post_sample_connected_s=post,
             repeat_count=timing.repeat_count,
-            pair_interval_s=timing.t_repeat_pair_interval_us * 1e-6,
-            repeat_pair_interval_s=timing.t_repeat_pair_interval_us * 1e-6,
+            pair_loop_interval_s=timing.t_pair_loop_total_us * 1e-6,
             effective_sample_offset_s=effective_offset,
             calculated_signal_sequence_s=timing.signal_sequence_us * 1e-6,
             calculated_ground_phase_s=timing.ground_phase_us * 1e-6,
@@ -191,14 +189,14 @@ class PztDecayTimingContext:
         """Time from the sweep start to one CH1/CH2 effective sample."""
         if repeat_index < 0 or repeat_index >= self.repeat_count:
             raise ValueError("repeat index is outside the configured burst")
-        return self.effective_sample_offset_s + repeat_index * self.repeat_pair_interval_s
+        return self.effective_sample_offset_s + repeat_index * self.pair_loop_interval_s
 
     def connected_exposure_between(self, previous_repeat: int | None, current_repeat: int) -> float:
         """Connected exposure between two effective observations of this input."""
         if previous_repeat is None:
             return 0.0
         if current_repeat == previous_repeat + 1:
-            return self.repeat_pair_interval_s
+            return self.pair_loop_interval_s
         if self.adc_mux_timing is not None:
             return (
                 self.adc_mux_timing.connected_after_effective_sample_s(
@@ -223,7 +221,7 @@ class PztDecayTimingContext:
             return 0.0
         if current_burst_index == previous.burst_index:
             if current_repeat_index == previous.repeat_index + 1:
-                return self.repeat_pair_interval_s
+                return self.pair_loop_interval_s
             return None
         if current_burst_index == previous.burst_index + 1:
             if previous.repeat_index == self.repeat_count - 1 and current_repeat_index == 0:
@@ -820,7 +818,7 @@ class PztDecayAnalyzer:
             sample.calculated_voltage_v = self.vmid_v + fitted_amplitude * math.exp(-connected_rate * sample.cumulative_connected_time_s)
 
         tau_wall, tau_on = 1.0 / wall_rate, 1.0 / connected_rate
-        alpha_within = math.exp(-connected_rate * self.timing.repeat_pair_interval_s)
+        alpha_within = math.exp(-connected_rate * self.timing.pair_loop_interval_s)
         alpha_boundary = math.exp(-connected_rate * self.timing.connected_exposure_between(
             self.timing.repeat_count - 1, 0,
         ))
@@ -842,8 +840,10 @@ class PztDecayAnalyzer:
         elif self.settings.capacitance_estimation_enabled:
             self.warnings.append("known resistance not supplied; capacitance not calculated")
         if r_squared < 0.98: self.warnings.append("low R²")
-        if not self.timing.adc_mux_timing or not self.timing.adc_mux_timing.repeat_pair_interval_calibrated:
-            self.warnings.append("Repeated-pair timing has not been calibrated for the active firmware")
+        if not self.timing.adc_mux_timing or not self.timing.adc_mux_timing.calibration_metadata.get(
+            "pair_loop_interval_empirically_estimated", False
+        ):
+            self.warnings.append("Retained-pair loop timing has not been empirically estimated for the active firmware")
         context = self.timing.with_sample_intervals(wall_intervals, connected_intervals)
         unique_warnings = tuple(dict.fromkeys(self.warnings))
         timing_valid = context.timing_consistency_valid and not any(

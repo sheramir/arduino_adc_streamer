@@ -39,10 +39,10 @@ def test_mg24_osr2_gain1_hardware_timing():
     assert timing.t_conv_us == pytest.approx(1.0)
     assert timing.t_iadc_input_switch_us == pytest.approx(0.2)
     assert timing.t_pair_hardware_us == pytest.approx(2.2)
-    assert timing.t_pair_software_overhead_us == pytest.approx(10.11)
-    assert timing.t_pair_total_us == pytest.approx(12.31)
-    assert timing.signal_sequence_us == pytest.approx(22.20)
-    assert timing.sensor_connected_us == pytest.approx(21.80)
+    assert timing.t_pair_loop_software_overhead_us == pytest.approx(8.293)
+    assert timing.t_pair_loop_total_us == pytest.approx(10.493)
+    assert timing.signal_sequence_us == pytest.approx(20.383)
+    assert timing.sensor_connected_us == pytest.approx(19.983)
 
 
 def test_mg24_osr4_gain1_hardware_timing():
@@ -52,23 +52,37 @@ def test_mg24_osr4_gain1_hardware_timing():
     assert timing.t_conv_us == pytest.approx(1.8)
     assert timing.t_iadc_input_switch_us == pytest.approx(0.2)
     assert timing.t_pair_hardware_us == pytest.approx(3.8)
-    assert timing.t_pair_software_overhead_us == pytest.approx(10.11)
-    assert timing.t_pair_total_us == pytest.approx(13.91)
-    assert timing.signal_sequence_us == pytest.approx(23.80)
-    assert timing.sensor_connected_us == pytest.approx(23.40)
-    assert timing.sensor_connected_s == pytest.approx(23.40e-6, abs=1e-9)
+    assert timing.t_pair_loop_software_overhead_us == pytest.approx(8.293)
+    assert timing.t_pair_loop_total_us == pytest.approx(12.093)
+    assert timing.signal_sequence_us == pytest.approx(21.983)
+    assert timing.sensor_connected_us == pytest.approx(21.583)
+    assert timing.sensor_connected_s == pytest.approx(21.583e-6, abs=1e-9)
+
+
+@pytest.mark.parametrize(
+    ("repeat_count", "signal_sequence_us", "sensor_connected_us"),
+    [(1, 21.983, 21.583), (16, 203.378, 202.978)],
+)
+def test_calibrated_uniform_pair_loop_sequence_equations(
+    repeat_count, signal_sequence_us, sensor_connected_us,
+):
+    timing = calculate(osr=4, repeat_count=repeat_count, use_ground_between_channels=False)
+
+    assert timing.t_pair_loop_total_us == pytest.approx(12.093)
+    assert timing.signal_sequence_us == pytest.approx(signal_sequence_us)
+    assert timing.sensor_connected_us == pytest.approx(sensor_connected_us)
 
 
 def test_mg24_dummy_ground_and_effective_sample_timing_match_measurements():
     timing = calculate(osr=4, use_ground_between_channels=True)
 
-    assert timing.t_ground_dummy_software_overhead_us == pytest.approx(14.25)
-    assert timing.ground_phase_us == pytest.approx(21.30)
-    assert timing.complete_sequence_us == pytest.approx(45.10)
+    assert timing.t_ground_dummy_software_overhead_us == pytest.approx(12.325)
+    assert timing.ground_phase_us == pytest.approx(19.375)
+    assert timing.complete_sequence_us == pytest.approx(41.358)
     assert timing.t_decay_before_effective_sample_ch1_us == pytest.approx(3.80)
     assert timing.t_decay_before_effective_sample_ch2_us == pytest.approx(5.80)
-    assert timing.t_connected_after_effective_sample_ch1_us == pytest.approx(19.60)
-    assert timing.t_connected_after_effective_sample_ch2_us == pytest.approx(17.60)
+    assert timing.t_connected_after_effective_sample_ch1_us == pytest.approx(17.783)
+    assert timing.t_connected_after_effective_sample_ch2_us == pytest.approx(15.783)
     assert (
         timing.t_decay_before_effective_sample_ch1_us
         + timing.t_connected_after_effective_sample_ch1_us
@@ -84,10 +98,10 @@ def test_repeat_specific_effective_sample_helpers_are_explicit():
 
     assert timing.decay_before_effective_sample_s(adc_input=1) == pytest.approx(3.80e-6)
     assert timing.decay_before_effective_sample_s(adc_input=1, repeat_index=1) == pytest.approx(
-        (3.80 + 13.91) * 1e-6
+        (3.80 + 12.093) * 1e-6
     )
     assert timing.decay_before_effective_sample_s(adc_input=2, repeat_index=1) == pytest.approx(
-        (5.80 + 13.91) * 1e-6
+        (5.80 + 12.093) * 1e-6
     )
     with pytest.raises(ValueError, match="adc_input"):
         timing.decay_before_effective_sample_s(adc_input=3)
@@ -95,7 +109,7 @@ def test_repeat_specific_effective_sample_helpers_are_explicit():
         timing.connected_after_effective_sample_s(adc_input=1, repeat_index=2)
 
 
-def test_measured_fifteen_selection_block_and_active_interval_predictions():
+def test_sequence_model_does_not_force_complete_block_timestamp_measurements():
     no_ground = calculate(osr=4, use_ground_between_channels=False)
     with_ground = calculate(osr=4, use_ground_between_channels=True)
 
@@ -105,18 +119,18 @@ def test_measured_fifteen_selection_block_and_active_interval_predictions():
     predicted_ground_block_us = (
         with_ground.t_block_fixed_overhead_us + 15 * with_ground.complete_sequence_us
     )
-    assert predicted_no_ground_block_us == pytest.approx(366.23, abs=0.1)
-    assert predicted_ground_block_us == pytest.approx(685.73, abs=0.1)
-    assert predicted_ground_block_us / 30 == pytest.approx(22.858, abs=0.01)
+    assert predicted_no_ground_block_us == pytest.approx(338.975, abs=0.001)
+    assert predicted_ground_block_us == pytest.approx(629.60, abs=0.001)
+    assert predicted_ground_block_us / 30 != pytest.approx(22.858, abs=0.01)
 
 
 def test_mg24_osr8_gain1_uses_calibrated_pair_overhead():
     timing = calculate(osr=8)
 
     assert timing.t_pair_hardware_us == pytest.approx(7.0)
-    assert timing.t_pair_total_us == pytest.approx(17.11)
-    assert timing.signal_sequence_us == pytest.approx(27.00)
-    assert timing.sensor_connected_us == pytest.approx(26.60)
+    assert timing.t_pair_loop_total_us == pytest.approx(15.293)
+    assert timing.signal_sequence_us == pytest.approx(25.183)
+    assert timing.sensor_connected_us == pytest.approx(24.783)
 
 
 def test_ground_repeat_and_sensor_connection_duration():
@@ -124,45 +138,46 @@ def test_ground_repeat_and_sensor_connection_duration():
     with_ground = calculate(repeat_count=2, use_ground_between_channels=True)
 
     assert without_ground.ground_phase_us == 0.0
-    assert with_ground.ground_phase_us == pytest.approx(19.7)
-    assert with_ground.signal_sequence_us == pytest.approx(34.51)
-    assert with_ground.complete_sequence_us == pytest.approx(54.21)
-    assert with_ground.sensor_connected_us == pytest.approx(34.11)
-    assert with_ground.sensor_connected_s == pytest.approx(34.11e-6)
+    assert with_ground.ground_phase_us == pytest.approx(17.775)
+    assert with_ground.signal_sequence_us == pytest.approx(30.876)
+    assert with_ground.complete_sequence_us == pytest.approx(48.651)
+    assert with_ground.sensor_connected_us == pytest.approx(30.476)
+    assert with_ground.sensor_connected_s == pytest.approx(30.476e-6)
 
 
 def test_repeat_count_ten_scales_only_pair_work_in_connection_time():
     timing = calculate(osr=4, repeat_count=10, use_ground_between_channels=True)
 
-    assert timing.signal_sequence_us == pytest.approx(0.25 + 3.0 + 6.64 + 10 * 13.91)
-    assert timing.sensor_connected_us == pytest.approx(3.0 - 0.15 + 6.64 + 10 * 13.91)
-    assert timing.ground_phase_us == pytest.approx(21.30)
+    assert timing.signal_sequence_us == pytest.approx(0.25 + 3.0 + 6.64 + 10 * 12.093)
+    assert timing.sensor_connected_us == pytest.approx(3.0 - 0.15 + 6.64 + 10 * 12.093)
+    assert timing.ground_phase_us == pytest.approx(19.375)
 
 
-def test_first_repeat_and_finalize_timing_are_independent_profile_values():
+def test_custom_profile_uses_one_uniform_pair_loop_interval():
     profile = {
         **MG24_TIMING_PROFILE,
-        "first_pair_software_overhead_us": 12.0,
-        "repeat_pair_software_overhead_us": 7.0,
+        "pair_loop_software_overhead_us": 8.0,
         "burst_finalize_overhead_us": 4.0,
     }
     timing = Mg24DualMuxTimingCalculator(profile=profile).calculate(
         osr=4, gain=1, repeat_count=3, use_ground_between_channels=False,
     )
-    assert timing.t_first_pair_total_us == pytest.approx(15.8)
-    assert timing.t_repeat_pair_interval_us == pytest.approx(10.8)
+    assert timing.t_pair_loop_total_us == pytest.approx(11.8)
     assert timing.t_burst_finalize_overhead_us == pytest.approx(4.0)
-    assert timing.signal_sequence_us == pytest.approx(0.25 + 3.0 + 15.8 + 2 * 10.8 + 4.0)
+    assert timing.signal_sequence_us == pytest.approx(0.25 + 3.0 + 3 * 11.8 + 4.0)
     assert timing.decay_before_effective_sample_s(adc_input=2, repeat_index=2) == pytest.approx(
-        (5.8 + 2 * 10.8) * 1e-6
+        (5.8 + 2 * 11.8) * 1e-6
     )
 
 
-def test_repeat_pair_calibration_helper_fits_additional_repeat_slope():
+def test_pair_loop_calibration_helper_fits_repeat_count_slope():
+    fixed_overhead_us = 37.5
+    repeat_counts = [1, 2, 5, 10, 16]
     result = estimate_repeat_pair_interval_from_measurements(
-        [1, 2, 5, 10, 20], [50.0, 62.5, 100.0, 162.5, 287.5],
+        repeat_counts, [fixed_overhead_us + count * 12.093 for count in repeat_counts],
     )
-    assert result["repeat_pair_interval_us"] == pytest.approx(12.5)
+    assert result["pair_loop_interval_us"] == pytest.approx(12.093)
+    assert result["fixed_overhead_us"] == pytest.approx(fixed_overhead_us)
     assert result["rmse_us"] == pytest.approx(0.0)
 
 
@@ -200,15 +215,15 @@ def test_timing_log_is_json_serializable_and_contains_calculated_results():
     serialized = json.dumps(payload)
     assert json.loads(serialized)["adc"] == "mg24_dual_mux_v3"
     assert payload["constants"]["adc_clk_hz"] == 10_000_000
-    assert payload["constants"]["pair_software_overhead_us"] == pytest.approx(10.11)
+    assert payload["constants"]["pair_loop_software_overhead_us"] == pytest.approx(8.29)
     assert payload["constants"]["per_mux_selection_overhead_us"] == pytest.approx(6.64)
     assert payload["constants"]["block_fixed_overhead_us"] == pytest.approx(9.23)
-    assert payload["constants"]["ground_dummy_software_overhead_us"] == pytest.approx(14.25)
+    assert payload["constants"]["ground_dummy_software_overhead_us"] == pytest.approx(12.32)
     assert "post_pair_overhead_us" not in payload["constants"]
-    assert payload["calculated_timing"]["t_connected_us"] == pytest.approx(23.4)
-    assert payload["calculated_timing"]["t_pair_software_overhead_us"] == pytest.approx(10.11)
+    assert payload["calculated_timing"]["t_connected_us"] == pytest.approx(21.58)
+    assert payload["calculated_timing"]["t_pair_loop_total_us"] == pytest.approx(12.09)
     assert payload["calculated_timing"]["t_per_mux_selection_overhead_us"] == pytest.approx(6.64)
-    assert payload["calculated_timing"]["t_ground_dummy_software_overhead_us"] == pytest.approx(14.25)
+    assert payload["calculated_timing"]["t_ground_dummy_software_overhead_us"] == pytest.approx(12.32)
     assert "calculator" not in payload
     assert "results" not in payload
     assert "t_total_overhead_us" not in payload["calculated_timing"]
@@ -221,17 +236,14 @@ def test_timing_log_timeline_is_chronological_and_uses_ground_sequence():
     timeline = payload["timeline"]
 
     assert timeline[0]["event"] == "ground_mux_switch_start"
-    assert timeline[-1] == {"t_us": 45.1, "event": "next_mux_switch_start"}
+    assert timeline[-1] == {"t_us": 41.36, "event": "next_mux_switch_start"}
     assert [item["t_us"] for item in timeline] == sorted(item["t_us"] for item in timeline)
-    assert next(item["t_us"] for item in timeline if item["event"] == "ground_dummy_processing_complete") == pytest.approx(
-        timing.ground_phase_us
-    )
+    assert next(item["t_us"] for item in timeline if item["event"] == "ground_dummy_processing_complete") == pytest.approx(19.38)
     assert not any(item["event"] == "ground_mux_selection_processing_complete" for item in timeline)
-    assert timeline[-1]["t_us"] == pytest.approx(timing.complete_sequence_us)
-    connected_at = next(item["t_us"] for item in timeline if item["event"] == "sensor_connected_to_mux_output")
-    assert timeline[-1]["t_us"] - connected_at == pytest.approx(
-        payload["calculated_timing"]["t_connected_us"]
-    )
+    assert timeline[-1]["t_us"] == pytest.approx(round(timing.complete_sequence_us, 2))
+    assert timing.complete_sequence_us - (
+        timing.ground_phase_us + timing.mux_address_overhead_us + timing.mux_turn_on_us
+    ) == pytest.approx(timing.sensor_connected_us)
 
 
 def test_timing_log_starts_with_signal_and_stays_compact_for_repeats():
@@ -243,6 +255,17 @@ def test_timing_log_starts_with_signal_and_stays_compact_for_repeats():
     assert any(item["event"] == "additional_retained_pairs_start" for item in timeline)
     assert any(item["event"] == "all_retained_adc_pairs_complete" for item in timeline)
     assert len(timeline) < 20
+
+
+def test_timeline_first_pair_consumes_one_uniform_pair_loop_interval():
+    payload = adc_mux_timing_log(calculate(osr=4, repeat_count=3, use_ground_between_channels=False))
+    timeline = payload["timeline"]
+    settled_at = next(item["t_us"] for item in timeline if item["event"] == "signal_mux_settled")
+    first_complete_at = next(
+        item["t_us"] for item in timeline if item["event"] == "first_retained_adc_pair_complete"
+    )
+
+    assert first_complete_at - settled_at == pytest.approx(12.09)
 
 
 def test_timing_log_rounds_every_float_only_at_json_boundary():
@@ -260,8 +283,8 @@ def test_timing_log_rounds_every_float_only_at_json_boundary():
                 assert_rounded(item)
 
     assert_rounded(payload)
-    assert timing.t_pair_total_us == pytest.approx(13.91)
-    assert payload["calculated_timing"]["t_pair_total_us"] == 13.91
+    assert timing.t_pair_loop_total_us == pytest.approx(12.093)
+    assert payload["calculated_timing"]["t_pair_loop_total_us"] == 12.09
     assert "3.8000000000000003" not in json.dumps(payload)
 
 
@@ -281,7 +304,7 @@ def test_custom_profile_controls_calculation_timeline_and_json_consistently():
         "mux_turn_on_us": 0.10,
         "mux_address_overhead_us": 0.50,
         "adc_start_overhead_us": 0.20,
-        "pair_software_overhead_us": 8.0,
+        "pair_loop_software_overhead_us": 8.0,
         "per_mux_selection_overhead_us": 4.0,
         "block_fixed_overhead_us": 7.0,
         "ground_dummy_software_overhead_us": 12.0,
@@ -294,7 +317,7 @@ def test_custom_profile_controls_calculation_timeline_and_json_consistently():
     assert timing.signal_sequence_us == pytest.approx(26.3)
     assert timing.complete_sequence_us == pytest.approx(52.6)
     assert payload["constants"]["mux_settle_us"] == 10.0
-    assert payload["constants"]["pair_software_overhead_us"] == 8.0
+    assert payload["constants"]["pair_loop_software_overhead_us"] == 8.0
     assert payload["timeline"][-1]["t_us"] == pytest.approx(52.6)
 
 

@@ -286,6 +286,9 @@ class PztDecaySettings:
     maximum_recording_duration_s: float = 60.0
     robust_fit_enabled: bool = True
     robust_mad_multiplier: float = 3.5
+    # Fit one regularly sampled segment only; inter-burst/interrupt gaps are
+    # excluded relative to the median candidate timestamp interval.
+    fit_max_interval_ratio: float = 2.0
     capacitance_estimation_enabled: bool = False
     connected_equivalent_resistance_ohm: float | None = None
     adc_min_v: float = 0.0
@@ -338,6 +341,7 @@ class PztDecayResult:
     connected_equivalent_resistance_ohm: float | None
     capacitance_estimated_f: float | None
     fitted_amplitude_v: float | None
+    fitted_baseline_v: float | None
     fitted_decay_rate_per_s: float | None
     r_squared: float | None
     rmse_voltage_v: float | None
@@ -368,6 +372,7 @@ class PztDecayResult:
                     "pairwise_rate_per_s_median": self.alpha_sample_pairwise_median,
                     "pairwise_rate_per_s_mad": self.alpha_sample_pairwise_mad, "tau_wall_s": self.tau_wall_s,
                     "tau_on_estimated_s": self.tau_on_estimated_s, "fitted_amplitude_v": self.fitted_amplitude_v,
+                    "fitted_baseline_v": self.fitted_baseline_v,
                     "fitted_decay_rate_per_s": self.fitted_decay_rate_per_s, "r_squared": self.r_squared,
                     "rmse_voltage_v": self.rmse_voltage_v},
             "capacitance_estimate": {"enabled": self.capacitance_estimated_f is not None,
@@ -592,32 +597,63 @@ class PztDecayAnalyzer:
             self._complete_analysis()
 
     @staticmethod
-    def _voltage_residuals(params: np.ndarray, x: np.ndarray, measured_v: np.ndarray, vmid_v: float) -> np.ndarray:
-        amplitude_v, decay_rate = params
-        return vmid_v + amplitude_v * np.exp(-decay_rate * x) - measured_v
+    def _voltage_residuals(params: np.ndarray, x: np.ndarray, measured_v: np.ndarray) -> np.ndarray:
+        baseline_v, amplitude_v, decay_rate = params
+        return baseline_v + amplitude_v * np.exp(-decay_rate * x) - measured_v
 
-    def _fit_voltage_exponential(self, x: np.ndarray, measured_v: np.ndarray) -> tuple[float, float, np.ndarray]:
-        """Robust nonlinear fit in volts; no logarithmic residual amplification."""
-        assert self.vmid_v is not None
+    def _fit_voltage_exponential(self, x: np.ndarray, measured_v: np.ndarray) -> tuple[float, float, float, np.ndarray]:
+        """Robust nonlinear voltage fit with a free asymptote, amplitude, and rate."""
         if len(x) < 2 or not np.all(np.isfinite(x)) or not np.all(np.isfinite(measured_v)):
             raise ValueError("too few finite samples for nonlinear voltage fit")
         lsb_v = (self.settings.adc_max_v - self.settings.adc_min_v) / 4095.0
         noise_sigma_v = max(self.baseline_sigma_v, lsb_v)
-        amplitude0 = max(float(measured_v[0] - self.vmid_v), noise_sigma_v)
-        positive = measured_v - self.vmid_v
+        baseline0 = float(np.min(measured_v))
+        amplitude0 = max(float(measured_v[0] - baseline0), noise_sigma_v)
+        positive = measured_v - baseline0
         rates = []
         for dt, earlier, later in zip(np.diff(x), positive[:-1], positive[1:]):
             if dt > 0.0 and earlier > noise_sigma_v and later > noise_sigma_v and later < earlier:
                 rates.append(-math.log(later / earlier) / dt)
         rate0 = float(np.median(rates)) if rates else 1.0 / max(float(x[-1] - x[0]), 1e-9)
         result = least_squares(
-            self._voltage_residuals, x0=[amplitude0, max(rate0, 1e-12)],
-            bounds=([0.0, 0.0], [2.0, np.inf]),
-            args=(x, measured_v, self.vmid_v), loss="soft_l1", f_scale=noise_sigma_v,
+            self._voltage_residuals, x0=[baseline0, amplitude0, max(rate0, 1e-12)],
+            bounds=([self.settings.adc_min_v, 0.0, 0.0], [self.settings.adc_max_v, 2.0, np.inf]),
+            args=(x, measured_v), loss="soft_l1", f_scale=noise_sigma_v,
         )
-        if not result.success or result.x[1] <= 0.0:
+        if not result.success or result.x[2] <= 0.0:
             raise ValueError("nonlinear voltage fit did not converge to a decay")
-        return float(result.x[0]), float(result.x[1]), np.asarray(result.fun, dtype=float)
+        return (
+            float(result.x[0]), float(result.x[1]), float(result.x[2]),
+            np.asarray(result.fun, dtype=float),
+        )
+
+    def _select_uniform_cadence_run(self, candidates: list[PztDecaySample]) -> list[PztDecaySample]:
+        """Keep the largest contiguous candidate run without a large timestamp gap."""
+        if len(candidates) < 2:
+            return candidates
+        intervals = np.asarray([
+            current.timestamp_s - previous.timestamp_s
+            for previous, current in zip(candidates, candidates[1:])
+            if current.timestamp_s > previous.timestamp_s
+        ], dtype=float)
+        if not len(intervals):
+            return candidates
+        maximum_dt_s = float(np.median(intervals)) * self.settings.fit_max_interval_ratio
+        runs: list[list[PztDecaySample]] = [[candidates[0]]]
+        for previous, current in zip(candidates, candidates[1:]):
+            if current.timestamp_s - previous.timestamp_s <= maximum_dt_s:
+                runs[-1].append(current)
+            else:
+                runs.append([current])
+        selected = max(runs, key=len)
+        if len(selected) != len(candidates):
+            selected_ids = {id(sample) for sample in selected}
+            for sample in candidates:
+                if id(sample) not in selected_ids:
+                    sample.fit_included = False
+                    sample.rejection_reason = "outside uniform sampling interval run"
+            self.warnings.append("fit excludes samples separated by a large timestamp gap")
+        return selected
 
     def _complete_analysis(self) -> None:
         if self.state in (PztDecayState.COMPLETE, PztDecayState.ERROR, PztDecayState.CANCELLED):
@@ -789,9 +825,18 @@ class PztDecayAnalyzer:
                     f"Warning: only {len(candidates)} sampling points in the configured fit range; "
                     f"{len(fallback)} available after expansion (minimum {self.settings.minimum_fit_samples})"
                 )
-        connected_x = np.asarray([sample.cumulative_connected_time_s for sample in candidates])
+        candidates = self._select_uniform_cadence_run(candidates)
+        if len(candidates) < self.settings.minimum_fit_samples:
+            raise ValueError(
+                "Warning: fewer than the minimum fit samples remain after excluding large timestamp gaps"
+            )
+        connected_origin_s = candidates[0].cumulative_connected_time_s
+        wall_origin_s = candidates[0].timestamp_s
+        connected_x = np.asarray([
+            sample.cumulative_connected_time_s - connected_origin_s for sample in candidates
+        ])
         measured_v = np.asarray([sample.voltage_v for sample in candidates])
-        fitted_amplitude, connected_rate, residuals = self._fit_voltage_exponential(connected_x, measured_v)
+        fitted_baseline, fitted_amplitude, connected_rate, residuals = self._fit_voltage_exponential(connected_x, measured_v)
         if self.settings.robust_fit_enabled:
             lsb_v = (self.settings.adc_max_v - self.settings.adc_min_v) / 4095.0
             noise_sigma_v = max(self.baseline_sigma_v, lsb_v)
@@ -804,18 +849,24 @@ class PztDecayAnalyzer:
                     if reject:
                         sample.fit_included = False; sample.rejection_reason = "robust voltage-space fit outlier"
                 candidates = [sample for sample in candidates if sample.fit_included]
-                connected_x = np.asarray([sample.cumulative_connected_time_s for sample in candidates])
+                connected_origin_s = candidates[0].cumulative_connected_time_s
+                wall_origin_s = candidates[0].timestamp_s
+                connected_x = np.asarray([
+                    sample.cumulative_connected_time_s - connected_origin_s for sample in candidates
+                ])
                 measured_v = np.asarray([sample.voltage_v for sample in candidates])
-                fitted_amplitude, connected_rate, residuals = self._fit_voltage_exponential(connected_x, measured_v)
+                fitted_baseline, fitted_amplitude, connected_rate, residuals = self._fit_voltage_exponential(connected_x, measured_v)
 
-        predicted_v = self.vmid_v + fitted_amplitude * np.exp(-connected_rate * connected_x)
+        predicted_v = fitted_baseline + fitted_amplitude * np.exp(-connected_rate * connected_x)
         ss_res = float(np.sum((measured_v - predicted_v) ** 2)); ss_tot = float(np.sum((measured_v - np.mean(measured_v)) ** 2))
         r_squared = 1.0 - ss_res / ss_tot if ss_tot > 0.0 else 1.0
         rmse = math.sqrt(ss_res / len(candidates))
-        wall_x = np.asarray([sample.relative_time_s for sample in candidates])
-        _, wall_rate, _ = self._fit_voltage_exponential(wall_x, measured_v)
+        wall_x = np.asarray([sample.timestamp_s - wall_origin_s for sample in candidates])
+        _, _, wall_rate, _ = self._fit_voltage_exponential(wall_x, measured_v)
         for sample in event:
-            sample.calculated_voltage_v = self.vmid_v + fitted_amplitude * math.exp(-connected_rate * sample.cumulative_connected_time_s)
+            fit_time_s = sample.cumulative_connected_time_s - connected_origin_s
+            if fit_time_s >= 0.0:
+                sample.calculated_voltage_v = fitted_baseline + fitted_amplitude * math.exp(-connected_rate * fit_time_s)
 
         tau_wall, tau_on = 1.0 / wall_rate, 1.0 / connected_rate
         alpha_within = math.exp(-connected_rate * self.timing.pair_loop_interval_s)
@@ -824,11 +875,10 @@ class PztDecayAnalyzer:
         ))
         alpha_full_selection = math.exp(-connected_rate * self.timing.sensor_connected_s)
         pair_rates = [
-            -math.log(b.delta_from_vmid_v / a.delta_from_vmid_v)
+            -math.log((b.voltage_v - fitted_baseline) / (a.voltage_v - fitted_baseline))
             / (b.cumulative_connected_time_s - a.cumulative_connected_time_s)
             for a, b in zip(candidates, candidates[1:])
-            if (a.delta_from_vmid_v and b.delta_from_vmid_v and a.delta_from_vmid_v > 0
-                and b.delta_from_vmid_v > 0
+            if (a.voltage_v > fitted_baseline and b.voltage_v > fitted_baseline
                 and b.cumulative_connected_time_s > a.cumulative_connected_time_s)
         ]
         pair_median = float(np.median(pair_rates)) if pair_rates else None
@@ -859,13 +909,14 @@ class PztDecayAnalyzer:
             plateau_voltage_v=self.plateau_voltage_v, initial_amplitude_v=self.initial_amplitude_v,
             capture_start_time_s=self.capture_start_time_s, release_time_s=self.release_time_s,
             recording_duration_s=event[-1].relative_time_s, total_samples=len(event), fit_samples=len(candidates),
-            fit_wall_time_origin_s=0.0, fit_connected_time_origin_s=0.0,
+            fit_wall_time_origin_s=wall_origin_s, fit_connected_time_origin_s=connected_origin_s,
             alpha_sample_regression=alpha_within, alpha_sample_pairwise_median=pair_median, alpha_sample_pairwise_mad=pair_mad,
             alpha_sample_pairwise_mean=float(np.mean(pair_rates)) if pair_rates else None, alpha_sample_pairwise_std=float(np.std(pair_rates)) if pair_rates else None,
             alpha_within_burst=alpha_within, alpha_burst_boundary=alpha_boundary,
             alpha_full_mux_selection=alpha_full_selection, fit_quality_valid=fit_valid,
             timing_quality_valid=timing_valid, event_quality_valid=event_valid,
             tau_wall_s=tau_wall, tau_on_estimated_s=tau_on, connected_equivalent_resistance_ohm=resistance,
-            capacitance_estimated_f=capacitance, fitted_amplitude_v=fitted_amplitude, fitted_decay_rate_per_s=connected_rate,
+            capacitance_estimated_f=capacitance, fitted_amplitude_v=fitted_amplitude,
+            fitted_baseline_v=fitted_baseline, fitted_decay_rate_per_s=connected_rate,
             r_squared=r_squared, rmse_voltage_v=rmse, timing=context, acquisition_configuration=self.acquisition_configuration,
             quality_status=quality, warnings=unique_warnings)

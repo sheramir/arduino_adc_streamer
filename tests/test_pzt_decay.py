@@ -1,6 +1,7 @@
 import json
 import math
 
+import numpy as np
 import pytest
 
 from data_processing.adc_mux_timing import Mg24DualMuxTimingCalculator
@@ -216,12 +217,41 @@ def test_wall_clock_fit_recovers_tau_and_calculates_curve_for_all_post_release_s
     assert trend_samples
     assert min(sample.timestamp_s for sample in trend_samples) >= analyzer.release_time_s
     first_fit = next(sample for sample in analyzer.samples if sample.fit_included)
-    assert analyzer.result.fit_wall_time_origin_s == pytest.approx(0.0)
-    assert analyzer.result.fit_connected_time_origin_s == pytest.approx(0.0)
-    first_event = min(trend_samples, key=lambda sample: sample.relative_time_s)
-    assert first_event.calculated_voltage_v == pytest.approx(
-        analyzer.result.vmid_v + analyzer.result.fitted_amplitude_v
+    assert analyzer.result.fit_wall_time_origin_s == pytest.approx(first_fit.timestamp_s)
+    assert analyzer.result.fit_connected_time_origin_s == pytest.approx(first_fit.cumulative_connected_time_s)
+    assert first_fit.calculated_voltage_v == pytest.approx(
+        analyzer.result.fitted_baseline_v + analyzer.result.fitted_amplitude_v
     )
+
+
+def test_voltage_fit_leaves_the_asymptote_free_from_vmid():
+    analyzer = PztDecayAnalyzer(
+        _mapping(), PztDecayTimingContext.from_adc_mux_timing(_timing(), 1), PztDecaySettings()
+    )
+    analyzer.begin_with_vmid(1.65)
+    x = np.arange(30, dtype=float) * 1e-4
+    measured = 1.74 + 0.80 * np.exp(-x / 0.001)
+
+    fitted_baseline, _amplitude, rate, _residuals = analyzer._fit_voltage_exponential(x, measured)
+
+    assert fitted_baseline == pytest.approx(1.74, abs=0.01)
+    assert 1.0 / rate == pytest.approx(0.001, rel=0.05)
+
+
+def test_fit_selects_one_uniform_timestamp_run_and_excludes_large_gap():
+    analyzer = PztDecayAnalyzer(
+        _mapping(), PztDecayTimingContext.from_adc_mux_timing(_timing(), 1), PztDecaySettings()
+    )
+    candidates = [
+        PztDecaySample(index, timestamp, 2.0, "recording_decay", fit_included=True)
+        for index, timestamp in enumerate((0.0, 1e-5, 2e-5, 5e-4, 5.1e-4))
+    ]
+
+    selected = analyzer._select_uniform_cadence_run(candidates)
+
+    assert [sample.sample_index for sample in selected] == [0, 1, 2]
+    assert not candidates[3].fit_included
+    assert candidates[3].rejection_reason == "outside uniform sampling interval run"
 
 
 def test_connected_time_fit_and_capacitance_use_connected_exposure_not_wall_time():

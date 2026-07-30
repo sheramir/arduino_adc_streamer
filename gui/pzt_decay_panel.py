@@ -28,9 +28,11 @@ PZT_DECAY_REPEAT_COUNT = 50
 PZT_DECAY_WAIT_REPEAT_COUNT = 1
 PZT_DECAY_VMID_REPEAT_COUNT = 100
 PZT_DECAY_VMID_DISCARD_INITIAL_SAMPLES = 10
+PZT_DECAY_SAMPLING_METHOD_BURST = "Burst Mode"
+PZT_DECAY_SAMPLING_METHOD_SINGLE = "Single Mode"
 PZT_DECAY_LIVE_PLOT_MAX_SAMPLES = 5_000
 PZT_DECAY_NO_DATA_TIMEOUT_S = 60.0
-PZT_DECAY_SETTINGS_VERSION = 2
+PZT_DECAY_SETTINGS_VERSION = 3
 # Keep a small, immediately preceding target plateau on the completed plot.
 # This makes the release and the portion above the fit-upper threshold
 # visible without allowing a long target-wait period to dominate the x-axis.
@@ -58,6 +60,7 @@ class PztDecayPanelMixin:
         self._pzt_decay_mode: str | None = None
         self._pzt_decay_previous_repeat: int | None = None
         self._pzt_decay_next_burst_index = 0
+        self._pzt_decay_saved_burst_repeat_count = PZT_DECAY_REPEAT_COUNT
         self.pzt_decay_vmid_by_signal: dict[str, tuple[float, float]] = {}
         self._pzt_decay_watchdog = QTimer(self)
         self._pzt_decay_watchdog.setInterval(250)
@@ -76,8 +79,15 @@ class PztDecayPanelMixin:
         form.addRow("", self.pzt_decay_calculate_vmid_btn)
         self.pzt_decay_excitation_spin = QDoubleSpinBox(); self.pzt_decay_excitation_spin.setRange(0.001, 3.0); self.pzt_decay_excitation_spin.setDecimals(4); self.pzt_decay_excitation_spin.setValue(1.0); self.pzt_decay_excitation_spin.setSuffix(" V")
         form.addRow("Excitation above Vmid:", self.pzt_decay_excitation_spin)
+        self.pzt_decay_sampling_method_combo = QComboBox()
+        self.pzt_decay_sampling_method_combo.addItems((PZT_DECAY_SAMPLING_METHOD_BURST, PZT_DECAY_SAMPLING_METHOD_SINGLE))
+        self.pzt_decay_sampling_method_combo.currentTextChanged.connect(self._update_pzt_decay_sampling_controls)
+        form.addRow("Sampling Method:", self.pzt_decay_sampling_method_combo)
         self.pzt_decay_repeat_spin = QSpinBox(); self.pzt_decay_repeat_spin.setRange(1, 100); self.pzt_decay_repeat_spin.setValue(PZT_DECAY_REPEAT_COUNT); self.pzt_decay_repeat_spin.setSuffix(" retained pairs")
         form.addRow("Repeat burst count:", self.pzt_decay_repeat_spin)
+        self.pzt_decay_dummy_ground_check = QCheckBox("Use dummy ground (Single Mode)")
+        self.pzt_decay_dummy_ground_check.setChecked(True)
+        form.addRow("", self.pzt_decay_dummy_ground_check)
         self.pzt_decay_required_voltage_label = QLabel("Calculate Vmid first.")
         form.addRow("Required applied voltage:", self.pzt_decay_required_voltage_label)
         self.pzt_decay_resistance_spin = QDoubleSpinBox(); self.pzt_decay_resistance_spin.setRange(0.0, 1e15); self.pzt_decay_resistance_spin.setDecimals(3); self.pzt_decay_resistance_spin.setValue(0.0); self.pzt_decay_resistance_spin.setSuffix(" Ω")
@@ -118,7 +128,8 @@ class PztDecayPanelMixin:
         for widget in (self.pzt_decay_signal_combo, self.pzt_decay_excitation_spin, self.pzt_decay_resistance_spin,
                        self.pzt_decay_capacitance_check, self.pzt_decay_tolerance_spin, self.pzt_decay_fit_upper,
                        self.pzt_decay_fit_lower, self.pzt_decay_min_fit_spin, self.pzt_decay_duration_spin,
-                       self.pzt_decay_repeat_spin, self.pzt_decay_robust_check):
+                       self.pzt_decay_repeat_spin, self.pzt_decay_sampling_method_combo,
+                       self.pzt_decay_dummy_ground_check, self.pzt_decay_robust_check):
             signal = getattr(widget, "valueChanged", None) or getattr(widget, "currentTextChanged", None) or getattr(widget, "stateChanged", None)
             if signal: signal.connect(self.save_last_pzt_decay_settings)
 
@@ -130,6 +141,8 @@ class PztDecayPanelMixin:
                   "tolerance": self.pzt_decay_tolerance_spin.value(), "fit_upper": self.pzt_decay_fit_upper.value(),
                   "fit_lower": self.pzt_decay_fit_lower.value(), "min_fit": self.pzt_decay_min_fit_spin.value(),
                   "duration_s": self.pzt_decay_duration_spin.value(), "repeat_count": self.pzt_decay_repeat_spin.value(),
+                  "sampling_method": self.pzt_decay_sampling_method_combo.currentText(),
+                  "single_dummy_ground": self.pzt_decay_dummy_ground_check.isChecked(),
                   "robust": self.pzt_decay_robust_check.isChecked()}
         for key, value in values.items(): settings.setValue(key, value)
         settings.setValue("defaults_version", PZT_DECAY_SETTINGS_VERSION)
@@ -151,7 +164,16 @@ class PztDecayPanelMixin:
         self.pzt_decay_min_fit_spin.setValue(max(3, int(settings.value("min_fit", 3))))
         self.pzt_decay_duration_spin.setValue(float(settings.value("duration_s", 60.0)))
         self.pzt_decay_repeat_spin.setValue(PZT_DECAY_REPEAT_COUNT if use_new_defaults else max(1, int(settings.value("repeat_count", PZT_DECAY_REPEAT_COUNT))))
+        self.pzt_decay_sampling_method_combo.setCurrentText(
+            PZT_DECAY_SAMPLING_METHOD_BURST if use_new_defaults else str(
+                settings.value("sampling_method", PZT_DECAY_SAMPLING_METHOD_BURST)
+            )
+        )
+        self.pzt_decay_dummy_ground_check.setChecked(
+            str(settings.value("single_dummy_ground", "true")).lower() in ("true", "1")
+        )
         self.pzt_decay_robust_check.setChecked(str(settings.value("robust", "true")).lower() in ("true", "1"))
+        self._update_pzt_decay_sampling_controls()
         if use_new_defaults:
             self.save_last_pzt_decay_settings()
 
@@ -210,10 +232,48 @@ class PztDecayPanelMixin:
                        getattr(self, "pzt_decay_capacitance_check", None), getattr(self, "pzt_decay_tolerance_spin", None),
                        getattr(self, "pzt_decay_fit_upper", None), getattr(self, "pzt_decay_fit_lower", None),
                        getattr(self, "pzt_decay_min_fit_spin", None), getattr(self, "pzt_decay_duration_spin", None),
-                       getattr(self, "pzt_decay_repeat_spin", None),
+                       getattr(self, "pzt_decay_repeat_spin", None), getattr(self, "pzt_decay_sampling_method_combo", None),
+                       getattr(self, "pzt_decay_dummy_ground_check", None),
                        getattr(self, "pzt_decay_robust_check", None), getattr(self, "pzt_decay_begin_btn", None)):
             if widget is not None:
                 widget.setEnabled(enabled)
+        self._update_pzt_decay_sampling_controls()
+
+    def _pzt_decay_is_single_mode(self) -> bool:
+        return (
+            getattr(self, "pzt_decay_sampling_method_combo", None) is not None
+            and self.pzt_decay_sampling_method_combo.currentText() == PZT_DECAY_SAMPLING_METHOD_SINGLE
+        )
+
+    def _pzt_decay_measurement_repeat_count(self) -> int:
+        return 1 if self._pzt_decay_is_single_mode() else self.pzt_decay_repeat_spin.value()
+
+    def _pzt_decay_measurement_uses_dummy_ground(self) -> bool:
+        return self._pzt_decay_is_single_mode() and self.pzt_decay_dummy_ground_check.isChecked()
+
+    def _pzt_decay_ground_command(self, mapping, use_dummy_ground: bool) -> tuple[str, int]:
+        """Return an existing ground command and a valid ground address when needed."""
+        if not use_dummy_ground:
+            return "ground false", -1
+        ground_pin = self._pzt_decay_config_snapshot.ground_pin
+        if ground_pin < 0 or ground_pin == mapping.mux_address:
+            ground_pin = 0 if mapping.mux_address != 0 else 15
+        return f"ground {ground_pin}", ground_pin
+
+    def _update_pzt_decay_sampling_controls(self, *_args) -> None:
+        """Apply method-specific control gating without changing the saved single-mode choice."""
+        if not hasattr(self, "pzt_decay_repeat_spin"):
+            return
+        controls_enabled = getattr(self, "pzt_decay_begin_btn", None) is not None and self.pzt_decay_begin_btn.isEnabled()
+        single_mode = self._pzt_decay_is_single_mode()
+        if single_mode:
+            if self.pzt_decay_repeat_spin.value() != 1:
+                self._pzt_decay_saved_burst_repeat_count = self.pzt_decay_repeat_spin.value()
+            self.pzt_decay_repeat_spin.setValue(1)
+        elif self.pzt_decay_repeat_spin.value() == 1:
+            self.pzt_decay_repeat_spin.setValue(max(2, self._pzt_decay_saved_burst_repeat_count))
+        self.pzt_decay_repeat_spin.setEnabled(controls_enabled and not single_mode)
+        self.pzt_decay_dummy_ground_check.setEnabled(controls_enabled and single_mode)
 
     def _update_pzt_decay_required_voltage(self, *_args) -> None:
         if not hasattr(self, "pzt_decay_required_voltage_label"):
@@ -284,20 +344,20 @@ class PztDecayPanelMixin:
             self._pzt_decay_config_snapshot = self.config.copy()
             self._pzt_decay_control_snapshot = {"buffer": self.buffer_spin.value() if hasattr(self, "buffer_spin") else 1}
             self.set_controls_enabled(False)
-            # Vmid is one compact repeat-100 burst.  A measurement waits with
-            # one sample, then switches to its dense burst after the target is
-            # found.  ``ground false`` uses the existing firmware command to
-            # skip dummy-ground ADC conversions; firmware MUX parking remains
-            # unchanged and is deliberately not configured here.
+            # Vmid is always one compact repeat-100, no-dummy-ground burst.
+            # Measurement target detection uses repeat 1; after target it
+            # switches to either the requested no-ground burst or single mode.
             initial_repeat_count = (
                 PZT_DECAY_VMID_REPEAT_COUNT
                 if mode == "vmid" else PZT_DECAY_WAIT_REPEAT_COUNT
             )
-            for command in (f"mode PZT" if self.is_array_pzt_pzr_mode() else None, f"channels {mapping.mux_address}", f"repeat {initial_repeat_count}", "ground false", "buffer 1"):
+            use_dummy_ground = mode == "measurement" and self._pzt_decay_measurement_uses_dummy_ground()
+            ground_command, ground_pin = self._pzt_decay_ground_command(mapping, use_dummy_ground)
+            for command in (f"mode PZT" if self.is_array_pzt_pzr_mode() else None, f"channels {mapping.mux_address}", f"repeat {initial_repeat_count}", ground_command, "buffer 1"):
                 if command:
                     ok, _ = self.send_command_and_wait_ack(command, None, timeout=0.5, max_retries=2)
                     if not ok: raise RuntimeError(f"device did not acknowledge '{command}'")
-            self.config.update({"channels": [mapping.mux_address], "channel_selection_source": "pzt_decay", "selected_array_sensors": [], "array_operation_mode": "PZT", "repeat": initial_repeat_count, "use_ground": False})
+            self.config.update({"channels": [mapping.mux_address], "channel_selection_source": "pzt_decay", "selected_array_sensors": [], "array_operation_mode": "PZT", "repeat": initial_repeat_count, "ground_pin": ground_pin, "use_ground": use_dummy_ground})
             timing = calculate_adc_mux_timing_for_acquisition(self.current_mcu, self.config)
             if timing is None: raise RuntimeError("no ADC/MUX timing model is available for this device")
             context = PztDecayTimingContext.from_adc_mux_timing(timing, mapping.physical_adc_input)
@@ -332,10 +392,14 @@ class PztDecayPanelMixin:
                 )
                 self.log_status("PZT decay Vmid measurement started; regular acquisition is locked.")
             else:
+                sampling_detail = (
+                    f"Single Mode: repeat 1; dummy ground {'enabled' if use_dummy_ground else 'disabled'}."
+                    if self._pzt_decay_is_single_mode()
+                    else f"Burst Mode: after target, {self.pzt_decay_repeat_spin.value()} connected repeats; no dummy-ground ADC conversion."
+                )
                 self.pzt_decay_timing_label.setText(
-                    f"CH{mapping.physical_adc_input}: waiting with 1 repeat; after target, "
-                    f"{self.pzt_decay_repeat_spin.value()} connected repeats per selected MUX pair. "
-                    "No dummy-ground ADC conversion occurs before bursts; existing firmware parking remains enabled. "
+                    f"CH{mapping.physical_adc_input}: waiting with 1 repeat. {sampling_detail} "
+                    "Existing firmware parking remains enabled. "
                     f"Dense pair-loop interval {context.pair_loop_interval_s * 1e6:.2f} µs; "
                     f"first effective sample {context.pre_sample_decay_s * 1e6:.2f} µs after connection."
                 )
@@ -361,7 +425,7 @@ class PztDecayPanelMixin:
                 or not self._pzt_decay_dense_sampling_pending):
             return
         self._pzt_decay_dense_sampling_pending = False
-        repeat_count = self.pzt_decay_repeat_spin.value()
+        repeat_count = self._pzt_decay_measurement_repeat_count()
         try:
             # The active PZT stream only polls for ``stop``.  Stop first so
             # repeat is acknowledged by the command parser rather than being
@@ -403,10 +467,14 @@ class PztDecayPanelMixin:
                 self.serial_thread.set_capturing(True, expected_samples_per_sweep=2 * repeat_count)
             self.send_command("run")
             self._pzt_decay_dense_sampling_active = True
-            self.pzt_decay_result_label.setText(
-                "Target found. Dense no-dummy-ground sampling is ready; remove the applied voltage now to record the decay."
+            sampling_label = (
+                f"Single Mode (dummy ground {'enabled' if self.config.get('use_ground') else 'disabled'})"
+                if self._pzt_decay_is_single_mode() else "Burst Mode (no dummy ground)"
             )
-            self.log_status(f"PZT decay target found; restarted stream with {repeat_count} connected repeats.")
+            self.pzt_decay_result_label.setText(
+                f"Target found. {sampling_label} sampling is ready; remove the applied voltage now to record the decay."
+            )
+            self.log_status(f"PZT decay target found; restarted {sampling_label} with repeat {repeat_count}.")
         except Exception as exc:
             self._finish_pzt_decay_capture(error=str(exc))
 

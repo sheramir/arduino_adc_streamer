@@ -14,8 +14,9 @@ from PyQt6.QtWidgets import QApplication, QScrollArea
 
 from constants.plotting import IADC_RESOLUTION_BITS
 from constants.pressure_map import (
-    DEFAULT_PRESSURE_PACKAGE_GAP_MM,
-    DEFAULT_PRESSURE_PACKAGE_BOUNDARY_SHAPE,
+    DEFAULT_PRESSURE_OUTER_BOUNDARY_REACH_MM,
+    DEFAULT_PRESSURE_PACKAGE_CENTER_SPACING_MM,
+    DEFAULT_PRESSURE_PIXELS_PER_MM,
     DEFAULT_PRESSURE_SHOW_MARKER,
     DEFAULT_HPF_CUTOFF_HZ,
     DEFAULT_INTEGRATION_WINDOW_SAMPLES,
@@ -167,19 +168,19 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         harness.shear_arrow_base_width_spin = DummySpinBox(0.6)
         harness.shear_arrow_width_scales_check = DummyCheckBox(False)
         harness.pressure_sensor_spacing_spin = DummySpinBox(1.75)
-        harness.pressure_circle_diameter_spin = DummySpinBox(5.5)
-        harness.pressure_grid_resolution_spin = DummySpinBox(25)
-        harness.pressure_grid_margin_spin = DummySpinBox(3)
+        harness.pressure_package_center_spacing_spin = DummySpinBox(8.0)
+        harness.pressure_pixels_per_mm_spin = DummySpinBox(12.5)
         harness.pressure_decay_rate_spin = DummySpinBox(0.9)
         harness.pressure_decay_ref_distance_spin = DummySpinBox(2.25)
-        harness.pressure_package_gap_spin = DummySpinBox(3.5)
-        harness.pressure_gap_contrast_gain_spin = DummySpinBox(0.42)
-        harness.pressure_gap_fade_width_spin = DummySpinBox(0.65)
+        harness.pressure_near_outer_peak_offset_spin = DummySpinBox(1.25)
+        harness.pressure_outer_boundary_reach_spin = DummySpinBox(1.5)
         harness.pressure_max_intensity_spin = DummySpinBox(7.5)
-        harness.pressure_package_boundary_shape_combo = DummyComboBox("Square")
         harness.pressure_show_negative_check = DummyCheckBox(True)
         harness.pressure_show_marker_check = DummyCheckBox(False)
         harness.pressure_mirror_check = DummyCheckBox(False)
+        harness.pressure_show_near_outer_boundary_check = DummyCheckBox(True)
+        harness.pressure_show_outer_boundary_check = DummyCheckBox(True)
+        harness.pressure_show_mid_boundary_check = DummyCheckBox(False)
 
     def test_counts_to_voltage_ignores_time_series_units(self):
         harness = SignalIntegrationPanelHarness()
@@ -548,19 +549,19 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             self.assertEqual(settings["processing"]["package_sensor_gains"]["PZT3"]["C"], 1.25)
             self.assertFalse(settings["visualization"]["arrow_width_scales"])
             self.assertEqual(settings["pressure_map"]["sensor_spacing_mm"], 1.75)
-            self.assertEqual(settings["pressure_map"]["circle_diameter_mm"], 5.5)
-            self.assertEqual(settings["pressure_map"]["grid_resolution"], 25)
-            self.assertEqual(settings["pressure_map"]["grid_margin"], 3)
+            self.assertEqual(settings["pressure_map"]["package_center_spacing_mm"], 8.0)
+            self.assertEqual(settings["pressure_map"]["pixels_per_mm"], 12.5)
             self.assertEqual(settings["pressure_map"]["decay_rate"], 0.9)
             self.assertEqual(settings["pressure_map"]["decay_ref_distance_mm"], 2.25)
-            self.assertEqual(settings["pressure_map"]["package_gap_mm"], 3.5)
-            self.assertEqual(settings["pressure_map"]["gap_contrast_gain"], 0.42)
-            self.assertEqual(settings["pressure_map"]["gap_fade_width_fraction"], 0.65)
+            self.assertEqual(settings["pressure_map"]["near_outer_peak_offset_mm"], 1.25)
+            self.assertEqual(settings["pressure_map"]["outer_boundary_reach_mm"], 1.5)
             self.assertEqual(settings["pressure_map"]["max_intensity"], 7.5)
-            self.assertEqual(settings["pressure_map"]["package_boundary_shape"], "square")
             self.assertTrue(settings["pressure_map"]["show_negative"])
             self.assertFalse(settings["pressure_map"]["show_marker"])
             self.assertFalse(settings["pressure_map"]["mirror"])
+            self.assertTrue(settings["pressure_map"]["show_near_outer_boundary"])
+            self.assertTrue(settings["pressure_map"]["show_outer_boundary"])
+            self.assertFalse(settings["pressure_map"]["show_mid_boundary"])
 
             settings["processing"]["package_sensor_gains"] = {
                 "PZT3": {"R": 2.5, "L": 0.25}
@@ -579,19 +580,19 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             harness.shear_noise_threshold_spin.setValue(3.0)
             harness.shear_arrow_width_scales_check.setChecked(True)
             harness.pressure_sensor_spacing_spin.setValue(2.0)
-            harness.pressure_circle_diameter_spin.setValue(6.0)
-            harness.pressure_grid_resolution_spin.setValue(21)
-            harness.pressure_grid_margin_spin.setValue(1)
+            harness.pressure_package_center_spacing_spin.setValue(9.0)
+            harness.pressure_pixels_per_mm_spin.setValue(5.0)
             harness.pressure_decay_rate_spin.setValue(0.1)
             harness.pressure_decay_ref_distance_spin.setValue(0.5)
-            harness.pressure_package_gap_spin.setValue(DEFAULT_PRESSURE_PACKAGE_GAP_MM)
-            harness.pressure_gap_contrast_gain_spin.setValue(0.0)
-            harness.pressure_gap_fade_width_spin.setValue(1.0)
+            harness.pressure_near_outer_peak_offset_spin.setValue(0.0)
+            harness.pressure_outer_boundary_reach_spin.setValue(1.0)
             harness.pressure_max_intensity_spin.setValue(1.0)
-            harness.pressure_package_boundary_shape_combo.setCurrentText(DEFAULT_PRESSURE_PACKAGE_BOUNDARY_SHAPE.title())
             harness.pressure_show_negative_check.setChecked(DEFAULT_PRESSURE_SHOW_NEGATIVE)
             harness.pressure_show_marker_check.setChecked(DEFAULT_PRESSURE_SHOW_MARKER)
             harness.pressure_mirror_check.setChecked(False)
+            harness.pressure_show_near_outer_boundary_check.setChecked(False)
+            harness.pressure_show_outer_boundary_check.setChecked(False)
+            harness.pressure_show_mid_boundary_check.setChecked(True)
 
             applied = harness.load_shear_settings_from_path(settings_path, log_message=True)
 
@@ -608,21 +609,65 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             self.assertEqual(harness.shear_noise_threshold_spin.value(), 0.75)
             self.assertFalse(harness.shear_arrow_width_scales_check.isChecked())
             self.assertEqual(harness.pressure_sensor_spacing_spin.value(), 1.75)
-            self.assertEqual(harness.pressure_circle_diameter_spin.value(), 5.5)
-            self.assertEqual(harness.pressure_grid_resolution_spin.value(), 25)
-            self.assertEqual(harness.pressure_grid_margin_spin.value(), 3)
+            self.assertEqual(harness.pressure_package_center_spacing_spin.value(), 8.0)
+            self.assertEqual(harness.pressure_pixels_per_mm_spin.value(), 12.5)
             self.assertEqual(harness.pressure_decay_rate_spin.value(), 0.9)
             self.assertEqual(harness.pressure_decay_ref_distance_spin.value(), 2.25)
-            self.assertEqual(harness.pressure_package_gap_spin.value(), 3.5)
-            self.assertEqual(harness.pressure_gap_contrast_gain_spin.value(), 0.42)
-            self.assertEqual(harness.pressure_gap_fade_width_spin.value(), 0.65)
+            self.assertEqual(harness.pressure_near_outer_peak_offset_spin.value(), 1.25)
+            self.assertEqual(harness.pressure_outer_boundary_reach_spin.value(), 1.5)
             self.assertEqual(harness.pressure_max_intensity_spin.value(), 7.5)
-            self.assertEqual(harness.pressure_package_boundary_shape_combo.currentText(), "Square")
             self.assertTrue(harness.pressure_show_negative_check.isChecked())
             self.assertFalse(harness.pressure_show_marker_check.isChecked())
             self.assertFalse(harness.pressure_mirror_check.isChecked())
+            self.assertTrue(harness.pressure_show_near_outer_boundary_check.isChecked())
+            self.assertTrue(harness.pressure_show_outer_boundary_check.isChecked())
+            self.assertFalse(harness.pressure_show_mid_boundary_check.isChecked())
             self.assertEqual(harness._pressure_package_sensor_gains["PZT3"]["R"], 2.5)
             self.assertEqual(harness._pressure_package_sensor_gains["PZT3"]["L"], 0.25)
+
+    def test_legacy_geometry_payload_resets_missing_physical_settings_to_defaults(self):
+        harness = SignalIntegrationPanelHarness()
+        self._install_shear_setting_widgets(harness)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            settings_path = Path(temp_dir) / "old_shear_settings.json"
+            harness.save_shear_settings_to_path(settings_path, log_message=False)
+            payload = json.loads(settings_path.read_text(encoding="utf-8"))
+            pressure_map = payload["shear_settings"]["pressure_map"]
+            pressure_map.pop("sensor_spacing_mm")
+            pressure_map.pop("package_center_spacing_mm")
+            pressure_map.pop("pixels_per_mm")
+            pressure_map.pop("near_outer_peak_offset_mm")
+            pressure_map["outer_boundary_reach_mm"] = None
+            pressure_map.pop("show_near_outer_boundary")
+            pressure_map.pop("show_outer_boundary")
+            pressure_map.pop("show_mid_boundary")
+            pressure_map["circle_diameter_mm"] = 5.5
+            pressure_map["grid_resolution"] = 25
+            pressure_map["grid_margin"] = 3
+            pressure_map["package_gap_mm"] = 3.5
+            pressure_map["mid_boundary_fraction"] = 0.4
+            pressure_map["package_boundary_shape"] = "square"
+            settings_path.write_text(json.dumps(payload), encoding="utf-8")
+
+            harness.pressure_sensor_spacing_spin.setValue(3.0)
+            harness.pressure_package_center_spacing_spin.setValue(20.0)
+            harness.pressure_pixels_per_mm_spin.setValue(1.0)
+            harness.pressure_near_outer_peak_offset_spin.setValue(9.0)
+            harness.pressure_outer_boundary_reach_spin.setValue(4.0)
+            harness.pressure_show_near_outer_boundary_check.setChecked(False)
+            harness.pressure_show_outer_boundary_check.setChecked(True)
+            harness.pressure_show_mid_boundary_check.setChecked(True)
+
+            self.assertTrue(harness.load_shear_settings_from_path(settings_path, log_message=False))
+            self.assertEqual(harness.pressure_sensor_spacing_spin.value(), 2.0)
+            self.assertEqual(harness.pressure_package_center_spacing_spin.value(), DEFAULT_PRESSURE_PACKAGE_CENTER_SPACING_MM)
+            self.assertEqual(harness.pressure_pixels_per_mm_spin.value(), DEFAULT_PRESSURE_PIXELS_PER_MM)
+            self.assertEqual(harness.pressure_near_outer_peak_offset_spin.value(), 1.0)
+            self.assertEqual(harness.pressure_outer_boundary_reach_spin.value(), DEFAULT_PRESSURE_OUTER_BOUNDARY_REACH_MM)
+            self.assertFalse(harness.pressure_show_near_outer_boundary_check.isChecked())
+            self.assertTrue(harness.pressure_show_outer_boundary_check.isChecked())
+            self.assertFalse(harness.pressure_show_mid_boundary_check.isChecked())
 
     def test_pressure_map_tab_controls_expose_tooltips(self):
         harness = SignalIntegrationPanelHarness()
@@ -649,16 +694,16 @@ class SignalIntegrationPanelTests(unittest.TestCase):
                 "shear_save_settings_btn": "save the current pressure map tab settings",
                 "shear_load_settings_btn": "load pressure map tab settings",
                 "pressure_sensor_spacing_spin": "sensor spacing",
-                "pressure_circle_diameter_spin": "pressure footprint",
-                "pressure_grid_resolution_spin": "grid cells across the pressure-circle diameter",
-                "pressure_grid_margin_spin": "extra grid cells",
+                "pressure_package_center_spacing_spin": "between neighbouring package centers",
+                "pressure_pixels_per_mm_spin": "grid density",
                 "pressure_decay_rate_spin": "distance gain",
                 "pressure_decay_ref_distance_spin": "reference distance",
-                "pressure_package_gap_spin": "edge-to-edge distance",
-                "pressure_gap_contrast_gain_spin": "estimated gap peak",
-                "pressure_gap_fade_width_spin": "lateral half-width",
+                "pressure_near_outer_peak_offset_spin": "outside that sensor",
+                "pressure_outer_boundary_reach_spin": "distance from the mid boundary",
                 "pressure_max_intensity_spin": "upper intensity mapped to white",
-                "pressure_package_boundary_shape_combo": "whole-package boundary shape",
+                "pressure_show_near_outer_boundary_check": "near-outer peak support circle",
+                "pressure_show_outer_boundary_check": "outer-boundary reach as a square",
+                "pressure_show_mid_boundary_check": "mid-boundary package dividers",
                 "pressure_show_negative_check": "negative release values",
                 "pressure_show_marker_check": "pressure-point marker",
                 "pressure_mirror_check": "mirror",
@@ -667,6 +712,15 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             for widget_name, expected_text in expected_tooltips.items():
                 widget = getattr(harness, widget_name)
                 self.assertIn(expected_text, widget.toolTip().lower(), msg=widget_name)
+            for obsolete_widget_name in (
+                "pressure_package_boundary_shape_combo",
+                "pressure_circle_diameter_spin",
+                "pressure_grid_resolution_spin",
+                "pressure_grid_margin_spin",
+                "pressure_package_gap_spin",
+                "pressure_mid_boundary_fraction_spin",
+            ):
+                self.assertFalse(hasattr(harness, obsolete_widget_name), msg=obsolete_widget_name)
         finally:
             tab.close()
 

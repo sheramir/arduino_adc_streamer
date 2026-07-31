@@ -260,7 +260,7 @@ class PressureMapWidgetTests(unittest.TestCase):
                 calibrated_values={"C": 0.0, "L": 2.0, "R": 0.0, "T": 0.0, "B": 0.0},
             ),
         ]
-        array_result = PressureMapArrayGenerator(circle_diameter_mm=5.0, package_gap_mm=2.0).generate([
+        array_result = PressureMapArrayGenerator().generate([
             PressureMapArrayPackage(
                 sensor_id=package.sensor_id,
                 grid_position=package.grid_position,
@@ -271,6 +271,11 @@ class PressureMapWidgetTests(unittest.TestCase):
             for package in packages
         ])
 
+        self.widget.configure_boundary_visibility(
+            show_near_outer_boundary=True,
+            show_outer_boundary=True,
+            show_mid_boundary=True,
+        )
         self.widget.update_array_display(array_result, packages)
 
         self.assertEqual(self.widget.last_array_result, array_result)
@@ -278,8 +283,40 @@ class PressureMapWidgetTests(unittest.TestCase):
         self.assertFalse(self.widget.package_image_items[0].isVisible())
         self.assertTrue(self.widget.package_circle_items[0].isVisible())
         self.assertTrue(self.widget.package_circle_items[1].isVisible())
+        self.assertTrue(self.widget.package_outer_boundary_items[0].isVisible())
+        self.assertTrue(self.widget.package_mid_boundary_items[0].isVisible())
+        self.assertNotEqual(
+            self.widget.package_outer_boundary_items[0].pen().dashPattern(),
+            self.widget.package_mid_boundary_items[0].pen().dashPattern(),
+        )
         self.assertIn("PZT3", self.widget.readout_label.text())
         self.assertIn("PZT6", self.widget.readout_label.text())
+
+    def test_boundary_overlays_use_peak_support_outer_support_and_midpoint_dash_styles(self):
+        signals = {"C": 0.0, "R": 5.0, "T": 0.0, "L": 0.0, "B": 0.0}
+        normal_result = self.calculator.compute(signals)
+        pressure_result = self.generator.generate(signals)
+        self.widget.configure_boundary_visibility(
+            show_near_outer_boundary=True,
+            show_outer_boundary=True,
+            show_mid_boundary=True,
+        )
+        self.widget.update_display(normal_result, pressure_result)
+
+        expected_radius = self.generator.sensor_spacing_mm + self.generator.near_outer_peak_offset_mm
+        self.assertAlmostEqual(self.widget.circle_item.rect().width(), expected_radius * 2.0, places=9)
+        self.assertTrue(self.widget.circle_item.isVisible())
+        self.assertTrue(self.widget.outer_boundary_item.isVisible())
+        self.assertTrue(self.widget.mid_boundary_item.isVisible())
+        self.assertAlmostEqual(
+            self.widget.mid_boundary_item.rect().width(),
+            pressure_result.mid_boundary_half_width_mm * 2.0,
+        )
+
+        self.widget.configure_boundary_visibility(show_near_outer_boundary=False)
+        self.widget.update_display(normal_result, pressure_result)
+        self.assertFalse(self.widget.circle_item.isVisible())
+        self.assertTrue(self.widget.outer_boundary_item.isVisible())
 
     def test_grayscale_lookup_table_runs_from_black_to_white(self):
         lookup_table = self.widget._grayscale_lookup_table()
@@ -366,26 +403,34 @@ class PressureMapWidgetTests(unittest.TestCase):
 
         self.assertEqual(len(self.widget.peak_marker_item.points()), 0)
 
-    def test_package_boundary_shape_can_be_circle_square_or_none(self):
+    def test_boundary_visibility_toggles_are_independent(self):
         signals = {"C": 0.0, "R": 5.0, "T": 0.0, "L": 0.0, "B": 0.0}
         normal_result = self.calculator.compute(signals)
         pressure_result = self.generator.generate(signals)
 
-        self.widget.configure_package_boundary(boundary_shape="circle")
+        self.widget.configure_boundary_visibility(
+            show_near_outer_boundary=True,
+            show_outer_boundary=False,
+            show_mid_boundary=False,
+        )
         self.widget.update_display(normal_result, pressure_result)
         self.assertIsInstance(self.widget.circle_item, QGraphicsEllipseItem)
         self.assertTrue(self.widget.circle_item.isVisible())
         self.assertEqual(self.widget.circle_item.pen().style(), Qt.PenStyle.DotLine)
         self.assertEqual(len(self.widget.sensor_marker_item.points()), len(pressure_result.sensor_positions))
 
-        self.widget.configure_package_boundary(boundary_shape="square")
-        self.assertIsInstance(self.widget.circle_item, QGraphicsRectItem)
-        self.assertTrue(self.widget.circle_item.isVisible())
-        self.assertEqual(self.widget.circle_item.pen().style(), Qt.PenStyle.DotLine)
-        self.assertEqual(len(self.widget.sensor_marker_item.points()), len(pressure_result.sensor_positions))
-
-        self.widget.configure_package_boundary(boundary_shape="none")
+        self.widget.configure_boundary_visibility(
+            show_near_outer_boundary=False,
+            show_outer_boundary=True,
+            show_mid_boundary=True,
+        )
         self.assertFalse(self.widget.circle_item.isVisible())
+        self.assertTrue(self.widget.outer_boundary_item.isVisible())
+        self.assertTrue(self.widget.mid_boundary_item.isVisible())
+        self.assertNotEqual(
+            self.widget.outer_boundary_item.pen().dashPattern(),
+            self.widget.mid_boundary_item.pen().dashPattern(),
+        )
         self.assertEqual(len(self.widget.sensor_marker_item.points()), len(pressure_result.sensor_positions))
 
     def test_mirror_can_be_enabled_and_disabled(self):

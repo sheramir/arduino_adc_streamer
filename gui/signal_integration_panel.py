@@ -9,8 +9,8 @@ live acquisition loop still does not run the streaming integrator, so
 responsiveness can be evaluated one processing stage at a time.
 
 Array configurations can additionally render one combined pressure surface
-across adjacent packages. The Settings tab exposes the physical package gap,
-gap contrast, and gap fade width used by that array interpolation path.
+from overlapping package candidates. The Settings tab exposes package-center
+spacing and fixed physical support geometry.
 
 Dependencies:
     PyQt6, pyqtgraph, numpy, existing ADC plotting helpers, and config constants.
@@ -55,17 +55,18 @@ from constants.sensor_config import (
 from config.sensor_config import normalize_array_cell
 from constants.ui import PRESSURE_MAP_TAB_NAME
 from constants.pressure_map import (
-    DEFAULT_PRESSURE_GAP_CONTRAST_GAIN,
+    DEFAULT_PRESSURE_NEAR_OUTER_PEAK_OFFSET_MM,
+    DEFAULT_PRESSURE_OUTER_BOUNDARY_REACH_MM,
+    DEFAULT_PRESSURE_PACKAGE_CENTER_SPACING_MM,
+    DEFAULT_PRESSURE_PIXELS_PER_MM,
+    DEFAULT_PRESSURE_SHOW_MID_BOUNDARY,
+    DEFAULT_PRESSURE_SHOW_NEAR_OUTER_BOUNDARY,
+    DEFAULT_PRESSURE_SHOW_OUTER_BOUNDARY,
     DEFAULT_PRESSURE_SHOW_MARKER,
     DEFAULT_PRESSURE_DECAY_RATE,
     DEFAULT_PRESSURE_DECAY_REF_DISTANCE_MM,
-    DEFAULT_PRESSURE_GAP_FADE_WIDTH_FRACTION,
-    DEFAULT_PRESSURE_GRID_MARGIN,
-    DEFAULT_PRESSURE_GRID_RESOLUTION,
     DEFAULT_PRESSURE_MAP_MAX_INTENSITY,
     DEFAULT_PRESSURE_MIRROR,
-    DEFAULT_PRESSURE_PACKAGE_GAP_MM,
-    DEFAULT_PRESSURE_PACKAGE_BOUNDARY_SHAPE,
     DEFAULT_PRESSURE_SENSOR_SPACING_MM,
     DEFAULT_DISPLAY_WINDOW_SEC,
     DEFAULT_HPF_CUTOFF_HZ,
@@ -75,10 +76,6 @@ from constants.pressure_map import (
     DEFAULT_SIGNAL_INTEGRATION_ROSETTE_RS2_ENABLED,
     DEFAULT_SIGNAL_INTEGRATION_ROSETTE_Y_MAX_OHMS,
     DEFAULT_SIGNAL_INTEGRATION_ROSETTE_Y_MIN_OHMS,
-    PRESSURE_CIRCLE_DIAMETER_DECIMALS,
-    PRESSURE_CIRCLE_DIAMETER_MAX_MM,
-    PRESSURE_CIRCLE_DIAMETER_MIN_MM,
-    PRESSURE_CIRCLE_DIAMETER_STEP_MM,
     PRESSURE_DECAY_RATE_DECIMALS,
     PRESSURE_DECAY_RATE_MAX,
     PRESSURE_DECAY_RATE_MIN,
@@ -87,31 +84,28 @@ from constants.pressure_map import (
     PRESSURE_DECAY_REF_DISTANCE_MAX_MM,
     PRESSURE_DECAY_REF_DISTANCE_MIN_MM,
     PRESSURE_DECAY_REF_DISTANCE_STEP_MM,
-    PRESSURE_GAP_CONTRAST_GAIN_DECIMALS,
-    PRESSURE_GAP_CONTRAST_GAIN_MAX,
-    PRESSURE_GAP_CONTRAST_GAIN_MIN,
-    PRESSURE_GAP_CONTRAST_GAIN_STEP,
-    PRESSURE_GAP_FADE_WIDTH_FRACTION_DECIMALS,
-    PRESSURE_GAP_FADE_WIDTH_FRACTION_MAX,
-    PRESSURE_GAP_FADE_WIDTH_FRACTION_MIN,
-    PRESSURE_GAP_FADE_WIDTH_FRACTION_STEP,
-    PRESSURE_GRID_MARGIN_MAX,
-    PRESSURE_GRID_MARGIN_STEP,
-    PRESSURE_GRID_MIN_MARGIN,
-    PRESSURE_PACKAGE_GAP_DECIMALS,
-    PRESSURE_PACKAGE_GAP_MAX_MM,
-    PRESSURE_PACKAGE_GAP_MIN_MM,
-    PRESSURE_PACKAGE_GAP_STEP_MM,
-    PRESSURE_GRID_RESOLUTION_MAX,
-    PRESSURE_GRID_RESOLUTION_MIN,
-    PRESSURE_GRID_RESOLUTION_STEP,
+    PRESSURE_NEAR_OUTER_PEAK_OFFSET_DECIMALS,
+    PRESSURE_NEAR_OUTER_PEAK_OFFSET_MAX_MM,
+    PRESSURE_NEAR_OUTER_PEAK_OFFSET_MIN_MM,
+    PRESSURE_NEAR_OUTER_PEAK_OFFSET_STEP_MM,
+    PRESSURE_OUTER_BOUNDARY_REACH_DECIMALS,
+    PRESSURE_OUTER_BOUNDARY_REACH_MAX_MM,
+    PRESSURE_OUTER_BOUNDARY_REACH_MIN_MM,
+    PRESSURE_OUTER_BOUNDARY_REACH_STEP_MM,
+    PRESSURE_PACKAGE_CENTER_SPACING_DECIMALS,
+    PRESSURE_PACKAGE_CENTER_SPACING_MAX_MM,
+    PRESSURE_PACKAGE_CENTER_SPACING_MIN_MM,
+    PRESSURE_PACKAGE_CENTER_SPACING_STEP_MM,
+    PRESSURE_PIXELS_PER_MM_DECIMALS,
+    PRESSURE_PIXELS_PER_MM_MAX,
+    PRESSURE_PIXELS_PER_MM_MIN,
+    PRESSURE_PIXELS_PER_MM_STEP,
     PRESSURE_MAP_STRETCH,
     PRESSURE_MAP_MAX_INTENSITY_DECIMALS,
     PRESSURE_MAP_MAX_INTENSITY_MAX,
     PRESSURE_MAP_MAX_INTENSITY_MIN,
     PRESSURE_MAP_MAX_INTENSITY_STEP,
     PRESSURE_MAP_LEVEL_EPSILON,
-    PRESSURE_PACKAGE_BOUNDARY_SHAPES,
     PRESSURE_SENSOR_SPACING_DECIMALS,
     PRESSURE_SENSOR_SPACING_MAX_MM,
     PRESSURE_SENSOR_SPACING_MIN_MM,
@@ -154,7 +148,6 @@ from constants.shear import (
     DEFAULT_ARROW_MAX_LENGTH_PX,
     DEFAULT_ARROW_MIN_THRESHOLD,
     DEFAULT_ARROW_WIDTH_SCALES,
-    DEFAULT_CIRCLE_DIAMETER_MM,
     DEFAULT_SHEAR_CALIBRATION_GAIN,
     DEFAULT_SHEAR_NOISE_THRESHOLD,
     SHEAR_ARROW_BASE_WIDTH_DECIMALS,
@@ -769,10 +762,9 @@ class PressureMapPanelMixin:
     def _create_pressure_map_settings_group(self) -> QGroupBox:
         """Build persistent Pressure Map geometry and rendering controls.
 
-        The group includes package-local pressure-map parameters, array
-        adjacent-gap interpolation controls with hover explanations, fixed
-        intensity display scaling, package-boundary shape, and mirror/negative
-        display toggles.
+        The group includes package-local pressure-map parameters, physical
+        overlap/support geometry, fixed intensity display scaling,
+        package-boundary rendering, and mirror/negative display toggles.
         """
         group = QGroupBox("Pressure Map Settings")
         layout = QGridLayout(group)
@@ -798,55 +790,40 @@ class PressureMapPanelMixin:
         self.pressure_sensor_spacing_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
         layout.addWidget(self.pressure_sensor_spacing_spin, 0, 1)
 
-        circle_diameter_tooltip = (
-            "Diameter of the circular pressure footprint in millimeters. "
-            "Also sets grid cell size for a given grid resolution."
+        package_center_spacing_tooltip = (
+            "Distance between neighbouring package centers in millimeters. "
+            "This directly positions array packages and defines the Mid Boundary."
         )
-        layout.addWidget(self._create_tooltip_label("Circle diameter:", circle_diameter_tooltip), 0, 2)
-        self.pressure_circle_diameter_spin = QDoubleSpinBox()
-        self.pressure_circle_diameter_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
-        self.pressure_circle_diameter_spin.setRange(
-            PRESSURE_CIRCLE_DIAMETER_MIN_MM,
-            PRESSURE_CIRCLE_DIAMETER_MAX_MM,
+        layout.addWidget(self._create_tooltip_label("Package center spacing:", package_center_spacing_tooltip), 0, 2)
+        self.pressure_package_center_spacing_spin = QDoubleSpinBox()
+        self.pressure_package_center_spacing_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
+        self.pressure_package_center_spacing_spin.setRange(
+            PRESSURE_PACKAGE_CENTER_SPACING_MIN_MM,
+            PRESSURE_PACKAGE_CENTER_SPACING_MAX_MM,
         )
-        self.pressure_circle_diameter_spin.setDecimals(PRESSURE_CIRCLE_DIAMETER_DECIMALS)
-        self.pressure_circle_diameter_spin.setSingleStep(PRESSURE_CIRCLE_DIAMETER_STEP_MM)
-        self.pressure_circle_diameter_spin.setSuffix(" mm")
-        self.pressure_circle_diameter_spin.setValue(DEFAULT_CIRCLE_DIAMETER_MM)
-        self.pressure_circle_diameter_spin.setToolTip(circle_diameter_tooltip)
-        self.pressure_circle_diameter_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
-        layout.addWidget(self.pressure_circle_diameter_spin, 0, 3)
+        self.pressure_package_center_spacing_spin.setDecimals(PRESSURE_PACKAGE_CENTER_SPACING_DECIMALS)
+        self.pressure_package_center_spacing_spin.setSingleStep(PRESSURE_PACKAGE_CENTER_SPACING_STEP_MM)
+        self.pressure_package_center_spacing_spin.setSuffix(" mm")
+        self.pressure_package_center_spacing_spin.setValue(DEFAULT_PRESSURE_PACKAGE_CENTER_SPACING_MM)
+        self.pressure_package_center_spacing_spin.setToolTip(package_center_spacing_tooltip)
+        self.pressure_package_center_spacing_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_package_center_spacing_spin, 0, 3)
 
-        grid_resolution_tooltip = (
-            "Number of grid cells across the pressure-circle diameter before margin cells are added. "
-            "Higher values increase detail and computation."
+        pixels_per_mm_tooltip = (
+            "Numerical grid density in pixels per millimeter. The generated grid "
+            "uses at least this density while placing the center and Outer Boundary edges exactly on pixels."
         )
-        layout.addWidget(self._create_tooltip_label("Grid:", grid_resolution_tooltip), 0, 4)
-        self.pressure_grid_resolution_spin = QSpinBox()
-        self.pressure_grid_resolution_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
-        self.pressure_grid_resolution_spin.setRange(
-            PRESSURE_GRID_RESOLUTION_MIN,
-            PRESSURE_GRID_RESOLUTION_MAX,
-        )
-        self.pressure_grid_resolution_spin.setSingleStep(PRESSURE_GRID_RESOLUTION_STEP)
-        self.pressure_grid_resolution_spin.setValue(DEFAULT_PRESSURE_GRID_RESOLUTION)
-        self.pressure_grid_resolution_spin.setToolTip(grid_resolution_tooltip)
-        self.pressure_grid_resolution_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
-        layout.addWidget(self.pressure_grid_resolution_spin, 0, 5)
-
-        grid_margin_tooltip = (
-            "Extra grid cells added beyond the circle on each side so the pressure planes "
-            "can extrapolate smoothly into the PDMS overhang region."
-        )
-        layout.addWidget(self._create_tooltip_label("Margin:", grid_margin_tooltip), 0, 6)
-        self.pressure_grid_margin_spin = QSpinBox()
-        self.pressure_grid_margin_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
-        self.pressure_grid_margin_spin.setRange(PRESSURE_GRID_MIN_MARGIN, PRESSURE_GRID_MARGIN_MAX)
-        self.pressure_grid_margin_spin.setSingleStep(PRESSURE_GRID_MARGIN_STEP)
-        self.pressure_grid_margin_spin.setValue(DEFAULT_PRESSURE_GRID_MARGIN)
-        self.pressure_grid_margin_spin.setToolTip(grid_margin_tooltip)
-        self.pressure_grid_margin_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
-        layout.addWidget(self.pressure_grid_margin_spin, 0, 7)
+        layout.addWidget(self._create_tooltip_label("Pixels per mm:", pixels_per_mm_tooltip), 0, 4)
+        self.pressure_pixels_per_mm_spin = QDoubleSpinBox()
+        self.pressure_pixels_per_mm_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
+        self.pressure_pixels_per_mm_spin.setRange(PRESSURE_PIXELS_PER_MM_MIN, PRESSURE_PIXELS_PER_MM_MAX)
+        self.pressure_pixels_per_mm_spin.setDecimals(PRESSURE_PIXELS_PER_MM_DECIMALS)
+        self.pressure_pixels_per_mm_spin.setSingleStep(PRESSURE_PIXELS_PER_MM_STEP)
+        self.pressure_pixels_per_mm_spin.setSuffix(" px/mm")
+        self.pressure_pixels_per_mm_spin.setValue(DEFAULT_PRESSURE_PIXELS_PER_MM)
+        self.pressure_pixels_per_mm_spin.setToolTip(pixels_per_mm_tooltip)
+        self.pressure_pixels_per_mm_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_pixels_per_mm_spin, 0, 5)
 
         decay_rate_tooltip = (
             "Distance gain used when estimating pressure-point height from sensor values. "
@@ -881,63 +858,46 @@ class PressureMapPanelMixin:
         self.pressure_decay_ref_distance_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
         layout.addWidget(self.pressure_decay_ref_distance_spin, 1, 3)
 
-        package_gap_tooltip = (
-            "Physical edge-to-edge distance between adjacent sensor packages in array layouts. "
-            "Single-package pressure maps are unchanged."
+        near_outer_peak_tooltip = (
+            "For exactly one active outer sensor, place the inferred pressure peak this many "
+            "millimeters outside that sensor without increasing its value."
         )
-        layout.addWidget(self._create_tooltip_label("Package gap:", package_gap_tooltip), 1, 4)
-        self.pressure_package_gap_spin = QDoubleSpinBox()
-        self.pressure_package_gap_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
-        self.pressure_package_gap_spin.setRange(PRESSURE_PACKAGE_GAP_MIN_MM, PRESSURE_PACKAGE_GAP_MAX_MM)
-        self.pressure_package_gap_spin.setDecimals(PRESSURE_PACKAGE_GAP_DECIMALS)
-        self.pressure_package_gap_spin.setSingleStep(PRESSURE_PACKAGE_GAP_STEP_MM)
-        self.pressure_package_gap_spin.setSuffix(" mm")
-        self.pressure_package_gap_spin.setValue(DEFAULT_PRESSURE_PACKAGE_GAP_MM)
-        self.pressure_package_gap_spin.setToolTip(package_gap_tooltip)
-        self.pressure_package_gap_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
-        layout.addWidget(self.pressure_package_gap_spin, 1, 5)
+        layout.addWidget(self._create_tooltip_label("Near-Outer Peak Offset:", near_outer_peak_tooltip), 1, 4)
+        self.pressure_near_outer_peak_offset_spin = QDoubleSpinBox()
+        self.pressure_near_outer_peak_offset_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
+        self.pressure_near_outer_peak_offset_spin.setRange(
+            PRESSURE_NEAR_OUTER_PEAK_OFFSET_MIN_MM,
+            PRESSURE_NEAR_OUTER_PEAK_OFFSET_MAX_MM,
+        )
+        self.pressure_near_outer_peak_offset_spin.setDecimals(PRESSURE_NEAR_OUTER_PEAK_OFFSET_DECIMALS)
+        self.pressure_near_outer_peak_offset_spin.setSingleStep(PRESSURE_NEAR_OUTER_PEAK_OFFSET_STEP_MM)
+        self.pressure_near_outer_peak_offset_spin.setSuffix(" mm")
+        self.pressure_near_outer_peak_offset_spin.setValue(DEFAULT_PRESSURE_NEAR_OUTER_PEAK_OFFSET_MM)
+        self.pressure_near_outer_peak_offset_spin.setToolTip(near_outer_peak_tooltip)
+        self.pressure_near_outer_peak_offset_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_near_outer_peak_offset_spin, 1, 5)
 
-        gap_contrast_tooltip = (
-            "Array gap interpolation tuning. When facing edge sensors indicate a pressure point "
-            "between packages, this gain controls how much the estimated gap peak can rise above "
-            "the stronger facing sensor. 0 disables extra peak lift; larger values make between-package "
-            "pressure appear brighter."
+        outer_boundary_reach_tooltip = (
+            "Distance from the Mid Boundary to the package Outer Boundary. "
+            "Together with package-center spacing, this defines the fixed local support square."
         )
-        layout.addWidget(self._create_tooltip_label("Gap contrast:", gap_contrast_tooltip), 1, 6)
-        self.pressure_gap_contrast_gain_spin = QDoubleSpinBox()
-        self.pressure_gap_contrast_gain_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
-        self.pressure_gap_contrast_gain_spin.setRange(
-            PRESSURE_GAP_CONTRAST_GAIN_MIN,
-            PRESSURE_GAP_CONTRAST_GAIN_MAX,
+        layout.addWidget(self._create_tooltip_label("Outer-Boundary Reach:", outer_boundary_reach_tooltip), 1, 6)
+        self.pressure_outer_boundary_reach_spin = QDoubleSpinBox()
+        self.pressure_outer_boundary_reach_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
+        self.pressure_outer_boundary_reach_spin.setRange(
+            PRESSURE_OUTER_BOUNDARY_REACH_MIN_MM,
+            PRESSURE_OUTER_BOUNDARY_REACH_MAX_MM,
         )
-        self.pressure_gap_contrast_gain_spin.setDecimals(PRESSURE_GAP_CONTRAST_GAIN_DECIMALS)
-        self.pressure_gap_contrast_gain_spin.setSingleStep(PRESSURE_GAP_CONTRAST_GAIN_STEP)
-        self.pressure_gap_contrast_gain_spin.setValue(DEFAULT_PRESSURE_GAP_CONTRAST_GAIN)
-        self.pressure_gap_contrast_gain_spin.setToolTip(gap_contrast_tooltip)
-        self.pressure_gap_contrast_gain_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
-        layout.addWidget(self.pressure_gap_contrast_gain_spin, 1, 7)
-
-        gap_fade_tooltip = (
-            "Array gap interpolation tuning. This sets the lateral half-width of pressure in the gap "
-            "as a fraction of the package footprint diameter. Smaller values create a narrow bridge "
-            "between facing sensors; larger values spread the gap pressure wider."
-        )
-        layout.addWidget(self._create_tooltip_label("Gap fade width:", gap_fade_tooltip), 2, 0)
-        self.pressure_gap_fade_width_spin = QDoubleSpinBox()
-        self.pressure_gap_fade_width_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
-        self.pressure_gap_fade_width_spin.setRange(
-            PRESSURE_GAP_FADE_WIDTH_FRACTION_MIN,
-            PRESSURE_GAP_FADE_WIDTH_FRACTION_MAX,
-        )
-        self.pressure_gap_fade_width_spin.setDecimals(PRESSURE_GAP_FADE_WIDTH_FRACTION_DECIMALS)
-        self.pressure_gap_fade_width_spin.setSingleStep(PRESSURE_GAP_FADE_WIDTH_FRACTION_STEP)
-        self.pressure_gap_fade_width_spin.setValue(DEFAULT_PRESSURE_GAP_FADE_WIDTH_FRACTION)
-        self.pressure_gap_fade_width_spin.setToolTip(gap_fade_tooltip)
-        self.pressure_gap_fade_width_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
-        layout.addWidget(self.pressure_gap_fade_width_spin, 2, 1)
+        self.pressure_outer_boundary_reach_spin.setDecimals(PRESSURE_OUTER_BOUNDARY_REACH_DECIMALS)
+        self.pressure_outer_boundary_reach_spin.setSingleStep(PRESSURE_OUTER_BOUNDARY_REACH_STEP_MM)
+        self.pressure_outer_boundary_reach_spin.setSuffix(" mm")
+        self.pressure_outer_boundary_reach_spin.setValue(DEFAULT_PRESSURE_OUTER_BOUNDARY_REACH_MM)
+        self.pressure_outer_boundary_reach_spin.setToolTip(outer_boundary_reach_tooltip)
+        self.pressure_outer_boundary_reach_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_outer_boundary_reach_spin, 1, 7)
 
         max_intensity_tooltip = "Fixed upper intensity mapped to white or the final pressure-map color."
-        layout.addWidget(self._create_tooltip_label("Max intensity:", max_intensity_tooltip), 2, 2)
+        layout.addWidget(self._create_tooltip_label("Max intensity:", max_intensity_tooltip), 2, 0)
         self.pressure_max_intensity_spin = QDoubleSpinBox()
         self.pressure_max_intensity_spin.setRange(PRESSURE_MAP_MAX_INTENSITY_MIN, PRESSURE_MAP_MAX_INTENSITY_MAX)
         self.pressure_max_intensity_spin.setDecimals(PRESSURE_MAP_MAX_INTENSITY_DECIMALS)
@@ -945,19 +905,7 @@ class PressureMapPanelMixin:
         self.pressure_max_intensity_spin.setValue(DEFAULT_PRESSURE_MAP_MAX_INTENSITY)
         self.pressure_max_intensity_spin.setToolTip(max_intensity_tooltip)
         self.pressure_max_intensity_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
-        layout.addWidget(self.pressure_max_intensity_spin, 2, 3)
-
-        boundary_shape_tooltip = (
-            "Whole-package boundary shape on the pressure map. "
-            "This does not affect the small T/R/L/C/B sensor markers or the pressure-point marker."
-        )
-        layout.addWidget(self._create_tooltip_label("Package boundary:", boundary_shape_tooltip), 2, 4)
-        self.pressure_package_boundary_shape_combo = QComboBox()
-        self.pressure_package_boundary_shape_combo.addItems(["Circle", "Square", "None"])
-        self.pressure_package_boundary_shape_combo.setCurrentText(DEFAULT_PRESSURE_PACKAGE_BOUNDARY_SHAPE.title())
-        self.pressure_package_boundary_shape_combo.setToolTip(boundary_shape_tooltip)
-        self.pressure_package_boundary_shape_combo.currentTextChanged.connect(self.on_pressure_map_settings_changed)
-        layout.addWidget(self.pressure_package_boundary_shape_combo, 2, 5)
+        layout.addWidget(self.pressure_max_intensity_spin, 2, 1)
 
         show_negative_tooltip = (
             "When enabled, pressure-point placement uses absolute signal magnitude so "
@@ -987,6 +935,27 @@ class PressureMapPanelMixin:
         self.pressure_mirror_check.setToolTip(mirror_tooltip)
         self.pressure_mirror_check.toggled.connect(self.on_pressure_map_settings_changed)
         layout.addWidget(self.pressure_mirror_check, 3, 6, 1, 2)
+
+        boundary_toggle_tooltip = "Show the inferred near-outer peak support circle."
+        self.pressure_show_near_outer_boundary_check = QCheckBox("Show near-outer circle")
+        self.pressure_show_near_outer_boundary_check.setChecked(DEFAULT_PRESSURE_SHOW_NEAR_OUTER_BOUNDARY)
+        self.pressure_show_near_outer_boundary_check.setToolTip(boundary_toggle_tooltip)
+        self.pressure_show_near_outer_boundary_check.toggled.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_show_near_outer_boundary_check, 4, 0, 1, 2)
+
+        outer_toggle_tooltip = "Show the package Outer-Boundary Reach as a square."
+        self.pressure_show_outer_boundary_check = QCheckBox("Show outer-boundary square")
+        self.pressure_show_outer_boundary_check.setChecked(DEFAULT_PRESSURE_SHOW_OUTER_BOUNDARY)
+        self.pressure_show_outer_boundary_check.setToolTip(outer_toggle_tooltip)
+        self.pressure_show_outer_boundary_check.toggled.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_show_outer_boundary_check, 4, 2, 1, 3)
+
+        mid_toggle_tooltip = "Show Mid-Boundary package dividers as a differently dashed square."
+        self.pressure_show_mid_boundary_check = QCheckBox("Show mid-boundary square")
+        self.pressure_show_mid_boundary_check.setChecked(DEFAULT_PRESSURE_SHOW_MID_BOUNDARY)
+        self.pressure_show_mid_boundary_check.setToolTip(mid_toggle_tooltip)
+        self.pressure_show_mid_boundary_check.toggled.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_show_mid_boundary_check, 4, 5, 1, 3)
 
         return group
 
@@ -1314,17 +1283,13 @@ class PressureMapPanelMixin:
                     "pressure_sensor_spacing_spin",
                     DEFAULT_PRESSURE_SENSOR_SPACING_MM,
                 ),
-                "circle_diameter_mm": self._spin_float(
-                    "pressure_circle_diameter_spin",
-                    DEFAULT_CIRCLE_DIAMETER_MM,
+                "package_center_spacing_mm": self._spin_float(
+                    "pressure_package_center_spacing_spin",
+                    DEFAULT_PRESSURE_PACKAGE_CENTER_SPACING_MM,
                 ),
-                "grid_resolution": self._spin_int(
-                    "pressure_grid_resolution_spin",
-                    DEFAULT_PRESSURE_GRID_RESOLUTION,
-                ),
-                "grid_margin": self._spin_int(
-                    "pressure_grid_margin_spin",
-                    DEFAULT_PRESSURE_GRID_MARGIN,
+                "pixels_per_mm": self._spin_float(
+                    "pressure_pixels_per_mm_spin",
+                    DEFAULT_PRESSURE_PIXELS_PER_MM,
                 ),
                 "decay_rate": self._spin_float(
                     "pressure_decay_rate_spin",
@@ -1334,17 +1299,13 @@ class PressureMapPanelMixin:
                     "pressure_decay_ref_distance_spin",
                     DEFAULT_PRESSURE_DECAY_REF_DISTANCE_MM,
                 ),
-                "package_gap_mm": self._spin_float(
-                    "pressure_package_gap_spin",
-                    DEFAULT_PRESSURE_PACKAGE_GAP_MM,
+                "near_outer_peak_offset_mm": self._spin_float(
+                    "pressure_near_outer_peak_offset_spin",
+                    DEFAULT_PRESSURE_NEAR_OUTER_PEAK_OFFSET_MM,
                 ),
-                "gap_contrast_gain": self._spin_float(
-                    "pressure_gap_contrast_gain_spin",
-                    DEFAULT_PRESSURE_GAP_CONTRAST_GAIN,
-                ),
-                "gap_fade_width_fraction": self._spin_float(
-                    "pressure_gap_fade_width_spin",
-                    DEFAULT_PRESSURE_GAP_FADE_WIDTH_FRACTION,
+                "outer_boundary_reach_mm": self._spin_float(
+                    "pressure_outer_boundary_reach_spin",
+                    DEFAULT_PRESSURE_OUTER_BOUNDARY_REACH_MM,
                 ),
                 "max_intensity": self._spin_float(
                     "pressure_max_intensity_spin",
@@ -1355,12 +1316,6 @@ class PressureMapPanelMixin:
                 "color_scale": self._combo_text("pressure_map_color_scale_combo", "Grayscale"),
                 "legend_range_count": self._spin_int("pressure_map_color_range_count_spin", 10),
                 "legend_unit": self._line_edit_text("pressure_map_color_unit_edit"),
-                "package_boundary_shape": self._normalized_pressure_package_boundary_shape(
-                    self._combo_text(
-                        "pressure_package_boundary_shape_combo",
-                        DEFAULT_PRESSURE_PACKAGE_BOUNDARY_SHAPE,
-                    )
-                ),
                 "show_negative": self._check_bool(
                     "pressure_show_negative_check",
                     DEFAULT_PRESSURE_SHOW_NEGATIVE,
@@ -1372,6 +1327,18 @@ class PressureMapPanelMixin:
                 "mirror": self._check_bool(
                     "pressure_mirror_check",
                     DEFAULT_PRESSURE_MIRROR,
+                ),
+                "show_near_outer_boundary": self._check_bool(
+                    "pressure_show_near_outer_boundary_check",
+                    DEFAULT_PRESSURE_SHOW_NEAR_OUTER_BOUNDARY,
+                ),
+                "show_outer_boundary": self._check_bool(
+                    "pressure_show_outer_boundary_check",
+                    DEFAULT_PRESSURE_SHOW_OUTER_BOUNDARY,
+                ),
+                "show_mid_boundary": self._check_bool(
+                    "pressure_show_mid_boundary_check",
+                    DEFAULT_PRESSURE_SHOW_MID_BOUNDARY,
                 ),
             },
         }
@@ -1635,9 +1602,13 @@ class PressureMapPanelMixin:
             "arrow_width_scales",
         )
         changed |= self._set_spin_value("pressure_sensor_spacing_spin", pressure_map, "sensor_spacing_mm", float)
-        changed |= self._set_spin_value("pressure_circle_diameter_spin", pressure_map, "circle_diameter_mm", float)
-        changed |= self._set_spin_value("pressure_grid_resolution_spin", pressure_map, "grid_resolution", int)
-        changed |= self._set_spin_value("pressure_grid_margin_spin", pressure_map, "grid_margin", int)
+        changed |= self._set_spin_value(
+            "pressure_package_center_spacing_spin",
+            pressure_map,
+            "package_center_spacing_mm",
+            float,
+        )
+        changed |= self._set_spin_value("pressure_pixels_per_mm_spin", pressure_map, "pixels_per_mm", float)
         changed |= self._set_spin_value("pressure_decay_rate_spin", pressure_map, "decay_rate", float)
         changed |= self._set_spin_value(
             "pressure_decay_ref_distance_spin",
@@ -1645,14 +1616,37 @@ class PressureMapPanelMixin:
             "decay_ref_distance_mm",
             float,
         )
-        changed |= self._set_spin_value("pressure_package_gap_spin", pressure_map, "package_gap_mm", float)
-        changed |= self._set_spin_value("pressure_gap_contrast_gain_spin", pressure_map, "gap_contrast_gain", float)
         changed |= self._set_spin_value(
-            "pressure_gap_fade_width_spin",
+            "pressure_near_outer_peak_offset_spin",
             pressure_map,
-            "gap_fade_width_fraction",
+            "near_outer_peak_offset_mm",
             float,
         )
+        if pressure_map.get("outer_boundary_reach_mm") is None:
+            changed |= self._set_spin_value(
+                "pressure_outer_boundary_reach_spin",
+                {"outer_boundary_reach_mm": DEFAULT_PRESSURE_OUTER_BOUNDARY_REACH_MM},
+                "outer_boundary_reach_mm",
+                float,
+            )
+        else:
+            changed |= self._set_spin_value(
+                "pressure_outer_boundary_reach_spin",
+                pressure_map,
+                "outer_boundary_reach_mm",
+                float,
+            )
+        # Retired geometry controls cannot be translated unambiguously. Use
+        # the new physical defaults whenever a legacy payload omits a field.
+        for widget_name, key, default in (
+            ("pressure_sensor_spacing_spin", "sensor_spacing_mm", DEFAULT_PRESSURE_SENSOR_SPACING_MM),
+            ("pressure_package_center_spacing_spin", "package_center_spacing_mm", DEFAULT_PRESSURE_PACKAGE_CENTER_SPACING_MM),
+            ("pressure_pixels_per_mm_spin", "pixels_per_mm", DEFAULT_PRESSURE_PIXELS_PER_MM),
+            ("pressure_near_outer_peak_offset_spin", "near_outer_peak_offset_mm", DEFAULT_PRESSURE_NEAR_OUTER_PEAK_OFFSET_MM),
+            ("pressure_outer_boundary_reach_spin", "outer_boundary_reach_mm", DEFAULT_PRESSURE_OUTER_BOUNDARY_REACH_MM),
+        ):
+            if key not in pressure_map:
+                changed |= self._set_spin_value(widget_name, {key: default}, key, float)
         changed |= self._set_spin_value(
             "pressure_max_intensity_spin",
             pressure_map,
@@ -1671,16 +1665,62 @@ class PressureMapPanelMixin:
         if "legend_unit" in pressure_map and hasattr(self, "pressure_map_color_unit_edit"):
             self.pressure_map_color_unit_edit.setText(str(pressure_map["legend_unit"]))
             changed = True
-        boundary_shape_key = "package_boundary_shape" if "package_boundary_shape" in pressure_map else "sensor_marker_shape"
-        if boundary_shape_key in pressure_map:
-            changed |= self._set_combo_value(
-                "pressure_package_boundary_shape_combo",
-                {"package_boundary_shape": self._pressure_boundary_shape_label(pressure_map.get(boundary_shape_key))},
-                "package_boundary_shape",
-            )
         changed |= self._set_check_value("pressure_show_negative_check", pressure_map, "show_negative")
         changed |= self._set_check_value("pressure_show_marker_check", pressure_map, "show_marker")
         changed |= self._set_check_value("pressure_mirror_check", pressure_map, "mirror")
+        changed |= self._set_check_value(
+            "pressure_show_near_outer_boundary_check",
+            pressure_map,
+            "show_near_outer_boundary",
+        )
+        changed |= self._set_check_value(
+            "pressure_show_outer_boundary_check",
+            pressure_map,
+            "show_outer_boundary",
+        )
+        changed |= self._set_check_value(
+            "pressure_show_mid_boundary_check",
+            pressure_map,
+            "show_mid_boundary",
+        )
+        for widget_name, key, default in (
+            (
+                "pressure_show_near_outer_boundary_check",
+                "show_near_outer_boundary",
+                DEFAULT_PRESSURE_SHOW_NEAR_OUTER_BOUNDARY,
+            ),
+            (
+                "pressure_show_outer_boundary_check",
+                "show_outer_boundary",
+                DEFAULT_PRESSURE_SHOW_OUTER_BOUNDARY,
+            ),
+            (
+                "pressure_show_mid_boundary_check",
+                "show_mid_boundary",
+                DEFAULT_PRESSURE_SHOW_MID_BOUNDARY,
+            ),
+        ):
+            if key not in pressure_map:
+                changed |= self._set_check_value(widget_name, {key: default}, key)
+
+        legacy_boundary_shape = pressure_map.get(
+            "package_boundary_shape",
+            pressure_map.get("sensor_marker_shape"),
+        )
+        if legacy_boundary_shape is not None:
+            normalized_shape = str(legacy_boundary_shape).strip().lower()
+            if "show_near_outer_boundary" not in pressure_map:
+                changed |= self._set_check_value(
+                    "pressure_show_near_outer_boundary_check",
+                    {"show_near_outer_boundary": normalized_shape == "circle"},
+                    "show_near_outer_boundary",
+                )
+            if "show_outer_boundary" not in pressure_map:
+                changed |= self._set_check_value(
+                    "pressure_show_outer_boundary_check",
+                    {"show_outer_boundary": normalized_shape == "square"},
+                    "show_outer_boundary",
+                )
 
         if changed:
             self._refresh_pressure_package_gain_controls()
@@ -1723,15 +1763,6 @@ class PressureMapPanelMixin:
         if widget is None or not hasattr(widget, "text"):
             return fallback
         return str(widget.text())
-
-    def _normalized_pressure_package_boundary_shape(self, value: object) -> str:
-        normalized = str(value).strip().lower()
-        if normalized not in PRESSURE_PACKAGE_BOUNDARY_SHAPES:
-            return DEFAULT_PRESSURE_PACKAGE_BOUNDARY_SHAPE
-        return normalized
-
-    def _pressure_boundary_shape_label(self, value: object) -> str:
-        return self._normalized_pressure_package_boundary_shape(value).title()
 
     def _set_spin_value(self, widget_name: str, settings: dict, key: str, value_type: type) -> bool:
         if key not in settings:
@@ -1930,36 +1961,50 @@ class PressureMapPanelMixin:
                 "pressure_show_marker_check",
                 DEFAULT_PRESSURE_SHOW_MARKER,
             )
-            package_boundary_shape = self._normalized_pressure_package_boundary_shape(
-                self._combo_text(
-                    "pressure_package_boundary_shape_combo",
-                    DEFAULT_PRESSURE_PACKAGE_BOUNDARY_SHAPE,
-                )
-            )
             min_intensity, max_intensity, _unit = self._get_pressure_map_color_scale_limits()
             color_scale = self._combo_text("pressure_map_color_scale_combo", "Grayscale")
             mirror = self._check_bool(
                 "pressure_mirror_check",
                 DEFAULT_PRESSURE_MIRROR,
             )
+            show_near_outer_boundary = self._check_bool(
+                "pressure_show_near_outer_boundary_check",
+                DEFAULT_PRESSURE_SHOW_NEAR_OUTER_BOUNDARY,
+            )
+            show_outer_boundary = self._check_bool(
+                "pressure_show_outer_boundary_check",
+                DEFAULT_PRESSURE_SHOW_OUTER_BOUNDARY,
+            )
+            show_mid_boundary = self._check_bool(
+                "pressure_show_mid_boundary_check",
+                DEFAULT_PRESSURE_SHOW_MID_BOUNDARY,
+            )
             if hasattr(self, "pressure_map_widget"):
                 self.pressure_map_widget.configure_markers(show_marker=show_marker)
-                self.pressure_map_widget.configure_package_boundary(boundary_shape=package_boundary_shape)
                 self.pressure_map_widget.configure_intensity(max_intensity=max_intensity)
                 self.pressure_map_widget.configure_noise_floor(
                     noise_floor=min_intensity
                 )
                 self.pressure_map_widget.configure_color_scale(color_scale=color_scale)
                 self.pressure_map_widget.configure_mirror(mirror=mirror)
+                self.pressure_map_widget.configure_boundary_visibility(
+                    show_near_outer_boundary=show_near_outer_boundary,
+                    show_outer_boundary=show_outer_boundary,
+                    show_mid_boundary=show_mid_boundary,
+                )
             self.update_pressure_map_color_scale_legend()
 
             sensor_spacing_mm = self._spin_float(
                 "pressure_sensor_spacing_spin",
                 DEFAULT_PRESSURE_SENSOR_SPACING_MM,
             )
-            circle_diameter_mm = self._spin_float(
-                "pressure_circle_diameter_spin",
-                DEFAULT_CIRCLE_DIAMETER_MM,
+            package_center_spacing_mm = self._spin_float(
+                "pressure_package_center_spacing_spin",
+                DEFAULT_PRESSURE_PACKAGE_CENTER_SPACING_MM,
+            )
+            outer_boundary_reach_mm = self._spin_float(
+                "pressure_outer_boundary_reach_spin",
+                DEFAULT_PRESSURE_OUTER_BOUNDARY_REACH_MM,
             )
             show_negative = self._check_bool(
                 "pressure_show_negative_check",
@@ -1967,12 +2012,12 @@ class PressureMapPanelMixin:
             )
             self.normal_force_calculator = NormalForceCalculator(sensor_spacing_mm=sensor_spacing_mm)
             self.pressure_map_generator = PressureMapGenerator(
-                circle_diameter_mm=circle_diameter_mm,
                 sensor_spacing_mm=sensor_spacing_mm,
-                grid_margin=self._spin_int("pressure_grid_margin_spin", DEFAULT_PRESSURE_GRID_MARGIN),
-                grid_resolution=self._spin_int(
-                    "pressure_grid_resolution_spin",
-                    DEFAULT_PRESSURE_GRID_RESOLUTION,
+                package_center_spacing_mm=package_center_spacing_mm,
+                outer_boundary_reach_mm=outer_boundary_reach_mm,
+                pixels_per_mm=self._spin_float(
+                    "pressure_pixels_per_mm_spin",
+                    DEFAULT_PRESSURE_PIXELS_PER_MM,
                 ),
                 decay_rate=self._spin_float(
                     "pressure_decay_rate_spin",
@@ -1982,22 +2027,16 @@ class PressureMapPanelMixin:
                     "pressure_decay_ref_distance_spin",
                     DEFAULT_PRESSURE_DECAY_REF_DISTANCE_MM,
                 ),
+                near_outer_peak_offset_mm=self._spin_float(
+                    "pressure_near_outer_peak_offset_spin",
+                    DEFAULT_PRESSURE_NEAR_OUTER_PEAK_OFFSET_MM,
+                ),
                 show_negative=show_negative,
             )
             self.pressure_map_array_generator = PressureMapArrayGenerator(
-                circle_diameter_mm=circle_diameter_mm,
-                package_gap_mm=self._spin_float(
-                    "pressure_package_gap_spin",
-                    DEFAULT_PRESSURE_PACKAGE_GAP_MM,
-                ),
-                gap_contrast_gain=self._spin_float(
-                    "pressure_gap_contrast_gain_spin",
-                    DEFAULT_PRESSURE_GAP_CONTRAST_GAIN,
-                ),
-                gap_fade_width_fraction=self._spin_float(
-                    "pressure_gap_fade_width_spin",
-                    DEFAULT_PRESSURE_GAP_FADE_WIDTH_FRACTION,
-                ),
+                sensor_spacing_mm=sensor_spacing_mm,
+                package_center_spacing_mm=package_center_spacing_mm,
+                outer_boundary_reach_mm=outer_boundary_reach_mm,
                 show_negative=show_negative,
             )
             self._update_pressure_map_from_latest()

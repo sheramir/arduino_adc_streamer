@@ -7,7 +7,6 @@ import numpy as np
 from constants.pressure_map import (
     DEFAULT_PRESSURE_SENSOR_SPACING_MM,
     PRESSURE_ACTIVE_QUADRANTS,
-    PRESSURE_GRID_MARGIN_SIDE_COUNT,
     PRESSURE_QUADRANT_BOTTOM_LEFT,
     PRESSURE_QUADRANT_BOTTOM_RIGHT,
     PRESSURE_QUADRANT_TOP_LEFT,
@@ -20,8 +19,10 @@ from data_processing.pressure_map_generator import (
     DEFAULT_PRESSURE_SHOW_NEGATIVE,
     PRESSURE_QUADRANT_MODE_PEAKED,
     PRESSURE_QUADRANT_MODE_PEAKLESS,
+    PRESSURE_QUADRANT_MODE_ISOLATED_OUTER_PEAKED,
     PRESSURE_QUADRANT_MODE_SINGLE_AXIS_PEAKED,
     PressureMapGenerator,
+    evaluate_pressure_map_result_at,
 )
 
 
@@ -29,7 +30,7 @@ class PressureMapGeneratorTests(unittest.TestCase):
     """Verify pressure-point placement, interpolation, and clamping."""
 
     def setUp(self):
-        self.generator = PressureMapGenerator(grid_resolution=23, grid_margin=2)
+        self.generator = PressureMapGenerator()
 
     def _grid_value(self, result, x_mm, y_mm):
         row = int(np.argmin(np.abs(result.y_coordinates_mm - y_mm)))
@@ -57,7 +58,7 @@ class PressureMapGeneratorTests(unittest.TestCase):
             self.assertAlmostEqual(self._grid_value(result, x_mm, y_mm), expected_value, places=6)
 
     def test_peak_height_is_reproduced_at_peak_location(self):
-        generator = PressureMapGenerator(grid_resolution=45, grid_margin=0)
+        generator = PressureMapGenerator()
         result = generator.generate({position: 5.0 for position in SHEAR_SENSOR_POSITIONS})
         tr_plane = {plane.label: plane for plane in result.quadrant_planes}[PRESSURE_QUADRANT_TOP_RIGHT]
         peak_x, peak_y = tr_plane.peak_point
@@ -79,7 +80,7 @@ class PressureMapGeneratorTests(unittest.TestCase):
         self.assertEqual(tr_plane.mode, PRESSURE_QUADRANT_MODE_PEAKLESS)
 
     def test_show_negative_mode_uses_absolute_magnitude_for_pressure_point(self):
-        generator = PressureMapGenerator(grid_resolution=23, grid_margin=2, show_negative=True)
+        generator = PressureMapGenerator(show_negative=True)
         result = generator.generate({"C": -5.0, "R": -3.0, "T": -3.0, "L": 0.0, "B": 0.0})
         tr_plane = self._planes_by_label(result)[PRESSURE_QUADRANT_TOP_RIGHT]
 
@@ -133,22 +134,102 @@ class PressureMapGeneratorTests(unittest.TestCase):
         self.assertEqual(result.quadrant_planes, ())
         self.assertTrue(np.all(result.pressure_grid == 0.0))
 
-    def test_only_one_outer_nonzero_produces_peakless_axis_ridge(self):
+    def test_only_one_outer_nonzero_moves_peak_beyond_sensor_without_gain(self):
         result = self.generator.generate({"C": 0.0, "R": 5.0, "T": 0.0, "L": 0.0, "B": 0.0})
         planes = self._planes_by_label(result)
         spacing = DEFAULT_PRESSURE_SENSOR_SPACING_MM
-        half_extent = self.generator.total_extent_mm / PRESSURE_GRID_MARGIN_SIDE_COUNT
+        plane = planes["R"]
 
-        self.assertEqual(planes[PRESSURE_QUADRANT_TOP_RIGHT].mode, PRESSURE_QUADRANT_MODE_PEAKLESS)
-        self.assertEqual(planes[PRESSURE_QUADRANT_BOTTOM_RIGHT].mode, PRESSURE_QUADRANT_MODE_PEAKLESS)
-        self.assertAlmostEqual(self._grid_value(result, spacing, 0.0), 5.0, places=6)
-        self.assertAlmostEqual(self._grid_value(result, half_extent, 0.0), 0.0, places=6)
-        self.assertAlmostEqual(self._grid_value(result, spacing, half_extent / 2.0), 0.0, places=6)
-        self.assertAlmostEqual(
-            self._quadrant_value(planes[PRESSURE_QUADRANT_TOP_RIGHT], spacing / 2.0, 0.0),
-            self._quadrant_value(planes[PRESSURE_QUADRANT_BOTTOM_RIGHT], spacing / 2.0, 0.0),
-            places=6,
+        self.assertEqual(plane.mode, PRESSURE_QUADRANT_MODE_ISOLATED_OUTER_PEAKED)
+        self.assertEqual(plane.peak_point, (spacing + self.generator.near_outer_peak_offset_mm, 0.0))
+        self.assertAlmostEqual(float(plane.peak_height), 5.0, places=12)
+        self.assertGreater(self._grid_value(result, spacing, 0.0), 0.0)
+        self.assertGreater(
+            float(evaluate_pressure_map_result_at(
+                result,
+                np.asarray([spacing + self.generator.near_outer_peak_offset_mm]),
+                np.asarray([0.0]),
+            )[0]),
+            float(evaluate_pressure_map_result_at(
+                result,
+                np.asarray([spacing + self.generator.near_outer_peak_offset_mm]),
+                np.asarray([spacing]),
+            )[0]),
         )
+
+    def test_default_geometry_uses_fixed_outer_support_and_pixels_per_mm(self):
+        result = self.generator.generate({position: 0.0 for position in SHEAR_SENSOR_POSITIONS})
+
+        self.assertEqual(self.generator.sensor_spacing_mm, 2.0)
+        self.assertEqual(self.generator.package_center_spacing_mm, 7.5)
+        self.assertEqual(self.generator.outer_boundary_reach_mm, 1.75)
+        self.assertEqual(self.generator.pixels_per_mm, 10.0)
+        self.assertEqual(result.facing_sensor_gap_mm, 3.5)
+        self.assertEqual(result.mid_boundary_half_width_mm, 3.75)
+        self.assertEqual(result.outer_boundary_half_width_mm, 5.5)
+        self.assertEqual(result.support_bounds_mm, (-5.5, 5.5, -5.5, 5.5))
+
+    def test_each_isolated_outer_sensor_uses_the_same_radial_offset(self):
+        offset = 0.75
+        generator = PressureMapGenerator(near_outer_peak_offset_mm=offset)
+        expected_points = {
+            "R": (generator.sensor_spacing_mm + offset, 0.0),
+            "L": (-generator.sensor_spacing_mm - offset, 0.0),
+            "T": (0.0, generator.sensor_spacing_mm + offset),
+            "B": (0.0, -generator.sensor_spacing_mm - offset),
+        }
+        for sensor, expected_point in expected_points.items():
+            result = generator.generate({position: 4.0 if position == sensor else 0.0 for position in SHEAR_SENSOR_POSITIONS})
+            self.assertEqual(result.quadrant_planes[0].peak_point, expected_point)
+            self.assertAlmostEqual(float(result.quadrant_planes[0].peak_height), 4.0, places=12)
+
+    def test_center_or_two_outer_sensors_do_not_use_isolated_outer_mode(self):
+        center_active = self.generator.generate({"C": 1.0, "R": 5.0, "T": 0.0, "L": 0.0, "B": 0.0})
+        two_outer_active = self.generator.generate({"C": 0.0, "R": 5.0, "T": 4.0, "L": 0.0, "B": 0.0})
+        self.assertFalse(any(plane.mode == PRESSURE_QUADRANT_MODE_ISOLATED_OUTER_PEAKED for plane in center_active.quadrant_planes))
+        self.assertFalse(any(plane.mode == PRESSURE_QUADRANT_MODE_ISOLATED_OUTER_PEAKED for plane in two_outer_active.quadrant_planes))
+
+    def test_visual_circle_is_not_a_computational_crop(self):
+        generator = PressureMapGenerator(
+            sensor_spacing_mm=1.0,
+            package_center_spacing_mm=7.0,
+            outer_boundary_reach_mm=2.0,
+            pixels_per_mm=10.0,
+        )
+        result = generator.generate({"C": 0.0, "R": 5.0, "T": 0.0, "L": 0.0, "B": 0.0})
+        x_mm = generator.sensor_spacing_mm + generator.near_outer_peak_offset_mm
+        y_mm = 1.6
+        row = int(np.argmin(np.abs(result.y_coordinates_mm - y_mm)))
+        col = int(np.argmin(np.abs(result.x_coordinates_mm - x_mm)))
+        self.assertFalse(bool(result.circle_mask[row, col]))
+        self.assertGreater(float(result.pressure_grid[row, col]), 0.0)
+
+    def test_isolated_outer_field_is_zero_on_and_beyond_its_support_boundary(self):
+        result = self.generator.generate({"C": 0.0, "R": 5.0, "T": 0.0, "L": 0.0, "B": 0.0})
+        _left, right, _bottom, _top = result.support_bounds_mm
+        values = evaluate_pressure_map_result_at(
+            result,
+            np.asarray([right, right + 0.5]),
+            np.asarray([0.0, 0.0]),
+        )
+        np.testing.assert_allclose(values, np.zeros(2), rtol=0.0, atol=1e-12)
+
+    def test_natural_decay_can_end_before_the_terminal_outer_boundary(self):
+        generator = PressureMapGenerator(
+            sensor_spacing_mm=1.0,
+            package_center_spacing_mm=7.0,
+            outer_boundary_reach_mm=2.0,
+            pixels_per_mm=10.0,
+            decay_rate=0.8,
+            decay_ref_distance_mm=1.5,
+        )
+        low = generator.generate({"C": 0.0, "R": 0.1, "T": 0.0, "L": 0.0, "B": 0.0})
+        high = generator.generate({"C": 0.0, "R": 5.0, "T": 0.0, "L": 0.0, "B": 0.0})
+        probe_x = 4.0
+        low_value = evaluate_pressure_map_result_at(low, np.asarray([probe_x]), np.asarray([0.0]))[0]
+        high_value = evaluate_pressure_map_result_at(high, np.asarray([probe_x]), np.asarray([0.0]))[0]
+        self.assertAlmostEqual(float(low_value), 0.0, places=12)
+        self.assertGreater(float(high_value), 0.0)
 
     def test_peakless_and_peaked_classification_for_zero_outer_axis(self):
         result = self.generator.generate({"C": 4.0, "R": 4.0, "T": 3.0, "L": 2.0, "B": 0.0})
@@ -226,14 +307,17 @@ class PressureMapGeneratorTests(unittest.TestCase):
         self.assertEqual(self._grid_value(result, -1.0, 1.0), 0.0)
         self.assertEqual(self._grid_value(result, 1.0, -1.0), 0.0)
 
-    def test_output_shape_includes_margin_cells(self):
+    def test_output_grid_uses_outer_boundary_and_at_least_requested_density(self):
         result = self.generator.generate({"C": 0.0, "R": 0.0, "T": 0.0, "L": 0.0, "B": 0.0})
-        expected_side = self.generator.grid_resolution + (
-            PRESSURE_GRID_MARGIN_SIDE_COUNT * self.generator.grid_margin
-        )
+        expected_side = (2 * int(np.ceil(
+            self.generator.outer_boundary_half_width_mm * self.generator.pixels_per_mm
+        ))) + 1
 
         self.assertEqual(result.pressure_grid.shape, (expected_side, expected_side))
         self.assertEqual(result.circle_mask.shape, (expected_side, expected_side))
+        self.assertAlmostEqual(result.x_coordinates_mm[0], -self.generator.outer_boundary_half_width_mm)
+        self.assertAlmostEqual(result.x_coordinates_mm[-1], self.generator.outer_boundary_half_width_mm)
+        self.assertLessEqual(result.cell_size_mm, 1.0 / self.generator.pixels_per_mm)
 
     def test_active_quadrants_still_follow_standard_order(self):
         result = self.generator.generate({position: 1.0 for position in SHEAR_SENSOR_POSITIONS})

@@ -2,9 +2,9 @@
 Pressure-map visualization widget for the five-sensor piezo package.
 
 The widget renders the Step 6 backend pressure grid as a heatmap with static
-sensor markers, a configurable dotted package boundary, and a numeric
-normal-force readout. It also draws the live shear arrow over the pressure map
-and can render one combined array-level pressure image for adjacent packages.
+sensor markers, a near-outer peak circle, optional outer-support and midpoint
+squares, and a numeric normal-force readout. It also draws the live shear arrow
+over the pressure map and can render one combined array-level pressure image.
 
 Dependencies:
     PyQt6, pyqtgraph, constants.shear, data_processing.normal_force_calculator,
@@ -33,8 +33,10 @@ from PyQt6.QtWidgets import (
 from constants.pressure_map import (
     DEFAULT_PRESSURE_MAP_MAX_INTENSITY,
     DEFAULT_PRESSURE_MIRROR,
-    DEFAULT_PRESSURE_PACKAGE_BOUNDARY_SHAPE,
+    DEFAULT_PRESSURE_SHOW_MID_BOUNDARY,
     DEFAULT_PRESSURE_SHOW_MARKER,
+    DEFAULT_PRESSURE_SHOW_NEAR_OUTER_BOUNDARY,
+    DEFAULT_PRESSURE_SHOW_OUTER_BOUNDARY,
     PRESSURE_MAP_BACKGROUND_COLOR,
     PRESSURE_MAP_CIRCLE_Z,
     PRESSURE_MAP_COLORMAP_POINTS,
@@ -45,7 +47,6 @@ from constants.pressure_map import (
     PRESSURE_MAP_MAX_INTENSITY_MIN,
     PRESSURE_MAP_OVERLAY_COLOR,
     PRESSURE_MAP_PACKAGE_COLORS,
-    PRESSURE_MAP_PACKAGE_SPACING_FRACTION,
     PRESSURE_MAP_PACKAGE_VIEW_PADDING_FRACTION,
     PRESSURE_MAP_PEAK_MARKER_COLOR,
     PRESSURE_MAP_PEAK_MARKER_PEN_WIDTH_PX,
@@ -62,8 +63,7 @@ from constants.pressure_map import (
     PRESSURE_MAP_WIDGET_MIN_HEIGHT_PX,
     PRESSURE_MAP_ZERO_LEVEL_MAX,
     PRESSURE_MAP_ZERO_LEVEL_MIN,
-    PRESSURE_GRID_MARGIN_SIDE_COUNT,
-    PRESSURE_PACKAGE_BOUNDARY_SHAPES,
+    PRESSURE_SUPPORT_SIDE_COUNT,
 )
 from constants.shear import (
     DEFAULT_ARROW_BASE_WIDTH_PX,
@@ -183,7 +183,9 @@ class PressureMapWidget(QWidget):
         self.arrow_base_width_px = DEFAULT_ARROW_BASE_WIDTH_PX
         self.arrow_color = DEFAULT_ARROW_COLOR
         self.show_marker = DEFAULT_PRESSURE_SHOW_MARKER
-        self.package_boundary_shape = DEFAULT_PRESSURE_PACKAGE_BOUNDARY_SHAPE
+        self.show_near_outer_boundary = DEFAULT_PRESSURE_SHOW_NEAR_OUTER_BOUNDARY
+        self.show_outer_boundary = DEFAULT_PRESSURE_SHOW_OUTER_BOUNDARY
+        self.show_mid_boundary = DEFAULT_PRESSURE_SHOW_MID_BOUNDARY
         self.max_intensity = float(DEFAULT_PRESSURE_MAP_MAX_INTENSITY)
         self.noise_floor = PRESSURE_MAP_ZERO_LEVEL_MIN
         self.mirror = bool(DEFAULT_PRESSURE_MIRROR)
@@ -213,6 +215,8 @@ class PressureMapWidget(QWidget):
         self.plot_widget.addItem(self.image_item)
 
         self.circle_item: QGraphicsEllipseItem | QGraphicsRectItem | None = None
+        self.outer_boundary_item: QGraphicsRectItem | None = None
+        self.mid_boundary_item: QGraphicsRectItem | None = None
         self.sensor_marker_item = pg.ScatterPlotItem()
         self.sensor_marker_item.setZValue(PRESSURE_MAP_SENSOR_Z)
         self.plot_widget.addItem(self.sensor_marker_item)
@@ -226,6 +230,8 @@ class PressureMapWidget(QWidget):
 
         self.package_image_items: list[pg.ImageItem] = []
         self.package_circle_items: list[QGraphicsEllipseItem | QGraphicsRectItem] = []
+        self.package_outer_boundary_items: list[QGraphicsRectItem] = []
+        self.package_mid_boundary_items: list[QGraphicsRectItem] = []
         self.package_sensor_marker_items: list[pg.ScatterPlotItem] = []
         self.package_peak_marker_items: list[pg.ScatterPlotItem] = []
         self.package_arrow_items: list[tuple[QGraphicsLineItem, QGraphicsPolygonItem]] = []
@@ -268,17 +274,28 @@ class PressureMapWidget(QWidget):
             self.show_marker = updated_show_marker
             self._refresh_cached_display()
 
-    def configure_package_boundary(self, *, boundary_shape: str | None = None) -> None:
-        """Update whole-package boundary shape."""
-        if boundary_shape is None:
-            return
-        normalized_shape = str(boundary_shape).strip().lower()
-        if normalized_shape not in PRESSURE_PACKAGE_BOUNDARY_SHAPES:
-            normalized_shape = DEFAULT_PRESSURE_PACKAGE_BOUNDARY_SHAPE
-        if self.package_boundary_shape == normalized_shape:
-            return
-        self.package_boundary_shape = normalized_shape
-        self._refresh_cached_display()
+    def configure_boundary_visibility(
+        self,
+        *,
+        show_near_outer_boundary: bool | None = None,
+        show_outer_boundary: bool | None = None,
+        show_mid_boundary: bool | None = None,
+    ) -> None:
+        """Toggle the near-outer circle, outer-support square, and mid square."""
+        changed = False
+        for attribute, value in (
+            ("show_near_outer_boundary", show_near_outer_boundary),
+            ("show_outer_boundary", show_outer_boundary),
+            ("show_mid_boundary", show_mid_boundary),
+        ):
+            if value is None:
+                continue
+            updated = bool(value)
+            if getattr(self, attribute) != updated:
+                setattr(self, attribute, updated)
+                changed = True
+        if changed:
+            self._refresh_cached_display()
 
     def configure_intensity(self, *, max_intensity: float | None = None) -> None:
         """Update fixed pressure-map upper intensity level."""
@@ -394,12 +411,18 @@ class PressureMapWidget(QWidget):
 
         centers = self._package_centers(packages)
         max_extent = max(float(package.pressure_result.total_extent_mm) for package in packages)
-        half_extent = max_extent / PRESSURE_GRID_MARGIN_SIDE_COUNT
+        half_extent = max_extent / PRESSURE_SUPPORT_SIDE_COUNT
 
         for index, package in enumerate(packages):
             center_x, center_y = centers[index]
             self._update_package_image(index, package, center_x, center_y)
-            self._update_package_boundary(index, package, center_x, center_y)
+            self._update_package_boundary(
+                index,
+                package,
+                center_x,
+                center_y,
+                mid_half_extent_mm=package.pressure_result.mid_boundary_half_width_mm,
+            )
             self._update_package_sensor_markers(index, package, center_x, center_y)
             self._update_package_peak_markers(index, package, center_x, center_y)
             self._update_package_shear_arrow(index, package, center_x, center_y)
@@ -439,7 +462,17 @@ class PressureMapWidget(QWidget):
 
         for index, package in enumerate(packages):
             center_x, center_y = self._array_package_center(array_result, package)
-            self._update_package_boundary(index, package, center_x, center_y)
+            self._update_package_boundary(
+                index,
+                package,
+                center_x,
+                center_y,
+                support_bounds_mm=array_result.candidate_support_bounds_mm.get(
+                    package.sensor_id,
+                    package.pressure_result.support_bounds_mm,
+                ),
+                mid_half_extent_mm=array_result.mid_boundary_half_width_mm,
+            )
             self._update_package_sensor_markers(index, package, center_x, center_y)
             self._update_package_peak_markers(index, package, center_x, center_y)
             self._update_package_shear_arrow(index, package, center_x, center_y)
@@ -463,6 +496,10 @@ class PressureMapWidget(QWidget):
         self._hide_arrow()
         if self.circle_item is not None:
             self.circle_item.setVisible(False)
+        if self.outer_boundary_item is not None:
+            self.outer_boundary_item.setVisible(False)
+        if self.mid_boundary_item is not None:
+            self.mid_boundary_item.setVisible(False)
 
     def _clear_package_items(self) -> None:
         self._hide_unused_package_items(0)
@@ -474,7 +511,7 @@ class PressureMapWidget(QWidget):
     ) -> None:
         levels = self._pressure_levels(normal_force_result, pressure_result.pressure_grid)
         extent = float(pressure_result.total_extent_mm)
-        half_extent = extent / PRESSURE_GRID_MARGIN_SIDE_COUNT
+        half_extent = extent / PRESSURE_SUPPORT_SIDE_COUNT
         
         # Apply mirror flip to the grid if needed
         grid = pressure_result.pressure_grid
@@ -613,27 +650,69 @@ class PressureMapWidget(QWidget):
         )
 
     def _update_boundary(self, pressure_result: PressureMapResult) -> None:
-        radius = float(pressure_result.total_extent_mm) / PRESSURE_GRID_MARGIN_SIDE_COUNT
+        radius = float(pressure_result.visual_boundary_radius_mm)
         self.circle_radius_mm = radius
-        if self.package_boundary_shape == "none":
-            if self.circle_item is not None:
-                self.circle_item.setVisible(False)
-            return
         if self.circle_item is None:
-            self.circle_item = self._new_boundary_item()
+            self.circle_item = self._new_near_boundary_item()
             self.plot_widget.addItem(self.circle_item)
-        elif not self._boundary_item_matches_shape(self.circle_item):
-            self.plot_widget.removeItem(self.circle_item)
-            self.circle_item = self._new_boundary_item()
-            self.plot_widget.addItem(self.circle_item)
-        circle_pen = QPen(QColor(PRESSURE_MAP_OVERLAY_COLOR))
-        circle_pen.setWidthF(SHEAR_LAYOUT_CIRCLE_LINE_WIDTH_PX)
-        circle_pen.setStyle(Qt.PenStyle.DotLine)
-        circle_pen.setCosmetic(SHEAR_LAYOUT_PENS_ARE_COSMETIC)
-        self.circle_item.setPen(circle_pen)
-        self.circle_item.setZValue(PRESSURE_MAP_CIRCLE_Z)
-        self.circle_item.setRect(-radius, -radius, radius * 2.0, radius * 2.0)
-        self.circle_item.setVisible(True)
+        self._style_boundary_item(
+            self.circle_item,
+            radius,
+            color=PRESSURE_MAP_OVERLAY_COLOR,
+            dash_pattern=None,
+        )
+        self.circle_item.setVisible(bool(self.show_near_outer_boundary))
+
+        self._ensure_single_square_items()
+        self._style_boundary_item(
+            self.outer_boundary_item,
+            float(pressure_result.outer_boundary_half_width_mm),
+            color=PRESSURE_MAP_OVERLAY_COLOR,
+            dash_pattern=(8.0, 4.0),
+        )
+        self.outer_boundary_item.setVisible(bool(self.show_outer_boundary))
+        self._style_boundary_item(
+            self.mid_boundary_item,
+            float(pressure_result.mid_boundary_half_width_mm),
+            color=PRESSURE_MAP_OVERLAY_COLOR,
+            dash_pattern=(3.0, 3.0),
+        )
+        self.mid_boundary_item.setVisible(bool(self.show_mid_boundary))
+
+    def _new_near_boundary_item(self) -> QGraphicsEllipseItem:
+        """Create the near-outer circle (the old item remains an API alias)."""
+        return QGraphicsEllipseItem()
+
+    def _ensure_single_square_items(self) -> None:
+        if self.outer_boundary_item is None:
+            self.outer_boundary_item = QGraphicsRectItem()
+            self.outer_boundary_item.setZValue(PRESSURE_MAP_CIRCLE_Z)
+            self.plot_widget.addItem(self.outer_boundary_item)
+        if self.mid_boundary_item is None:
+            self.mid_boundary_item = QGraphicsRectItem()
+            self.mid_boundary_item.setZValue(PRESSURE_MAP_CIRCLE_Z)
+            self.plot_widget.addItem(self.mid_boundary_item)
+
+    def _style_boundary_item(
+        self,
+        item: QGraphicsEllipseItem | QGraphicsRectItem | None,
+        half_extent: float,
+        *,
+        color: str,
+        dash_pattern: tuple[float, float] | None,
+    ) -> None:
+        if item is None:
+            return
+        pen = QPen(QColor(color))
+        pen.setWidthF(SHEAR_LAYOUT_CIRCLE_LINE_WIDTH_PX)
+        if dash_pattern is None:
+            pen.setStyle(Qt.PenStyle.DotLine)
+        else:
+            pen.setDashPattern(list(dash_pattern))
+        pen.setCosmetic(SHEAR_LAYOUT_PENS_ARE_COSMETIC)
+        item.setPen(pen)
+        item.setZValue(PRESSURE_MAP_CIRCLE_Z)
+        item.setRect(-half_extent, -half_extent, half_extent * 2.0, half_extent * 2.0)
 
     def _update_sensor_markers(self, pressure_result: PressureMapResult) -> None:
         spots = [
@@ -718,10 +797,20 @@ class PressureMapWidget(QWidget):
             self.package_image_items.append(image_item)
             self._package_image_caches.append(None)
 
-            circle_item = self._new_boundary_item()
+            circle_item = self._new_near_boundary_item()
             circle_item.setZValue(PRESSURE_MAP_CIRCLE_Z)
             self.plot_widget.addItem(circle_item)
             self.package_circle_items.append(circle_item)
+
+            outer_boundary_item = QGraphicsRectItem()
+            outer_boundary_item.setZValue(PRESSURE_MAP_CIRCLE_Z)
+            self.plot_widget.addItem(outer_boundary_item)
+            self.package_outer_boundary_items.append(outer_boundary_item)
+
+            mid_boundary_item = QGraphicsRectItem()
+            mid_boundary_item.setZValue(PRESSURE_MAP_CIRCLE_Z)
+            self.plot_widget.addItem(mid_boundary_item)
+            self.package_mid_boundary_items.append(mid_boundary_item)
 
             sensor_marker_item = pg.ScatterPlotItem()
             sensor_marker_item.setZValue(PRESSURE_MAP_SENSOR_Z)
@@ -752,6 +841,8 @@ class PressureMapWidget(QWidget):
             self.package_image_items[index].hide()
             self._package_image_caches[index] = None
             self.package_circle_items[index].hide()
+            self.package_outer_boundary_items[index].hide()
+            self.package_mid_boundary_items[index].hide()
             self.package_sensor_marker_items[index].setData([])
             self.package_peak_marker_items[index].setData([])
             self._hide_package_arrow(index)
@@ -759,8 +850,7 @@ class PressureMapWidget(QWidget):
                 self.package_label_items[index].setVisible(False)
 
     def _package_centers(self, packages: list[PressureMapPackageDisplay]) -> list[tuple[float, float]]:
-        max_extent = max(float(package.pressure_result.total_extent_mm) for package in packages)
-        spacing = max_extent * PRESSURE_MAP_PACKAGE_SPACING_FRACTION
+        spacing = float(packages[0].pressure_result.package_center_spacing_mm)
         grid_positions = [package.grid_position for package in packages if package.grid_position is not None]
 
         if grid_positions:
@@ -796,7 +886,7 @@ class PressureMapWidget(QWidget):
             grid = np.fliplr(grid)
         levels = self._pressure_levels(package.normal_force_result, grid)
         extent = float(package.pressure_result.total_extent_mm)
-        half_extent = extent / PRESSURE_GRID_MARGIN_SIDE_COUNT
+        half_extent = extent / PRESSURE_SUPPORT_SIDE_COUNT
         rect = (center_x - half_extent, center_y - half_extent, extent, extent)
         self._package_image_caches[index] = self._update_cached_image_item(
             image_item,
@@ -812,26 +902,61 @@ class PressureMapWidget(QWidget):
         package: PressureMapPackageDisplay,
         center_x: float,
         center_y: float,
+        *,
+        support_bounds_mm: tuple[float, float, float, float] | None = None,
+        mid_half_extent_mm: float | None = None,
     ) -> None:
-        radius = float(package.pressure_result.total_extent_mm) / PRESSURE_GRID_MARGIN_SIDE_COUNT
-        if self.package_boundary_shape == "none":
-            self.package_circle_items[index].hide()
-            return
-        if not self._boundary_item_matches_shape(self.package_circle_items[index]):
-            old_item = self.package_circle_items[index]
-            self.plot_widget.removeItem(old_item)
-            circle_item = self._new_boundary_item()
-            circle_item.setZValue(PRESSURE_MAP_CIRCLE_Z)
-            self.plot_widget.addItem(circle_item)
-            self.package_circle_items[index] = circle_item
-        circle_item = self.package_circle_items[index]
-        circle_pen = QPen(QColor(package.color))
-        circle_pen.setWidthF(SHEAR_LAYOUT_CIRCLE_LINE_WIDTH_PX)
-        circle_pen.setStyle(Qt.PenStyle.DotLine)
-        circle_pen.setCosmetic(SHEAR_LAYOUT_PENS_ARE_COSMETIC)
-        circle_item.setPen(circle_pen)
-        circle_item.setRect(center_x - radius, center_y - radius, radius * 2.0, radius * 2.0)
-        circle_item.show()
+        radius = float(package.pressure_result.visual_boundary_radius_mm)
+        near_item = self.package_circle_items[index]
+        if not isinstance(near_item, QGraphicsEllipseItem):
+            self.plot_widget.removeItem(near_item)
+            near_item = self._new_near_boundary_item()
+            near_item.setZValue(PRESSURE_MAP_CIRCLE_Z)
+            self.plot_widget.addItem(near_item)
+            self.package_circle_items[index] = near_item
+        self._style_boundary_item(
+            near_item,
+            radius,
+            color=package.color,
+            dash_pattern=None,
+        )
+        near_item.setRect(center_x - radius, center_y - radius, radius * 2.0, radius * 2.0)
+        near_item.setVisible(bool(self.show_near_outer_boundary))
+
+        outer_item = self.package_outer_boundary_items[index]
+        bounds = support_bounds_mm or package.pressure_result.support_bounds_mm
+        outer_radius = float(package.pressure_result.outer_boundary_half_width_mm)
+        self._style_boundary_item(
+            outer_item,
+            outer_radius,
+            color=package.color,
+            dash_pattern=(8.0, 4.0),
+        )
+        outer_item.setRect(
+            center_x - outer_radius,
+            center_y - outer_radius,
+            outer_radius * 2.0,
+            outer_radius * 2.0,
+        )
+        outer_item.setVisible(bool(self.show_outer_boundary))
+
+        mid_item = self.package_mid_boundary_items[index]
+        if mid_half_extent_mm is None:
+            mid_item.setVisible(False)
+        else:
+            self._style_boundary_item(
+                mid_item,
+                float(mid_half_extent_mm),
+                color=package.color,
+                dash_pattern=(3.0, 3.0),
+            )
+            mid_item.setRect(
+                center_x - float(mid_half_extent_mm),
+                center_y - float(mid_half_extent_mm),
+                float(mid_half_extent_mm) * 2.0,
+                float(mid_half_extent_mm) * 2.0,
+            )
+            mid_item.setVisible(bool(self.show_mid_boundary))
 
     def _update_package_sensor_markers(
         self,
@@ -855,16 +980,6 @@ class PressureMapWidget(QWidget):
             for position, (x_coord, y_coord) in self._sensor_positions_from_result(package.pressure_result).items()
         ]
         self.package_sensor_marker_items[index].setData(spots)
-
-    def _new_boundary_item(self) -> QGraphicsEllipseItem | QGraphicsRectItem:
-        if self.package_boundary_shape == "square":
-            return QGraphicsRectItem()
-        return QGraphicsEllipseItem()
-
-    def _boundary_item_matches_shape(self, item: QGraphicsEllipseItem | QGraphicsRectItem) -> bool:
-        if self.package_boundary_shape == "square":
-            return isinstance(item, QGraphicsRectItem)
-        return isinstance(item, QGraphicsEllipseItem)
 
     def _array_package_center(
         self,
@@ -902,7 +1017,7 @@ class PressureMapWidget(QWidget):
         if package.shear_result is None:
             self._hide_package_arrow(index)
             return
-        self.circle_radius_mm = float(package.pressure_result.total_extent_mm) / PRESSURE_GRID_MARGIN_SIDE_COUNT
+        self.circle_radius_mm = float(package.pressure_result.visual_boundary_radius_mm)
         geometry = self.calculate_arrow_geometry(package.shear_result)
         if not geometry.visible:
             self._hide_package_arrow(index)
@@ -918,7 +1033,7 @@ class PressureMapWidget(QWidget):
     ) -> None:
         if index >= len(self.package_label_items):
             return
-        radius = float(package.pressure_result.total_extent_mm) / PRESSURE_GRID_MARGIN_SIDE_COUNT
+        radius = float(package.pressure_result.visual_boundary_radius_mm)
         label_item = self.package_label_items[index]
         label_item.setText(str(package.sensor_id), color=package.color)
         label_item.setPos(center_x, center_y + (radius * 0.82))
@@ -981,7 +1096,7 @@ class PressureMapWidget(QWidget):
         max_y = float("-inf")
         max_radius = fallback_half_extent
         for package, (center_x, center_y) in zip(packages, centers):
-            radius = float(package.pressure_result.total_extent_mm) / PRESSURE_GRID_MARGIN_SIDE_COUNT
+            radius = float(package.pressure_result.total_extent_mm) / PRESSURE_SUPPORT_SIDE_COUNT
             max_radius = max(max_radius, radius)
             min_x = min(min_x, center_x - radius)
             max_x = max(max_x, center_x + radius)

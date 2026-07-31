@@ -10,7 +10,12 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtWidgets import QGraphicsEllipseItem, QGraphicsRectItem
 
-from constants.pressure_map import PRESSURE_MAP_BACKGROUND_COLOR, PRESSURE_MAP_OVERLAY_COLOR
+from constants.pressure_map import (
+    PRESSURE_DISPLAY_MODE_MAGNITUDE,
+    PRESSURE_DISPLAY_MODE_SIGNED,
+    PRESSURE_MAP_BACKGROUND_COLOR,
+    PRESSURE_MAP_OVERLAY_COLOR,
+)
 from data_processing.normal_force_calculator import NormalForceCalculator
 from data_processing.pressure_map_array_generator import PressureMapArrayGenerator, PressureMapArrayPackage
 from data_processing.pressure_map_generator import PressureMapGenerator
@@ -266,7 +271,6 @@ class PressureMapWidgetTests(unittest.TestCase):
                 grid_position=package.grid_position,
                 normal_force_result=package.normal_force_result,
                 pressure_result=package.pressure_result,
-                calibrated_values=package.calibrated_values,
             )
             for package in packages
         ])
@@ -373,6 +377,29 @@ class PressureMapWidgetTests(unittest.TestCase):
         levels = self.widget._pressure_levels(tension_result, pressure_grid)
 
         self.assertEqual(levels, (0.0, 5.0))
+
+    def test_display_mode_changes_rendering_without_changing_backend_data(self):
+        normal_result = self.calculator.compute({"C": -1.0, "R": -2.0, "T": -2.0, "L": -2.0, "B": -2.0})
+        pressure_result = self.generator.generate(normal_result.normalized)
+        original_grid = pressure_result.pressure_grid.copy()
+
+        self.widget.configure_display_mode(display_mode=PRESSURE_DISPLAY_MODE_MAGNITUDE)
+        np.testing.assert_allclose(self.widget._display_grid(pressure_result.pressure_grid), np.abs(original_grid))
+        self.widget.configure_display_mode(display_mode=PRESSURE_DISPLAY_MODE_SIGNED)
+        np.testing.assert_allclose(self.widget._display_grid(pressure_result.pressure_grid), original_grid)
+        self.assertEqual(self.widget._pressure_levels(normal_result, original_grid), (-self.widget.max_intensity, self.widget.max_intensity))
+        np.testing.assert_allclose(pressure_result.pressure_grid, original_grid)
+        lookup_table = self.widget._color_lookup_table()
+        self.assertTrue(np.all(lookup_table[len(lookup_table) // 2, :3] <= 2))
+
+    def test_arrow_scale_uses_outer_boundary_not_near_outer_peak_offset(self):
+        shear_result = self.detector.detect({"C": 0.0, "L": -1.0, "R": 1.0, "T": 0.0, "B": 0.0})
+        normal_result = self.calculator.compute(shear_result.residual)
+        pressure_result = PressureMapGenerator(near_outer_peak_offset_mm=2.0).generate(normal_result.normalized)
+
+        self.widget.update_display(normal_result, pressure_result, shear_result)
+
+        self.assertEqual(self.widget.circle_radius_mm, pressure_result.outer_boundary_half_width_mm)
 
     def test_pressure_levels_revert_to_normalized_when_max_intensity_is_zero(self):
         pressure_grid = np.array([[6.0, 0.0], [3.0, 1.0]], dtype=np.float64)

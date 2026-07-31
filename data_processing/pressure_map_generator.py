@@ -17,12 +17,20 @@ import numpy as np
 from constants.pressure_map import (
     DEFAULT_PRESSURE_DECAY_RATE,
     DEFAULT_PRESSURE_DECAY_REF_DISTANCE_MM,
+    DEFAULT_PRESSURE_DECAY_AMPLITUDE_REFERENCE,
+    DEFAULT_PRESSURE_MAXIMUM_DECAY_REACH_MM,
+    DEFAULT_PRESSURE_MAXIMUM_PEAK_GAIN,
+    DEFAULT_PRESSURE_MINIMUM_DECAY_REACH_MM,
+    DEFAULT_PRESSURE_NATURAL_DECAY_REFERENCE_DISTANCE_MM,
+    DEFAULT_PRESSURE_PEAK_HEIGHT_DECAY_RATE,
+    DEFAULT_PRESSURE_PEAK_HEIGHT_REFERENCE_DISTANCE_MM,
     DEFAULT_PRESSURE_NEAR_OUTER_PEAK_OFFSET_MM,
     DEFAULT_PRESSURE_OUTER_BOUNDARY_REACH_MM,
     DEFAULT_PRESSURE_PACKAGE_CENTER_SPACING_MM,
     DEFAULT_PRESSURE_PIXELS_PER_MM,
     DEFAULT_PRESSURE_SENSOR_SPACING_MM,
     DEFAULT_PRESSURE_SHOW_NEGATIVE,
+    DEFAULT_PRESSURE_SIGNAL_ACTIVITY_THRESHOLD,
     PRESSURE_ACTIVE_QUADRANTS,
     PRESSURE_AXIS_NEGATIVE_DIRECTION,
     PRESSURE_AXIS_POSITIVE_DIRECTION,
@@ -32,6 +40,7 @@ from constants.pressure_map import (
     PRESSURE_QUADRANT_TOP_LEFT,
     PRESSURE_QUADRANT_TOP_RIGHT,
 )
+from data_processing.pressure_map_geometry import PressureMapGeometry
 from constants.shear import (
     SHEAR_POSITION_BOTTOM,
     SHEAR_POSITION_CENTER,
@@ -108,6 +117,14 @@ class PressureMapResult:
     outer_boundary_half_width_mm: float
     decay_rate: float
     decay_ref_distance_mm: float
+    peak_height_reference_distance_mm: float
+    peak_height_decay_rate: float
+    maximum_peak_gain: float
+    natural_decay_reference_distance_mm: float
+    decay_amplitude_reference: float
+    minimum_decay_reach_mm: float
+    maximum_decay_reach_mm: float
+    signal_activity_threshold: float
     geometry_epsilon: float
     show_negative: bool
     near_outer_peak_offset_mm: float
@@ -135,6 +152,15 @@ class PressureMapGenerator:
         pixels_per_mm: float = DEFAULT_PRESSURE_PIXELS_PER_MM,
         decay_rate: float = DEFAULT_PRESSURE_DECAY_RATE,
         decay_ref_distance_mm: float = DEFAULT_PRESSURE_DECAY_REF_DISTANCE_MM,
+        peak_height_reference_distance_mm: float = DEFAULT_PRESSURE_PEAK_HEIGHT_REFERENCE_DISTANCE_MM,
+        peak_height_decay_rate: float = DEFAULT_PRESSURE_PEAK_HEIGHT_DECAY_RATE,
+        maximum_peak_gain: float = DEFAULT_PRESSURE_MAXIMUM_PEAK_GAIN,
+        natural_decay_reference_distance_mm: float | None = None,
+        decay_amplitude_reference: float = DEFAULT_PRESSURE_DECAY_AMPLITUDE_REFERENCE,
+        minimum_decay_reach_mm: float = DEFAULT_PRESSURE_MINIMUM_DECAY_REACH_MM,
+        maximum_decay_reach_mm: float = DEFAULT_PRESSURE_MAXIMUM_DECAY_REACH_MM,
+        signal_activity_threshold: float = DEFAULT_PRESSURE_SIGNAL_ACTIVITY_THRESHOLD,
+        geometry: PressureMapGeometry | None = None,
         near_outer_peak_offset_mm: float = DEFAULT_PRESSURE_NEAR_OUTER_PEAK_OFFSET_MM,
         geometry_epsilon: float = PRESSURE_GEOMETRY_EPSILON,
         show_negative: bool = DEFAULT_PRESSURE_SHOW_NEGATIVE,
@@ -145,19 +171,34 @@ class PressureMapGenerator:
         self.pixels_per_mm = float(pixels_per_mm)
         self.decay_rate = float(decay_rate)
         self.decay_ref_distance_mm = float(decay_ref_distance_mm)
+        self.peak_height_reference_distance_mm = float(peak_height_reference_distance_mm)
+        self.peak_height_decay_rate = float(peak_height_decay_rate)
+        self.maximum_peak_gain = float(maximum_peak_gain)
+        self.natural_decay_reference_distance_mm = float(
+            decay_ref_distance_mm if natural_decay_reference_distance_mm is None else natural_decay_reference_distance_mm
+        )
+        self.decay_amplitude_reference = float(decay_amplitude_reference)
+        self.minimum_decay_reach_mm = float(minimum_decay_reach_mm)
+        self.maximum_decay_reach_mm = float(maximum_decay_reach_mm)
+        self.signal_activity_threshold = float(signal_activity_threshold)
         self.near_outer_peak_offset_mm = float(near_outer_peak_offset_mm)
         self.geometry_epsilon = float(geometry_epsilon)
         self.show_negative = bool(show_negative)
 
+        self.geometry = geometry or PressureMapGeometry(
+            sensor_spacing_mm=self.sensor_spacing_mm,
+            package_center_spacing_mm=self.package_center_spacing_mm,
+            outer_boundary_reach_mm=self.outer_boundary_reach_mm,
+            near_outer_peak_offset_mm=self.near_outer_peak_offset_mm,
+            pixels_per_mm=self.pixels_per_mm,
+        )
         self._validate_parameters()
         self.sensor_positions = self._build_sensor_positions()
         self.quadrants = self._build_quadrant_definitions()
         self._quadrant_by_label = {quadrant.label: quadrant for quadrant in self.quadrants}
-        self.facing_sensor_gap_mm = self.package_center_spacing_mm - (2.0 * self.sensor_spacing_mm)
-        self.mid_boundary_half_width_mm = self.package_center_spacing_mm / 2.0
-        self.outer_boundary_half_width_mm = (
-            self.mid_boundary_half_width_mm + self.outer_boundary_reach_mm
-        )
+        self.facing_sensor_gap_mm = self.geometry.facing_sensor_gap_mm
+        self.mid_boundary_half_width_mm = self.geometry.mid_boundary_half_width_mm
+        self.outer_boundary_half_width_mm = self.geometry.outer_boundary_half_width_mm
         self.visual_boundary_radius_mm = (
             self.sensor_spacing_mm + self.near_outer_peak_offset_mm
         )
@@ -223,6 +264,14 @@ class PressureMapGenerator:
             outer_boundary_half_width_mm=self.outer_boundary_half_width_mm,
             decay_rate=self.decay_rate,
             decay_ref_distance_mm=self.decay_ref_distance_mm,
+            peak_height_reference_distance_mm=self.peak_height_reference_distance_mm,
+            peak_height_decay_rate=self.peak_height_decay_rate,
+            maximum_peak_gain=self.maximum_peak_gain,
+            natural_decay_reference_distance_mm=self.natural_decay_reference_distance_mm,
+            decay_amplitude_reference=self.decay_amplitude_reference,
+            minimum_decay_reach_mm=self.minimum_decay_reach_mm,
+            maximum_decay_reach_mm=self.maximum_decay_reach_mm,
+            signal_activity_threshold=self.signal_activity_threshold,
             geometry_epsilon=self.geometry_epsilon,
             show_negative=self.show_negative,
             near_outer_peak_offset_mm=self.near_outer_peak_offset_mm,
@@ -239,6 +288,14 @@ class PressureMapGenerator:
             raise ValueError("pixels_per_mm must be positive")
         if self.decay_ref_distance_mm <= SHEAR_ZERO_VALUE:
             raise ValueError("decay_ref_distance_mm must be positive")
+        if self.peak_height_reference_distance_mm <= 0 or self.maximum_peak_gain < 1:
+            raise ValueError("peak-height shaping parameters are invalid")
+        if self.natural_decay_reference_distance_mm <= 0 or self.decay_amplitude_reference <= 0:
+            raise ValueError("natural decay parameters must be positive")
+        if not 0 <= self.minimum_decay_reach_mm <= self.maximum_decay_reach_mm:
+            raise ValueError("decay reach limits are invalid")
+        if self.signal_activity_threshold < 0:
+            raise ValueError("signal_activity_threshold must be non-negative")
         if self.near_outer_peak_offset_mm < SHEAR_ZERO_VALUE:
             raise ValueError("near_outer_peak_offset_mm must be non-negative")
         if (
@@ -283,10 +340,14 @@ class PressureMapGenerator:
 
     def _isolated_outer_sensor(self, signals: Mapping[str, float]) -> str | None:
         outer_sensors = (SHEAR_POSITION_LEFT, SHEAR_POSITION_RIGHT, SHEAR_POSITION_TOP, SHEAR_POSITION_BOTTOM)
-        active = [sensor for sensor in outer_sensors if signals[sensor] != SHEAR_ZERO_VALUE]
-        if signals[SHEAR_POSITION_CENTER] != SHEAR_ZERO_VALUE or len(active) != 1:
+        active = [sensor for sensor in outer_sensors if self.is_signal_active(signals[sensor])]
+        if self.is_signal_active(signals[SHEAR_POSITION_CENTER]) or len(active) != 1:
             return None
         return active[0]
+
+    def is_signal_active(self, value: float) -> bool:
+        """Classify values in the calibrated signal domain, not geometry space."""
+        return abs(float(value)) >= self.signal_activity_threshold
 
     def _build_isolated_outer_plane(self, signals: Mapping[str, float], sensor: str) -> PressureQuadrantPlane:
         sensor_x, sensor_y = self.sensor_positions[sensor]
@@ -299,6 +360,11 @@ class PressureMapGenerator:
         else:
             peak_point = (sensor_x, sensor_y - self.near_outer_peak_offset_mm)
         value = float(signals[sensor])
+        gain = min(
+            self.maximum_peak_gain,
+            1.0 + self.peak_height_decay_rate * self.near_outer_peak_offset_mm /
+            self.peak_height_reference_distance_mm,
+        )
         return PressureQuadrantPlane(
             label=sensor,
             a=0.0,
@@ -308,7 +374,7 @@ class PressureMapGenerator:
             sensors=(SHEAR_POSITION_CENTER, sensor),
             mode=PRESSURE_QUADRANT_MODE_ISOLATED_OUTER_PEAKED,
             peak_point=peak_point,
-            peak_height=value,
+            peak_height=value * gain,
             single_axis_peak_sensor=sensor,
             single_axis_center_value=0.0,
             single_axis_outer_value=value,
@@ -316,7 +382,7 @@ class PressureMapGenerator:
 
     def _quadrant_is_active(self, signals: Mapping[str, float], quadrant: _QuadrantDefinition) -> bool:
         values = [signals[sensor] for sensor in quadrant.sensors]
-        nonzero_values = [value for value in values if value != SHEAR_ZERO_VALUE]
+        nonzero_values = [value for value in values if self.is_signal_active(value)]
         if not nonzero_values:
             return False
         reference_sign = self._value_sign(nonzero_values[0])
@@ -350,9 +416,9 @@ class PressureMapGenerator:
         )
 
     def _single_axis_peak_sensor(self, signals: Mapping[str, float], quadrant: _QuadrantDefinition) -> str | None:
-        center_nonzero = abs(signals[SHEAR_POSITION_CENTER]) > self.geometry_epsilon
-        horizontal_nonzero = abs(signals[quadrant.horizontal_sensor]) > self.geometry_epsilon
-        vertical_nonzero = abs(signals[quadrant.vertical_sensor]) > self.geometry_epsilon
+        center_nonzero = self.is_signal_active(signals[SHEAR_POSITION_CENTER])
+        horizontal_nonzero = self.is_signal_active(signals[quadrant.horizontal_sensor])
+        vertical_nonzero = self.is_signal_active(signals[quadrant.vertical_sensor])
         if not center_nonzero:
             return None
         if horizontal_nonzero and not vertical_nonzero:
@@ -380,7 +446,7 @@ class PressureMapGenerator:
         return (float(x_peak), float(y_peak))
 
     def _pressure_magnitude(self, value: float) -> float:
-        return abs(value) if self.show_negative else max(SHEAR_ZERO_VALUE, value)
+        return abs(value)
 
     def _is_peaked_pressure_point(self, peak_x: float, peak_y: float, quadrant: _QuadrantDefinition) -> bool:
         return (
@@ -394,7 +460,10 @@ class PressureMapGenerator:
         for sensor in quadrant.sensors:
             sensor_x, sensor_y = self.sensor_positions[sensor]
             distance = float(np.hypot(sensor_x - peak_x, sensor_y - peak_y))
-            estimate = signals[sensor] * (1.0 + self.decay_rate * distance / self.decay_ref_distance_mm)
+            estimate = signals[sensor] * min(
+                self.maximum_peak_gain,
+                1.0 + self.peak_height_decay_rate * distance / self.peak_height_reference_distance_mm,
+            )
             weight = 1.0 / max(self.geometry_epsilon, distance) ** 2
             weighted_estimate_sum += estimate * weight
             weight_sum += weight
@@ -496,18 +565,34 @@ class PressureMapGenerator:
         peak_axis = sensor_axis + self.near_outer_peak_offset_mm
         outer_value = float(plane.single_axis_outer_value or 0.0)
         before_sensor = outer_value * np.clip(local_axis / sensor_axis, 0.0, 1.0)
-        to_peak = np.full_like(local_axis, outer_value, dtype=np.float64)
+        to_peak = outer_value + (float(plane.peak_height) - outer_value) * np.clip(
+            (local_axis - sensor_axis) / max(self.geometry_epsilon, peak_axis - sensor_axis),
+            0.0,
+            1.0,
+        )
         after_peak_distance = np.maximum(0.0, local_axis - peak_axis)
-        natural = self._natural_decay_factor(after_peak_distance, abs(float(plane.peak_height)))
-        after_peak = outer_value * natural
+        natural = self._radial_decay_factor(
+            after_peak_distance,
+            abs(float(plane.peak_height)),
+            0.0,
+            axis_bound - peak_axis,
+        )
+        after_peak = float(plane.peak_height) * natural
         axial = np.where(local_axis <= sensor_axis, before_sensor, np.where(local_axis <= peak_axis, to_peak, after_peak))
         axial = np.where(local_axis >= 0.0, axial, 0.0)
 
         lateral_width = max(self.geometry_epsilon, self.sensor_spacing_mm * 0.65)
         lateral_profile = np.exp(-((local_lateral / lateral_width) ** 2))
-        terminal_axis = self._terminal_envelope(local_axis, peak_axis, axis_bound)
-        terminal_lateral = np.clip(1.0 - (local_lateral / np.maximum(self.geometry_epsilon, lateral_bounds)), 0.0, 1.0)
-        values = axial * lateral_profile * terminal_axis * terminal_lateral
+        # One radial compact-support factor is applied below from the inferred
+        # peak.  Do not add a second axis/lateral terminal envelope here.
+        values = axial * lateral_profile
+        peak_distance = np.hypot(x_values_mm - plane.peak_point[0], y_values_mm - plane.peak_point[1])
+        ray_boundary = self._ray_boundary_distance(
+            plane.peak_point[0], plane.peak_point[1], x_values_mm, y_values_mm, support_bounds_mm
+        )
+        after_peak = local_axis > peak_axis
+        decay = self._radial_decay_factor(peak_distance, abs(float(plane.peak_height)), 0.0, ray_boundary)
+        values = np.where(after_peak, values * decay, values)
         return self._clamp_values(values, plane.sign)
 
     def _evaluate_single_axis_peaked_quadrant(self, plane: PressureQuadrantPlane, x_values_mm: np.ndarray, y_values_mm: np.ndarray) -> np.ndarray:
@@ -523,16 +608,23 @@ class PressureMapGenerator:
         else:
             local_axis, local_lateral, peak_axis = y_values_mm * quadrant.vertical_sign, np.abs(x_values_mm), peak_y * quadrant.vertical_sign
         peak_axis = float(np.clip(peak_axis, self.geometry_epsilon, self.sensor_spacing_mm - self.geometry_epsilon))
-        before_peak = np.clip(local_axis / peak_axis, 0.0, 1.0)
-        after_peak = np.clip((self.sensor_spacing_mm - local_axis) / (self.sensor_spacing_mm - peak_axis), 0.0, 1.0)
-        axial_blend = np.where(local_axis <= peak_axis, before_peak, after_peak)
         center_value = float(plane.single_axis_center_value or 0.0)
         outer_value = float(plane.single_axis_outer_value or 0.0)
-        edge_value = (center_value + outer_value) / 2.0
         peak_value = float(plane.peak_height if plane.peak_height is not None else plane.c)
-        values = edge_value + (peak_value - edge_value) * axial_blend
+        rise = np.clip(local_axis / peak_axis, 0.0, 1.0)
+        fall = np.clip((local_axis - peak_axis) / (self.sensor_spacing_mm - peak_axis), 0.0, 1.0)
+        before_outer = np.where(
+            local_axis <= peak_axis,
+            center_value + ((peak_value - center_value) * rise),
+            peak_value + ((outer_value - peak_value) * fall),
+        )
+        # The shared radial compact-support pass supplies outward decay.  Keep
+        # this piecewise surface solely responsible for C -> peak -> outer.
+        values = np.where(local_axis <= self.sensor_spacing_mm, before_outer, outer_value)
+        values = np.where(local_axis >= 0.0, values, 0.0)
         width_at_peak = max(self.geometry_epsilon, self.sensor_spacing_mm * 0.22)
         width_at_edges = max(self.geometry_epsilon, self.sensor_spacing_mm * 0.07)
+        axial_blend = np.clip(local_axis / max(self.geometry_epsilon, self.sensor_spacing_mm), 0.0, 1.0)
         lateral_width = width_at_edges + (width_at_peak - width_at_edges) * axial_blend
         return values * np.exp(-((local_lateral / lateral_width) ** 2))
 
@@ -540,20 +632,19 @@ class PressureMapGenerator:
         quadrant = self._quadrant_by_label.get(plane.label)
         if quadrant is None:
             return values
-        local_x = x_values_mm * quadrant.horizontal_sign
-        local_y = y_values_mm * quadrant.vertical_sign
-        x_bound = bounds[1] if quadrant.horizontal_sign > 0 else -bounds[0]
-        y_bound = bounds[3] if quadrant.vertical_sign > 0 else -bounds[2]
-        peak_x = abs(plane.peak_point[0]) if plane.peak_point is not None else 0.0
-        peak_y = abs(plane.peak_point[1]) if plane.peak_point is not None else 0.0
-        x_anchor = max(self.sensor_spacing_mm, peak_x)
-        y_anchor = max(self.sensor_spacing_mm, peak_y)
+        origin_x, origin_y = plane.peak_point or (0.0, 0.0)
+        distance = np.hypot(x_values_mm - origin_x, y_values_mm - origin_y)
         strength = self._plane_decay_strength(plane)
-        natural = self._natural_decay_factor(np.maximum(0.0, local_x - x_anchor), strength)
-        natural *= self._natural_decay_factor(np.maximum(0.0, local_y - y_anchor), strength)
-        terminal = self._terminal_envelope(local_x, x_anchor, x_bound)
-        terminal *= self._terminal_envelope(local_y, y_anchor, y_bound)
-        return values * natural * terminal
+        boundary = self._ray_boundary_distance(origin_x, origin_y, x_values_mm, y_values_mm, bounds)
+        # Preserve all measured/interpolated anchors inside the sensor cross;
+        # radial compact support applies only beyond the contact origin.
+        factor = self._radial_decay_factor(distance, strength, 0.0, boundary)
+        contact_region = (
+            (np.abs(x_values_mm) <= self.sensor_spacing_mm)
+            & (np.abs(y_values_mm) <= self.sensor_spacing_mm)
+        )
+        factor = np.where(contact_region, 1.0, factor)
+        return values * factor
 
     def _plane_decay_strength(self, plane: PressureQuadrantPlane) -> float:
         if plane.peak_height is not None:
@@ -563,18 +654,41 @@ class PressureMapGenerator:
         return max(abs(float(value)) for value in candidates)
 
     def _natural_decay_factor(self, distance_mm: np.ndarray, strength: float) -> np.ndarray:
-        if self.decay_rate <= self.geometry_epsilon:
-            return np.ones_like(distance_mm, dtype=np.float64)
-        natural_reach = self.decay_ref_distance_mm * max(1.0, strength * self.decay_rate)
-        return np.clip(1.0 - (distance_mm / max(self.geometry_epsilon, natural_reach)), 0.0, 1.0)
+        reach = self._natural_decay_reach(strength)
+        return self._radial_decay_factor(distance_mm, strength, 0.0, reach)
 
-    def _terminal_envelope(self, coordinate_mm: np.ndarray, anchor_mm: float, boundary_mm: float) -> np.ndarray:
-        if boundary_mm <= anchor_mm + self.geometry_epsilon:
-            return np.where(coordinate_mm < boundary_mm, 1.0, 0.0)
-        envelope = np.ones_like(coordinate_mm, dtype=np.float64)
-        outward = coordinate_mm > anchor_mm
-        envelope[outward] = np.clip((boundary_mm - coordinate_mm[outward]) / (boundary_mm - anchor_mm), 0.0, 1.0)
-        return envelope
+    def _natural_decay_reach(self, strength: float) -> float:
+        ratio = min(
+            self.maximum_decay_reach_mm / max(self.geometry_epsilon, self.natural_decay_reference_distance_mm),
+            abs(float(strength)) / self.decay_amplitude_reference,
+        )
+        return min(
+            self.maximum_decay_reach_mm,
+            self.minimum_decay_reach_mm + ratio * (
+                self.natural_decay_reference_distance_mm - self.minimum_decay_reach_mm
+            ),
+        )
+
+    def _radial_decay_factor(self, distance_mm: np.ndarray, strength: float, anchor_distance_mm: float, boundary_distance_mm: float | np.ndarray) -> np.ndarray:
+        reach = np.minimum(self._natural_decay_reach(strength), boundary_distance_mm - anchor_distance_mm)
+        outward = np.maximum(0.0, np.asarray(distance_mm, dtype=np.float64) - anchor_distance_mm)
+        safe_reach = np.maximum(self.geometry_epsilon, reach)
+        t = np.clip(outward / safe_reach, 0.0, 1.0)
+        factor = 1.0 - (3.0 * t * t) + (2.0 * t * t * t)
+        return np.where(outward >= reach, 0.0, factor)
+
+    def _ray_boundary_distance(self, origin_x: float, origin_y: float, x_values_mm: np.ndarray, y_values_mm: np.ndarray, bounds: tuple[float, float, float, float]) -> np.ndarray:
+        dx = x_values_mm - origin_x
+        dy = y_values_mm - origin_y
+        left, right, bottom, top = bounds
+        with np.errstate(divide="ignore", invalid="ignore"):
+            x_limit = np.where(dx > 0, (right - origin_x) / dx, np.where(dx < 0, (left - origin_x) / dx, np.inf))
+            y_limit = np.where(dy > 0, (top - origin_y) / dy, np.where(dy < 0, (bottom - origin_y) / dy, np.inf))
+        distance = np.hypot(dx, dy)
+        boundary = np.full_like(distance, np.inf, dtype=np.float64)
+        active = distance > self.geometry_epsilon
+        boundary[active] = distance[active] * np.minimum(x_limit[active], y_limit[active])
+        return boundary
 
     def _evaluate_peaked_quadrant(self, plane: PressureQuadrantPlane, x_values_mm: np.ndarray, y_values_mm: np.ndarray) -> np.ndarray:
         values = np.empty_like(x_values_mm, dtype=np.float64)
@@ -587,11 +701,12 @@ class PressureMapGenerator:
             matched_mask[triangle_mask] = True
         unmatched = np.flatnonzero(~matched_mask)
         if unmatched.size:
-            outer_triangles = [triangle for triangle in plane.triangles if triangle.name.startswith("outer")]
-            fallbacks = outer_triangles or list(plane.triangles)
-            for index in unmatched:
-                triangle = self._nearest_triangle(fallbacks, float(x_values_mm[index]), float(y_values_mm[index]))
-                values[index] = self._evaluate_plane(triangle.a, triangle.b, triangle.c, x_values_mm[index], y_values_mm[index])
+            # Numerical boundary tolerance can leave points precisely on a
+            # shared edge.  The base three-sensor plane is deterministic and
+            # continuous at the measured anchors; never choose by centroid.
+            values[unmatched] = self._evaluate_plane(
+                plane.a, plane.b, plane.c, x_values_mm[unmatched], y_values_mm[unmatched]
+            )
         return values
 
     def _points_in_triangle(self, x_values_mm: np.ndarray, y_values_mm: np.ndarray, vertices: tuple[tuple[float, float], tuple[float, float], tuple[float, float]]) -> np.ndarray:
@@ -605,11 +720,6 @@ class PressureMapGenerator:
 
     def _cross(self, edge_end: tuple[float, float], edge_start: tuple[float, float], x_values_mm: np.ndarray, y_values_mm: np.ndarray) -> np.ndarray:
         return ((edge_end[0] - edge_start[0]) * (y_values_mm - edge_start[1]) - (edge_end[1] - edge_start[1]) * (x_values_mm - edge_start[0]))
-
-    def _nearest_triangle(self, triangles: list[PressureTrianglePlane], x_value: float, y_value: float) -> PressureTrianglePlane:
-        point = np.array((x_value, y_value), dtype=np.float64)
-        distances = [float(np.linalg.norm(point - np.mean(np.array(triangle.vertices, dtype=np.float64), axis=0))) for triangle in triangles]
-        return triangles[int(np.argmin(distances))]
 
     def _evaluate_plane(self, a: float, b: float, c: float, x_values_mm: np.ndarray | float, y_values_mm: np.ndarray | float) -> np.ndarray | float:
         return (a * x_values_mm) + (b * y_values_mm) + c
@@ -644,6 +754,14 @@ def evaluate_pressure_map_result_at(
     evaluator.outer_boundary_half_width_mm = result.outer_boundary_half_width_mm
     evaluator.decay_rate = result.decay_rate
     evaluator.decay_ref_distance_mm = result.decay_ref_distance_mm
+    evaluator.peak_height_reference_distance_mm = result.peak_height_reference_distance_mm
+    evaluator.peak_height_decay_rate = result.peak_height_decay_rate
+    evaluator.maximum_peak_gain = result.maximum_peak_gain
+    evaluator.natural_decay_reference_distance_mm = result.natural_decay_reference_distance_mm
+    evaluator.decay_amplitude_reference = result.decay_amplitude_reference
+    evaluator.minimum_decay_reach_mm = result.minimum_decay_reach_mm
+    evaluator.maximum_decay_reach_mm = result.maximum_decay_reach_mm
+    evaluator.signal_activity_threshold = result.signal_activity_threshold
     evaluator.near_outer_peak_offset_mm = result.near_outer_peak_offset_mm
     evaluator.geometry_epsilon = result.geometry_epsilon
     evaluator.show_negative = result.show_negative

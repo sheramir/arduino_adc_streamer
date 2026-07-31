@@ -282,7 +282,7 @@ GUI-independent computation of signed normal force, force type, and global centr
 GUI-independent generator that builds a piecewise-linear 2D pressure surface (per quadrant cross layout) from normalized five-sensor signals.
 
 - PressureTrianglePlane / PressureQuadrantPlane / PressureMapResult (dataclasses) — geometry/plane metadata and the final grid result.
-- PressureMapGenerator.__init__(...) — configures circle diameter, sensor spacing, grid resolution/margin, decay parameters; precomputes grids and quadrant masks.
+- PressureMapGenerator.__init__(...) — consumes the shared physical geometry, shaping parameters, and signal activity threshold; precomputes the fixed Outer-Boundary grid.
 - PressureMapGenerator.generate(normalized_signals) — builds active quadrant planes and renders the pressure grid for one sample.
 - PressureMapGenerator._validate_parameters() — validates constructor parameters.
 - PressureMapGenerator._build_sensor_positions() / _build_quadrant_definitions() — builds static sensor/quadrant geometry.
@@ -293,18 +293,18 @@ GUI-independent generator that builds a piecewise-linear 2D pressure surface (pe
 - PressureMapGenerator._isolated_outer_sensor / _single_axis_peak_sensor — detect isolated-outer and center-active single-axis special cases.
 - PressureMapGenerator._three_sensor_plane_coefficients(signals, quadrant) — solves the base 3-point plane.
 - PressureMapGenerator._pressure_point(signals, quadrant) — computes the interior peak point location.
-- PressureMapGenerator._pressure_magnitude(value) — magnitude helper respecting `show_negative`.
+- PressureMapGenerator._pressure_magnitude(value) — backend magnitude helper; display mode never changes inference.
 - PressureMapGenerator._is_peaked_pressure_point(peak_x, peak_y, quadrant) — checks whether the peak lies strictly inside the quadrant.
 - PressureMapGenerator._pressure_point_height(signals, quadrant, peak_x, peak_y) — inverse-distance weighted estimate of peak height.
 - PressureMapGenerator._build_triangle_planes(signals, quadrant, peak_x, peak_y, peak_height) — builds the four sub-triangle planes for a peaked quadrant.
 - PressureMapGenerator._corner_value / _solve_triangle_plane — geometry helpers for triangle plane solving.
 - PressureMapGenerator._quadrant_sign(*values) / _value_sign(value) — sign helpers for quadrant activation.
 - PressureMapGenerator._build_pressure_grid(quadrant_planes) / _evaluate_planes_at(...) — evaluates the full numerical field independently of the visual circle.
-- PressureMapGenerator._evaluate_quadrant_for_region(...) — dispatches to peaked/single-axis/plane evaluation plus natural and terminal support decay.
+- PressureMapGenerator._evaluate_quadrant_for_region(...) — dispatches to peaked/single-axis/plane evaluation plus one radial compact-support decay.
 - PressureMapGenerator._evaluate_isolated_outer_plane(...) — evaluates the localized outer-sensor response through its inferred external peak.
-- PressureMapGenerator._apply_support_decay(...) — applies natural decay and a continuous maximum-support envelope.
+- PressureMapGenerator._apply_support_decay(...) — applies amplitude-dependent radial smoothstep compact support.
 - PressureMapGenerator._evaluate_peaked_quadrant(...) / _points_in_triangle / _cross — evaluates a peaked quadrant via barycentric triangle membership.
-- PressureMapGenerator._evaluate_unmatched_peak_points / _nearest_triangle — fallback assignment for points missed by triangle tests.
+- PressureMapGenerator._evaluate_peaked_quadrant(...) — uses the deterministic triangle fan; numerical shared-edge points use the base plane, never a nearest-triangle fallback.
 - PressureMapGenerator._evaluate_plane(a, b, c, x, y) — evaluates a linear plane.
 - PressureMapGenerator._clamp_values(values, sign) — clamps grid values to the quadrant's dominant sign.
 
@@ -313,7 +313,7 @@ GUI-independent generator that builds a piecewise-linear 2D pressure surface (pe
 GUI-independent generator that evaluates each package as a world-space candidate, then blends shared support regions without a synthetic gap field.
 
 - PressureMapArrayPackage / PressureMapArrayResult (dataclasses) — package input payloads, candidate-support geometry, and combined-grid output metadata.
-- PressureMapArrayGenerator.__init__(sensor_spacing_mm=..., package_center_spacing_mm=..., outer_boundary_reach_mm=..., show_negative=...) — configures physical placement and the fixed local support square.
+- PressureMapArrayGenerator.__init__(geometry=... or physical geometry fields) — configures the shared physical placement, density, and fixed local support square.
 - PressureMapArrayGenerator.generate(packages) — evaluates package candidates in world coordinates and blends all shared supports deterministically.
 - PressureMapArrayGenerator._package_centers(...) — converts array row/column positions into physical package centers using configurable center spacing.
 - PressureMapArrayGenerator._candidate_support_bounds(...) — assigns every package the same fixed Outer-Boundary support square.

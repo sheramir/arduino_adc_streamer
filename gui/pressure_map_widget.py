@@ -37,6 +37,8 @@ from constants.pressure_map import (
     DEFAULT_PRESSURE_SHOW_MARKER,
     DEFAULT_PRESSURE_SHOW_NEAR_OUTER_BOUNDARY,
     DEFAULT_PRESSURE_SHOW_OUTER_BOUNDARY,
+    PRESSURE_DISPLAY_MODE_MAGNITUDE,
+    PRESSURE_DISPLAY_MODE_SIGNED,
     PRESSURE_MAP_BACKGROUND_COLOR,
     PRESSURE_MAP_CIRCLE_Z,
     PRESSURE_MAP_COLORMAP_POINTS,
@@ -112,6 +114,7 @@ class PressureMapPackageDisplay:
 
 @dataclass(slots=True)
 class _PressureMapImageCache:
+    cache_key: tuple[object, ...]
     pressure_grid: np.ndarray
     levels: tuple[float, float]
     rect: tuple[float, float, float, float]
@@ -190,6 +193,7 @@ class PressureMapWidget(QWidget):
         self.noise_floor = PRESSURE_MAP_ZERO_LEVEL_MIN
         self.mirror = bool(DEFAULT_PRESSURE_MIRROR)
         self.color_scale = "Grayscale"
+        self.display_mode = PRESSURE_DISPLAY_MODE_MAGNITUDE
         self._color_maps: dict[str, pg.ColorMap] = {}
         self.last_arrow_geometry = self._hidden_arrow_geometry()
 
@@ -336,6 +340,21 @@ class PressureMapWidget(QWidget):
                 return
             self.mirror = updated_mirror
             self._refresh_cached_display()
+
+    def configure_display_mode(self, *, display_mode: str | None = None) -> None:
+        """Choose magnitude (default) or signed pressure rendering only."""
+        if display_mode not in (PRESSURE_DISPLAY_MODE_MAGNITUDE, PRESSURE_DISPLAY_MODE_SIGNED):
+            return
+        if self.display_mode != display_mode:
+            self.display_mode = display_mode
+            lookup_table = self._color_lookup_table()
+            self.image_item.setLookupTable(lookup_table)
+            for image_item in self.package_image_items:
+                image_item.setLookupTable(lookup_table)
+            self._refresh_cached_display()
+
+    def _display_grid(self, grid: np.ndarray) -> np.ndarray:
+        return np.abs(grid) if self.display_mode == PRESSURE_DISPLAY_MODE_MAGNITUDE else grid
 
     def _refresh_cached_display(self) -> None:
         if self.last_array_result is not None and self.last_package_displays:
@@ -514,7 +533,7 @@ class PressureMapWidget(QWidget):
         half_extent = extent / PRESSURE_SUPPORT_SIDE_COUNT
         
         # Apply mirror flip to the grid if needed
-        grid = pressure_result.pressure_grid
+        grid = self._display_grid(pressure_result.pressure_grid)
         if self.mirror:
             grid = np.fliplr(grid)
         
@@ -526,6 +545,7 @@ class PressureMapWidget(QWidget):
             grid,
             levels,
             rect,
+            cache_key=(id(pressure_result.pressure_grid), self.display_mode, self.mirror),
         )
         self.plot_widget.setXRange(-half_extent, half_extent, padding=SHEAR_ZERO_VALUE)
         self.plot_widget.setYRange(-half_extent, half_extent, padding=SHEAR_ZERO_VALUE)
@@ -536,7 +556,7 @@ class PressureMapWidget(QWidget):
         packages: list[PressureMapPackageDisplay],
     ) -> None:
         level_source = packages[0].normal_force_result
-        grid = array_result.pressure_grid
+        grid = self._display_grid(array_result.pressure_grid)
         if self.mirror:
             grid = np.fliplr(grid)
         levels = self._pressure_levels(level_source, grid)
@@ -552,6 +572,7 @@ class PressureMapWidget(QWidget):
             grid,
             levels,
             rect,
+            cache_key=(id(array_result.pressure_grid), self.display_mode, self.mirror),
         )
 
     def _update_cached_image_item(
@@ -561,23 +582,19 @@ class PressureMapWidget(QWidget):
         pressure_grid: np.ndarray,
         levels: tuple[float, float],
         rect: tuple[float, float, float, float],
+        *,
+        cache_key: tuple[object, ...],
     ) -> _PressureMapImageCache:
-        image_unchanged = False
-        if cache is not None and cache.levels == levels and cache.rect == rect:
-            image_unchanged = (
-                cache.pressure_grid is pressure_grid
-                or np.array_equal(cache.pressure_grid, pressure_grid)
-            )
-
-        if not image_unchanged:
+        if cache is None or cache.cache_key != cache_key or cache.levels != levels:
             image_item.setImage(
-                np.abs(pressure_grid).T,
+                pressure_grid.T,
                 autoLevels=False,
                 levels=levels,
             )
-
-        image_item.setRect(QRectF(*rect))
+        if cache is None or cache.rect != rect:
+            image_item.setRect(QRectF(*rect))
         return _PressureMapImageCache(
+            cache_key=cache_key,
             pressure_grid=pressure_grid,
             levels=levels,
             rect=rect,
@@ -592,6 +609,8 @@ class PressureMapWidget(QWidget):
             return self._normalized_pressure_levels(normal_force_result, pressure_grid)
 
         level_max = max(float(self.max_intensity), PRESSURE_MAP_LEVEL_EPSILON)
+        if self.display_mode == PRESSURE_DISPLAY_MODE_SIGNED:
+            return (-level_max, level_max)
         level_min = min(self.noise_floor, level_max - PRESSURE_MAP_LEVEL_EPSILON)
         return (level_min, level_max)
 
@@ -615,6 +634,13 @@ class PressureMapWidget(QWidget):
         return -x if self.mirror else x
 
     def _color_lookup_table(self) -> np.ndarray:
+        if self.display_mode == PRESSURE_DISPLAY_MODE_SIGNED:
+            return pg.ColorMap(
+                # Keep zero transparent/black against the pressure-map canvas.
+                # The old white midpoint made an empty Signed map look like its
+                # background had changed even though the PlotWidget was black.
+                [0.0, 0.5, 1.0], ["#2166AC", "#000000", "#B2182B"]
+            ).getLookupTable(nPts=PRESSURE_MAP_COLORMAP_POINTS)
         color_map = self._color_maps.get(self.color_scale)
         if color_map is None:
             color_map = pg.ColorMap(
@@ -651,7 +677,7 @@ class PressureMapWidget(QWidget):
 
     def _update_boundary(self, pressure_result: PressureMapResult) -> None:
         radius = float(pressure_result.visual_boundary_radius_mm)
-        self.circle_radius_mm = radius
+        self.circle_radius_mm = float(pressure_result.outer_boundary_half_width_mm)
         if self.circle_item is None:
             self.circle_item = self._new_near_boundary_item()
             self.plot_widget.addItem(self.circle_item)
@@ -881,7 +907,7 @@ class PressureMapWidget(QWidget):
     ) -> None:
         image_item = self.package_image_items[index]
         image_item.show()
-        grid = package.pressure_result.pressure_grid
+        grid = self._display_grid(package.pressure_result.pressure_grid)
         if self.mirror:
             grid = np.fliplr(grid)
         levels = self._pressure_levels(package.normal_force_result, grid)
@@ -894,6 +920,7 @@ class PressureMapWidget(QWidget):
             grid,
             levels,
             rect,
+            cache_key=(id(package.pressure_result.pressure_grid), self.display_mode, self.mirror),
         )
 
     def _update_package_boundary(
@@ -1017,7 +1044,7 @@ class PressureMapWidget(QWidget):
         if package.shear_result is None:
             self._hide_package_arrow(index)
             return
-        self.circle_radius_mm = float(package.pressure_result.visual_boundary_radius_mm)
+        self.circle_radius_mm = float(package.pressure_result.outer_boundary_half_width_mm)
         geometry = self.calculate_arrow_geometry(package.shear_result)
         if not geometry.visible:
             self._hide_package_arrow(index)

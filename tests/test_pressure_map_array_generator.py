@@ -29,7 +29,6 @@ class PressureMapArrayGeneratorTests(unittest.TestCase):
             grid_position=grid_position,
             normal_force_result=self.normal_calculator.compute(values),
             pressure_result=active_generator.generate(values),
-            calibrated_values=dict(values),
         )
 
     def _generator(self, **kwargs):
@@ -134,7 +133,7 @@ class PressureMapArrayGeneratorTests(unittest.TestCase):
         )
         first = self._package("A", (0, 0), {"C": 0.0, "L": 0.0, "R": 5.0, "T": 0.0, "B": 0.0}, generator=signed_generator)
         second = self._package("B", (0, 1), {"C": 0.0, "L": -5.0, "R": 0.0, "T": 0.0, "B": 0.0}, generator=signed_generator)
-        result = self._generator(show_negative=True).generate([first, second])
+        result = self._generator().generate([first, second])
         self.assertAlmostEqual(self._grid_value(result, 0.0, 0.0), 0.0, places=8)
 
         for x_mm in (-1.0, -0.5, 0.0, 0.5, 1.0):
@@ -191,6 +190,38 @@ class PressureMapArrayGeneratorTests(unittest.TestCase):
             result = self._generator().generate(packages)
         self.assertTrue(any("four-or-more" in str(item.message) for item in caught))
         self.assertTrue(np.isfinite(result.pressure_grid).all())
+
+    def test_rejects_duplicate_ids_positions_nonfinite_data_and_geometry_mismatch(self):
+        values = {"C": 0.0, "L": 0.0, "R": 1.0, "T": 0.0, "B": 0.0}
+        first = self._package("A", (0, 0), values)
+        duplicate_id = self._package("A", (0, 1), values)
+        duplicate_position = self._package("B", (0, 0), values)
+        with self.assertRaisesRegex(ValueError, "sensor_id"):
+            self._generator().generate([first, duplicate_id])
+        with self.assertRaisesRegex(ValueError, "grid_position"):
+            self._generator().generate([first, duplicate_position])
+
+        nonfinite = self._package("C", (0, 1), values)
+        nonfinite.pressure_result.pressure_grid[0, 0] = np.nan
+        with self.assertRaisesRegex(ValueError, "finite"):
+            self._generator().generate([first, nonfinite])
+
+        different_density = PressureMapGenerator(
+            sensor_spacing_mm=1.0, package_center_spacing_mm=7.0,
+            outer_boundary_reach_mm=2.0, pixels_per_mm=8.0,
+        )
+        incompatible = self._package("D", (0, 1), values, generator=different_density)
+        with self.assertRaisesRegex(ValueError, "incompatible"):
+            self._generator().generate([first, incompatible])
+
+    def test_coordinate_metadata_uses_actual_linspace_spacing(self):
+        values = {"C": 0.0, "L": 0.0, "R": 1.0, "T": 0.0, "B": 0.0}
+        result = self._generator().generate([
+            self._package("A", (0, 0), values),
+            self._package("B", (0, 1), values),
+        ])
+        self.assertEqual(result.cell_size_x_mm, result.x_coordinates_mm[1] - result.x_coordinates_mm[0])
+        self.assertEqual(result.cell_size_y_mm, result.y_coordinates_mm[1] - result.y_coordinates_mm[0])
 
 
 if __name__ == "__main__":

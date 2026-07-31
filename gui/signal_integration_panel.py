@@ -63,8 +63,16 @@ from constants.pressure_map import (
     DEFAULT_PRESSURE_SHOW_NEAR_OUTER_BOUNDARY,
     DEFAULT_PRESSURE_SHOW_OUTER_BOUNDARY,
     DEFAULT_PRESSURE_SHOW_MARKER,
-    DEFAULT_PRESSURE_DECAY_RATE,
-    DEFAULT_PRESSURE_DECAY_REF_DISTANCE_MM,
+    DEFAULT_PRESSURE_PEAK_HEIGHT_REFERENCE_DISTANCE_MM,
+    DEFAULT_PRESSURE_PEAK_HEIGHT_DECAY_RATE,
+    DEFAULT_PRESSURE_MAXIMUM_PEAK_GAIN,
+    DEFAULT_PRESSURE_NATURAL_DECAY_REFERENCE_DISTANCE_MM,
+    DEFAULT_PRESSURE_DECAY_AMPLITUDE_REFERENCE,
+    DEFAULT_PRESSURE_MINIMUM_DECAY_REACH_MM,
+    DEFAULT_PRESSURE_MAXIMUM_DECAY_REACH_MM,
+    DEFAULT_PRESSURE_SIGNAL_ACTIVITY_THRESHOLD,
+    PRESSURE_DISPLAY_MODE_MAGNITUDE,
+    PRESSURE_DISPLAY_MODE_SIGNED,
     DEFAULT_PRESSURE_MAP_MAX_INTENSITY,
     DEFAULT_PRESSURE_MIRROR,
     DEFAULT_PRESSURE_SENSOR_SPACING_MM,
@@ -76,14 +84,6 @@ from constants.pressure_map import (
     DEFAULT_SIGNAL_INTEGRATION_ROSETTE_RS2_ENABLED,
     DEFAULT_SIGNAL_INTEGRATION_ROSETTE_Y_MAX_OHMS,
     DEFAULT_SIGNAL_INTEGRATION_ROSETTE_Y_MIN_OHMS,
-    PRESSURE_DECAY_RATE_DECIMALS,
-    PRESSURE_DECAY_RATE_MAX,
-    PRESSURE_DECAY_RATE_MIN,
-    PRESSURE_DECAY_RATE_STEP,
-    PRESSURE_DECAY_REF_DISTANCE_DECIMALS,
-    PRESSURE_DECAY_REF_DISTANCE_MAX_MM,
-    PRESSURE_DECAY_REF_DISTANCE_MIN_MM,
-    PRESSURE_DECAY_REF_DISTANCE_STEP_MM,
     PRESSURE_NEAR_OUTER_PEAK_OFFSET_DECIMALS,
     PRESSURE_NEAR_OUTER_PEAK_OFFSET_MAX_MM,
     PRESSURE_NEAR_OUTER_PEAK_OFFSET_MIN_MM,
@@ -189,11 +189,7 @@ from constants.shear import (
 )
 from data_processing.adc_filter_engine import ADCFilterEngine, SCIPY_FILTERS_AVAILABLE
 from data_processing.normal_force_calculator import NormalForceCalculator, NormalForceResult
-from data_processing.pressure_map_generator import (
-    DEFAULT_PRESSURE_SHOW_NEGATIVE,
-    PressureMapGenerator,
-    PressureMapResult,
-)
+from data_processing.pressure_map_generator import PressureMapGenerator, PressureMapResult
 from data_processing.pressure_map_array_generator import (
     PressureMapArrayGenerator,
     PressureMapArrayPackage,
@@ -825,39 +821,6 @@ class PressureMapPanelMixin:
         self.pressure_pixels_per_mm_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
         layout.addWidget(self.pressure_pixels_per_mm_spin, 0, 5)
 
-        decay_rate_tooltip = (
-            "Distance gain used when estimating pressure-point height from sensor values. "
-            "Higher values increase distance-based amplification."
-        )
-        layout.addWidget(self._create_tooltip_label("Decay rate:", decay_rate_tooltip), 1, 0)
-        self.pressure_decay_rate_spin = QDoubleSpinBox()
-        self.pressure_decay_rate_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
-        self.pressure_decay_rate_spin.setRange(PRESSURE_DECAY_RATE_MIN, PRESSURE_DECAY_RATE_MAX)
-        self.pressure_decay_rate_spin.setDecimals(PRESSURE_DECAY_RATE_DECIMALS)
-        self.pressure_decay_rate_spin.setSingleStep(PRESSURE_DECAY_RATE_STEP)
-        self.pressure_decay_rate_spin.setValue(DEFAULT_PRESSURE_DECAY_RATE)
-        self.pressure_decay_rate_spin.setToolTip(decay_rate_tooltip)
-        self.pressure_decay_rate_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
-        layout.addWidget(self.pressure_decay_rate_spin, 1, 1)
-
-        decay_ref_tooltip = (
-            "Reference distance in millimeters for pressure-point height decay shaping."
-        )
-        layout.addWidget(self._create_tooltip_label("Decay ref:", decay_ref_tooltip), 1, 2)
-        self.pressure_decay_ref_distance_spin = QDoubleSpinBox()
-        self.pressure_decay_ref_distance_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
-        self.pressure_decay_ref_distance_spin.setRange(
-            PRESSURE_DECAY_REF_DISTANCE_MIN_MM,
-            PRESSURE_DECAY_REF_DISTANCE_MAX_MM,
-        )
-        self.pressure_decay_ref_distance_spin.setDecimals(PRESSURE_DECAY_REF_DISTANCE_DECIMALS)
-        self.pressure_decay_ref_distance_spin.setSingleStep(PRESSURE_DECAY_REF_DISTANCE_STEP_MM)
-        self.pressure_decay_ref_distance_spin.setSuffix(" mm")
-        self.pressure_decay_ref_distance_spin.setValue(DEFAULT_PRESSURE_DECAY_REF_DISTANCE_MM)
-        self.pressure_decay_ref_distance_spin.setToolTip(decay_ref_tooltip)
-        self.pressure_decay_ref_distance_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
-        layout.addWidget(self.pressure_decay_ref_distance_spin, 1, 3)
-
         near_outer_peak_tooltip = (
             "For exactly one active outer sensor, place the inferred pressure peak this many "
             "millimeters outside that sensor without increasing its value."
@@ -907,16 +870,26 @@ class PressureMapPanelMixin:
         self.pressure_max_intensity_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
         layout.addWidget(self.pressure_max_intensity_spin, 2, 1)
 
-        show_negative_tooltip = (
-            "When enabled, pressure-point placement uses absolute signal magnitude so "
-            "negative release values contribute. When disabled, only positive pressure "
-            "signals influence pressure-point placement."
+        display_mode_tooltip = (
+            "Magnitude renders inferred relative intensity. Signed renders a "
+            "zero-centered diverging field; it never changes the backend calculation."
         )
-        self.pressure_show_negative_check = QCheckBox("Show negative")
-        self.pressure_show_negative_check.setChecked(DEFAULT_PRESSURE_SHOW_NEGATIVE)
-        self.pressure_show_negative_check.setToolTip(show_negative_tooltip)
-        self.pressure_show_negative_check.toggled.connect(self.on_pressure_map_settings_changed)
-        layout.addWidget(self.pressure_show_negative_check, 3, 0, 1, 4)
+        layout.addWidget(self._create_tooltip_label("Display mode:", display_mode_tooltip), 2, 2)
+        self.pressure_display_mode_combo = QComboBox()
+        self.pressure_display_mode_combo.addItems(["Magnitude", "Signed"])
+        self.pressure_display_mode_combo.setCurrentText("Magnitude")
+        self.pressure_display_mode_combo.setToolTip(display_mode_tooltip)
+        self.pressure_display_mode_combo.currentTextChanged.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_display_mode_combo, 2, 3)
+
+        self._add_pressure_shape_spin(layout, "Peak ref:", "pressure_peak_height_reference_distance_spin", DEFAULT_PRESSURE_PEAK_HEIGHT_REFERENCE_DISTANCE_MM, 2, 4, "Peak-height reference distance (mm).")
+        self._add_pressure_shape_spin(layout, "Peak rate:", "pressure_peak_height_decay_rate_spin", DEFAULT_PRESSURE_PEAK_HEIGHT_DECAY_RATE, 2, 6, "Peak-height extrapolation rate.")
+        self._add_pressure_shape_spin(layout, "Peak gain cap:", "pressure_maximum_peak_gain_spin", DEFAULT_PRESSURE_MAXIMUM_PEAK_GAIN, 3, 0, "Maximum inferred peak gain.")
+        self._add_pressure_shape_spin(layout, "Natural reach:", "pressure_natural_decay_reference_distance_spin", DEFAULT_PRESSURE_NATURAL_DECAY_REFERENCE_DISTANCE_MM, 3, 2, "Natural spatial decay reach (mm) at the amplitude reference.")
+        self._add_pressure_shape_spin(layout, "Decay amplitude ref:", "pressure_decay_amplitude_reference_spin", DEFAULT_PRESSURE_DECAY_AMPLITUDE_REFERENCE, 3, 4, "Representative integrated-signal magnitude for the reference decay reach.")
+        self._add_pressure_shape_spin(layout, "Min decay reach:", "pressure_minimum_decay_reach_spin", DEFAULT_PRESSURE_MINIMUM_DECAY_REACH_MM, 3, 6, "Minimum natural spatial decay reach (mm).")
+        self._add_pressure_shape_spin(layout, "Max decay reach:", "pressure_maximum_decay_reach_spin", DEFAULT_PRESSURE_MAXIMUM_DECAY_REACH_MM, 4, 0, "Maximum natural spatial decay reach (mm).")
+        self._add_pressure_shape_spin(layout, "Activity threshold:", "pressure_signal_activity_threshold_spin", DEFAULT_PRESSURE_SIGNAL_ACTIVITY_THRESHOLD, 4, 2, "Signal-domain activity threshold used for all mode selection.")
 
         show_marker_tooltip = (
             "Show calculated pressure-point marker(s) on the pressure map."
@@ -925,7 +898,7 @@ class PressureMapPanelMixin:
         self.pressure_show_marker_check.setChecked(DEFAULT_PRESSURE_SHOW_MARKER)
         self.pressure_show_marker_check.setToolTip(show_marker_tooltip)
         self.pressure_show_marker_check.toggled.connect(self.on_pressure_map_settings_changed)
-        layout.addWidget(self.pressure_show_marker_check, 3, 4, 1, 2)
+        layout.addWidget(self.pressure_show_marker_check, 5, 0, 1, 2)
 
         mirror_tooltip = (
             "Mirror the pressure-map display horizontally, flipping left-right sensor positions."
@@ -934,30 +907,43 @@ class PressureMapPanelMixin:
         self.pressure_mirror_check.setChecked(DEFAULT_PRESSURE_MIRROR)
         self.pressure_mirror_check.setToolTip(mirror_tooltip)
         self.pressure_mirror_check.toggled.connect(self.on_pressure_map_settings_changed)
-        layout.addWidget(self.pressure_mirror_check, 3, 6, 1, 2)
+        layout.addWidget(self.pressure_mirror_check, 5, 2, 1, 2)
 
         boundary_toggle_tooltip = "Show the inferred near-outer peak support circle."
         self.pressure_show_near_outer_boundary_check = QCheckBox("Show near-outer circle")
         self.pressure_show_near_outer_boundary_check.setChecked(DEFAULT_PRESSURE_SHOW_NEAR_OUTER_BOUNDARY)
         self.pressure_show_near_outer_boundary_check.setToolTip(boundary_toggle_tooltip)
         self.pressure_show_near_outer_boundary_check.toggled.connect(self.on_pressure_map_settings_changed)
-        layout.addWidget(self.pressure_show_near_outer_boundary_check, 4, 0, 1, 2)
+        layout.addWidget(self.pressure_show_near_outer_boundary_check, 6, 0, 1, 2)
 
         outer_toggle_tooltip = "Show the package Outer-Boundary Reach as a square."
         self.pressure_show_outer_boundary_check = QCheckBox("Show outer-boundary square")
         self.pressure_show_outer_boundary_check.setChecked(DEFAULT_PRESSURE_SHOW_OUTER_BOUNDARY)
         self.pressure_show_outer_boundary_check.setToolTip(outer_toggle_tooltip)
         self.pressure_show_outer_boundary_check.toggled.connect(self.on_pressure_map_settings_changed)
-        layout.addWidget(self.pressure_show_outer_boundary_check, 4, 2, 1, 3)
+        layout.addWidget(self.pressure_show_outer_boundary_check, 6, 2, 1, 3)
 
         mid_toggle_tooltip = "Show Mid-Boundary package dividers as a differently dashed square."
         self.pressure_show_mid_boundary_check = QCheckBox("Show mid-boundary square")
         self.pressure_show_mid_boundary_check.setChecked(DEFAULT_PRESSURE_SHOW_MID_BOUNDARY)
         self.pressure_show_mid_boundary_check.setToolTip(mid_toggle_tooltip)
         self.pressure_show_mid_boundary_check.toggled.connect(self.on_pressure_map_settings_changed)
-        layout.addWidget(self.pressure_show_mid_boundary_check, 4, 5, 1, 3)
+        layout.addWidget(self.pressure_show_mid_boundary_check, 6, 5, 1, 3)
 
         return group
+
+    def _add_pressure_shape_spin(self, layout, label, attribute, value, row, column, tooltip):
+        layout.addWidget(self._create_tooltip_label(label, tooltip), row, column)
+        spin = QDoubleSpinBox()
+        spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
+        spin.setRange(0.0, 1_000_000.0)
+        spin.setDecimals(6)
+        spin.setSingleStep(0.05)
+        spin.setValue(value)
+        spin.setToolTip(tooltip)
+        spin.valueChanged.connect(self.on_pressure_map_settings_changed)
+        setattr(self, attribute, spin)
+        layout.addWidget(spin, row, column + 1)
 
     def _create_pressure_package_gain_settings_group(self) -> QGroupBox:
         group = QGroupBox("Per-Package Gain Calibration")
@@ -1291,14 +1277,14 @@ class PressureMapPanelMixin:
                     "pressure_pixels_per_mm_spin",
                     DEFAULT_PRESSURE_PIXELS_PER_MM,
                 ),
-                "decay_rate": self._spin_float(
-                    "pressure_decay_rate_spin",
-                    DEFAULT_PRESSURE_DECAY_RATE,
-                ),
-                "decay_ref_distance_mm": self._spin_float(
-                    "pressure_decay_ref_distance_spin",
-                    DEFAULT_PRESSURE_DECAY_REF_DISTANCE_MM,
-                ),
+                "peak_height_reference_distance_mm": self._spin_float("pressure_peak_height_reference_distance_spin", DEFAULT_PRESSURE_PEAK_HEIGHT_REFERENCE_DISTANCE_MM),
+                "peak_height_decay_rate": self._spin_float("pressure_peak_height_decay_rate_spin", DEFAULT_PRESSURE_PEAK_HEIGHT_DECAY_RATE),
+                "maximum_peak_gain": self._spin_float("pressure_maximum_peak_gain_spin", DEFAULT_PRESSURE_MAXIMUM_PEAK_GAIN),
+                "natural_decay_reference_distance_mm": self._spin_float("pressure_natural_decay_reference_distance_spin", DEFAULT_PRESSURE_NATURAL_DECAY_REFERENCE_DISTANCE_MM),
+                "decay_amplitude_reference": self._spin_float("pressure_decay_amplitude_reference_spin", DEFAULT_PRESSURE_DECAY_AMPLITUDE_REFERENCE),
+                "minimum_decay_reach_mm": self._spin_float("pressure_minimum_decay_reach_spin", DEFAULT_PRESSURE_MINIMUM_DECAY_REACH_MM),
+                "maximum_decay_reach_mm": self._spin_float("pressure_maximum_decay_reach_spin", DEFAULT_PRESSURE_MAXIMUM_DECAY_REACH_MM),
+                "signal_activity_threshold": self._spin_float("pressure_signal_activity_threshold_spin", DEFAULT_PRESSURE_SIGNAL_ACTIVITY_THRESHOLD),
                 "near_outer_peak_offset_mm": self._spin_float(
                     "pressure_near_outer_peak_offset_spin",
                     DEFAULT_PRESSURE_NEAR_OUTER_PEAK_OFFSET_MM,
@@ -1311,15 +1297,16 @@ class PressureMapPanelMixin:
                     "pressure_max_intensity_spin",
                     DEFAULT_PRESSURE_MAP_MAX_INTENSITY,
                 ),
+                "display_mode": (
+                    PRESSURE_DISPLAY_MODE_SIGNED
+                    if self._combo_text("pressure_display_mode_combo", "Magnitude").lower() == "signed"
+                    else PRESSURE_DISPLAY_MODE_MAGNITUDE
+                ),
                 "legend_min_value": self._spin_float("pressure_color_min_spin", DEFAULT_SHEAR_NOISE_THRESHOLD),
                 "legend_max_value": self._spin_float("pressure_color_max_spin", DEFAULT_PRESSURE_MAP_MAX_INTENSITY),
                 "color_scale": self._combo_text("pressure_map_color_scale_combo", "Grayscale"),
                 "legend_range_count": self._spin_int("pressure_map_color_range_count_spin", 10),
                 "legend_unit": self._line_edit_text("pressure_map_color_unit_edit"),
-                "show_negative": self._check_bool(
-                    "pressure_show_negative_check",
-                    DEFAULT_PRESSURE_SHOW_NEGATIVE,
-                ),
                 "show_marker": self._check_bool(
                     "pressure_show_marker_check",
                     DEFAULT_PRESSURE_SHOW_MARKER,
@@ -1609,13 +1596,6 @@ class PressureMapPanelMixin:
             float,
         )
         changed |= self._set_spin_value("pressure_pixels_per_mm_spin", pressure_map, "pixels_per_mm", float)
-        changed |= self._set_spin_value("pressure_decay_rate_spin", pressure_map, "decay_rate", float)
-        changed |= self._set_spin_value(
-            "pressure_decay_ref_distance_spin",
-            pressure_map,
-            "decay_ref_distance_mm",
-            float,
-        )
         changed |= self._set_spin_value(
             "pressure_near_outer_peak_offset_spin",
             pressure_map,
@@ -1653,6 +1633,29 @@ class PressureMapPanelMixin:
             "max_intensity",
             float,
         )
+        for widget_name, key, default in (
+            ("pressure_peak_height_reference_distance_spin", "peak_height_reference_distance_mm", DEFAULT_PRESSURE_PEAK_HEIGHT_REFERENCE_DISTANCE_MM),
+            ("pressure_peak_height_decay_rate_spin", "peak_height_decay_rate", DEFAULT_PRESSURE_PEAK_HEIGHT_DECAY_RATE),
+            ("pressure_maximum_peak_gain_spin", "maximum_peak_gain", DEFAULT_PRESSURE_MAXIMUM_PEAK_GAIN),
+            ("pressure_natural_decay_reference_distance_spin", "natural_decay_reference_distance_mm", pressure_map.get("decay_ref_distance_mm", DEFAULT_PRESSURE_NATURAL_DECAY_REFERENCE_DISTANCE_MM)),
+            ("pressure_decay_amplitude_reference_spin", "decay_amplitude_reference", DEFAULT_PRESSURE_DECAY_AMPLITUDE_REFERENCE),
+            ("pressure_minimum_decay_reach_spin", "minimum_decay_reach_mm", DEFAULT_PRESSURE_MINIMUM_DECAY_REACH_MM),
+            ("pressure_maximum_decay_reach_spin", "maximum_decay_reach_mm", DEFAULT_PRESSURE_MAXIMUM_DECAY_REACH_MM),
+            ("pressure_signal_activity_threshold_spin", "signal_activity_threshold", DEFAULT_PRESSURE_SIGNAL_ACTIVITY_THRESHOLD),
+        ):
+            changed |= self._set_spin_value(widget_name, pressure_map if key in pressure_map else {key: default}, key, float)
+        if "display_mode" in pressure_map:
+            changed |= self._set_combo_value(
+                "pressure_display_mode_combo",
+                {"display_mode": "Signed" if pressure_map["display_mode"] == PRESSURE_DISPLAY_MODE_SIGNED else "Magnitude"},
+                "display_mode",
+            )
+        elif "show_negative" in pressure_map:
+            changed |= self._set_combo_value(
+                "pressure_display_mode_combo",
+                {"display_mode": "Signed" if pressure_map["show_negative"] else "Magnitude"},
+                "display_mode",
+            )
         changed |= self._set_spin_value("pressure_color_min_spin", pressure_map, "legend_min_value", float)
         changed |= self._set_spin_value("pressure_color_max_spin", pressure_map, "legend_max_value", float)
         changed |= self._set_combo_value("pressure_map_color_scale_combo", pressure_map, "color_scale")
@@ -1665,7 +1668,6 @@ class PressureMapPanelMixin:
         if "legend_unit" in pressure_map and hasattr(self, "pressure_map_color_unit_edit"):
             self.pressure_map_color_unit_edit.setText(str(pressure_map["legend_unit"]))
             changed = True
-        changed |= self._set_check_value("pressure_show_negative_check", pressure_map, "show_negative")
         changed |= self._set_check_value("pressure_show_marker_check", pressure_map, "show_marker")
         changed |= self._set_check_value("pressure_mirror_check", pressure_map, "mirror")
         changed |= self._set_check_value(
@@ -1987,6 +1989,13 @@ class PressureMapPanelMixin:
                 )
                 self.pressure_map_widget.configure_color_scale(color_scale=color_scale)
                 self.pressure_map_widget.configure_mirror(mirror=mirror)
+                self.pressure_map_widget.configure_display_mode(
+                    display_mode=(
+                        PRESSURE_DISPLAY_MODE_SIGNED
+                        if self._combo_text("pressure_display_mode_combo", "Magnitude").lower() == "signed"
+                        else PRESSURE_DISPLAY_MODE_MAGNITUDE
+                    )
+                )
                 self.pressure_map_widget.configure_boundary_visibility(
                     show_near_outer_boundary=show_near_outer_boundary,
                     show_outer_boundary=show_outer_boundary,
@@ -2006,10 +2015,6 @@ class PressureMapPanelMixin:
                 "pressure_outer_boundary_reach_spin",
                 DEFAULT_PRESSURE_OUTER_BOUNDARY_REACH_MM,
             )
-            show_negative = self._check_bool(
-                "pressure_show_negative_check",
-                DEFAULT_PRESSURE_SHOW_NEGATIVE,
-            )
             self.normal_force_calculator = NormalForceCalculator(sensor_spacing_mm=sensor_spacing_mm)
             self.pressure_map_generator = PressureMapGenerator(
                 sensor_spacing_mm=sensor_spacing_mm,
@@ -2019,25 +2024,27 @@ class PressureMapPanelMixin:
                     "pressure_pixels_per_mm_spin",
                     DEFAULT_PRESSURE_PIXELS_PER_MM,
                 ),
-                decay_rate=self._spin_float(
-                    "pressure_decay_rate_spin",
-                    DEFAULT_PRESSURE_DECAY_RATE,
-                ),
-                decay_ref_distance_mm=self._spin_float(
-                    "pressure_decay_ref_distance_spin",
-                    DEFAULT_PRESSURE_DECAY_REF_DISTANCE_MM,
-                ),
+                peak_height_reference_distance_mm=self._spin_float("pressure_peak_height_reference_distance_spin", DEFAULT_PRESSURE_PEAK_HEIGHT_REFERENCE_DISTANCE_MM),
+                peak_height_decay_rate=self._spin_float("pressure_peak_height_decay_rate_spin", DEFAULT_PRESSURE_PEAK_HEIGHT_DECAY_RATE),
+                maximum_peak_gain=self._spin_float("pressure_maximum_peak_gain_spin", DEFAULT_PRESSURE_MAXIMUM_PEAK_GAIN),
+                natural_decay_reference_distance_mm=self._spin_float("pressure_natural_decay_reference_distance_spin", DEFAULT_PRESSURE_NATURAL_DECAY_REFERENCE_DISTANCE_MM),
+                decay_amplitude_reference=self._spin_float("pressure_decay_amplitude_reference_spin", DEFAULT_PRESSURE_DECAY_AMPLITUDE_REFERENCE),
+                minimum_decay_reach_mm=self._spin_float("pressure_minimum_decay_reach_spin", DEFAULT_PRESSURE_MINIMUM_DECAY_REACH_MM),
+                maximum_decay_reach_mm=self._spin_float("pressure_maximum_decay_reach_spin", DEFAULT_PRESSURE_MAXIMUM_DECAY_REACH_MM),
+                signal_activity_threshold=self._spin_float("pressure_signal_activity_threshold_spin", DEFAULT_PRESSURE_SIGNAL_ACTIVITY_THRESHOLD),
                 near_outer_peak_offset_mm=self._spin_float(
                     "pressure_near_outer_peak_offset_spin",
                     DEFAULT_PRESSURE_NEAR_OUTER_PEAK_OFFSET_MM,
                 ),
-                show_negative=show_negative,
             )
             self.pressure_map_array_generator = PressureMapArrayGenerator(
                 sensor_spacing_mm=sensor_spacing_mm,
                 package_center_spacing_mm=package_center_spacing_mm,
                 outer_boundary_reach_mm=outer_boundary_reach_mm,
-                show_negative=show_negative,
+                pixels_per_mm=self._spin_float(
+                    "pressure_pixels_per_mm_spin",
+                    DEFAULT_PRESSURE_PIXELS_PER_MM,
+                ),
             )
             self._update_pressure_map_from_latest()
             self.save_last_shear_settings()
@@ -2601,7 +2608,6 @@ class PressureMapPanelMixin:
                     grid_position=tuple(package.grid_position),
                     normal_force_result=package.normal_force_result,
                     pressure_result=package.pressure_result,
-                    calibrated_values=dict(calibrated_values),
                 )
             )
 

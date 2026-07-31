@@ -121,6 +121,7 @@ Despite the `.c` extension, this is not compiled code — it's a scratch file of
 - [docs/user/ARRAY_CONFIGURATION_GUIDE.md](docs/user/ARRAY_CONFIGURATION_GUIDE.md): configuring bundled and custom sensor layouts
 - [docs/user/HEATMAP_README.md](docs/user/HEATMAP_README.md): current heatmap modes, array point tracking, geometry controls, and saved settings behavior
 - [Specs/PRESSURE_MAP_TAB_SPEC.md](Specs/PRESSURE_MAP_TAB_SPEC.md): Pressure Map controls, color-scale legend behavior, and acceptance criteria
+- [Specs/PRESSURE_MAP_REFACTOR_SPEC.md](Specs/PRESSURE_MAP_REFACTOR_SPEC.md): Current inferred-field geometry, shaping, overlap, and display-mode contract
 - [docs/history/FORCE_SENSOR_REFACTOR_PLAN.md](docs/history/FORCE_SENSOR_REFACTOR_PLAN.md): future force-path cleanup roadmap
 
 ## Testing

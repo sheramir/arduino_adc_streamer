@@ -72,12 +72,12 @@ class PressureMapGeneratorTests(unittest.TestCase):
             places=6,
         )
 
-    def test_default_mode_uses_positive_signals_for_pressure_point(self):
+    def test_backend_peak_location_uses_magnitude_independently_of_display_mode(self):
         self.assertFalse(DEFAULT_PRESSURE_SHOW_NEGATIVE)
         result = self.generator.generate({"C": -5.0, "R": -3.0, "T": -3.0, "L": 0.0, "B": 0.0})
         tr_plane = self._planes_by_label(result)[PRESSURE_QUADRANT_TOP_RIGHT]
 
-        self.assertEqual(tr_plane.mode, PRESSURE_QUADRANT_MODE_PEAKLESS)
+        self.assertEqual(tr_plane.mode, PRESSURE_QUADRANT_MODE_PEAKED)
 
     def test_show_negative_mode_uses_absolute_magnitude_for_pressure_point(self):
         generator = PressureMapGenerator(show_negative=True)
@@ -134,7 +134,7 @@ class PressureMapGeneratorTests(unittest.TestCase):
         self.assertEqual(result.quadrant_planes, ())
         self.assertTrue(np.all(result.pressure_grid == 0.0))
 
-    def test_only_one_outer_nonzero_moves_peak_beyond_sensor_without_gain(self):
+    def test_only_one_outer_nonzero_moves_peak_beyond_sensor_with_bounded_gain(self):
         result = self.generator.generate({"C": 0.0, "R": 5.0, "T": 0.0, "L": 0.0, "B": 0.0})
         planes = self._planes_by_label(result)
         spacing = DEFAULT_PRESSURE_SENSOR_SPACING_MM
@@ -142,7 +142,8 @@ class PressureMapGeneratorTests(unittest.TestCase):
 
         self.assertEqual(plane.mode, PRESSURE_QUADRANT_MODE_ISOLATED_OUTER_PEAKED)
         self.assertEqual(plane.peak_point, (spacing + self.generator.near_outer_peak_offset_mm, 0.0))
-        self.assertAlmostEqual(float(plane.peak_height), 5.0, places=12)
+        self.assertGreater(float(plane.peak_height), 5.0)
+        self.assertLessEqual(float(plane.peak_height), 5.0 * self.generator.maximum_peak_gain)
         self.assertGreater(self._grid_value(result, spacing, 0.0), 0.0)
         self.assertGreater(
             float(evaluate_pressure_map_result_at(
@@ -181,7 +182,7 @@ class PressureMapGeneratorTests(unittest.TestCase):
         for sensor, expected_point in expected_points.items():
             result = generator.generate({position: 4.0 if position == sensor else 0.0 for position in SHEAR_SENSOR_POSITIONS})
             self.assertEqual(result.quadrant_planes[0].peak_point, expected_point)
-            self.assertAlmostEqual(float(result.quadrant_planes[0].peak_height), 4.0, places=12)
+            self.assertGreater(float(result.quadrant_planes[0].peak_height), 4.0)
 
     def test_center_or_two_outer_sensors_do_not_use_isolated_outer_mode(self):
         center_active = self.generator.generate({"C": 1.0, "R": 5.0, "T": 0.0, "L": 0.0, "B": 0.0})
@@ -323,6 +324,28 @@ class PressureMapGeneratorTests(unittest.TestCase):
         result = self.generator.generate({position: 1.0 for position in SHEAR_SENSOR_POSITIONS})
 
         self.assertEqual(result.active_quadrants, PRESSURE_ACTIVE_QUADRANTS)
+
+    def test_single_axis_modes_reconstruct_center_and_outer_anchors_with_both_signs(self):
+        for sensor, coordinate in (("R", (2.0, 0.0)), ("L", (-2.0, 0.0)), ("T", (0.0, 2.0)), ("B", (0.0, -2.0))):
+            for sign in (1.0, -1.0):
+                signals = {position: 0.0 for position in SHEAR_SENSOR_POSITIONS}
+                signals["C"] = sign * 5.0
+                signals[sensor] = sign * 3.0
+                result = self.generator.generate(signals)
+                center = evaluate_pressure_map_result_at(result, np.asarray([0.0]), np.asarray([0.0]))[0]
+                outer = evaluate_pressure_map_result_at(
+                    result, np.asarray([coordinate[0]]), np.asarray([coordinate[1]])
+                )[0]
+                self.assertAlmostEqual(float(center), signals["C"], places=10)
+                self.assertAlmostEqual(float(outer), signals[sensor], places=10)
+
+    def test_signal_activity_threshold_is_independent_of_geometry_epsilon(self):
+        generator = PressureMapGenerator(signal_activity_threshold=0.25)
+        below_threshold = generator.generate({"C": 0.0, "R": 0.24, "T": 0.0, "L": 0.0, "B": 0.0})
+        at_threshold = generator.generate({"C": 0.0, "R": 0.25, "T": 0.0, "L": 0.0, "B": 0.0})
+
+        self.assertEqual(below_threshold.active_quadrants, ())
+        self.assertEqual(at_threshold.quadrant_planes[0].mode, PRESSURE_QUADRANT_MODE_ISOLATED_OUTER_PEAKED)
 
 
 if __name__ == "__main__":

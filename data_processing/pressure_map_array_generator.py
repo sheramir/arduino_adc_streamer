@@ -17,6 +17,7 @@ import numpy as np
 from constants.pressure_map import (
     DEFAULT_PRESSURE_OUTER_BOUNDARY_REACH_MM,
     DEFAULT_PRESSURE_PACKAGE_CENTER_SPACING_MM,
+    DEFAULT_PRESSURE_PIXELS_PER_MM,
     DEFAULT_PRESSURE_SENSOR_SPACING_MM,
 )
 from constants.shear import SHEAR_ZERO_VALUE
@@ -26,6 +27,7 @@ from data_processing.pressure_map_generator import (
     PressureMapResult,
     evaluate_pressure_map_result_at,
 )
+from data_processing.pressure_map_geometry import PressureMapGeometry
 
 
 PRESSURE_ARRAY_GEOMETRY_EPSILON = 1e-9
@@ -40,7 +42,6 @@ class PressureMapArrayPackage:
     grid_position: tuple[int, int]
     normal_force_result: NormalForceResult
     pressure_result: PressureMapResult
-    calibrated_values: Mapping[str, float]
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,7 +55,9 @@ class PressureMapArrayResult:
     y_grid_mm: np.ndarray
     package_centers: dict[str, tuple[float, float]]
     package_results: dict[str, PressureMapResult]
-    adjacent_pairs: tuple[tuple[str, str], ...]
+    overlap_pairs: tuple[tuple[str, str], ...]
+    cell_size_x_mm: float
+    cell_size_y_mm: float
     cell_size_mm: float
     total_extent_mm: float
     candidate_support_bounds_mm: dict[str, tuple[float, float, float, float]]
@@ -65,9 +68,9 @@ class PressureMapArrayResult:
     outer_boundary_half_width_mm: float
 
     @property
-    def overlap_pairs(self) -> tuple[tuple[str, str], ...]:
-        """Explicit name for ``adjacent_pairs`` retained for widget compatibility."""
-        return self.adjacent_pairs
+    def adjacent_pairs(self) -> tuple[tuple[str, str], ...]:
+        """Compatibility alias for callers predating diagonal overlaps."""
+        return self.overlap_pairs
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,17 +91,23 @@ class PressureMapArrayGenerator:
         sensor_spacing_mm: float = DEFAULT_PRESSURE_SENSOR_SPACING_MM,
         package_center_spacing_mm: float = DEFAULT_PRESSURE_PACKAGE_CENTER_SPACING_MM,
         outer_boundary_reach_mm: float = DEFAULT_PRESSURE_OUTER_BOUNDARY_REACH_MM,
-        show_negative: bool = False,
+        pixels_per_mm: float = DEFAULT_PRESSURE_PIXELS_PER_MM,
+        geometry: PressureMapGeometry | None = None,
     ) -> None:
-        self.sensor_spacing_mm = float(sensor_spacing_mm)
-        self.package_center_spacing_mm = float(package_center_spacing_mm)
-        self.outer_boundary_reach_mm = float(outer_boundary_reach_mm)
-        self.facing_sensor_gap_mm = self.package_center_spacing_mm - (2.0 * self.sensor_spacing_mm)
-        self.mid_boundary_half_width_mm = self.package_center_spacing_mm / 2.0
-        self.outer_boundary_half_width_mm = (
-            self.mid_boundary_half_width_mm + self.outer_boundary_reach_mm
+        self.geometry = geometry or PressureMapGeometry(
+            sensor_spacing_mm=float(sensor_spacing_mm),
+            package_center_spacing_mm=float(package_center_spacing_mm),
+            outer_boundary_reach_mm=float(outer_boundary_reach_mm),
+            pixels_per_mm=float(pixels_per_mm),
         )
-        self.show_negative = bool(show_negative)
+        self.sensor_spacing_mm = self.geometry.sensor_spacing_mm
+        self.package_center_spacing_mm = self.geometry.package_center_spacing_mm
+        self.outer_boundary_reach_mm = self.geometry.outer_boundary_reach_mm
+        self.pixels_per_mm = self.geometry.pixels_per_mm
+        self.facing_sensor_gap_mm = self.geometry.facing_sensor_gap_mm
+        self.mid_boundary_half_width_mm = self.geometry.mid_boundary_half_width_mm
+        self.outer_boundary_half_width_mm = self.geometry.outer_boundary_half_width_mm
+        self._warned_layout_conditions: set[tuple[str, tuple[tuple[str, str], ...]]] = set()
         if self.sensor_spacing_mm <= SHEAR_ZERO_VALUE:
             raise ValueError("sensor_spacing_mm must be positive")
         if self.package_center_spacing_mm <= 2.0 * self.sensor_spacing_mm:
@@ -115,11 +124,21 @@ class PressureMapArrayGenerator:
         )
         if not complete_packages:
             raise ValueError("at least one positioned package is required")
+        sensor_ids = [str(package.sensor_id) for package in complete_packages]
+        positions = [package.grid_position for package in complete_packages]
+        if len(sensor_ids) != len(set(sensor_ids)):
+            raise ValueError("duplicate sensor_id values are not permitted")
+        if len(positions) != len(set(positions)):
+            raise ValueError("duplicate grid_position values are not permitted")
+        for package in complete_packages:
+            if not np.isfinite(package.pressure_result.pressure_grid).all():
+                raise ValueError("package pressure data must be finite")
+            if not self._geometry_matches(package.pressure_result):
+                raise ValueError("package pressure results use incompatible geometry")
 
         centers = self._package_centers(complete_packages)
-        cell_size_mm = self._cell_size_mm(complete_packages)
         support_bounds = self._candidate_support_bounds(complete_packages, centers)
-        x_coordinates, y_coordinates = self._array_coordinates(complete_packages, centers, support_bounds, cell_size_mm)
+        x_coordinates, y_coordinates = self._array_coordinates(complete_packages, centers, support_bounds)
         x_grid, y_grid = np.meshgrid(x_coordinates, y_coordinates)
         candidates = tuple(
             self._evaluate_candidate(package, centers[package.sensor_id], support_bounds[package.sensor_id], x_grid, y_grid)
@@ -135,8 +154,12 @@ class PressureMapArrayGenerator:
             y_grid_mm=y_grid,
             package_centers=dict(centers),
             package_results={package.sensor_id: package.pressure_result for package in complete_packages},
-            adjacent_pairs=overlap_pairs,
-            cell_size_mm=cell_size_mm,
+            overlap_pairs=overlap_pairs,
+            cell_size_x_mm=float(x_coordinates[1] - x_coordinates[0]),
+            cell_size_y_mm=float(y_coordinates[1] - y_coordinates[0]),
+            # Compatibility scalar; callers that need physical integration
+            # must use the exact per-axis metadata above.
+            cell_size_mm=float(min(x_coordinates[1] - x_coordinates[0], y_coordinates[1] - y_coordinates[0])),
             total_extent_mm=float(max(x_coordinates[-1] - x_coordinates[0], y_coordinates[-1] - y_coordinates[0])),
             candidate_support_bounds_mm=dict(support_bounds),
             package_center_spacing_mm=self.package_center_spacing_mm,
@@ -159,11 +182,17 @@ class PressureMapArrayGenerator:
             for package in packages
         }
 
-    def _cell_size_mm(self, packages: Sequence[PressureMapArrayPackage]) -> float:
-        cell_sizes = [float(package.pressure_result.cell_size_mm) for package in packages if float(package.pressure_result.cell_size_mm) > SHEAR_ZERO_VALUE]
-        if not cell_sizes:
-            raise ValueError("package pressure results must provide a positive cell size")
-        return float(min(cell_sizes))
+    def _geometry_matches(self, result: PressureMapResult) -> bool:
+        return all(
+            np.isclose(actual, expected, rtol=0.0, atol=PRESSURE_ARRAY_GEOMETRY_EPSILON)
+            for actual, expected in (
+                (result.sensor_spacing_mm, self.geometry.sensor_spacing_mm),
+                (result.package_center_spacing_mm, self.geometry.package_center_spacing_mm),
+                (result.outer_boundary_reach_mm, self.geometry.outer_boundary_reach_mm),
+                (result.near_outer_peak_offset_mm, self.geometry.near_outer_peak_offset_mm),
+                (result.pixels_per_mm, self.geometry.pixels_per_mm),
+            )
+        )
 
     def _candidate_support_bounds(self, packages: Sequence[PressureMapArrayPackage], centers: Mapping[str, tuple[float, float]]) -> dict[str, tuple[float, float, float, float]]:
         """Return the same local Outer-Boundary support square for every package."""
@@ -199,13 +228,13 @@ class PressureMapArrayGenerator:
             if required >= available - PRESSURE_ARRAY_GEOMETRY_EPSILON:
                 raise ValueError("near_outer_peak_offset_mm must remain inside the applicable outer support")
 
-    def _array_coordinates(self, packages: Sequence[PressureMapArrayPackage], centers: Mapping[str, tuple[float, float]], support_bounds: Mapping[str, tuple[float, float, float, float]], cell_size_mm: float) -> tuple[np.ndarray, np.ndarray]:
+    def _array_coordinates(self, packages: Sequence[PressureMapArrayPackage], centers: Mapping[str, tuple[float, float]], support_bounds: Mapping[str, tuple[float, float, float, float]]) -> tuple[np.ndarray, np.ndarray]:
         min_x = min(centers[package.sensor_id][0] + support_bounds[package.sensor_id][0] for package in packages)
         max_x = max(centers[package.sensor_id][0] + support_bounds[package.sensor_id][1] for package in packages)
         min_y = min(centers[package.sensor_id][1] + support_bounds[package.sensor_id][2] for package in packages)
         max_y = max(centers[package.sensor_id][1] + support_bounds[package.sensor_id][3] for package in packages)
-        x_count = max(2, int(np.ceil((max_x - min_x) / cell_size_mm)) + 1)
-        y_count = max(2, int(np.ceil((max_y - min_y) / cell_size_mm)) + 1)
+        x_count = max(2, int(np.ceil((max_x - min_x) * self.pixels_per_mm)) + 1)
+        y_count = max(2, int(np.ceil((max_y - min_y) * self.pixels_per_mm)) + 1)
         return (
             np.linspace(min_x, max_x, x_count, dtype=np.float64),
             np.linspace(min_y, max_y, y_count, dtype=np.float64),
@@ -253,26 +282,31 @@ class PressureMapArrayGenerator:
             valid = shared & (pair_count == expected_pairs)
             pressure_grid[valid] = pair_sum[valid] / expected_pairs[valid]
             if np.any(shared & ~valid):
-                LOGGER.warning(
-                    "Pressure Map overlap geometry has an incomplete pair set; using the available pair average."
-                )
-                warnings.warn(
+                self._warn_once(
+                    "incomplete-pairs", overlap_pairs,
                     "Pressure Map overlap geometry has an incomplete pair set; using the available pair average.",
-                    RuntimeWarning,
-                    stacklevel=2,
                 )
                 fallback = shared & ~valid & (pair_count > 0)
                 pressure_grid[fallback] = pair_sum[fallback] / pair_count[fallback]
             if np.any(contributor_count >= 4):
-                LOGGER.warning(
-                    "Pressure Map four-or-more package overlap uses the documented all-pairs average fallback."
-                )
-                warnings.warn(
+                self._warn_once(
+                    "four-or-more", overlap_pairs,
                     "Pressure Map four-or-more package overlap uses the documented all-pairs average fallback.",
-                    RuntimeWarning,
-                    stacklevel=2,
                 )
         return pressure_grid, tuple(overlap_pairs)
+
+    def _warn_once(
+        self,
+        condition: str,
+        overlap_pairs: Sequence[tuple[str, str]],
+        message: str,
+    ) -> None:
+        key = (condition, tuple(overlap_pairs))
+        if key in self._warned_layout_conditions:
+            return
+        self._warned_layout_conditions.add(key)
+        LOGGER.warning(message)
+        warnings.warn(message, RuntimeWarning, stacklevel=3)
 
     def _support_overlap(self, first: _PackageCandidate, second: _PackageCandidate) -> tuple[float, float, float, float] | None:
         first_center_x, first_center_y = first.center

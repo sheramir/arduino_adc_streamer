@@ -26,7 +26,7 @@ from constants.pressure_map import (
 from constants.shear import SHEAR_SENSOR_POSITIONS
 from data_processing.adc_filter_engine import ADCFilterEngine
 from data_processing.normal_force_calculator import NormalForceCalculator
-from data_processing.pressure_map_generator import DEFAULT_PRESSURE_SHOW_NEGATIVE, PressureMapGenerator
+from data_processing.pressure_map_generator import PressureMapGenerator
 from data_processing.shear_detector import ShearDetector
 from gui.pressure_map_widget import PressureMapWidget
 from gui.signal_integration_panel import PressureMapPanelMixin
@@ -170,12 +170,9 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         harness.pressure_sensor_spacing_spin = DummySpinBox(1.75)
         harness.pressure_package_center_spacing_spin = DummySpinBox(8.0)
         harness.pressure_pixels_per_mm_spin = DummySpinBox(12.5)
-        harness.pressure_decay_rate_spin = DummySpinBox(0.9)
-        harness.pressure_decay_ref_distance_spin = DummySpinBox(2.25)
         harness.pressure_near_outer_peak_offset_spin = DummySpinBox(1.25)
         harness.pressure_outer_boundary_reach_spin = DummySpinBox(1.5)
         harness.pressure_max_intensity_spin = DummySpinBox(7.5)
-        harness.pressure_show_negative_check = DummyCheckBox(True)
         harness.pressure_show_marker_check = DummyCheckBox(False)
         harness.pressure_mirror_check = DummyCheckBox(False)
         harness.pressure_show_near_outer_boundary_check = DummyCheckBox(True)
@@ -551,12 +548,12 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             self.assertEqual(settings["pressure_map"]["sensor_spacing_mm"], 1.75)
             self.assertEqual(settings["pressure_map"]["package_center_spacing_mm"], 8.0)
             self.assertEqual(settings["pressure_map"]["pixels_per_mm"], 12.5)
-            self.assertEqual(settings["pressure_map"]["decay_rate"], 0.9)
-            self.assertEqual(settings["pressure_map"]["decay_ref_distance_mm"], 2.25)
+            self.assertNotIn("decay_rate", settings["pressure_map"])
+            self.assertNotIn("decay_ref_distance_mm", settings["pressure_map"])
             self.assertEqual(settings["pressure_map"]["near_outer_peak_offset_mm"], 1.25)
             self.assertEqual(settings["pressure_map"]["outer_boundary_reach_mm"], 1.5)
             self.assertEqual(settings["pressure_map"]["max_intensity"], 7.5)
-            self.assertTrue(settings["pressure_map"]["show_negative"])
+            self.assertNotIn("show_negative", settings["pressure_map"])
             self.assertFalse(settings["pressure_map"]["show_marker"])
             self.assertFalse(settings["pressure_map"]["mirror"])
             self.assertTrue(settings["pressure_map"]["show_near_outer_boundary"])
@@ -582,12 +579,9 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             harness.pressure_sensor_spacing_spin.setValue(2.0)
             harness.pressure_package_center_spacing_spin.setValue(9.0)
             harness.pressure_pixels_per_mm_spin.setValue(5.0)
-            harness.pressure_decay_rate_spin.setValue(0.1)
-            harness.pressure_decay_ref_distance_spin.setValue(0.5)
             harness.pressure_near_outer_peak_offset_spin.setValue(0.0)
             harness.pressure_outer_boundary_reach_spin.setValue(1.0)
             harness.pressure_max_intensity_spin.setValue(1.0)
-            harness.pressure_show_negative_check.setChecked(DEFAULT_PRESSURE_SHOW_NEGATIVE)
             harness.pressure_show_marker_check.setChecked(DEFAULT_PRESSURE_SHOW_MARKER)
             harness.pressure_mirror_check.setChecked(False)
             harness.pressure_show_near_outer_boundary_check.setChecked(False)
@@ -611,12 +605,9 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             self.assertEqual(harness.pressure_sensor_spacing_spin.value(), 1.75)
             self.assertEqual(harness.pressure_package_center_spacing_spin.value(), 8.0)
             self.assertEqual(harness.pressure_pixels_per_mm_spin.value(), 12.5)
-            self.assertEqual(harness.pressure_decay_rate_spin.value(), 0.9)
-            self.assertEqual(harness.pressure_decay_ref_distance_spin.value(), 2.25)
             self.assertEqual(harness.pressure_near_outer_peak_offset_spin.value(), 1.25)
             self.assertEqual(harness.pressure_outer_boundary_reach_spin.value(), 1.5)
             self.assertEqual(harness.pressure_max_intensity_spin.value(), 7.5)
-            self.assertTrue(harness.pressure_show_negative_check.isChecked())
             self.assertFalse(harness.pressure_show_marker_check.isChecked())
             self.assertFalse(harness.pressure_mirror_check.isChecked())
             self.assertTrue(harness.pressure_show_near_outer_boundary_check.isChecked())
@@ -696,15 +687,12 @@ class SignalIntegrationPanelTests(unittest.TestCase):
                 "pressure_sensor_spacing_spin": "sensor spacing",
                 "pressure_package_center_spacing_spin": "between neighbouring package centers",
                 "pressure_pixels_per_mm_spin": "grid density",
-                "pressure_decay_rate_spin": "distance gain",
-                "pressure_decay_ref_distance_spin": "reference distance",
                 "pressure_near_outer_peak_offset_spin": "outside that sensor",
                 "pressure_outer_boundary_reach_spin": "distance from the mid boundary",
                 "pressure_max_intensity_spin": "upper intensity mapped to white",
                 "pressure_show_near_outer_boundary_check": "near-outer peak support circle",
                 "pressure_show_outer_boundary_check": "outer-boundary reach as a square",
                 "pressure_show_mid_boundary_check": "mid-boundary package dividers",
-                "pressure_show_negative_check": "negative release values",
                 "pressure_show_marker_check": "pressure-point marker",
                 "pressure_mirror_check": "mirror",
             }
@@ -719,6 +707,9 @@ class SignalIntegrationPanelTests(unittest.TestCase):
                 "pressure_grid_margin_spin",
                 "pressure_package_gap_spin",
                 "pressure_mid_boundary_fraction_spin",
+                "pressure_decay_rate_spin",
+                "pressure_decay_ref_distance_spin",
+                "pressure_show_negative_check",
             ):
                 self.assertFalse(hasattr(harness, obsolete_widget_name), msg=obsolete_widget_name)
         finally:

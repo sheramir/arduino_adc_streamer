@@ -18,6 +18,7 @@ from constants.shear import (
 from data_processing.pressure_map_generator import (
     DEFAULT_PRESSURE_SHOW_NEGATIVE,
     PRESSURE_PACKAGE_MODE_CENTER_PLUS_ONE_OUTER,
+    PRESSURE_PACKAGE_MODE_ALL_INACTIVE,
     PRESSURE_PACKAGE_MODE_GENERAL_MULTI_SENSOR,
     PRESSURE_QUADRANT_MODE_SIGNED_TRANSITION,
     PRESSURE_QUADRANT_MODE_PEAKED,
@@ -134,6 +135,17 @@ class PressureMapGeneratorTests(unittest.TestCase):
         np.testing.assert_allclose(grid, np.flip(grid, axis=0), rtol=1e-6, atol=1e-6)
         np.testing.assert_allclose(grid, np.flip(grid, axis=1), rtol=1e-6, atol=1e-6)
 
+    def test_equal_outer_ring_has_no_extrapolated_corner_peak(self):
+        result = self.generator.generate({"C": 0.0, "R": 2.0, "T": 2.0, "L": 2.0, "B": 2.0})
+        spacing = self.generator.sensor_spacing_mm
+        core = result.pressure_grid[
+            (np.abs(result.y_grid_mm) <= spacing) & (np.abs(result.x_grid_mm) <= spacing)
+        ]
+        self.assertAlmostEqual(self._grid_value(result, 0.0, 0.0), 0.0, places=12)
+        self.assertLessEqual(float(np.max(core)), 2.0)
+        np.testing.assert_allclose(result.pressure_grid, np.flip(result.pressure_grid, axis=0), atol=1e-12)
+        np.testing.assert_allclose(result.pressure_grid, np.flip(result.pressure_grid, axis=1), atol=1e-12)
+
     def test_all_zero_inputs_produce_empty_zero_map(self):
         result = self.generator.generate({"C": 0.0, "R": 0.0, "T": 0.0, "L": 0.0, "B": 0.0})
 
@@ -239,6 +251,16 @@ class PressureMapGeneratorTests(unittest.TestCase):
         self.assertAlmostEqual(float(low_value), 0.0, places=12)
         self.assertGreater(float(high_value), 0.0)
 
+    def test_terminal_guard_only_zeroes_the_final_outer_strip_for_a_strong_lobe(self):
+        result = self.generator.generate({"C": 0.0, "R": 5.0, "T": 0.0, "L": 0.0, "B": 0.0})
+        _left, right, _bottom, _top = result.support_bounds_mm
+        before_guard = evaluate_pressure_map_result_at(result, np.asarray([5.0]), np.asarray([0.0]))[0]
+        inside_guard = evaluate_pressure_map_result_at(result, np.asarray([right - 0.05]), np.asarray([0.0]))[0]
+        boundary = evaluate_pressure_map_result_at(result, np.asarray([right]), np.asarray([0.0]))[0]
+        self.assertGreater(float(before_guard), float(inside_guard))
+        self.assertGreater(float(inside_guard), 0.0)
+        self.assertEqual(float(boundary), 0.0)
+
     def test_general_model_uses_complete_peakless_quadrants_for_zero_outer_axes(self):
         result = self.generator.generate({"C": 4.0, "R": 4.0, "T": 3.0, "L": 2.0, "B": 0.0})
         planes = self._planes_by_label(result)
@@ -285,8 +307,8 @@ class PressureMapGeneratorTests(unittest.TestCase):
             tuple(triangle.name for triangle in tr_plane.triangles),
             ("core-horizontal", "core-vertical"),
         )
-        self.assertEqual(float(tr_plane.corner_value), 12.0)
-        self.assertAlmostEqual(self._quadrant_value(tr_plane, spacing, spacing), 12.0, places=6)
+        self.assertEqual(float(tr_plane.corner_value), 4.8)
+        self.assertAlmostEqual(self._quadrant_value(tr_plane, spacing, spacing), 4.8, places=6)
 
     def test_opposing_sign_conflicts_keep_signed_transition_quadrants(self):
         result = self.generator.generate({"C": 0.0, "R": 5.0, "T": 5.0, "L": -4.0, "B": -4.0})
@@ -301,8 +323,8 @@ class PressureMapGeneratorTests(unittest.TestCase):
 
     def test_output_grid_uses_outer_boundary_and_at_least_requested_density(self):
         result = self.generator.generate({"C": 0.0, "R": 0.0, "T": 0.0, "L": 0.0, "B": 0.0})
-        expected_side = (2 * int(np.ceil(
-            self.generator.outer_boundary_half_width_mm * self.generator.pixels_per_mm
+        expected_side = (2 * int(round(
+            self.generator.outer_boundary_half_width_mm / self.generator.cell_size_mm
         ))) + 1
 
         self.assertEqual(result.pressure_grid.shape, (expected_side, expected_side))
@@ -310,6 +332,7 @@ class PressureMapGeneratorTests(unittest.TestCase):
         self.assertAlmostEqual(result.x_coordinates_mm[0], -self.generator.outer_boundary_half_width_mm)
         self.assertAlmostEqual(result.x_coordinates_mm[-1], self.generator.outer_boundary_half_width_mm)
         self.assertLessEqual(result.cell_size_mm, 1.0 / self.generator.pixels_per_mm)
+        self.assertEqual(result.actual_pixels_per_mm, 1.0 / result.cell_size_mm)
 
     def test_active_quadrants_still_follow_standard_order(self):
         result = self.generator.generate({position: 1.0 for position in SHEAR_SENSOR_POSITIONS})
@@ -334,9 +357,54 @@ class PressureMapGeneratorTests(unittest.TestCase):
         generator = PressureMapGenerator(signal_activity_threshold=0.25)
         below_threshold = generator.generate({"C": 0.0, "R": 0.24, "T": 0.0, "L": 0.0, "B": 0.0})
         at_threshold = generator.generate({"C": 0.0, "R": 0.25, "T": 0.0, "L": 0.0, "B": 0.0})
+        above_threshold = generator.generate({"C": 0.0, "R": 0.250001, "T": 0.0, "L": 0.0, "B": 0.0})
 
         self.assertEqual(below_threshold.active_quadrants, ())
-        self.assertEqual(at_threshold.quadrant_planes[0].mode, PRESSURE_QUADRANT_MODE_ISOLATED_OUTER_PEAKED)
+        self.assertEqual(at_threshold.active_quadrants, ())
+        self.assertEqual(above_threshold.quadrant_planes[0].mode, PRESSURE_QUADRANT_MODE_ISOLATED_OUTER_PEAKED)
+
+    def test_zero_threshold_never_classifies_an_exact_zero_as_active(self):
+        result = PressureMapGenerator(signal_activity_threshold=0.0).generate(
+            {position: 0.0 for position in SHEAR_SENSOR_POSITIONS}
+        )
+
+        self.assertEqual(result.package_mode, PRESSURE_PACKAGE_MODE_ALL_INACTIVE)
+        self.assertEqual(result.package_activity_confidence, 0.0)
+        self.assertTrue(np.all(result.pressure_grid == 0.0))
+
+    def test_quadrant_corner_is_a_bounded_convex_estimate(self):
+        examples = (
+            ({"C": 0.0, "R": 1.0, "T": 1.0, "L": 0.0, "B": 0.0}, 0.8),
+            ({"C": 1.0, "R": 0.0, "T": 0.0, "L": 0.0, "B": 0.0}, 0.2),
+            ({"C": 2.0, "R": 2.0, "T": 2.0, "L": 0.0, "B": 0.0}, 2.0),
+        )
+        for signals, expected in examples:
+            plane = self._planes_by_label(self.generator.generate(signals))[PRESSURE_QUADRANT_TOP_RIGHT]
+            anchors = (signals["C"], signals["R"], signals["T"])
+            self.assertAlmostEqual(float(plane.corner_value), expected, places=12)
+            self.assertGreaterEqual(float(plane.corner_value), min(anchors))
+            self.assertLessEqual(float(plane.corner_value), max(anchors))
+
+    def test_general_quadrant_extension_uses_its_own_local_decay_origin(self):
+        result = self.generator.generate({"C": 1.0, "R": 8.0, "T": 1.0, "L": 1.0, "B": 1.0})
+        origins = self._planes_by_label(result)
+        self.assertNotEqual(
+            origins[PRESSURE_QUADRANT_TOP_RIGHT].decay_origin,
+            origins[PRESSURE_QUADRANT_BOTTOM_LEFT].decay_origin,
+        )
+        self.assertGreater(origins[PRESSURE_QUADRANT_TOP_RIGHT].decay_origin[0], 0.0)
+        self.assertGreater(origins[PRESSURE_QUADRANT_TOP_RIGHT].decay_origin[1], 0.0)
+
+    def test_geometry_alignment_places_default_landmarks_on_samples(self):
+        geometry = PressureMapGeometry(pixels_per_mm=3.0)
+        result = PressureMapGenerator(geometry=geometry).generate(
+            {position: 0.0 for position in SHEAR_SENSOR_POSITIONS}
+        )
+        self.assertAlmostEqual(geometry.geometry_quantum_mm, 0.25)
+        self.assertAlmostEqual(result.cell_size_mm, 0.25)
+        self.assertAlmostEqual(result.actual_pixels_per_mm, 4.0)
+        for landmark in (0.0, geometry.sensor_spacing_mm, geometry.mid_boundary_half_width_mm, geometry.outer_boundary_half_width_mm):
+            self.assertTrue(np.any(np.isclose(result.x_coordinates_mm, landmark)))
 
     def test_sensor_anchors_are_exact_for_positive_negative_and_mixed_vectors(self):
         for signals in (
@@ -374,6 +442,16 @@ class PressureMapGeneratorTests(unittest.TestCase):
         self.assertIsNotNone(result.diagnostics)
         self.assertEqual(result.diagnostics["package_mode"], PRESSURE_PACKAGE_MODE_GENERAL_MULTI_SENSOR)
         self.assertIn("core_surface", result.diagnostics)
+        self.assertTrue({
+            "raw_sensor_values",
+            "thresholded_sensor_values",
+            "package_activity_confidence",
+            "quadrant_corner_values",
+            "quadrant_decay_origins",
+            "natural_decay_factor",
+            "boundary_guard_factor",
+            "final_package_candidate",
+        }.issubset(result.diagnostics))
 
     def test_supplied_geometry_is_authoritative_and_rejects_explicit_conflict(self):
         geometry = PressureMapGeometry(sensor_spacing_mm=1.0, package_center_spacing_mm=7.0)

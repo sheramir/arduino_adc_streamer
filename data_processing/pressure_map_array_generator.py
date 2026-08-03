@@ -64,6 +64,7 @@ class PressureMapArrayResult:
     candidate_support_bounds_mm: dict[str, tuple[float, float, float, float]]
     package_center_spacing_mm: float
     outer_boundary_reach_mm: float
+    actual_pixels_per_mm: float
     facing_sensor_gap_mm: float
     mid_boundary_half_width_mm: float
     outer_boundary_half_width_mm: float
@@ -84,6 +85,7 @@ class _PackageCandidate:
     values: np.ndarray
     support_mask: np.ndarray
     support_confidence: np.ndarray
+    activity_confidence: float
 
 
 class PressureMapArrayGenerator:
@@ -121,6 +123,8 @@ class PressureMapArrayGenerator:
         self.package_center_spacing_mm = self.geometry.package_center_spacing_mm
         self.outer_boundary_reach_mm = self.geometry.outer_boundary_reach_mm
         self.pixels_per_mm = self.geometry.pixels_per_mm
+        self.actual_pixels_per_mm = self.geometry.actual_pixels_per_mm
+        self.cell_size_mm = self.geometry.aligned_cell_size_mm
         self.facing_sensor_gap_mm = self.geometry.facing_sensor_gap_mm
         self.mid_boundary_half_width_mm = self.geometry.mid_boundary_half_width_mm
         self.outer_boundary_half_width_mm = self.geometry.outer_boundary_half_width_mm
@@ -161,7 +165,18 @@ class PressureMapArrayGenerator:
             self._evaluate_candidate(package, centers[package.sensor_id], support_bounds[package.sensor_id], x_grid, y_grid)
             for package in complete_packages
         )
-        pressure_grid, overlap_pairs, pair_denominator = self._blend_candidates(candidates, x_grid, y_grid)
+        (
+            pressure_grid,
+            overlap_pairs,
+            pair_denominator,
+            candidate_denominator,
+            pair_effective_weights,
+        ) = self._blend_candidates(candidates, x_grid, y_grid)
+        array_support_mask = np.logical_or.reduce(
+            tuple(candidate.support_mask for candidate in candidates)
+        )
+        # Preserve the local support contract after every blend mode too.
+        pressure_grid[~array_support_mask] = 0.0
         diagnostics = None
         if self.debug:
             diagnostics = {
@@ -170,6 +185,9 @@ class PressureMapArrayGenerator:
                     for candidate in candidates
                 },
                 "pair_confidence_denominator": pair_denominator,
+                "candidate_fallback_denominator": candidate_denominator,
+                "effective_pair_weights": pair_effective_weights,
+                "array_support_mask": array_support_mask.copy(),
                 "final_array_field": pressure_grid.copy(),
             }
 
@@ -191,6 +209,7 @@ class PressureMapArrayGenerator:
             candidate_support_bounds_mm=dict(support_bounds),
             package_center_spacing_mm=self.package_center_spacing_mm,
             outer_boundary_reach_mm=self.outer_boundary_reach_mm,
+            actual_pixels_per_mm=self.actual_pixels_per_mm,
             facing_sensor_gap_mm=self.facing_sensor_gap_mm,
             mid_boundary_half_width_mm=self.mid_boundary_half_width_mm,
             outer_boundary_half_width_mm=self.outer_boundary_half_width_mm,
@@ -262,18 +281,23 @@ class PressureMapArrayGenerator:
         max_x = max(centers[package.sensor_id][0] + support_bounds[package.sensor_id][1] for package in packages)
         min_y = min(centers[package.sensor_id][1] + support_bounds[package.sensor_id][2] for package in packages)
         max_y = max(centers[package.sensor_id][1] + support_bounds[package.sensor_id][3] for package in packages)
-        x_count = max(2, int(np.ceil((max_x - min_x) * self.pixels_per_mm)) + 1)
-        y_count = max(2, int(np.ceil((max_y - min_y) * self.pixels_per_mm)) + 1)
+        cell_size = self.cell_size_mm
+        x_start, x_end = int(round(min_x / cell_size)), int(round(max_x / cell_size))
+        y_start, y_end = int(round(min_y / cell_size)), int(round(max_y / cell_size))
+        x_count, y_count = x_end - x_start + 1, y_end - y_start + 1
+        max_side = 4097
+        if x_count > max_side or y_count > max_side or x_count * y_count > 16_000_000:
+            raise ValueError("geometry-aligned pressure-map array grid exceeds the safety cap")
         return (
-            np.linspace(min_x, max_x, x_count, dtype=np.float64),
-            np.linspace(min_y, max_y, y_count, dtype=np.float64),
+            np.arange(x_start, x_end + 1, dtype=np.float64) * cell_size,
+            np.arange(y_start, y_end + 1, dtype=np.float64) * cell_size,
         )
 
     def _evaluate_candidate(self, package: PressureMapArrayPackage, center: tuple[float, float], support_bounds_mm: tuple[float, float, float, float], x_grid_mm: np.ndarray, y_grid_mm: np.ndarray) -> _PackageCandidate:
         local_x = x_grid_mm - center[0]
         local_y = y_grid_mm - center[1]
         left, right, bottom, top = support_bounds_mm
-        support_mask = (local_x >= left) & (local_x <= right) & (local_y >= bottom) & (local_y <= top)
+        support_mask = (local_x > left) & (local_x < right) & (local_y > bottom) & (local_y < top)
         values = np.zeros_like(x_grid_mm, dtype=np.float64)
         if np.any(support_mask):
             values[support_mask] = evaluate_pressure_map_result_at(
@@ -283,8 +307,16 @@ class PressureMapArrayGenerator:
                 support_bounds_mm=support_bounds_mm,
             )
         support_confidence = self._support_confidence(local_x, local_y)
+        support_confidence[~support_mask] = 0.0
+        values[~support_mask] = 0.0
         return _PackageCandidate(
-            package, center, support_bounds_mm, values, support_mask, support_confidence
+            package,
+            center,
+            support_bounds_mm,
+            values,
+            support_mask,
+            support_confidence,
+            package.pressure_result.package_activity_confidence,
         )
 
     def _support_confidence(self, local_x: np.ndarray, local_y: np.ndarray) -> np.ndarray:
@@ -302,26 +334,52 @@ class PressureMapArrayGenerator:
             confidence[transition] = 1.0 - (3.0 * t ** 2) + (2.0 * t ** 3)
         return confidence
 
-    def _blend_candidates(self, candidates: Sequence[_PackageCandidate], x_grid_mm: np.ndarray, y_grid_mm: np.ndarray) -> tuple[np.ndarray, tuple[tuple[str, str], ...], np.ndarray]:
+    def _blend_candidates(
+        self,
+        candidates: Sequence[_PackageCandidate],
+        x_grid_mm: np.ndarray,
+        y_grid_mm: np.ndarray,
+    ) -> tuple[
+        np.ndarray,
+        tuple[tuple[str, str], ...],
+        np.ndarray,
+        np.ndarray,
+        dict[tuple[str, str], tuple[np.ndarray, np.ndarray]],
+    ]:
         """Use confidence-weighted pair aggregation without contributor branches."""
 
         candidate_numerator = np.zeros_like(x_grid_mm, dtype=np.float64)
         candidate_denominator = np.zeros_like(x_grid_mm, dtype=np.float64)
         for candidate in candidates:
-            candidate_numerator += candidate.support_confidence * candidate.values
-            candidate_denominator += candidate.support_confidence
+            candidate_weight = candidate.support_confidence * candidate.activity_confidence
+            candidate_numerator += candidate_weight * candidate.values
+            candidate_denominator += candidate_weight
 
         pair_numerator = np.zeros_like(x_grid_mm, dtype=np.float64)
         pair_denominator = np.zeros_like(x_grid_mm, dtype=np.float64)
         overlap_pairs: list[tuple[str, str]] = []
+        pair_effective_weights: dict[tuple[str, str], tuple[np.ndarray, np.ndarray]] = {}
         for first_index, first in enumerate(candidates):
             for second in candidates[first_index + 1:]:
                 overlap = self._support_overlap(first, second)
                 if overlap is None:
                     continue
                 overlap_pairs.append((first.package.sensor_id, second.package.sensor_id))
-                pair_values = self._pair_blend(first, second, overlap, x_grid_mm, y_grid_mm)
-                pair_confidence = first.support_confidence * second.support_confidence
+                pair_values, effective_weights = self._pair_blend(
+                    first,
+                    second,
+                    overlap,
+                    x_grid_mm,
+                    y_grid_mm,
+                    include_effective_weights=self.debug,
+                )
+                if effective_weights is not None:
+                    pair_effective_weights[(first.package.sensor_id, second.package.sensor_id)] = effective_weights
+                pair_confidence = (
+                    first.support_confidence
+                    * second.support_confidence
+                    * min(first.activity_confidence, second.activity_confidence)
+                )
                 pair_numerator += pair_confidence * pair_values
                 pair_denominator += pair_confidence
 
@@ -332,7 +390,13 @@ class PressureMapArrayGenerator:
         pressure_grid[candidate_valid] = (
             candidate_numerator[candidate_valid] / candidate_denominator[candidate_valid]
         )
-        return pressure_grid, tuple(overlap_pairs), pair_denominator
+        return (
+            pressure_grid,
+            tuple(overlap_pairs),
+            pair_denominator,
+            candidate_denominator,
+            pair_effective_weights,
+        )
 
     def _support_overlap(self, first: _PackageCandidate, second: _PackageCandidate) -> tuple[float, float, float, float] | None:
         first_center_x, first_center_y = first.center
@@ -347,7 +411,16 @@ class PressureMapArrayGenerator:
             return None
         return (x0, x1, y0, y1)
 
-    def _pair_blend(self, first: _PackageCandidate, second: _PackageCandidate, overlap: tuple[float, float, float, float], x_grid_mm: np.ndarray, y_grid_mm: np.ndarray) -> np.ndarray:
+    def _pair_blend(
+        self,
+        first: _PackageCandidate,
+        second: _PackageCandidate,
+        overlap: tuple[float, float, float, float],
+        x_grid_mm: np.ndarray,
+        y_grid_mm: np.ndarray,
+        *,
+        include_effective_weights: bool,
+    ) -> tuple[np.ndarray, tuple[np.ndarray, np.ndarray] | None]:
         x0, x1, y0, y1 = overlap
         first_center_x, first_center_y = first.center
         second_center_x, second_center_y = second.center
@@ -386,4 +459,19 @@ class PressureMapArrayGenerator:
             area_blend = 3.0 * normalized_sum ** 2 - 2.0 * normalized_sum ** 3
             first_weight = area_blend * normalized_area + (1.0 - area_blend) * distance_weight
             second_weight = 1.0 - first_weight
-        return first_weight * first.values + second_weight * second.values
+        effective_first = first_weight * first.activity_confidence
+        effective_second = second_weight * second.activity_confidence
+        normalizer = effective_first + effective_second
+        pair_values = np.zeros_like(first.values, dtype=np.float64)
+        valid = normalizer > PRESSURE_ARRAY_BLEND_EPSILON
+        pair_values[valid] = (
+            effective_first[valid] * first.values[valid]
+            + effective_second[valid] * second.values[valid]
+        ) / normalizer[valid]
+        if not include_effective_weights:
+            return pair_values, None
+        normalized_first = np.zeros_like(first.values, dtype=np.float64)
+        normalized_second = np.zeros_like(first.values, dtype=np.float64)
+        normalized_first[valid] = effective_first[valid] / normalizer[valid]
+        normalized_second[valid] = effective_second[valid] / normalizer[valid]
+        return pair_values, (normalized_first, normalized_second)

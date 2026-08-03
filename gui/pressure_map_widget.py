@@ -232,6 +232,10 @@ class PressureMapWidget(QWidget):
         self.display_floor_low = DEFAULT_PRESSURE_DISPLAY_FLOOR_LOW
         self.display_floor_high = DEFAULT_PRESSURE_DISPLAY_FLOOR_HIGH
         self.saturated_pixel_percentage = 0.0
+        # Opt-in callers can inspect these backend diagnostics without any
+        # display auto-scaling or numerical-path changes.
+        self.debug_backend_maximum = 0.0
+        self.debug_saturation_mask: np.ndarray | None = None
         self.mirror = bool(DEFAULT_PRESSURE_MIRROR)
         self.color_scale = "Grayscale"
         self.display_mode = PRESSURE_DISPLAY_MODE_MAGNITUDE
@@ -560,7 +564,7 @@ class PressureMapWidget(QWidget):
 
         self._hide_unused_package_items(len(packages))
         self._set_array_ranges(array_result)
-        self._update_package_readout(packages)
+        self._update_package_readout(packages, preserve_saturation=True)
         self.plot_widget.getPlotItem().getViewBox().update()
 
     def _clear_dynamic_items(self, *, clear_image: bool = True) -> None:
@@ -611,6 +615,8 @@ class PressureMapWidget(QWidget):
         self.saturated_pixel_percentage = self._saturated_pixel_percentage(
             pressure_result.pressure_grid
         )
+        self.debug_backend_maximum = float(np.max(np.abs(pressure_result.pressure_grid)))
+        self.debug_saturation_mask = np.abs(pressure_result.pressure_grid) >= self.max_intensity
         self.plot_widget.setXRange(image_rect.left(), image_rect.right(), padding=SHEAR_ZERO_VALUE)
         self.plot_widget.setYRange(image_rect.top(), image_rect.bottom(), padding=SHEAR_ZERO_VALUE)
 
@@ -640,6 +646,8 @@ class PressureMapWidget(QWidget):
         self.saturated_pixel_percentage = self._saturated_pixel_percentage(
             array_result.pressure_grid
         )
+        self.debug_backend_maximum = float(np.max(np.abs(array_result.pressure_grid)))
+        self.debug_saturation_mask = np.abs(array_result.pressure_grid) >= self.max_intensity
 
     def _update_cached_image_item(
         self,
@@ -1281,16 +1289,19 @@ class PressureMapWidget(QWidget):
         self.plot_widget.setXRange(center_x - half_span - padding, center_x + half_span + padding, padding=SHEAR_ZERO_VALUE)
         self.plot_widget.setYRange(center_y - half_span - padding, center_y + half_span + padding, padding=SHEAR_ZERO_VALUE)
 
-    def _update_package_readout(self, packages: list[PressureMapPackageDisplay]) -> None:
+    def _update_package_readout(
+        self, packages: list[PressureMapPackageDisplay], *, preserve_saturation: bool = False
+    ) -> None:
         total_force = sum(float(package.normal_force_result.total_force) for package in packages)
         package_labels = ", ".join(package.sensor_id for package in packages)
         finite_grids = [
             np.asarray(package.pressure_result.pressure_grid, dtype=np.float64).ravel()
             for package in packages
         ]
-        self.saturated_pixel_percentage = self._saturated_pixel_percentage(
-            np.concatenate(finite_grids) if finite_grids else np.asarray((), dtype=np.float64)
-        )
+        if not preserve_saturation:
+            self.saturated_pixel_percentage = self._saturated_pixel_percentage(
+                np.concatenate(finite_grids) if finite_grids else np.asarray((), dtype=np.float64)
+            )
         self.readout_label.setText(
             f"Array packages: {package_labels} | "
             f"Total normal: {total_force:.{SHEAR_READOUT_MAGNITUDE_DECIMALS}f}"

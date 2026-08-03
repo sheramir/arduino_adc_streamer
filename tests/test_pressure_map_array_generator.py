@@ -214,6 +214,9 @@ class PressureMapArrayGeneratorTests(unittest.TestCase):
         self.assertIsNotNone(result.diagnostics)
         self.assertIn("support_confidence", result.diagnostics)
         self.assertIn("pair_confidence_denominator", result.diagnostics)
+        self.assertIn("candidate_fallback_denominator", result.diagnostics)
+        self.assertIn("effective_pair_weights", result.diagnostics)
+        self.assertIn("array_support_mask", result.diagnostics)
 
     def test_rejects_duplicate_ids_positions_nonfinite_data_and_geometry_mismatch(self):
         values = {"C": 0.0, "L": 0.0, "R": 1.0, "T": 0.0, "B": 0.0}
@@ -246,6 +249,49 @@ class PressureMapArrayGeneratorTests(unittest.TestCase):
         ])
         self.assertEqual(result.cell_size_x_mm, result.x_coordinates_mm[1] - result.x_coordinates_mm[0])
         self.assertEqual(result.cell_size_y_mm, result.y_coordinates_mm[1] - result.y_coordinates_mm[0])
+
+    def test_inactive_neighbour_cannot_attenuate_an_active_candidate(self):
+        active_values = {"C": 5.0, "L": 0.0, "R": 0.0, "T": 0.0, "B": 0.0}
+        inactive_values = {"C": 0.0, "L": 0.0, "R": 0.0, "T": 0.0, "B": 0.0}
+        inactive = self._package("ZERO", (0, 0), inactive_values)
+        active = self._package("ACTIVE", (0, 1), active_values)
+        result = self._generator().generate([inactive, active])
+
+        for world_x in (0.5, 1.5, 2.5, 3.5):
+            expected = self._candidate_value(result, active, world_x, 0.0)
+            self.assertAlmostEqual(self._grid_value(result, world_x, 0.0), expected, places=10)
+        self.assertEqual(inactive.pressure_result.package_activity_confidence, 0.0)
+
+    def test_array_field_is_zero_at_and_outside_every_outer_boundary(self):
+        first = self._package("A", (0, 0), {"C": 5.0, "L": 0.0, "R": 0.0, "T": 0.0, "B": 0.0})
+        result = self._generator().generate([first])
+        center_x, center_y = result.package_centers["A"]
+        _left, right, _bottom, top = result.candidate_support_bounds_mm["A"]
+        for world_x, world_y in ((center_x + right, center_y), (center_x + right + 0.1, center_y), (center_x, center_y + top)):
+            actual = evaluate_pressure_map_result_at(
+                first.pressure_result,
+                np.asarray([world_x - center_x]),
+                np.asarray([world_y - center_y]),
+                support_bounds_mm=result.candidate_support_bounds_mm["A"],
+            )[0]
+            self.assertEqual(float(actual), 0.0)
+        self.assertTrue(np.all(result.pressure_grid[[0, -1], :] == 0.0))
+        self.assertTrue(np.all(result.pressure_grid[:, [0, -1]] == 0.0))
+
+    def test_activity_confidence_is_smooth_between_threshold_and_full_participation(self):
+        generator = PressureMapGenerator(
+            sensor_spacing_mm=1.0,
+            package_center_spacing_mm=7.0,
+            outer_boundary_reach_mm=2.0,
+            signal_activity_threshold=1.0,
+            decay_amplitude_reference=5.0,
+        )
+        low = generator.generate({"C": 1.01, "L": 0.0, "R": 0.0, "T": 0.0, "B": 0.0})
+        mid = generator.generate({"C": 1.5, "L": 0.0, "R": 0.0, "T": 0.0, "B": 0.0})
+        high = generator.generate({"C": 2.0, "L": 0.0, "R": 0.0, "T": 0.0, "B": 0.0})
+        self.assertGreater(low.package_activity_confidence, 0.0)
+        self.assertGreater(mid.package_activity_confidence, low.package_activity_confidence)
+        self.assertEqual(high.package_activity_confidence, 1.0)
 
 
 if __name__ == "__main__":

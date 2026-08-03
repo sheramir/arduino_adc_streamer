@@ -181,6 +181,7 @@ class PressureQuadrantPlane:
     single_axis_peak_sensor: str | None = None
     single_axis_center_value: float | None = None
     single_axis_outer_value: float | None = None
+    decay_origin: tuple[float, float] = (0.0, 0.0)
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,7 +190,9 @@ class PressureFieldModel:
 
     geometry: PressureMapGeometry
     package_mode: str
+    raw_sensor_values: tuple[tuple[str, float], ...]
     sensor_values: tuple[tuple[str, float], ...]
+    package_activity_confidence: float
     quadrant_planes: tuple[PressureQuadrantPlane, ...]
     support_bounds_mm: tuple[float, float, float, float]
     decay_origin: tuple[float, float]
@@ -249,6 +252,7 @@ class PressureMapResult:
     package_center_spacing_mm: float
     outer_boundary_reach_mm: float
     pixels_per_mm: float
+    actual_pixels_per_mm: float
     facing_sensor_gap_mm: float
     mid_boundary_half_width_mm: float
     outer_boundary_half_width_mm: float
@@ -262,6 +266,8 @@ class PressureMapResult:
     minimum_decay_reach_mm: float
     maximum_decay_reach_mm: float
     signal_activity_threshold: float
+    raw_sensor_values: tuple[tuple[str, float], ...]
+    package_activity_confidence: float
     geometry_epsilon: float
     show_negative: bool
     near_outer_peak_offset_mm: float
@@ -361,16 +367,17 @@ class PressureMapGenerator:
         self.mid_boundary_half_width_mm = self.geometry.mid_boundary_half_width_mm
         self.outer_boundary_half_width_mm = self.geometry.outer_boundary_half_width_mm
         self.visual_boundary_radius_mm = self.geometry.near_outer_circle_radius_mm
-        self.half_intervals = int(np.ceil(self.outer_boundary_half_width_mm * self.pixels_per_mm))
+        self.actual_pixels_per_mm = self.geometry.actual_pixels_per_mm
+        self.cell_size_mm = self.geometry.aligned_cell_size_mm
+        self.half_intervals = int(round(self.outer_boundary_half_width_mm / self.cell_size_mm))
         self.total_grid_side = (2 * self.half_intervals) + 1
-        self.cell_size_mm = self.outer_boundary_half_width_mm / float(self.half_intervals)
+        if self.total_grid_side > 4097:
+            raise ValueError("geometry-aligned pressure-map grid exceeds the 4097-pixel safety cap")
         self.total_extent_mm = self.outer_boundary_half_width_mm * 2.0
         self.support_bounds_mm = self.geometry.support_bounds_mm
-        self.x_coordinates_mm = np.linspace(
-            -self.outer_boundary_half_width_mm,
-            self.outer_boundary_half_width_mm,
-            self.total_grid_side,
-            dtype=np.float64,
+        self.x_coordinates_mm = (
+            np.arange(-self.half_intervals, self.half_intervals + 1, dtype=np.float64)
+            * self.cell_size_mm
         )
         self.y_coordinates_mm = self.x_coordinates_mm.copy()
         self.x_grid_mm, self.y_grid_mm = np.meshgrid(self.x_coordinates_mm, self.y_coordinates_mm)
@@ -380,8 +387,9 @@ class PressureMapGenerator:
     def generate(self, normalized_signals: Mapping[str, float]) -> PressureMapResult:
         """Threshold input signals, then build and rasterize one signed model."""
 
-        signals = self._normalize_signals(normalized_signals)
-        model = self._build_package_field_model(signals)
+        raw_signals = self._raw_signals(normalized_signals)
+        signals = self._normalize_signals(raw_signals)
+        model = self._build_package_field_model(signals, raw_signals)
         pressure_grid = model.evaluate(self.x_grid_mm, self.y_grid_mm)
         diagnostics = self._build_diagnostics(model, pressure_grid) if self.debug else None
         return PressureMapResult(
@@ -400,6 +408,7 @@ class PressureMapGenerator:
             package_center_spacing_mm=self.package_center_spacing_mm,
             outer_boundary_reach_mm=self.outer_boundary_reach_mm,
             pixels_per_mm=self.pixels_per_mm,
+            actual_pixels_per_mm=self.actual_pixels_per_mm,
             facing_sensor_gap_mm=self.facing_sensor_gap_mm,
             mid_boundary_half_width_mm=self.mid_boundary_half_width_mm,
             outer_boundary_half_width_mm=self.outer_boundary_half_width_mm,
@@ -412,6 +421,8 @@ class PressureMapGenerator:
             minimum_decay_reach_mm=self.minimum_decay_reach_mm,
             maximum_decay_reach_mm=self.maximum_decay_reach_mm,
             signal_activity_threshold=self.signal_activity_threshold,
+            raw_sensor_values=model.raw_sensor_values,
+            package_activity_confidence=model.package_activity_confidence,
             geometry_epsilon=self.geometry_epsilon, show_negative=self.show_negative,
             near_outer_peak_offset_mm=self.near_outer_peak_offset_mm,
             field_model=model, package_mode=model.package_mode, frame_id=next(_FRAME_IDS),
@@ -436,19 +447,79 @@ class PressureMapGenerator:
                     model, self.x_grid_mm[core_mask], self.y_grid_mm[core_mask]
                 )
         return {
+            "raw_sensor_values": dict(model.raw_sensor_values),
             "thresholded_sensor_values": dict(model.sensor_values),
             "package_mode": model.package_mode,
+            "package_activity_confidence": model.package_activity_confidence,
             "quadrant_modes": {plane.label: plane.mode for plane in model.quadrant_planes},
+            "quadrant_corner_values": {
+                plane.label: plane.corner_value for plane in model.quadrant_planes
+            },
+            "quadrant_decay_origins": {
+                plane.label: plane.decay_origin for plane in model.quadrant_planes
+            },
             "peaks": tuple(
                 (plane.label, plane.peak_point, plane.peak_height)
                 for plane in model.quadrant_planes if plane.peak_point is not None
             ),
             "core_surface": core_surface,
+            # These arrays identify the two separate support mechanisms.  The
+            # detailed extension factors are intentionally diagnostic-only;
+            # normal evaluation remains the single vectorized field path.
+            "natural_decay_factor": self._diagnostic_decay_factor(model, natural=True),
+            "boundary_guard_factor": self._diagnostic_decay_factor(model, natural=False),
             "final_package_candidate": pressure_grid.copy(),
             "support_bounds_mm": model.support_bounds_mm,
         }
 
-    def _build_package_field_model(self, signals: Mapping[str, float]) -> PressureFieldModel:
+    def _diagnostic_decay_factor(self, model: PressureFieldModel, *, natural: bool) -> np.ndarray:
+        factors = np.zeros_like(self.x_grid_mm, dtype=np.float64)
+        inside = _strict_support_mask(self.x_grid_mm, self.y_grid_mm, model.support_bounds_mm)
+        if model.package_mode == PRESSURE_PACKAGE_MODE_ALL_INACTIVE:
+            return factors
+        factors[inside] = 1.0
+        if model.package_mode == PRESSURE_PACKAGE_MODE_ISOLATED_OUTER:
+            return factors
+        spacing = self.geometry.sensor_spacing_mm
+        extension = inside & ((np.abs(self.x_grid_mm) > spacing) | (np.abs(self.y_grid_mm) > spacing))
+        if model.package_mode == PRESSURE_PACKAGE_MODE_CENTER_PLUS_ONE_OUTER:
+            _, natural_factor, boundary_factor = _extension_decay_components(
+                model,
+                self.x_grid_mm[extension],
+                self.y_grid_mm[extension],
+                model.support_bounds_mm,
+                model.decay_origin,
+            )
+            factors[extension] = natural_factor if natural else boundary_factor
+            return factors
+        by_label = {plane.label: plane for plane in model.quadrant_planes}
+        regions = {
+            PRESSURE_QUADRANT_TOP_RIGHT: extension & (self.x_grid_mm > 0.0) & (self.y_grid_mm > 0.0),
+            PRESSURE_QUADRANT_TOP_LEFT: extension & (self.x_grid_mm < 0.0) & (self.y_grid_mm > 0.0),
+            PRESSURE_QUADRANT_BOTTOM_LEFT: extension & (self.x_grid_mm < 0.0) & (self.y_grid_mm < 0.0),
+            PRESSURE_QUADRANT_BOTTOM_RIGHT: extension & (self.x_grid_mm > 0.0) & (self.y_grid_mm < 0.0),
+        }
+        for label, mask in regions.items():
+            plane = by_label.get(label)
+            if plane is None or not np.any(mask):
+                factors[mask] = 0.0
+                continue
+            _, natural_factor, boundary_factor = _extension_decay_components(
+                model,
+                self.x_grid_mm[mask],
+                self.y_grid_mm[mask],
+                model.support_bounds_mm,
+                plane.decay_origin,
+            )
+            factors[mask] = natural_factor if natural else boundary_factor
+        return factors
+
+    def _build_package_field_model(
+        self,
+        signals: Mapping[str, float],
+        raw_signals: Mapping[str, float] | None = None,
+    ) -> PressureFieldModel:
+        raw_signals = signals if raw_signals is None else raw_signals
         package_mode, active_outer = self._classify_package(signals)
         if package_mode == PRESSURE_PACKAGE_MODE_ALL_INACTIVE:
             planes: tuple[PressureQuadrantPlane, ...] = ()
@@ -482,15 +553,23 @@ class PressureMapGenerator:
             if plane.peak_height is not None
         )
         model_strength = max(strength_candidates, default=0.0)
-        # General fields must preserve rotational symmetry when multiple peaks
-        # are equally plausible, so their outward rays originate at the centre.
-        decay_origin = peak_point if package_mode in (
-            PRESSURE_PACKAGE_MODE_ISOLATED_OUTER,
-            PRESSURE_PACKAGE_MODE_CENTER_PLUS_ONE_OUTER,
-        ) and peak_point is not None else (0.0, 0.0)
+        # General fields select local quadrant origins at evaluation time;
+        # single-axis packages retain their one explicit axis origin here.
+        decay_origin = (
+            planes[0].decay_origin
+            if package_mode in (
+                PRESSURE_PACKAGE_MODE_ISOLATED_OUTER,
+                PRESSURE_PACKAGE_MODE_CENTER_PLUS_ONE_OUTER,
+            ) and planes
+            else (0.0, 0.0)
+        )
         return PressureFieldModel(
             geometry=self.geometry, package_mode=package_mode,
+            raw_sensor_values=tuple(
+                (sensor, float(raw_signals[sensor])) for sensor in SHEAR_SENSOR_POSITIONS
+            ),
             sensor_values=tuple((sensor, float(signals[sensor])) for sensor in SHEAR_SENSOR_POSITIONS),
+            package_activity_confidence=self._package_activity_confidence(raw_signals),
             quadrant_planes=planes, support_bounds_mm=self.support_bounds_mm,
             decay_origin=(float(decay_origin[0]), float(decay_origin[1])),
             model_strength=float(model_strength), decay_rate=self.decay_rate,
@@ -548,17 +627,40 @@ class PressureMapGenerator:
             _QuadrantDefinition(PRESSURE_QUADRANT_BOTTOM_RIGHT, SHEAR_POSITION_RIGHT, SHEAR_POSITION_BOTTOM, 1.0, -1.0, (SHEAR_POSITION_CENTER, SHEAR_POSITION_RIGHT, SHEAR_POSITION_BOTTOM)),
         )
 
-    def _normalize_signals(self, normalized_signals: Mapping[str, float]) -> dict[str, float]:
+    def _raw_signals(self, normalized_signals: Mapping[str, float]) -> dict[str, float]:
         signals: dict[str, float] = {}
         for sensor in SHEAR_SENSOR_POSITIONS:
             value = float(normalized_signals.get(sensor, SHEAR_ZERO_VALUE))
             if not np.isfinite(value):
                 raise ValueError(f"pressure signal {sensor} must be finite")
-            signals[sensor] = value if self.is_signal_active(value) else 0.0
+            signals[sensor] = value
         return signals
 
+    def _normalize_signals(self, raw_signals: Mapping[str, float]) -> dict[str, float]:
+        """Remove exact and sub-threshold input after finite validation."""
+
+        return {
+            sensor: float(raw_signals[sensor]) if self.is_signal_active(raw_signals[sensor]) else 0.0
+            for sensor in SHEAR_SENSOR_POSITIONS
+        }
+
     def is_signal_active(self, value: float) -> bool:
-        return abs(float(value)) >= self.signal_activity_threshold
+        effective_threshold = max(self.signal_activity_threshold, PRESSURE_NUMERIC_EPSILON)
+        return abs(float(value)) > effective_threshold
+
+    def _package_activity_confidence(self, raw_signals: Mapping[str, float]) -> float:
+        raw_strength = max(abs(float(raw_signals[sensor])) for sensor in SHEAR_SENSOR_POSITIONS)
+        activity_low = max(self.signal_activity_threshold, PRESSURE_NUMERIC_EPSILON)
+        activity_high = max(
+            activity_low * 2.0,
+            activity_low + 0.02 * self.decay_amplitude_reference,
+        )
+        if raw_strength <= activity_low:
+            return 0.0
+        if raw_strength >= activity_high:
+            return 1.0
+        t = (raw_strength - activity_low) / (activity_high - activity_low)
+        return float(3.0 * t ** 2 - 2.0 * t ** 3)
 
     def _quadrant_is_active(self, signals: Mapping[str, float], quadrant: _QuadrantDefinition) -> bool:
         return any(self.is_signal_active(signals[sensor]) for sensor in quadrant.sensors)
@@ -583,6 +685,7 @@ class PressureMapGenerator:
             peak_point=peak_point, peak_height=peak_height,
             single_axis_peak_sensor=sensor, single_axis_center_value=center,
             single_axis_outer_value=outer,
+            decay_origin=peak_point or self._axis_decay_origin(signals, sensor),
         )
 
     def _build_isolated_outer_plane(self, signals: Mapping[str, float], sensor: str) -> PressureQuadrantPlane:
@@ -602,6 +705,7 @@ class PressureMapGenerator:
             peak_point=peak_point, peak_height=value * gain,
             single_outer_decay_sensor=sensor, single_axis_peak_sensor=sensor,
             single_axis_center_value=0.0, single_axis_outer_value=value,
+            decay_origin=peak_point,
         )
 
     def _build_quadrant_plane(self, signals: Mapping[str, float], quadrant: _QuadrantDefinition) -> PressureQuadrantPlane:
@@ -610,12 +714,14 @@ class PressureMapGenerator:
         active = tuple(value for value in values if self.is_signal_active(value))
         sign = self._value_sign(active[0]) if active else 0.0
         mixed_sign = any(value > 0.0 for value in active) and any(value < 0.0 for value in active)
-        corner_value = values[1] + values[2] - values[0]
+        corner_value = (values[1] + values[2] + (0.5 * values[0])) / 2.5
+        weighted_origin = self._quadrant_decay_origin(signals, quadrant)
         if mixed_sign:
             return PressureQuadrantPlane(
                 label=quadrant.label, a=a, b=b, c=c, sign=sign, sensors=quadrant.sensors,
                 mode=PRESSURE_QUADRANT_MODE_SIGNED_TRANSITION, corner_value=corner_value,
                 triangles=self._build_peakless_triangles(signals, quadrant, corner_value),
+                decay_origin=weighted_origin,
             )
         peak_x, peak_y = self._pressure_point(signals, quadrant)
         if not self._is_peaked_pressure_point(peak_x, peak_y, quadrant):
@@ -623,6 +729,7 @@ class PressureMapGenerator:
                 label=quadrant.label, a=a, b=b, c=c, sign=sign, sensors=quadrant.sensors,
                 mode=PRESSURE_QUADRANT_MODE_PEAKLESS, corner_value=corner_value,
                 triangles=self._build_peakless_triangles(signals, quadrant, corner_value),
+                decay_origin=weighted_origin,
             )
         peak_height = self._pressure_point_height(signals, quadrant, peak_x, peak_y)
         triangles = self._build_peaked_triangles(signals, quadrant, peak_x, peak_y, peak_height, corner_value)
@@ -631,11 +738,48 @@ class PressureMapGenerator:
                 label=quadrant.label, a=a, b=b, c=c, sign=sign, sensors=quadrant.sensors,
                 mode=PRESSURE_QUADRANT_MODE_PEAKLESS, corner_value=corner_value,
                 triangles=self._build_peakless_triangles(signals, quadrant, corner_value),
+                decay_origin=weighted_origin,
             )
         return PressureQuadrantPlane(
             label=quadrant.label, a=a, b=b, c=c, sign=sign, sensors=quadrant.sensors,
             mode=PRESSURE_QUADRANT_MODE_PEAKED, peak_point=(peak_x, peak_y),
             peak_height=peak_height, corner_value=corner_value, triangles=triangles,
+            decay_origin=(peak_x, peak_y),
+        )
+
+    def _axis_decay_origin(
+        self, signals: Mapping[str, float], sensor: str
+    ) -> tuple[float, float]:
+        center_weight = abs(float(signals[SHEAR_POSITION_CENTER]))
+        outer_weight = abs(float(signals[sensor]))
+        total_weight = center_weight + outer_weight
+        if total_weight <= PRESSURE_NUMERIC_EPSILON:
+            return (0.0, 0.0)
+        outer_x, outer_y = self.sensor_positions[sensor]
+        return (
+            outer_weight * outer_x / total_weight,
+            outer_weight * outer_y / total_weight,
+        )
+
+    def _quadrant_decay_origin(
+        self, signals: Mapping[str, float], quadrant: _QuadrantDefinition
+    ) -> tuple[float, float]:
+        weights = np.asarray(
+            [abs(float(signals[sensor])) for sensor in quadrant.sensors], dtype=np.float64
+        )
+        total_weight = float(weights.sum())
+        if total_weight <= PRESSURE_NUMERIC_EPSILON:
+            return (0.0, 0.0)
+        positions = np.asarray(
+            [self.sensor_positions[sensor] for sensor in quadrant.sensors], dtype=np.float64
+        )
+        origin = (weights[:, np.newaxis] * positions).sum(axis=0) / total_weight
+        spacing = self.sensor_spacing_mm
+        low_x, high_x = sorted((0.0, quadrant.horizontal_sign * spacing))
+        low_y, high_y = sorted((0.0, quadrant.vertical_sign * spacing))
+        return (
+            float(np.clip(origin[0], low_x, high_x)),
+            float(np.clip(origin[1], low_y, high_y)),
         )
 
     def _three_sensor_plane_coefficients(self, signals: Mapping[str, float], quadrant: _QuadrantDefinition) -> tuple[float, float, float]:
@@ -766,7 +910,7 @@ class PressureMapGenerator:
         return model.evaluate(x_values_mm, y_values_mm, support_bounds_mm)
 
     def _evaluate_quadrant_for_region(self, plane: PressureQuadrantPlane, x_values_mm: np.ndarray, y_values_mm: np.ndarray, *, support_bounds_mm: tuple[float, float, float, float] | None = None) -> np.ndarray:
-        if plane.mode == PRESSURE_QUADRANT_MODE_PEAKED and plane.triangles:
+        if plane.triangles:
             return _evaluate_triangles(plane, np.asarray(x_values_mm), np.asarray(y_values_mm), self.geometry_epsilon)
         return (plane.a * np.asarray(x_values_mm)) + (plane.b * np.asarray(y_values_mm)) + plane.c
 
@@ -792,22 +936,61 @@ def _evaluate_pressure_field_model(model: PressureFieldModel, x_values: np.ndarr
     values = np.zeros_like(x_values, dtype=np.float64)
     if model.package_mode == PRESSURE_PACKAGE_MODE_ALL_INACTIVE:
         return values
-    left, right, bottom, top = (float(value) for value in support_bounds)
-    # Exact outer support is zero; all masks below only allocate/evaluate.
-    inside = (x_values > left) & (x_values < right) & (y_values > bottom) & (y_values < top)
+    # The strict mask is the terminal support contract: samples at or beyond
+    # an Outer Boundary are identically zero, regardless of interpolation.
+    inside = _strict_support_mask(x_values, y_values, support_bounds)
     if not np.any(inside):
         return values
     if model.package_mode == PRESSURE_PACKAGE_MODE_ISOLATED_OUTER:
-        return _evaluate_isolated_model(model, x_values, y_values, support_bounds, inside)
+        values = _evaluate_isolated_model(model, x_values, y_values, support_bounds, inside)
+        values[~inside] = 0.0
+        return _numeric_cleanup(values)
     spacing = model.geometry.sensor_spacing_mm
     core_mask = inside & (np.abs(x_values) <= spacing) & (np.abs(y_values) <= spacing)
     if np.any(core_mask):
         values[core_mask] = _evaluate_core(model, x_values[core_mask], y_values[core_mask])
     extension_mask = inside & ~core_mask
     if np.any(extension_mask):
-        values[extension_mask] = _evaluate_core_extension(
-            model, x_values[extension_mask], y_values[extension_mask], support_bounds
+        if model.package_mode == PRESSURE_PACKAGE_MODE_CENTER_PLUS_ONE_OUTER:
+            values[extension_mask] = _evaluate_core_extension(
+                model,
+                x_values[extension_mask],
+                y_values[extension_mask],
+                support_bounds,
+                model.decay_origin,
+            )
+            values[~inside] = 0.0
+            return _numeric_cleanup(values)
+        by_label = {plane.label: plane for plane in model.quadrant_planes}
+        quadrant_masks = {
+            PRESSURE_QUADRANT_TOP_RIGHT: extension_mask & (x_values > 0.0) & (y_values > 0.0),
+            PRESSURE_QUADRANT_TOP_LEFT: extension_mask & (x_values < 0.0) & (y_values > 0.0),
+            PRESSURE_QUADRANT_BOTTOM_LEFT: extension_mask & (x_values < 0.0) & (y_values < 0.0),
+            PRESSURE_QUADRANT_BOTTOM_RIGHT: extension_mask & (x_values > 0.0) & (y_values < 0.0),
+        }
+        for label, mask in quadrant_masks.items():
+            plane = by_label.get(label)
+            if plane is not None and np.any(mask):
+                values[mask] = _evaluate_core_extension(
+                    model, x_values[mask], y_values[mask], support_bounds, plane.decay_origin
+                )
+        axis_tolerance = max(PRESSURE_NUMERIC_EPSILON, model.geometry_epsilon * 1e-6)
+        axis_masks = (
+            (extension_mask & (np.abs(y_values) <= axis_tolerance) & (x_values > 0.0), SHEAR_POSITION_RIGHT),
+            (extension_mask & (np.abs(y_values) <= axis_tolerance) & (x_values < 0.0), SHEAR_POSITION_LEFT),
+            (extension_mask & (np.abs(x_values) <= axis_tolerance) & (y_values > 0.0), SHEAR_POSITION_TOP),
+            (extension_mask & (np.abs(x_values) <= axis_tolerance) & (y_values < 0.0), SHEAR_POSITION_BOTTOM),
         )
+        for mask, sensor in axis_masks:
+            if np.any(mask):
+                values[mask] = _evaluate_core_extension(
+                    model,
+                    x_values[mask],
+                    y_values[mask],
+                    support_bounds,
+                    _model_axis_decay_origin(model, sensor),
+                )
+    values[~inside] = 0.0
     return _numeric_cleanup(values)
 
 
@@ -941,8 +1124,27 @@ def _evaluate_axis_lobe(model: PressureFieldModel, x_values: np.ndarray, y_value
     return longitudinal * lateral
 
 
-def _evaluate_core_extension(model: PressureFieldModel, x_values: np.ndarray, y_values: np.ndarray, support_bounds: tuple[float, float, float, float]) -> np.ndarray:
-    origin_x, origin_y = model.decay_origin
+def _evaluate_core_extension(
+    model: PressureFieldModel,
+    x_values: np.ndarray,
+    y_values: np.ndarray,
+    support_bounds: tuple[float, float, float, float],
+    origin: tuple[float, float],
+) -> np.ndarray:
+    anchor, natural_factor, boundary_factor = _extension_decay_components(
+        model, x_values, y_values, support_bounds, origin
+    )
+    return anchor * natural_factor * boundary_factor
+
+
+def _extension_decay_components(
+    model: PressureFieldModel,
+    x_values: np.ndarray,
+    y_values: np.ndarray,
+    support_bounds: tuple[float, float, float, float],
+    origin: tuple[float, float],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    origin_x, origin_y = origin
     dx = x_values - origin_x
     dy = y_values - origin_y
     distance = np.hypot(dx, dy)
@@ -955,8 +1157,43 @@ def _evaluate_core_extension(model: PressureFieldModel, x_values: np.ndarray, y_
     outward_distance = distance * np.maximum(0.0, 1.0 - t_core)
     available_distance = distance * np.maximum(0.0, t_outer - t_core)
     strength = np.where(np.abs(anchor) > PRESSURE_NUMERIC_EPSILON, np.abs(anchor), model.model_strength)
-    reach = np.minimum(_natural_decay_reach(strength, model), available_distance)
-    return anchor * smoothstep_fade(outward_distance, reach)
+    natural_factor = smoothstep_fade(outward_distance, _natural_decay_reach(strength, model))
+    guard_width = np.minimum(
+        available_distance,
+        np.maximum(0.20 * available_distance, model.geometry_epsilon),
+    )
+    guard_start = available_distance - guard_width
+    boundary_factor = smoothstep_fade(
+        np.maximum(0.0, outward_distance - guard_start),
+        np.maximum(guard_width, PRESSURE_NUMERIC_EPSILON),
+    )
+    return anchor, natural_factor, boundary_factor
+
+
+def _strict_support_mask(
+    x_values: np.ndarray,
+    y_values: np.ndarray,
+    support_bounds: tuple[float, float, float, float],
+) -> np.ndarray:
+    left, right, bottom, top = (float(value) for value in support_bounds)
+    return (x_values > left) & (x_values < right) & (y_values > bottom) & (y_values < top)
+
+
+def _model_axis_decay_origin(model: PressureFieldModel, sensor: str) -> tuple[float, float]:
+    signal = dict(model.sensor_values)
+    center_weight = abs(signal[SHEAR_POSITION_CENTER])
+    outer_weight = abs(signal[sensor])
+    weight_sum = center_weight + outer_weight
+    if weight_sum <= PRESSURE_NUMERIC_EPSILON:
+        return (0.0, 0.0)
+    spacing = model.geometry.sensor_spacing_mm
+    if sensor == SHEAR_POSITION_RIGHT:
+        return (spacing * outer_weight / weight_sum, 0.0)
+    if sensor == SHEAR_POSITION_LEFT:
+        return (-spacing * outer_weight / weight_sum, 0.0)
+    if sensor == SHEAR_POSITION_TOP:
+        return (0.0, spacing * outer_weight / weight_sum)
+    return (0.0, -spacing * outer_weight / weight_sum)
 
 
 def _ray_exit_parameter(origin_x: float, origin_y: float, dx: np.ndarray, dy: np.ndarray, bounds: tuple[float, float, float, float]) -> np.ndarray:
@@ -996,8 +1233,18 @@ def _evaluate_isolated_model(model: PressureFieldModel, x_values: np.ndarray, y_
     available = distance * t_outer
     width = _piecewise_width(model, np.full_like(local_v, peak_axis), peak_axis, isolated=True)
     anchor = float(model.peak_height) * smoothstep_fade(np.abs(local_v), width)
-    reach = np.minimum(_natural_decay_reach(np.abs(anchor), model), available)
-    values[trailing] = anchor * smoothstep_fade(distance, reach)
+    natural_factor = smoothstep_fade(distance, _natural_decay_reach(np.abs(anchor), model))
+    guard_width = np.minimum(
+        available,
+        np.maximum(0.20 * available, model.geometry_epsilon),
+    )
+    guard_start = available - guard_width
+    boundary_factor = smoothstep_fade(
+        np.maximum(0.0, distance - guard_start),
+        np.maximum(guard_width, PRESSURE_NUMERIC_EPSILON),
+    )
+    values[trailing] = anchor * natural_factor * boundary_factor
+    values[~inside] = 0.0
     return _numeric_cleanup(values)
 
 

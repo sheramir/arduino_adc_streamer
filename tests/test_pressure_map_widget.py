@@ -318,6 +318,15 @@ class PressureMapWidgetTests(unittest.TestCase):
         self.assertIn("PZT3", self.widget.readout_label.text())
         self.assertIn("PZT6", self.widget.readout_label.text())
 
+        self.widget.configure_intensity(max_intensity=1.0)
+        self.widget.update_array_display(array_result, packages)
+        expected_saturation = self.widget._saturated_pixel_percentage(array_result.pressure_grid)
+        self.assertAlmostEqual(self.widget.saturated_pixel_percentage, expected_saturation, places=12)
+        np.testing.assert_array_equal(
+            self.widget.debug_saturation_mask,
+            np.abs(array_result.pressure_grid) >= self.widget.max_intensity,
+        )
+
     def test_boundary_overlays_use_peak_support_outer_support_and_midpoint_dash_styles(self):
         signals = {"C": 0.0, "R": 5.0, "T": 0.0, "L": 0.0, "B": 0.0}
         normal_result = self.calculator.compute(signals)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import reduce
 import math
 
 from constants.pressure_map import (
@@ -70,3 +71,53 @@ class PressureMapGeometry:
 
         half = self.sensor_spacing_mm
         return (-half, half, -half, half)
+
+    @property
+    def geometry_quantum_mm(self) -> float:
+        """Smallest stable physical increment represented by this geometry.
+
+        Values are first rounded to micrometres so configured decimal geometry
+        remains reproducible across platforms.  Zero-valued optional offsets
+        are excluded: zero must not collapse the GCD to a one-micrometre grid.
+        """
+
+        values_mm = (
+            self.sensor_spacing_mm,
+            self.package_center_spacing_mm,
+            self.outer_boundary_reach_mm,
+            self.near_outer_peak_offset_mm,
+            self.mid_boundary_half_width_mm,
+            self.outer_boundary_half_width_mm,
+        )
+        micrometres = [
+            abs(int(round(float(value) * 1000.0)))
+            for value in values_mm
+            if abs(float(value)) > 0.0
+        ]
+        if not micrometres:
+            return 0.001
+        return reduce(math.gcd, micrometres) / 1000.0
+
+    @property
+    def requested_cell_size_mm(self) -> float:
+        """Cell size requested by the caller before geometry alignment."""
+
+        return 1.0 / self.pixels_per_mm
+
+    @property
+    def aligned_subdivisions(self) -> int:
+        """Integer subdivisions needed to meet the requested raster density."""
+
+        return max(1, int(math.ceil(self.geometry_quantum_mm / self.requested_cell_size_mm)))
+
+    @property
+    def aligned_cell_size_mm(self) -> float:
+        """Geometry-aligned cell size at least as dense as requested."""
+
+        return self.geometry_quantum_mm / self.aligned_subdivisions
+
+    @property
+    def actual_pixels_per_mm(self) -> float:
+        """Actual raster density after aligning physical landmarks to samples."""
+
+        return 1.0 / self.aligned_cell_size_mm

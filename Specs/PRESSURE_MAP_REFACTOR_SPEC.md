@@ -14,19 +14,22 @@ fan.  Mixed signs are a signed-transition core, never a deleted quadrant or
 sign-clamped field.  Axes are evaluated separately from their one-dimensional
 sensor anchors, so their result is independent of quadrant order.
 
-Outside the sensor square, the evaluator intersects a ray from the selected
-field origin with the core and Outer-Boundary squares, copies the core value at
-the first intersection, and applies exactly one compact smoothstep fade over
-`min(natural_reach, available_boundary_distance)`.  A lone outer sensor keeps
-its centre → sensor → near-outer peak lobe before that single fade.  The field
-is zero on and outside Outer Boundary and can naturally reach zero earlier.
+Outside the sensor square, each physical quadrant intersects a ray from its
+own inferred peak or magnitude-weighted local anchor with the core and
+Outer-Boundary squares.  The core value at the first intersection receives an
+independent natural smoothstep fade, followed only by a final 20%-of-available
+terminal boundary guard.  Natural reach is never rescaled to the square.
+An explicit strict support mask makes every candidate exactly zero on and
+outside an Outer Boundary; a lone outer sensor keeps its centre → sensor →
+near-outer peak lobe before that decay.
 
 Array blending has no integer contributor-count branches.  Each package has a
-Chebyshev support confidence of one through Mid Boundary and a smoothstep fade
-to zero at Outer Boundary.  Direct/diagonal pair values are accumulated by the
-product of their confidences; where no pair remains, the continuous
-confidence-weighted candidate average is used.  Diagonal area weights blend
-continuously into inverse-distance weights near singular corners.
+raw-signal activity confidence as well as a Chebyshev support confidence of one
+through Mid Boundary and a smoothstep fade to zero at Outer Boundary.  Pair
+geometry weights are activity-normalized, and pair aggregation is zero when
+either participant is inactive; fallback uses support × activity weighting.
+Thus zero packages cannot attenuate an active neighbour.  Diagonal area weights
+blend continuously into inverse-distance weights near singular corners.
 
 Magnitude is `abs(signed_grid)` only in the widget.  Fixed magnitude levels
 are `0..max_intensity`, signed levels are `-max_intensity..+max_intensity`, and
@@ -40,15 +43,15 @@ The pressure map is an inferred relative-signal visualization. It is not calibra
 
 `PressureMapGeometry` is the immutable geometry contract shared by single and array generation. Its defaults are sensor spacing 2.0 mm, package-center spacing 7.5 mm, Outer-Boundary reach 1.75 mm, near-outer offset 1.0 mm, and 10 pixels/mm. It derives a 3.5 mm facing-sensor gap, 3.75 mm Mid Boundary half-width, and 5.5 mm Outer Boundary half-width.
 
-Each local field uses the fixed square support `[-outer_half_width, +outer_half_width]` on both axes. Its grid has `2 * ceil(outer_half_width * pixels_per_mm) + 1` pixels per side, so the centre and both Outer Boundary edges are exact grid coordinates. View padding for dashed overlays is rendering-only and never expands numerical support.
+Each local field uses the fixed square support `[-outer_half_width, +outer_half_width]` on both axes.  Raster coordinates use integer multiples of a micrometre-rounded geometry GCD; requested `pixels_per_mm` is a minimum density, and result metadata reports the aligned cell size and actual density.  The default 0.25 mm quantum turns a 3 px/mm request into 4 px/mm, placing centres and boundaries exactly on samples. View padding for dashed overlays is rendering-only and never expands numerical support.
 
 ## Field construction
 
-Activity uses `abs(value) >= signal_activity_threshold` in the calibrated signal domain. Active sensor anchors are reconstructed exactly. Single-axis lobes interpolate center -> inferred peak -> active outer sensor, then use radial compact-support decay. A lone active outer sensor interpolates from the measured sensor value to an outward inferred peak, whose signed height is bounded by `maximum_peak_gain`.
+Activity uses `abs(value) > max(signal_activity_threshold, PRESSURE_NUMERIC_EPSILON)` in the calibrated signal domain; exact and sub-threshold inputs are normalized to zero.  Package participation uses a separate smooth raw-vector activity confidence. Active sensor anchors are reconstructed exactly. Single-axis lobes interpolate center -> inferred peak -> active outer sensor, then use radial compact-support decay. A lone active outer sensor interpolates from the measured sensor value to an outward inferred peak, whose signed height is bounded by `maximum_peak_gain`.
 
 Peak-height extrapolation is controlled only by `peak_height_reference_distance_mm` and `peak_height_decay_rate`. Spatial reach is controlled separately by `natural_decay_reference_distance_mm`, `decay_amplitude_reference`, and minimum/maximum decay reach. The default amplitude reference of 1.0 is a named integrated-signal-domain starting point and must be calibrated against representative capture data.
 
-Spatial fading uses one radial smoothstep compact-support factor from the relevant anchor/peak. Fields may become zero before the Outer Boundary and are always zero at or past it. There is no additional per-axis terminal fade.
+Spatial fading uses one natural radial smoothstep factor from the relevant anchor/peak plus a separate terminal boundary guard. Fields may become zero before the Outer Boundary and are exactly zero at or past it.
 
 ## Array and rendering
 

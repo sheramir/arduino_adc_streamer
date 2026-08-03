@@ -32,6 +32,8 @@ from PyQt6.QtWidgets import (
 
 from constants.pressure_map import (
     DEFAULT_PRESSURE_MAP_MAX_INTENSITY,
+    DEFAULT_PRESSURE_DISPLAY_FLOOR_HIGH,
+    DEFAULT_PRESSURE_DISPLAY_FLOOR_LOW,
     DEFAULT_PRESSURE_MIRROR,
     DEFAULT_PRESSURE_SHOW_MID_BOUNDARY,
     DEFAULT_PRESSURE_SHOW_MARKER,
@@ -97,6 +99,40 @@ from data_processing.pressure_map_array_generator import PressureMapArrayResult
 from data_processing.pressure_map_generator import PressureMapResult
 from data_processing.shear_detector import ShearResult
 from gui.shear_visualization_widget import ShearArrowGeometry
+
+
+def image_rect_from_centers(
+    x_coordinates: np.ndarray,
+    y_coordinates: np.ndarray,
+    *,
+    mirror_x: bool = False,
+    offset_x: float = 0.0,
+    offset_y: float = 0.0,
+) -> QRectF:
+    """Build a pixel-edge image rectangle from ascending grid-centre arrays."""
+
+    x_values = np.asarray(x_coordinates, dtype=np.float64)
+    y_values = np.asarray(y_coordinates, dtype=np.float64)
+    if x_values.size < 2 or y_values.size < 2:
+        raise ValueError("image coordinate arrays must contain at least two centres")
+    dx = float(x_values[1] - x_values[0])
+    dy = float(y_values[1] - y_values[0])
+    if dx <= 0.0 or dy <= 0.0:
+        raise ValueError("image coordinate arrays must be strictly increasing")
+    left = (-float(x_values[-1]) if mirror_x else float(x_values[0])) - (dx / 2.0)
+    bottom = float(y_values[0]) - (dy / 2.0)
+    return QRectF(
+        left + float(offset_x),
+        bottom + float(offset_y),
+        float(x_values[-1] - x_values[0] + dx),
+        float(y_values[-1] - y_values[0] + dy),
+    )
+
+
+def _rect_tuple(rect: QRectF) -> tuple[float, float, float, float]:
+    """Convert a Qt rectangle once for the image cache's value comparison."""
+
+    return (rect.x(), rect.y(), rect.width(), rect.height())
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,7 +226,12 @@ class PressureMapWidget(QWidget):
         self.show_outer_boundary = DEFAULT_PRESSURE_SHOW_OUTER_BOUNDARY
         self.show_mid_boundary = DEFAULT_PRESSURE_SHOW_MID_BOUNDARY
         self.max_intensity = float(DEFAULT_PRESSURE_MAP_MAX_INTENSITY)
+        # Display-only alpha fade.  The backend, levels, and sensor activity
+        # threshold are deliberately not changed by these values.
         self.noise_floor = PRESSURE_MAP_ZERO_LEVEL_MIN
+        self.display_floor_low = DEFAULT_PRESSURE_DISPLAY_FLOOR_LOW
+        self.display_floor_high = DEFAULT_PRESSURE_DISPLAY_FLOOR_HIGH
+        self.saturated_pixel_percentage = 0.0
         self.mirror = bool(DEFAULT_PRESSURE_MIRROR)
         self.color_scale = "Grayscale"
         self.display_mode = PRESSURE_DISPLAY_MODE_MAGNITUDE
@@ -311,13 +352,30 @@ class PressureMapWidget(QWidget):
             self._refresh_cached_display()
 
     def configure_noise_floor(self, *, noise_floor: float | None = None) -> None:
-        """Set the value represented by the first pressure-map palette color."""
+        """Set the lower edge of the display-only smooth alpha fade."""
         if noise_floor is None:
             return
         updated_noise_floor = max(float(noise_floor), PRESSURE_MAP_ZERO_LEVEL_MIN)
         if self.noise_floor == updated_noise_floor:
             return
         self.noise_floor = updated_noise_floor
+        self.display_floor_low = updated_noise_floor
+        self.display_floor_high = updated_noise_floor + max(
+            PRESSURE_MAP_LEVEL_EPSILON,
+            float(self.max_intensity) * 0.02,
+        )
+        self._refresh_cached_display()
+
+    def configure_display_alpha(
+        self, *, display_floor_low: float | None = None, display_floor_high: float | None = None
+    ) -> None:
+        """Configure a smooth alpha fade without altering numeric colour levels."""
+
+        low = self.display_floor_low if display_floor_low is None else max(0.0, float(display_floor_low))
+        high = self.display_floor_high if display_floor_high is None else max(low, float(display_floor_high))
+        if (low, high) == (self.display_floor_low, self.display_floor_high):
+            return
+        self.display_floor_low, self.display_floor_high = low, high
         self._refresh_cached_display()
 
     def configure_color_scale(self, *, color_scale: str | None = None) -> None:
@@ -390,6 +448,7 @@ class PressureMapWidget(QWidget):
             None.
         """
         self._clear_package_items()
+        self.image_item.show()
         self.last_normal_force_result = normal_force_result
         self.last_pressure_result = pressure_result
         self.last_shear_result = shear_result
@@ -411,7 +470,8 @@ class PressureMapWidget(QWidget):
 
     def update_package_displays(self, packages: list[PressureMapPackageDisplay]) -> None:
         """Render multiple array sensor packages in their configured grid cells."""
-        self._clear_dynamic_items()
+        self._clear_dynamic_items(clear_image=False)
+        self.image_item.hide()
         self.last_package_displays = list(packages)
         self.last_array_result = None
         if not packages:
@@ -458,7 +518,8 @@ class PressureMapWidget(QWidget):
         packages: list[PressureMapPackageDisplay],
     ) -> None:
         """Render one array-level pressure image with per-package overlays."""
-        self._clear_dynamic_items()
+        self._clear_dynamic_items(clear_image=False)
+        self.image_item.show()
         self.last_array_result = array_result
         self.last_package_displays = list(packages)
         if not packages:
@@ -502,14 +563,14 @@ class PressureMapWidget(QWidget):
         self._update_package_readout(packages)
         self.plot_widget.getPlotItem().getViewBox().update()
 
-    def _clear_dynamic_items(self) -> None:
-        empty_grid = np.zeros((PRESSURE_MAP_COLORMAP_POINTS, PRESSURE_MAP_COLORMAP_POINTS), dtype=np.float64)
-        self.image_item.setImage(
-            empty_grid,
-            autoLevels=False,
-            levels=(PRESSURE_MAP_ZERO_LEVEL_MIN, PRESSURE_MAP_ZERO_LEVEL_MAX),
-        )
-        self._image_cache = None
+    def _clear_dynamic_items(self, *, clear_image: bool = True) -> None:
+        if clear_image:
+            empty_grid = np.zeros((PRESSURE_MAP_COLORMAP_POINTS, PRESSURE_MAP_COLORMAP_POINTS, 4), dtype=np.uint8)
+            self.image_item.setImage(
+                empty_grid,
+                autoLevels=False,
+            )
+            self._image_cache = None
         self.sensor_marker_item.setData([])
         self.peak_marker_item.setData([])
         self._hide_arrow()
@@ -529,26 +590,29 @@ class PressureMapWidget(QWidget):
         pressure_result: PressureMapResult,
     ) -> None:
         levels = self._pressure_levels(normal_force_result, pressure_result.pressure_grid)
-        extent = float(pressure_result.total_extent_mm)
-        half_extent = extent / PRESSURE_SUPPORT_SIDE_COUNT
-        
-        # Apply mirror flip to the grid if needed
+        # Apply mirror only for rendering; the retained pressure grid remains signed.
         grid = self._display_grid(pressure_result.pressure_grid)
         if self.mirror:
             grid = np.fliplr(grid)
-        
-        mirror_offset = self._mirror_x(0.0)
-        rect = (mirror_offset - half_extent, -half_extent, extent, extent)
+        image_rect = image_rect_from_centers(
+            pressure_result.x_coordinates_mm,
+            pressure_result.y_coordinates_mm,
+            mirror_x=self.mirror,
+        )
+        rect = _rect_tuple(image_rect)
         self._image_cache = self._update_cached_image_item(
             self.image_item,
             self._image_cache,
             grid,
             levels,
             rect,
-            cache_key=(id(pressure_result.pressure_grid), self.display_mode, self.mirror),
+            cache_key=self._image_cache_key(pressure_result.frame_id),
         )
-        self.plot_widget.setXRange(-half_extent, half_extent, padding=SHEAR_ZERO_VALUE)
-        self.plot_widget.setYRange(-half_extent, half_extent, padding=SHEAR_ZERO_VALUE)
+        self.saturated_pixel_percentage = self._saturated_pixel_percentage(
+            pressure_result.pressure_grid
+        )
+        self.plot_widget.setXRange(image_rect.left(), image_rect.right(), padding=SHEAR_ZERO_VALUE)
+        self.plot_widget.setYRange(image_rect.top(), image_rect.bottom(), padding=SHEAR_ZERO_VALUE)
 
     def _update_array_image(
         self,
@@ -560,19 +624,21 @@ class PressureMapWidget(QWidget):
         if self.mirror:
             grid = np.fliplr(grid)
         levels = self._pressure_levels(level_source, grid)
-        x_min = float(array_result.x_coordinates_mm[0])
-        x_max = float(array_result.x_coordinates_mm[-1])
-        y_min = float(array_result.y_coordinates_mm[0])
-        y_max = float(array_result.y_coordinates_mm[-1])
-        rect_x = -x_max if self.mirror else x_min
-        rect = (rect_x, y_min, x_max - x_min, y_max - y_min)
+        rect = _rect_tuple(image_rect_from_centers(
+            array_result.x_coordinates_mm,
+            array_result.y_coordinates_mm,
+            mirror_x=self.mirror,
+        ))
         self._image_cache = self._update_cached_image_item(
             self.image_item,
             self._image_cache,
             grid,
             levels,
             rect,
-            cache_key=(id(array_result.pressure_grid), self.display_mode, self.mirror),
+            cache_key=self._image_cache_key(array_result.frame_id),
+        )
+        self.saturated_pixel_percentage = self._saturated_pixel_percentage(
+            array_result.pressure_grid
         )
 
     def _update_cached_image_item(
@@ -586,10 +652,10 @@ class PressureMapWidget(QWidget):
         cache_key: tuple[object, ...],
     ) -> _PressureMapImageCache:
         if cache is None or cache.cache_key != cache_key or cache.levels != levels:
+            rgba = self._rgba_image(pressure_grid, levels)
             image_item.setImage(
-                pressure_grid.T,
+                np.transpose(rgba, (1, 0, 2)),
                 autoLevels=False,
-                levels=levels,
             )
         if cache is None or cache.rect != rect:
             image_item.setRect(QRectF(*rect))
@@ -599,6 +665,46 @@ class PressureMapWidget(QWidget):
             levels=levels,
             rect=rect,
         )
+
+    def _image_cache_key(self, frame_id: int) -> tuple[object, ...]:
+        return (
+            frame_id, self.display_mode, self.mirror, self.color_scale,
+            self.max_intensity, self.display_floor_low, self.display_floor_high,
+        )
+
+    def _rgba_image(self, pressure_grid: np.ndarray, levels: tuple[float, float]) -> np.ndarray:
+        """Map the display grid to RGBA with a magnitude-based smooth alpha."""
+
+        lower, upper = levels
+        span = max(PRESSURE_MAP_LEVEL_EPSILON, upper - lower)
+        normalized = np.clip((np.asarray(pressure_grid, dtype=np.float64) - lower) / span, 0.0, 1.0)
+        indices = np.rint(normalized * (PRESSURE_MAP_COLORMAP_POINTS - 1)).astype(np.intp)
+        lookup_table = np.asarray(self._color_lookup_table(), dtype=np.uint8)
+        colors = lookup_table[indices]
+        if colors.shape[-1] == 3:
+            rgba = np.empty((*colors.shape[:2], 4), dtype=np.uint8)
+            rgba[..., :3] = colors
+            rgba[..., 3] = 255
+        else:
+            rgba = colors.copy()
+        magnitude = np.abs(np.asarray(pressure_grid, dtype=np.float64))
+        fade_low = max(0.0, self.display_floor_low)
+        fade_high = self.display_floor_high
+        if fade_high <= fade_low + PRESSURE_MAP_LEVEL_EPSILON:
+            fade_high = fade_low + max(PRESSURE_MAP_LEVEL_EPSILON, abs(upper) * 0.02)
+        alpha_t = np.clip((magnitude - fade_low) / (fade_high - fade_low), 0.0, 1.0)
+        alpha = 3.0 * alpha_t ** 2 - 2.0 * alpha_t ** 3
+        rgba[..., 3] = np.rint(rgba[..., 3].astype(np.float64) * alpha).astype(np.uint8)
+        return rgba
+
+    def _saturated_pixel_percentage(self, pressure_grid: np.ndarray) -> float:
+        if self.max_intensity <= PRESSURE_MAP_LEVEL_EPSILON:
+            return 0.0
+        values = np.asarray(pressure_grid, dtype=np.float64)
+        finite = np.isfinite(values)
+        if not np.any(finite):
+            return 0.0
+        return 100.0 * float(np.mean(np.abs(values[finite]) >= self.max_intensity))
 
     def _pressure_levels(
         self,
@@ -611,8 +717,7 @@ class PressureMapWidget(QWidget):
         level_max = max(float(self.max_intensity), PRESSURE_MAP_LEVEL_EPSILON)
         if self.display_mode == PRESSURE_DISPLAY_MODE_SIGNED:
             return (-level_max, level_max)
-        level_min = min(self.noise_floor, level_max - PRESSURE_MAP_LEVEL_EPSILON)
-        return (level_min, level_max)
+        return (PRESSURE_MAP_ZERO_LEVEL_MIN, level_max)
 
     def _normalized_pressure_levels(
         self,
@@ -625,9 +730,9 @@ class PressureMapWidget(QWidget):
         magnitude_max = max(PRESSURE_MAP_ZERO_LEVEL_MIN, float(np.max(np.abs(finite_values))))
         if magnitude_max <= PRESSURE_MAP_LEVEL_EPSILON:
             return (PRESSURE_MAP_ZERO_LEVEL_MIN, PRESSURE_MAP_ZERO_LEVEL_MAX)
-        active_sensor_count = self._active_sensor_count(normal_force_result)
-        level_scale = self._level_scale_for_active_sensors(active_sensor_count)
-        return (PRESSURE_MAP_ZERO_LEVEL_MIN, magnitude_max * level_scale)
+        # Auto scale is retained only for the legacy max-intensity=0 setting;
+        # production fixed scale never changes with active sensor count.
+        return (PRESSURE_MAP_ZERO_LEVEL_MIN, magnitude_max)
 
     def _mirror_x(self, x: float) -> float:
         """Apply horizontal mirror transformation if enabled."""
@@ -802,8 +907,13 @@ class PressureMapWidget(QWidget):
         self.readout_label.setText(
             f"Normal: {normal_force_result.force_type} {total_force} | "
             f"Pos: ({x_coord}, {y_coord}) mm | Quadrants: {len(pressure_result.active_quadrants)} | "
-            f"{shear_text}"
+            f"{shear_text}{self._saturation_indicator()}"
         )
+
+    def _saturation_indicator(self) -> str:
+        if self.saturated_pixel_percentage <= 0.0:
+            return ""
+        return f" | SAT {self.saturated_pixel_percentage:.1f}%"
 
     def _shear_readout_text(self, shear_result: ShearResult | None) -> str:
         if shear_result is None:
@@ -911,16 +1021,20 @@ class PressureMapWidget(QWidget):
         if self.mirror:
             grid = np.fliplr(grid)
         levels = self._pressure_levels(package.normal_force_result, grid)
-        extent = float(package.pressure_result.total_extent_mm)
-        half_extent = extent / PRESSURE_SUPPORT_SIDE_COUNT
-        rect = (center_x - half_extent, center_y - half_extent, extent, extent)
+        rect = _rect_tuple(image_rect_from_centers(
+            package.pressure_result.x_coordinates_mm,
+            package.pressure_result.y_coordinates_mm,
+            mirror_x=self.mirror,
+            offset_x=center_x,
+            offset_y=center_y,
+        ))
         self._package_image_caches[index] = self._update_cached_image_item(
             image_item,
             self._package_image_caches[index],
             grid,
             levels,
             rect,
-            cache_key=(id(package.pressure_result.pressure_grid), self.display_mode, self.mirror),
+            cache_key=self._image_cache_key(package.pressure_result.frame_id),
         )
 
     def _update_package_boundary(
@@ -1170,9 +1284,17 @@ class PressureMapWidget(QWidget):
     def _update_package_readout(self, packages: list[PressureMapPackageDisplay]) -> None:
         total_force = sum(float(package.normal_force_result.total_force) for package in packages)
         package_labels = ", ".join(package.sensor_id for package in packages)
+        finite_grids = [
+            np.asarray(package.pressure_result.pressure_grid, dtype=np.float64).ravel()
+            for package in packages
+        ]
+        self.saturated_pixel_percentage = self._saturated_pixel_percentage(
+            np.concatenate(finite_grids) if finite_grids else np.asarray((), dtype=np.float64)
+        )
         self.readout_label.setText(
             f"Array packages: {package_labels} | "
             f"Total normal: {total_force:.{SHEAR_READOUT_MAGNITUDE_DECIMALS}f}"
+            f"{self._saturation_indicator()}"
         )
 
     def package_color_for_index(self, index: int) -> str:

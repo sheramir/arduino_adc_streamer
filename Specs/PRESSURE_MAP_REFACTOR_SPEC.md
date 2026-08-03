@@ -1,5 +1,39 @@
 # Pressure Map Refactor Specification
 
+## Continuity revision (2026-08)
+
+`PressureFieldModel` is the authoritative signed backend.  It stores
+thresholded C/L/R/T/B anchors, package mode, complete core triangles, inferred
+peaks, decay settings, and shared `PressureMapGeometry`; both the local raster
+and world-space array candidates call `model.evaluate(...)`.
+
+Package classification is `all-inactive`, `isolated-outer`,
+`center-plus-one-outer`, or `general-multi-sensor`.  General cores use a
+complete two-triangle C/H/K and C/K/V split, or a complete four-triangle peak
+fan.  Mixed signs are a signed-transition core, never a deleted quadrant or
+sign-clamped field.  Axes are evaluated separately from their one-dimensional
+sensor anchors, so their result is independent of quadrant order.
+
+Outside the sensor square, the evaluator intersects a ray from the selected
+field origin with the core and Outer-Boundary squares, copies the core value at
+the first intersection, and applies exactly one compact smoothstep fade over
+`min(natural_reach, available_boundary_distance)`.  A lone outer sensor keeps
+its centre → sensor → near-outer peak lobe before that single fade.  The field
+is zero on and outside Outer Boundary and can naturally reach zero earlier.
+
+Array blending has no integer contributor-count branches.  Each package has a
+Chebyshev support confidence of one through Mid Boundary and a smoothstep fade
+to zero at Outer Boundary.  Direct/diagonal pair values are accumulated by the
+product of their confidences; where no pair remains, the continuous
+confidence-weighted candidate average is used.  Diagonal area weights blend
+continuously into inverse-distance weights near singular corners.
+
+Magnitude is `abs(signed_grid)` only in the widget.  Fixed magnitude levels
+are `0..max_intensity`, signed levels are `-max_intensity..+max_intensity`, and
+a separate smooth display-alpha fade never changes numeric data.  Images use
+pixel-edge rectangles derived from coordinate centres and result `frame_id`
+values invalidate image caches safely.
+
 ## Interpretation and geometry
 
 The pressure map is an inferred relative-signal visualization. It is not calibrated pressure per unit area, and integrating pixel values is not expected to reproduce `NormalForceResult.total_force`.

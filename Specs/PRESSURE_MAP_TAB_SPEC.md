@@ -1,5 +1,13 @@
 # Pressure Map Tab Specification
 
+> Continuity revision: the historical implementation details below are
+> superseded where they conflict with `PRESSURE_MAP_REFACTOR_SPEC.md`.  The
+> live tab now renders an immutable signed `PressureFieldModel`: package axes,
+> core-square boundaries, and package overlaps are value-continuous; mixed-sign
+> inputs cross zero rather than disappearing; and the display applies
+> magnitude/alpha only after array blending.  The shared geometry instance is
+> constructed by `PressureMapPanelMixin` and passed to both field generators.
+
 Owner: Host application GUI/pressure-processing stack  
 Status: Implemented  
 Date: 2026-07-30

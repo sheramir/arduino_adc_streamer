@@ -194,6 +194,7 @@ from data_processing.pressure_map_array_generator import (
     PressureMapArrayGenerator,
     PressureMapArrayPackage,
 )
+from data_processing.pressure_map_geometry import PressureMapGeometry
 from data_processing.shear_detector import ShearDetector, ShearResult
 from file_operations.settings_persistence import load_settings_payload, save_settings_payload
 from gui.pressure_map_widget import PressureMapPackageDisplay, PressureMapWidget
@@ -467,8 +468,9 @@ class PressureMapPanelMixin:
 
         self.shear_detector = ShearDetector()
         self.normal_force_calculator = NormalForceCalculator()
-        self.pressure_map_generator = PressureMapGenerator()
-        self.pressure_map_array_generator = PressureMapArrayGenerator()
+        self.pressure_map_geometry = PressureMapGeometry()
+        self.pressure_map_generator = PressureMapGenerator(geometry=self.pressure_map_geometry)
+        self.pressure_map_array_generator = PressureMapArrayGenerator(geometry=self.pressure_map_geometry)
         self.pressure_map_widget = PressureMapWidget()
         display_layout.addWidget(self.pressure_map_widget, stretch=PRESSURE_MAP_STRETCH)
         settings_layout.addWidget(self._create_shear_visualization_settings_group())
@@ -2016,14 +2018,21 @@ class PressureMapPanelMixin:
                 DEFAULT_PRESSURE_OUTER_BOUNDARY_REACH_MM,
             )
             self.normal_force_calculator = NormalForceCalculator(sensor_spacing_mm=sensor_spacing_mm)
-            self.pressure_map_generator = PressureMapGenerator(
+            self.pressure_map_geometry = PressureMapGeometry(
                 sensor_spacing_mm=sensor_spacing_mm,
                 package_center_spacing_mm=package_center_spacing_mm,
                 outer_boundary_reach_mm=outer_boundary_reach_mm,
+                near_outer_peak_offset_mm=self._spin_float(
+                    "pressure_near_outer_peak_offset_spin",
+                    DEFAULT_PRESSURE_NEAR_OUTER_PEAK_OFFSET_MM,
+                ),
                 pixels_per_mm=self._spin_float(
                     "pressure_pixels_per_mm_spin",
                     DEFAULT_PRESSURE_PIXELS_PER_MM,
                 ),
+            )
+            self.pressure_map_generator = PressureMapGenerator(
+                geometry=self.pressure_map_geometry,
                 peak_height_reference_distance_mm=self._spin_float("pressure_peak_height_reference_distance_spin", DEFAULT_PRESSURE_PEAK_HEIGHT_REFERENCE_DISTANCE_MM),
                 peak_height_decay_rate=self._spin_float("pressure_peak_height_decay_rate_spin", DEFAULT_PRESSURE_PEAK_HEIGHT_DECAY_RATE),
                 maximum_peak_gain=self._spin_float("pressure_maximum_peak_gain_spin", DEFAULT_PRESSURE_MAXIMUM_PEAK_GAIN),
@@ -2032,19 +2041,9 @@ class PressureMapPanelMixin:
                 minimum_decay_reach_mm=self._spin_float("pressure_minimum_decay_reach_spin", DEFAULT_PRESSURE_MINIMUM_DECAY_REACH_MM),
                 maximum_decay_reach_mm=self._spin_float("pressure_maximum_decay_reach_spin", DEFAULT_PRESSURE_MAXIMUM_DECAY_REACH_MM),
                 signal_activity_threshold=self._spin_float("pressure_signal_activity_threshold_spin", DEFAULT_PRESSURE_SIGNAL_ACTIVITY_THRESHOLD),
-                near_outer_peak_offset_mm=self._spin_float(
-                    "pressure_near_outer_peak_offset_spin",
-                    DEFAULT_PRESSURE_NEAR_OUTER_PEAK_OFFSET_MM,
-                ),
             )
             self.pressure_map_array_generator = PressureMapArrayGenerator(
-                sensor_spacing_mm=sensor_spacing_mm,
-                package_center_spacing_mm=package_center_spacing_mm,
-                outer_boundary_reach_mm=outer_boundary_reach_mm,
-                pixels_per_mm=self._spin_float(
-                    "pressure_pixels_per_mm_spin",
-                    DEFAULT_PRESSURE_PIXELS_PER_MM,
-                ),
+                geometry=self.pressure_map_geometry,
             )
             self._update_pressure_map_from_latest()
             self.save_last_shear_settings()

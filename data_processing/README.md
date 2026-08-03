@@ -306,7 +306,9 @@ GUI-independent generator that builds a piecewise-linear 2D pressure surface (pe
 - PressureMapGenerator._evaluate_peaked_quadrant(...) / _points_in_triangle / _cross — evaluates a peaked quadrant via barycentric triangle membership.
 - PressureMapGenerator._evaluate_peaked_quadrant(...) — uses the deterministic triangle fan; numerical shared-edge points use the base plane, never a nearest-triangle fallback.
 - PressureMapGenerator._evaluate_plane(a, b, c, x, y) — evaluates a linear plane.
-- PressureMapGenerator._clamp_values(values, sign) — clamps grid values to the quadrant's dominant sign.
+- PressureFieldModel.evaluate(x, y, support_bounds) — evaluates the retained
+  signed package field for local or array-world coordinates; no quadrant sign
+  clamping or display transform occurs in the backend.
 
 ### pressure_map_array_generator.py
 

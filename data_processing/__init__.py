@@ -22,6 +22,7 @@ from data_processing.force_processor import ForceProcessorMixin
 from data_processing.heatmap_processor import HeatmapProcessorMixin
 from data_processing.normal_force_calculator import NormalForceCalculator, NormalForceResult
 from data_processing.pressure_map_generator import (
+    PressureFieldModel,
     PressureMapGenerator,
     PressureMapResult,
     PressureQuadrantPlane,
@@ -67,6 +68,7 @@ __all__ = [
     'NormalForceCalculator',
     'NormalForceResult',
     'PressureMapGenerator',
+    'PressureFieldModel',
     'PressureMapResult',
     'PressureQuadrantPlane',
     'PressureMapArrayGenerator',

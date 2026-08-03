@@ -1,8 +1,6 @@
 """Tests for candidate-first Pressure Map array overlap blending."""
 
 import unittest
-import warnings
-
 import numpy as np
 
 from data_processing.normal_force_calculator import NormalForceCalculator
@@ -179,17 +177,43 @@ class PressureMapArrayGeneratorTests(unittest.TestCase):
                 )[0]
                 self.assertAlmostEqual(float(value), 0.0, places=10)
 
-    def test_four_package_overlap_uses_logged_all_pairs_fallback(self):
+    def test_four_package_overlap_uses_confidence_weighted_pair_aggregation(self):
         values = {"C": 1.0, "L": 1.0, "R": 1.0, "T": 1.0, "B": 1.0}
         packages = [
             self._package("A", (0, 0), values), self._package("B", (0, 1), values),
             self._package("C", (1, 0), values), self._package("D", (1, 1), values),
         ]
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            result = self._generator().generate(packages)
-        self.assertTrue(any("four-or-more" in str(item.message) for item in caught))
+        result = self._generator().generate(packages)
         self.assertTrue(np.isfinite(result.pressure_grid).all())
+
+    def test_support_confidence_is_smooth_from_mid_to_outer_boundary(self):
+        generator = self._generator()
+        radius = np.asarray([
+            generator.mid_boundary_half_width_mm,
+            (generator.mid_boundary_half_width_mm + generator.outer_boundary_half_width_mm) / 2.0,
+            generator.outer_boundary_half_width_mm,
+        ])
+        confidence = generator._support_confidence(radius, np.zeros_like(radius))
+        np.testing.assert_allclose(confidence, [1.0, 0.5, 0.0], atol=1e-12)
+
+    def test_diagonal_weights_are_finite_and_continuous_at_former_singular_corner(self):
+        first = self._package("A", (1, 0), {"C": 0.0, "L": 0.0, "R": 4.0, "T": 4.0, "B": 0.0})
+        second = self._package("B", (0, 1), {"C": 0.0, "L": 3.0, "R": 0.0, "T": 0.0, "B": 3.0})
+        result = self._generator().generate([first, second])
+        corner = (-2.0, -2.0)
+        nearby = (-1.999, -2.0)
+        corner_value = self._grid_value(result, *corner)
+        nearby_value = self._grid_value(result, *nearby)
+        self.assertTrue(np.isfinite(corner_value))
+        self.assertTrue(np.isfinite(nearby_value))
+        self.assertLess(abs(corner_value - nearby_value), 0.1)
+
+    def test_debug_array_diagnostics_are_opt_in(self):
+        package = self._package("A", (0, 0), {"C": 0.0, "L": 0.0, "R": 1.0, "T": 0.0, "B": 0.0})
+        result = self._generator(debug=True).generate([package])
+        self.assertIsNotNone(result.diagnostics)
+        self.assertIn("support_confidence", result.diagnostics)
+        self.assertIn("pair_confidence_denominator", result.diagnostics)
 
     def test_rejects_duplicate_ids_positions_nonfinite_data_and_geometry_mismatch(self):
         values = {"C": 0.0, "L": 0.0, "R": 1.0, "T": 0.0, "B": 0.0}

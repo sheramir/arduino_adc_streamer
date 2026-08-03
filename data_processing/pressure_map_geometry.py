@@ -63,3 +63,10 @@ class PressureMapGeometry:
     def support_bounds_mm(self) -> tuple[float, float, float, float]:
         half = self.outer_boundary_half_width_mm
         return (-half, half, -half, half)
+
+    @property
+    def core_bounds_mm(self) -> tuple[float, float, float, float]:
+        """The physical sensor-square core before outward field extension."""
+
+        half = self.sensor_spacing_mm
+        return (-half, half, -half, half)

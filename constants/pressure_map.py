@@ -183,6 +183,11 @@ PRESSURE_MAP_COLORMAP_MAX_COLOR = "#FFFFFF"
 PRESSURE_MAP_ZERO_LEVEL_MIN = 0.0
 PRESSURE_MAP_ZERO_LEVEL_MAX = 1.0
 PRESSURE_MAP_LEVEL_EPSILON = 1e-12
+# Display alpha is intentionally independent from the signal-activity
+# threshold and the numeric colour range.  A zero high value requests the
+# widget's small scale-relative transition band.
+DEFAULT_PRESSURE_DISPLAY_FLOOR_LOW = 0.0
+DEFAULT_PRESSURE_DISPLAY_FLOOR_HIGH = 0.0
 PRESSURE_MAP_LEVEL_SCALE_SINGLE_SENSOR = 1.0
 PRESSURE_MAP_LEVEL_SCALE_ALL_SENSORS = 2.0
 DEFAULT_PRESSURE_MAP_MAX_INTENSITY = 0.15

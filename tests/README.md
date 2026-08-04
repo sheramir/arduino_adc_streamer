@@ -409,6 +409,7 @@ Tests `PressureMapWidget` (real PyQt6 widget, offscreen platform): readout text,
 - test_multiple_package_displays_use_grid_positions_and_distinct_colors() — verifies multi-package displays use grid positions and distinct colors.
 - test_multiple_package_display_range_contains_full_circles() — verifies the view range contains all package circles fully.
 - test_multiple_package_displays_skip_unchanged_image_uploads() — skips re-uploading unchanged images across multiple packages.
+- test_view_ranges_update_only_when_mode_geometry_or_mirror_changes() — verifies live pressure frames do not repeatedly reset stable single, package, or array view ranges.
 - test_array_display_uses_single_image_and_package_overlays() — verifies an array-level pressure result uses one image item while preserving package overlays.
 - test_grayscale_lookup_table_runs_from_black_to_white() — verifies the grayscale colormap LUT spans black to white.
 - test_pressure_levels_use_fixed_max_intensity() — verifies a configured fixed max intensity is used for color levels.
@@ -429,7 +430,7 @@ Tests `PressureMapWidget` (real PyQt6 widget, offscreen platform): readout text,
 
 Tests `PressureMapArrayGenerator`, the GUI-independent candidate-first pressure surface generator for package arrays.
 
-- test_package_centers_use_circle_diameter_plus_gap() — verifies physical package centers use package diameter plus gap.
+- test_package_centers_use_configured_center_spacing() — verifies physical package centers use configured spacing and distinguishes stable structural adjacency from active overlap.
 - test_horizontal_overlap_uses_0_50_100_linear_weights() / test_vertical_overlap_uses_0_50_100_linear_weights() — verify direct-neighbour edge and midpoint weights.
 - test_bottom_left_top_right_diagonal_uses_area_ratio_weights() / test_top_left_bottom_right_diagonal_uses_area_ratio_weights() — verify both diagonal area-ratio blend orientations.
 - test_three_package_overlap_averages_original_pair_blends() — verifies the three-pair average uses original candidates.
@@ -549,6 +550,7 @@ Tests the Signal Integration / Pressure Map tab (`PressureMapPanelMixin`, real P
 - test_package_specific_gains_override_default_processing_gains() — verifies package-specific sensor gains override the default gain table.
 - test_array_package_plumbing_tracks_values_and_grid_positions() — verifies per-package values and array grid positions are tracked correctly.
 - test_array_package_displays_are_built_per_complete_sensor_package() — verifies pressure-map package displays are built once each sensor package's values are complete.
+- test_array_display_selection_uses_structural_pairs_when_overlap_is_inactive() — verifies inactive live overlap does not switch structurally adjacent packages out of array mode.
 - test_hidden_pressure_map_tab_skips_pressure_map_refresh() — verifies pressure-map computation is skipped while the tab/display is hidden.
 - test_multi_package_force_mode_enabled_only_for_multiple_array_packages() — verifies multi-package force mode activates only with 2+ array packages.
 - test_compute_package_total_force_series_returns_one_force_trace() — verifies a per-package total-force time series is computed correctly.

@@ -232,7 +232,7 @@ The `decay_rate` and `decay_reference_distance` settings therefore shape inferre
 
 ## Array Surface and Gap Interpolation
 
-Every complete selected array package first gets the single-package calculation above. If there are two or more complete packages, all have a grid position, and the layout contains at least one direct horizontal or vertical neighbour, the app displays one combined array image. Otherwise it displays separate package images positioned in their grid cells.
+Every complete selected array package first gets the single-package calculation above. If there are two or more complete packages, all have a grid position, and the layout contains at least one stable direct or diagonal structural neighbour pair, the app displays one combined array image. Otherwise it displays separate package images positioned in their grid cells. Signal-dependent active overlap pairs are retained for calculation and diagnostics only; they never choose the display mode.
 
 Package centres are determined only from the configured row/column geometry:
 

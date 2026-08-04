@@ -4,7 +4,11 @@ import unittest
 import numpy as np
 
 from data_processing.normal_force_calculator import NormalForceCalculator
-from data_processing.pressure_map_array_generator import PressureMapArrayGenerator, PressureMapArrayPackage
+from data_processing.pressure_map_array_generator import (
+    PressureMapArrayGenerator,
+    PressureMapArrayPackage,
+    overlap_bounds_to_slice,
+)
 from data_processing.pressure_map_generator import PressureMapGenerator, evaluate_pressure_map_result_at
 
 
@@ -42,6 +46,11 @@ class PressureMapArrayGeneratorTests(unittest.TestCase):
         col = int(np.argmin(np.abs(result.x_coordinates_mm - x_mm)))
         return float(result.pressure_grid[row, col])
 
+    def _magnitude_grid_value(self, result, x_mm, y_mm):
+        row = int(np.argmin(np.abs(result.y_coordinates_mm - y_mm)))
+        col = int(np.argmin(np.abs(result.x_coordinates_mm - x_mm)))
+        return float(result.magnitude_pressure_grid[row, col])
+
     def _candidate_value(self, result, package, x_mm, y_mm):
         center_x, center_y = result.package_centers[package.sensor_id]
         return float(evaluate_pressure_map_result_at(
@@ -58,6 +67,10 @@ class PressureMapArrayGeneratorTests(unittest.TestCase):
             self._package("PZT6", (0, 1), empty),
         ])
         self.assertAlmostEqual(result.package_centers["PZT6"][0] - result.package_centers["PZT3"][0], 7.0)
+        self.assertEqual(result.structural_pairs, (("PZT3", "PZT6"),))
+        self.assertEqual(result.adjacent_pairs, result.structural_pairs)
+        self.assertEqual(result.active_overlap_pairs, ())
+        self.assertEqual(result.overlap_pairs, result.active_overlap_pairs)
 
     def test_horizontal_overlap_uses_0_50_100_linear_weights(self):
         first = self._package("A", (0, 0), {"C": 0.0, "L": 0.0, "R": 5.0, "T": 0.0, "B": 0.0})
@@ -69,6 +82,8 @@ class PressureMapArrayGeneratorTests(unittest.TestCase):
             second_value = self._candidate_value(result, second, x_mm, 0.0)
             expected = first_weight * first_value + (1.0 - first_weight) * second_value
             self.assertAlmostEqual(self._grid_value(result, x_mm, 0.0), expected, places=8)
+        self.assertEqual(result.structural_pairs, (("A", "B"),))
+        self.assertEqual(result.active_overlap_pairs, (("A", "B"),))
         self.assertEqual(result.overlap_pairs, (("A", "B"),))
 
     def test_vertical_overlap_uses_0_50_100_linear_weights(self):
@@ -139,6 +154,32 @@ class PressureMapArrayGeneratorTests(unittest.TestCase):
             value = self._grid_value(result, x_mm, 0.0)
             self.assertGreaterEqual(value, min(candidates) - 1e-12)
             self.assertLessEqual(value, max(candidates) + 1e-12)
+
+        first_value = self._candidate_value(result, first, 0.0, 0.0)
+        second_value = self._candidate_value(result, second, 0.0, 0.0)
+        self.assertAlmostEqual(self._grid_value(result, 0.0, 0.0), 0.0, places=8)
+        self.assertAlmostEqual(
+            self._magnitude_grid_value(result, 0.0, 0.0),
+            (abs(first_value) + abs(second_value)) / 2.0,
+            places=8,
+        )
+
+    def test_locally_absent_active_candidate_passes_through_present_neighbour(self):
+        center_only = self._package(
+            "CENTER", (0, 0), {"C": 5.0, "L": 0.0, "R": 0.0, "T": 0.0, "B": 0.0}
+        )
+        left_lobe = self._package(
+            "LEFT", (0, 1), {"C": 0.0, "L": 5.0, "R": 0.0, "T": 0.0, "B": 0.0}
+        )
+        result = self._generator().generate([center_only, left_lobe])
+
+        # At the overlap midpoint, the center-only field has already ended,
+        # while the left-facing lobe remains nonzero.
+        expected = self._candidate_value(result, left_lobe, 0.0, 0.0)
+        self.assertGreater(abs(expected), 0.0)
+        self.assertAlmostEqual(self._candidate_value(result, center_only, 0.0, 0.0), 0.0, places=12)
+        self.assertAlmostEqual(self._grid_value(result, 0.0, 0.0), expected, places=10)
+        self.assertAlmostEqual(self._magnitude_grid_value(result, 0.0, 0.0), abs(expected), places=10)
 
     def test_output_is_independent_of_package_input_order(self):
         packages = [
@@ -217,6 +258,11 @@ class PressureMapArrayGeneratorTests(unittest.TestCase):
         self.assertIn("candidate_fallback_denominator", result.diagnostics)
         self.assertIn("effective_pair_weights", result.diagnostics)
         self.assertIn("array_support_mask", result.diagnostics)
+        self.assertIn("local_presence", result.diagnostics)
+        self.assertIn("eligible_neighbor_pairs", result.diagnostics)
+        self.assertIn("final_magnitude_array_field", result.diagnostics)
+        self.assertEqual(result.diagnostics["structural_pairs"], result.structural_pairs)
+        self.assertEqual(result.diagnostics["active_overlap_pairs"], result.active_overlap_pairs)
 
     def test_rejects_duplicate_ids_positions_nonfinite_data_and_geometry_mismatch(self):
         values = {"C": 0.0, "L": 0.0, "R": 1.0, "T": 0.0, "B": 0.0}
@@ -260,6 +306,7 @@ class PressureMapArrayGeneratorTests(unittest.TestCase):
         for world_x in (0.5, 1.5, 2.5, 3.5):
             expected = self._candidate_value(result, active, world_x, 0.0)
             self.assertAlmostEqual(self._grid_value(result, world_x, 0.0), expected, places=10)
+            self.assertAlmostEqual(self._magnitude_grid_value(result, world_x, 0.0), abs(expected), places=10)
         self.assertEqual(inactive.pressure_result.package_activity_confidence, 0.0)
 
     def test_array_field_is_zero_at_and_outside_every_outer_boundary(self):
@@ -277,6 +324,68 @@ class PressureMapArrayGeneratorTests(unittest.TestCase):
             self.assertEqual(float(actual), 0.0)
         self.assertTrue(np.all(result.pressure_grid[[0, -1], :] == 0.0))
         self.assertTrue(np.all(result.pressure_grid[:, [0, -1]] == 0.0))
+        self.assertTrue(np.all(result.magnitude_pressure_grid[[0, -1], :] == 0.0))
+        self.assertTrue(np.all(result.magnitude_pressure_grid[:, [0, -1]] == 0.0))
+
+    def test_pair_prefilter_skips_away_facing_lobes_but_keeps_center_active_package(self):
+        array_generator = self._generator()
+        away_first = self._package("A", (0, 0), {"C": 0.0, "L": 3.0, "R": 0.0, "T": 0.0, "B": 0.0})
+        away_second = self._package("B", (0, 1), {"C": 0.0, "L": 0.0, "R": 3.0, "T": 0.0, "B": 0.0})
+        center = self._package("C", (0, 0), {"C": 3.0, "L": 0.0, "R": 0.0, "T": 0.0, "B": 0.0})
+        centers = array_generator._package_centers([away_first, away_second])
+        bounds = array_generator._candidate_support_bounds([away_first, away_second], centers)
+        coordinates = array_generator._array_coordinates([away_first, away_second], centers, bounds)
+        x_grid, y_grid = np.meshgrid(*coordinates)
+        first_candidate = array_generator._evaluate_candidate(away_first, centers["A"], bounds["A"], x_grid, y_grid)
+        second_candidate = array_generator._evaluate_candidate(away_second, centers["B"], bounds["B"], x_grid, y_grid)
+        center_candidate = array_generator._evaluate_candidate(center, centers["A"], bounds["A"], x_grid, y_grid)
+
+        self.assertFalse(array_generator._pair_is_sensor_relevant(first_candidate, second_candidate))
+        self.assertTrue(array_generator._pair_is_sensor_relevant(center_candidate, second_candidate))
+
+    def test_neighbor_enumeration_is_linear_for_regular_array(self):
+        packages = [
+            self._package(f"P{row}{col}", (row, col), {"C": 1.0, "L": 0.0, "R": 0.0, "T": 0.0, "B": 0.0})
+            for row in range(3) for col in range(3)
+        ]
+        array_generator = self._generator()
+        centers = array_generator._package_centers(packages)
+        bounds = array_generator._candidate_support_bounds(packages, centers)
+        coordinates = array_generator._array_coordinates(packages, centers, bounds)
+        x_grid, y_grid = np.meshgrid(*coordinates)
+        candidates = tuple(
+            array_generator._evaluate_candidate(package, centers[package.sensor_id], bounds[package.sensor_id], x_grid, y_grid)
+            for package in packages
+        )
+        pairs = array_generator._eligible_neighbor_pairs(candidates)
+
+        self.assertEqual(len(pairs), 20)
+        self.assertLessEqual(len(pairs), 4 * len(packages))
+        for first, second in pairs:
+            row_delta = abs(first.package.grid_position[0] - second.package.grid_position[0])
+            col_delta = abs(first.package.grid_position[1] - second.package.grid_position[1])
+            self.assertLessEqual(row_delta, 1)
+            self.assertLessEqual(col_delta, 1)
+
+    def test_overlap_slice_pair_result_matches_full_pair_evaluation(self):
+        first = self._package("A", (0, 0), {"C": 0.0, "L": 0.0, "R": 4.0, "T": 0.0, "B": 0.0})
+        second = self._package("B", (0, 1), {"C": 0.0, "L": 4.0, "R": 0.0, "T": 0.0, "B": 0.0})
+        array_generator = self._generator()
+        centers = array_generator._package_centers([first, second])
+        bounds = array_generator._candidate_support_bounds([first, second], centers)
+        coordinates = array_generator._array_coordinates([first, second], centers, bounds)
+        x_grid, y_grid = np.meshgrid(*coordinates)
+        first_candidate = array_generator._evaluate_candidate(first, centers["A"], bounds["A"], x_grid, y_grid)
+        second_candidate = array_generator._evaluate_candidate(second, centers["B"], bounds["B"], x_grid, y_grid)
+        overlap = array_generator._support_overlap(first_candidate, second_candidate)
+        y_slice, x_slice = overlap_bounds_to_slice(overlap, *coordinates)
+        region = np.s_[y_slice, x_slice]
+        sliced = array_generator._pair_blend(first_candidate, second_candidate, overlap, x_grid[region], y_grid[region], region, include_effective_weights=False)
+        full = array_generator._pair_blend(first_candidate, second_candidate, overlap, x_grid, y_grid, np.s_[:, :], include_effective_weights=False)
+
+        np.testing.assert_allclose(sliced[0], full[0][region])
+        np.testing.assert_allclose(sliced[1], full[1][region])
+        np.testing.assert_array_equal(sliced[2], full[2][region])
 
     def test_activity_confidence_is_smooth_between_threshold_and_full_participation(self):
         generator = PressureMapGenerator(

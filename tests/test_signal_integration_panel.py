@@ -26,6 +26,7 @@ from constants.pressure_map import (
 from constants.shear import SHEAR_SENSOR_POSITIONS
 from data_processing.adc_filter_engine import ADCFilterEngine
 from data_processing.normal_force_calculator import NormalForceCalculator
+from data_processing.pressure_map_array_generator import PressureMapArrayGenerator
 from data_processing.pressure_map_generator import PressureMapGenerator
 from data_processing.shear_detector import ShearDetector
 from gui.pressure_map_widget import PressureMapWidget
@@ -433,6 +434,32 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         self.assertEqual(packages[1].grid_position, (1, 0))
         self.assertNotEqual(packages[0].color, packages[1].color)
         self.assertTrue(packages[0].shear_result.has_shear)
+
+    def test_array_display_selection_uses_structural_pairs_when_overlap_is_inactive(self):
+        harness = SignalIntegrationPanelHarness()
+        harness.pressure_map_widget = PressureMapWidget()
+        self.addCleanup(harness.pressure_map_widget.close)
+        harness.shear_detector = ShearDetector()
+        harness.normal_force_calculator = NormalForceCalculator()
+        harness.pressure_map_generator = PressureMapGenerator()
+        harness.pressure_map_array_generator = PressureMapArrayGenerator()
+        harness.shear_noise_threshold_spin = DummySpinBox(0.0)
+        empty = {position: 0.0 for position in SHEAR_SENSOR_POSITIONS}
+        harness._latest_signal_integration_values_by_package = {
+            "PZT3": dict(empty),
+            "PZT5": dict(empty),
+        }
+        harness._latest_signal_integration_package_layout = [
+            {"sensor_id": "PZT3", "grid_position": (0, 0), "color_slot": 0},
+            {"sensor_id": "PZT5", "grid_position": (0, 1), "color_slot": 1},
+        ]
+        packages = harness._build_pressure_map_package_displays()
+
+        array_result = harness._build_pressure_map_array_result(packages)
+
+        self.assertIsNotNone(array_result)
+        self.assertEqual(array_result.structural_pairs, (("PZT3", "PZT5"),))
+        self.assertEqual(array_result.active_overlap_pairs, ())
 
     def test_hidden_pressure_map_tab_skips_pressure_map_refresh(self):
         harness = SignalIntegrationPanelHarness()

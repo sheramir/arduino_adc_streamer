@@ -1,5 +1,37 @@
 # Pressure Map Refactor Specification
 
+## Third-pass local-participation revision (2026-08)
+
+Thresholded anchors also produce an `active_sensor_mask` (`C/L/R/T/B` bits).
+This lightweight metadata prefilters array work: only direct or diagonal grid
+neighbours are considered, and a pair is skipped when neither package has an
+active centre or an outer anchor facing that overlap.  Final participation is
+still determined per pixel by a Boolean `local_present` mask derived from the
+already evaluated signed candidate (`abs(candidate) > epsilon`); no second
+floating local-confidence field exists.
+
+Pair weights are evaluated only in each pair's raster overlap slice.  A single
+locally present candidate passes through unchanged, while two locally present
+candidates use the existing direct linear or regularized diagonal geometric
+weights.  Candidate fallback is weighted by support × package activity × local
+presence.  These rules prevent a package from attenuating another package in a
+region where its own field is zero and reduce regular-array pair work from
+all-pairs to neighbouring overlaps.
+
+Array results retain `pressure_grid` as the signed field and add
+`magnitude_pressure_grid`.  The latter blends candidate magnitudes before
+rendering, so equal opposite signed fields can cancel in Signed mode without
+vanishing from Magnitude mode.  Single-package Magnitude rendering remains the
+absolute signed candidate.
+
+A center-active package with no active outer anchors uses the dedicated
+`center-only` mode: `C * smoothstep_fade(hypot(x, y), sensor_spacing_mm)`.
+It is rotationally symmetric, reaches zero exactly at every outer sensor, and
+does not extend beyond that radius.  Natural reach maps exactly from minimum
+at zero strength, through reference reach at one amplitude reference, to the
+configured maximum at two references or above.  All signed and magnitude
+outputs remain exactly zero on and beyond Outer Boundary support.
+
 ## Continuity revision (2026-08)
 
 `PressureFieldModel` is the authoritative signed backend.  It stores
@@ -55,9 +87,11 @@ Spatial fading uses one natural radial smoothstep factor from the relevant ancho
 
 ## Array and rendering
 
-Arrays reject duplicate IDs, duplicate grid cells, non-finite candidate data, and any package whose complete geometry differs from the shared geometry. World coordinates preserve exact support limits and use `pixels_per_mm`; result metadata records the actual `cell_size_x_mm` and `cell_size_y_mm` from those coordinate vectors. Direct, diagonal, and multi-package overlaps retain their weighted pair blending; `overlap_pairs` is the authoritative metadata name.
+Arrays reject duplicate IDs, duplicate grid cells, non-finite candidate data, and any package whose complete geometry differs from the shared geometry. World coordinates preserve exact support limits and use `pixels_per_mm`; result metadata records the actual `cell_size_x_mm` and `cell_size_y_mm` from those coordinate vectors. Direct, diagonal, and multi-package overlaps retain their weighted pair blending. `structural_pairs` records stable direct/diagonal grid adjacency and is the only pair set used to choose combined-array versus separate-package display. `active_overlap_pairs` records signal-dependent pairs that actually contributed to the current blend; `overlap_pairs` remains a compatibility alias for that active set and is calculation/diagnostic metadata only.
 
-Magnitude and Signed are display-only modes. Magnitude renders `abs(grid)`; Signed uses a zero-centred diverging palette. Neither changes interpolation, mode selection, or decay. The fixed Max Intensity range is common across every visible package. Shear-arrow length is capped from Outer-Boundary half-width, not from the near-outer offset.
+Magnitude and Signed are display-only modes. Single and separate-package Magnitude rendering uses `abs(grid)`; combined arrays use the separately blended `magnitude_pressure_grid`. Signed uses the signed field with a zero-centred diverging palette. Neither changes interpolation, mode selection, or decay. The fixed Max Intensity range is common across every visible package. Shear-arrow length is capped from Outer-Boundary half-width, not from the near-outer offset.
+
+The widget caches a view-range signature made only from display structure, layout geometry, and mirror state. Live field values and frame IDs do not reset the range. Changing among single, separate-package, and combined-array modes, or changing geometry or mirror state, invalidates the signature and applies the new range once.
 
 The independent visual overlays are the Near-Outer Circle, Outer-Boundary Square, and differently dashed Mid-Boundary Square. The circle diameter is twice `sensor_spacing_mm + near_outer_peak_offset_mm`.
 

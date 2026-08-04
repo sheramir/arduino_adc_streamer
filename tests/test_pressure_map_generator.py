@@ -5,6 +5,8 @@ import unittest
 import numpy as np
 
 from constants.pressure_map import (
+    ACTIVE_CENTER,
+    ACTIVE_RIGHT,
     DEFAULT_PRESSURE_SENSOR_SPACING_MM,
     PRESSURE_ACTIVE_QUADRANTS,
     PRESSURE_QUADRANT_BOTTOM_LEFT,
@@ -18,6 +20,7 @@ from constants.shear import (
 from data_processing.pressure_map_generator import (
     DEFAULT_PRESSURE_SHOW_NEGATIVE,
     PRESSURE_PACKAGE_MODE_CENTER_PLUS_ONE_OUTER,
+    PRESSURE_PACKAGE_MODE_CENTER_ONLY,
     PRESSURE_PACKAGE_MODE_ALL_INACTIVE,
     PRESSURE_PACKAGE_MODE_GENERAL_MULTI_SENSOR,
     PRESSURE_QUADRANT_MODE_SIGNED_TRANSITION,
@@ -26,6 +29,8 @@ from data_processing.pressure_map_generator import (
     PRESSURE_QUADRANT_MODE_ISOLATED_OUTER_PEAKED,
     PRESSURE_QUADRANT_MODE_SINGLE_AXIS_PEAKED,
     PressureMapGenerator,
+    _natural_decay_reach,
+    build_active_sensor_mask,
     evaluate_pressure_map_result_at,
     ray_square_exit_distance,
     ray_square_intersection_point,
@@ -120,6 +125,20 @@ class PressureMapGeneratorTests(unittest.TestCase):
         self.assertGreater(center, halfway)
         self.assertGreater(halfway, outer)
         self.assertAlmostEqual(outer, 0.0, places=6)
+
+    def test_center_only_mode_is_rotationally_symmetric_and_has_no_extension(self):
+        value = 5.0
+        result = self.generator.generate({"C": value, "R": 0.0, "T": 0.0, "L": 0.0, "B": 0.0})
+        spacing = self.generator.sensor_spacing_mm
+
+        self.assertEqual(result.package_mode, PRESSURE_PACKAGE_MODE_CENTER_ONLY)
+        self.assertEqual(result.quadrant_planes, ())
+        self.assertAlmostEqual(self._grid_value(result, 0.0, 0.0), value, places=12)
+        for coordinate in ((spacing, 0.0), (-spacing, 0.0), (0.0, spacing), (0.0, -spacing)):
+            self.assertEqual(self._grid_value(result, *coordinate), 0.0)
+        np.testing.assert_allclose(result.pressure_grid, np.flip(result.pressure_grid, axis=0), atol=1e-12)
+        np.testing.assert_allclose(result.pressure_grid, np.flip(result.pressure_grid, axis=1), atol=1e-12)
+        self.assertEqual(self._grid_value(result, spacing + 0.25, 0.0), 0.0)
 
     def test_signed_backend_preserves_mixed_sign_anchors_without_clamping(self):
         compression = self.generator.generate({"C": 5.0, "R": 0.0, "T": 8.0, "L": 3.0, "B": 2.0})
@@ -261,6 +280,16 @@ class PressureMapGeneratorTests(unittest.TestCase):
         self.assertGreater(float(inside_guard), 0.0)
         self.assertEqual(float(boundary), 0.0)
 
+    def test_natural_reach_hits_minimum_reference_and_maximum_exactly(self):
+        generator = PressureMapGenerator(
+            natural_decay_reference_distance_mm=2.5,
+            decay_amplitude_reference=1.0,
+            minimum_decay_reach_mm=0.25,
+            maximum_decay_reach_mm=5.0,
+        )
+        reaches = _natural_decay_reach(np.asarray([0.0, 1.0, 2.0, 4.0]), generator)
+        np.testing.assert_allclose(reaches, [0.25, 2.5, 5.0, 5.0], atol=1e-12)
+
     def test_general_model_uses_complete_peakless_quadrants_for_zero_outer_axes(self):
         result = self.generator.generate({"C": 4.0, "R": 4.0, "T": 3.0, "L": 2.0, "B": 0.0})
         planes = self._planes_by_label(result)
@@ -372,6 +401,17 @@ class PressureMapGeneratorTests(unittest.TestCase):
         self.assertEqual(result.package_activity_confidence, 0.0)
         self.assertTrue(np.all(result.pressure_grid == 0.0))
 
+    def test_active_sensor_mask_uses_thresholded_sensor_values(self):
+        result = PressureMapGenerator(signal_activity_threshold=0.5).generate(
+            {"C": 1.0, "R": 2.0, "T": 0.25, "L": 0.0, "B": 0.0}
+        )
+
+        self.assertEqual(result.active_sensor_mask, ACTIVE_CENTER | ACTIVE_RIGHT)
+        self.assertEqual(
+            build_active_sensor_mask(dict(result.field_model.sensor_values)),
+            ACTIVE_CENTER | ACTIVE_RIGHT,
+        )
+
     def test_quadrant_corner_is_a_bounded_convex_estimate(self):
         examples = (
             ({"C": 0.0, "R": 1.0, "T": 1.0, "L": 0.0, "B": 0.0}, 0.8),
@@ -379,7 +419,9 @@ class PressureMapGeneratorTests(unittest.TestCase):
             ({"C": 2.0, "R": 2.0, "T": 2.0, "L": 0.0, "B": 0.0}, 2.0),
         )
         for signals, expected in examples:
-            plane = self._planes_by_label(self.generator.generate(signals))[PRESSURE_QUADRANT_TOP_RIGHT]
+            plane = self.generator._build_quadrant_plane(
+                signals, self.generator.quadrants[0]
+            )
             anchors = (signals["C"], signals["R"], signals["T"])
             self.assertAlmostEqual(float(plane.corner_value), expected, places=12)
             self.assertGreaterEqual(float(plane.corner_value), min(anchors))

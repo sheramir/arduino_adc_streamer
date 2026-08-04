@@ -2616,7 +2616,9 @@ class PressureMapPanelMixin:
             if hasattr(self, "log_status"):
                 self.log_status(f"Pressure Map array interpolation unavailable: {exc}")
             return None
-        return array_result if array_result.adjacent_pairs else None
+        # Display routing must depend only on the configured layout. Active
+        # overlaps can legitimately appear and disappear with live signals.
+        return array_result if array_result.structural_pairs else None
 
     def _calibrate_signal_integration_values_for_shear(
         self,

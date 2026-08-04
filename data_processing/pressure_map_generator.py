@@ -14,6 +14,11 @@ from itertools import count
 import numpy as np
 
 from constants.pressure_map import (
+    ACTIVE_BOTTOM,
+    ACTIVE_CENTER,
+    ACTIVE_LEFT,
+    ACTIVE_RIGHT,
+    ACTIVE_TOP,
     DEFAULT_PRESSURE_DECAY_AMPLITUDE_REFERENCE,
     DEFAULT_PRESSURE_DECAY_RATE,
     DEFAULT_PRESSURE_DECAY_REF_DISTANCE_MM,
@@ -55,6 +60,7 @@ PRESSURE_GEOMETRY_EPSILON = 0.001
 PRESSURE_NUMERIC_EPSILON = 1e-14
 
 PRESSURE_PACKAGE_MODE_ALL_INACTIVE = "all-inactive"
+PRESSURE_PACKAGE_MODE_CENTER_ONLY = "center-only"
 PRESSURE_PACKAGE_MODE_ISOLATED_OUTER = "isolated-outer"
 PRESSURE_PACKAGE_MODE_CENTER_PLUS_ONE_OUTER = "center-plus-one-outer"
 PRESSURE_PACKAGE_MODE_GENERAL_MULTI_SENSOR = "general-multi-sensor"
@@ -74,6 +80,23 @@ _OUTER_SENSORS = (
     SHEAR_POSITION_TOP,
     SHEAR_POSITION_BOTTOM,
 )
+
+
+def build_active_sensor_mask(sensor_values: Mapping[str, float]) -> int:
+    """Return a compact bitmask for already-thresholded package anchors."""
+
+    mask = 0
+    if float(sensor_values[SHEAR_POSITION_CENTER]) != 0.0:
+        mask |= ACTIVE_CENTER
+    if float(sensor_values[SHEAR_POSITION_LEFT]) != 0.0:
+        mask |= ACTIVE_LEFT
+    if float(sensor_values[SHEAR_POSITION_RIGHT]) != 0.0:
+        mask |= ACTIVE_RIGHT
+    if float(sensor_values[SHEAR_POSITION_TOP]) != 0.0:
+        mask |= ACTIVE_TOP
+    if float(sensor_values[SHEAR_POSITION_BOTTOM]) != 0.0:
+        mask |= ACTIVE_BOTTOM
+    return mask
 
 
 def smoothstep_fade(distance: np.ndarray | float, reach: np.ndarray | float) -> np.ndarray:
@@ -192,6 +215,7 @@ class PressureFieldModel:
     package_mode: str
     raw_sensor_values: tuple[tuple[str, float], ...]
     sensor_values: tuple[tuple[str, float], ...]
+    active_sensor_mask: int
     package_activity_confidence: float
     quadrant_planes: tuple[PressureQuadrantPlane, ...]
     support_bounds_mm: tuple[float, float, float, float]
@@ -267,6 +291,7 @@ class PressureMapResult:
     maximum_decay_reach_mm: float
     signal_activity_threshold: float
     raw_sensor_values: tuple[tuple[str, float], ...]
+    active_sensor_mask: int
     package_activity_confidence: float
     geometry_epsilon: float
     show_negative: bool
@@ -422,6 +447,7 @@ class PressureMapGenerator:
             maximum_decay_reach_mm=self.maximum_decay_reach_mm,
             signal_activity_threshold=self.signal_activity_threshold,
             raw_sensor_values=model.raw_sensor_values,
+            active_sensor_mask=model.active_sensor_mask,
             package_activity_confidence=model.package_activity_confidence,
             geometry_epsilon=self.geometry_epsilon, show_negative=self.show_negative,
             near_outer_peak_offset_mm=self.near_outer_peak_offset_mm,
@@ -438,7 +464,11 @@ class PressureMapGenerator:
         core_mask = (np.abs(self.x_grid_mm) <= spacing) & (np.abs(self.y_grid_mm) <= spacing)
         core_surface = np.zeros_like(pressure_grid)
         if np.any(core_mask) and model.package_mode != PRESSURE_PACKAGE_MODE_ALL_INACTIVE:
-            if model.package_mode == PRESSURE_PACKAGE_MODE_ISOLATED_OUTER:
+            if model.package_mode == PRESSURE_PACKAGE_MODE_CENTER_ONLY:
+                core_surface[core_mask] = _evaluate_center_only_model(
+                    model, self.x_grid_mm[core_mask], self.y_grid_mm[core_mask]
+                )
+            elif model.package_mode == PRESSURE_PACKAGE_MODE_ISOLATED_OUTER:
                 core_surface[core_mask] = _evaluate_axis_lobe(
                     model, self.x_grid_mm[core_mask], self.y_grid_mm[core_mask], isolated=True
                 )
@@ -449,6 +479,7 @@ class PressureMapGenerator:
         return {
             "raw_sensor_values": dict(model.raw_sensor_values),
             "thresholded_sensor_values": dict(model.sensor_values),
+            "active_sensor_mask": model.active_sensor_mask,
             "package_mode": model.package_mode,
             "package_activity_confidence": model.package_activity_confidence,
             "quadrant_modes": {plane.label: plane.mode for plane in model.quadrant_planes},
@@ -526,6 +557,11 @@ class PressureMapGenerator:
             axis_sensor = None
             peak_point = None
             peak_height = None
+        elif package_mode == PRESSURE_PACKAGE_MODE_CENTER_ONLY:
+            planes = ()
+            axis_sensor = None
+            peak_point = None
+            peak_height = None
         elif package_mode == PRESSURE_PACKAGE_MODE_ISOLATED_OUTER:
             axis_sensor = active_outer[0]
             plane = self._build_isolated_outer_plane(signals, axis_sensor)
@@ -569,6 +605,7 @@ class PressureMapGenerator:
                 (sensor, float(raw_signals[sensor])) for sensor in SHEAR_SENSOR_POSITIONS
             ),
             sensor_values=tuple((sensor, float(signals[sensor])) for sensor in SHEAR_SENSOR_POSITIONS),
+            active_sensor_mask=build_active_sensor_mask(signals),
             package_activity_confidence=self._package_activity_confidence(raw_signals),
             quadrant_planes=planes, support_bounds_mm=self.support_bounds_mm,
             decay_origin=(float(decay_origin[0]), float(decay_origin[1])),
@@ -591,6 +628,8 @@ class PressureMapGenerator:
         center_active = self.is_signal_active(signals[SHEAR_POSITION_CENTER])
         if not center_active and not active_outer:
             return PRESSURE_PACKAGE_MODE_ALL_INACTIVE, active_outer
+        if center_active and not active_outer:
+            return PRESSURE_PACKAGE_MODE_CENTER_ONLY, active_outer
         if not center_active and len(active_outer) == 1:
             return PRESSURE_PACKAGE_MODE_ISOLATED_OUTER, active_outer
         if center_active and len(active_outer) == 1:
@@ -919,16 +958,16 @@ class PressureMapGenerator:
 
 
 def _natural_decay_reach(strength: np.ndarray, model: PressureFieldModel | PressureMapGenerator) -> np.ndarray:
-    ratio = np.minimum(
-        float(model.maximum_decay_reach_mm) / max(PRESSURE_NUMERIC_EPSILON, float(model.natural_decay_reference_distance_mm)),
-        np.abs(np.asarray(strength, dtype=np.float64)) / float(model.decay_amplitude_reference),
+    normalized = np.abs(np.asarray(strength, dtype=np.float64)) / float(
+        model.decay_amplitude_reference
     )
-    return np.minimum(
-        float(model.maximum_decay_reach_mm),
-        float(model.minimum_decay_reach_mm) + ratio * (
-            float(model.natural_decay_reference_distance_mm) - float(model.minimum_decay_reach_mm)
-        ),
-    )
+    minimum = float(model.minimum_decay_reach_mm)
+    natural = float(model.natural_decay_reference_distance_mm)
+    maximum = float(model.maximum_decay_reach_mm)
+    low_reach = minimum + normalized * (natural - minimum)
+    high_t = np.clip(normalized - 1.0, 0.0, 1.0)
+    high_reach = natural + high_t * (maximum - natural)
+    return np.clip(np.where(normalized <= 1.0, low_reach, high_reach), minimum, maximum)
 
 
 def _evaluate_pressure_field_model(model: PressureFieldModel, x_values: np.ndarray, y_values: np.ndarray, support_bounds: tuple[float, float, float, float]) -> np.ndarray:
@@ -941,6 +980,12 @@ def _evaluate_pressure_field_model(model: PressureFieldModel, x_values: np.ndarr
     inside = _strict_support_mask(x_values, y_values, support_bounds)
     if not np.any(inside):
         return values
+    if model.package_mode == PRESSURE_PACKAGE_MODE_CENTER_ONLY:
+        values[inside] = _evaluate_center_only_model(
+            model, x_values[inside], y_values[inside]
+        )
+        values[~inside] = 0.0
+        return _numeric_cleanup(values)
     if model.package_mode == PRESSURE_PACKAGE_MODE_ISOLATED_OUTER:
         values = _evaluate_isolated_model(model, x_values, y_values, support_bounds, inside)
         values[~inside] = 0.0
@@ -995,9 +1040,21 @@ def _evaluate_pressure_field_model(model: PressureFieldModel, x_values: np.ndarr
 
 
 def _evaluate_core(model: PressureFieldModel, x_values: np.ndarray, y_values: np.ndarray) -> np.ndarray:
+    if model.package_mode == PRESSURE_PACKAGE_MODE_CENTER_ONLY:
+        return _evaluate_center_only_model(model, x_values, y_values)
     if model.package_mode == PRESSURE_PACKAGE_MODE_CENTER_PLUS_ONE_OUTER:
         return _evaluate_axis_lobe(model, x_values, y_values, isolated=False)
     return _evaluate_general_core(model, x_values, y_values)
+
+
+def _evaluate_center_only_model(
+    model: PressureFieldModel, x_values: np.ndarray, y_values: np.ndarray
+) -> np.ndarray:
+    """Rotationally symmetric center-only field with no outer extension."""
+
+    center = dict(model.sensor_values)[SHEAR_POSITION_CENTER]
+    radius = np.hypot(x_values, y_values)
+    return center * smoothstep_fade(radius, model.geometry.sensor_spacing_mm)
 
 
 def _evaluate_general_core(model: PressureFieldModel, x_values: np.ndarray, y_values: np.ndarray) -> np.ndarray:

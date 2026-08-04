@@ -260,6 +260,101 @@ class PressureMapWidgetTests(unittest.TestCase):
 
         self.assertEqual(len(image_uploads), 0)
 
+    def test_view_ranges_update_only_when_mode_geometry_or_mirror_changes(self):
+        def build_frame(first_values, second_values):
+            first_normal = self.calculator.compute(first_values)
+            second_normal = self.calculator.compute(second_values)
+            first_pressure = self.generator.generate(first_normal.normalized)
+            second_pressure = self.generator.generate(second_normal.normalized)
+            packages = [
+                PressureMapPackageDisplay(
+                    sensor_id="PZT3",
+                    normal_force_result=first_normal,
+                    pressure_result=first_pressure,
+                    grid_position=(0, 0),
+                    color=self.widget.package_color_for_index(0),
+                    calibrated_values=dict(first_values),
+                ),
+                PressureMapPackageDisplay(
+                    sensor_id="PZT5",
+                    normal_force_result=second_normal,
+                    pressure_result=second_pressure,
+                    grid_position=(0, 1),
+                    color=self.widget.package_color_for_index(1),
+                    calibrated_values=dict(second_values),
+                ),
+            ]
+            array_result = PressureMapArrayGenerator().generate([
+                PressureMapArrayPackage(
+                    sensor_id=package.sensor_id,
+                    grid_position=package.grid_position,
+                    normal_force_result=package.normal_force_result,
+                    pressure_result=package.pressure_result,
+                )
+                for package in packages
+            ])
+            return packages, array_result
+
+        first_packages, first_array = build_frame(
+            {"C": 0.0, "L": 0.0, "R": 4.0, "T": 0.0, "B": 0.0},
+            {"C": 0.0, "L": 2.0, "R": 0.0, "T": 0.0, "B": 0.0},
+        )
+        second_packages, second_array = build_frame(
+            {"C": 1.0, "L": 0.0, "R": 1.0, "T": 0.0, "B": 0.0},
+            {"C": 2.0, "L": 1.0, "R": 0.0, "T": 0.0, "B": 0.0},
+        )
+        self.widget.update_package_displays(first_packages)
+
+        x_range_calls: list[int] = []
+        y_range_calls: list[int] = []
+        original_set_x_range = self.widget.plot_widget.setXRange
+        original_set_y_range = self.widget.plot_widget.setYRange
+
+        def counting_set_x_range(*args, **kwargs):
+            x_range_calls.append(1)
+            return original_set_x_range(*args, **kwargs)
+
+        def counting_set_y_range(*args, **kwargs):
+            y_range_calls.append(1)
+            return original_set_y_range(*args, **kwargs)
+
+        self.widget.plot_widget.setXRange = counting_set_x_range
+        self.widget.plot_widget.setYRange = counting_set_y_range
+
+        # New signal values and frame IDs do not change separate-package ranges.
+        self.widget.update_package_displays(second_packages)
+        self.assertEqual((len(x_range_calls), len(y_range_calls)), (0, 0))
+
+        # A structural mode change resets the signature exactly once.
+        self.widget.update_array_display(second_array, second_packages)
+        self.assertEqual((len(x_range_calls), len(y_range_calls)), (1, 1))
+        x_range_calls.clear()
+        y_range_calls.clear()
+
+        # Array ranges also remain stable across signal-dependent fields.
+        self.widget.update_array_display(first_array, first_packages)
+        self.assertEqual((len(x_range_calls), len(y_range_calls)), (0, 0))
+
+        # Mirror changes invalidate and reapply the current array range.
+        self.widget.configure_mirror(mirror=not self.widget.mirror)
+        self.assertEqual((len(x_range_calls), len(y_range_calls)), (1, 1))
+        x_range_calls.clear()
+        y_range_calls.clear()
+
+        # Single mode gets one range update, then keeps it for later frames.
+        self.widget.update_display(
+            first_packages[0].normal_force_result,
+            first_packages[0].pressure_result,
+        )
+        self.assertEqual((len(x_range_calls), len(y_range_calls)), (1, 1))
+        x_range_calls.clear()
+        y_range_calls.clear()
+        self.widget.update_display(
+            second_packages[0].normal_force_result,
+            second_packages[0].pressure_result,
+        )
+        self.assertEqual((len(x_range_calls), len(y_range_calls)), (0, 0))
+
     def test_array_display_uses_single_image_and_package_overlays(self):
         first_shear = self.detector.detect({"C": 0.0, "L": 0.0, "R": 5.0, "T": 0.0, "B": 0.0})
         second_shear = self.detector.detect({"C": 0.0, "L": 2.0, "R": 0.0, "T": 0.0, "B": 0.0})
@@ -326,6 +421,25 @@ class PressureMapWidgetTests(unittest.TestCase):
             self.widget.debug_saturation_mask,
             np.abs(array_result.pressure_grid) >= self.widget.max_intensity,
         )
+
+    def test_array_magnitude_mode_uses_separately_blended_magnitude_grid(self):
+        normal = self.calculator.compute({"C": 0.0, "L": 0.0, "R": 2.0, "T": 0.0, "B": 0.0})
+        pressure = self.generator.generate(normal.normalized)
+        array_result = PressureMapArrayGenerator().generate([
+            PressureMapArrayPackage("A", (0, 0), normal, pressure),
+        ])
+        magnitude = np.full_like(array_result.pressure_grid, 0.75)
+        signed = np.zeros_like(array_result.pressure_grid)
+        synthetic = replace(
+            array_result,
+            pressure_grid=signed,
+            magnitude_pressure_grid=magnitude,
+        )
+
+        self.widget.configure_display_mode(display_mode=PRESSURE_DISPLAY_MODE_MAGNITUDE)
+        np.testing.assert_array_equal(self.widget._array_display_grid(synthetic), magnitude)
+        self.widget.configure_display_mode(display_mode=PRESSURE_DISPLAY_MODE_SIGNED)
+        np.testing.assert_array_equal(self.widget._array_display_grid(synthetic), signed)
 
     def test_boundary_overlays_use_peak_support_outer_support_and_midpoint_dash_styles(self):
         signals = {"C": 0.0, "R": 5.0, "T": 0.0, "L": 0.0, "B": 0.0}

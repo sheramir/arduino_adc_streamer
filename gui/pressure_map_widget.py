@@ -287,6 +287,8 @@ class PressureMapWidget(QWidget):
         self.package_label_items: list[pg.TextItem] = []
         self._image_cache: _PressureMapImageCache | None = None
         self._package_image_caches: list[_PressureMapImageCache | None] = []
+        self._view_mode: str | None = None
+        self._view_range_signature: tuple[object, ...] | None = None
 
         self.update_display(None, None, None)
 
@@ -401,6 +403,7 @@ class PressureMapWidget(QWidget):
             if self.mirror == updated_mirror:
                 return
             self.mirror = updated_mirror
+            self._invalidate_view_range()
             self._refresh_cached_display()
 
     def configure_display_mode(self, *, display_mode: str | None = None) -> None:
@@ -417,6 +420,13 @@ class PressureMapWidget(QWidget):
 
     def _display_grid(self, grid: np.ndarray) -> np.ndarray:
         return np.abs(grid) if self.display_mode == PRESSURE_DISPLAY_MODE_MAGNITUDE else grid
+
+    def _array_display_grid(self, array_result: PressureMapArrayResult) -> np.ndarray:
+        """Select the separately blended magnitude field when rendering arrays."""
+
+        if self.display_mode == PRESSURE_DISPLAY_MODE_MAGNITUDE:
+            return array_result.magnitude_pressure_grid
+        return array_result.pressure_grid
 
     def _refresh_cached_display(self) -> None:
         if self.last_array_result is not None and self.last_package_displays:
@@ -451,6 +461,9 @@ class PressureMapWidget(QWidget):
         Raises:
             None.
         """
+        self._set_view_mode(
+            "single" if normal_force_result is not None and pressure_result is not None else "empty"
+        )
         self._clear_package_items()
         self.image_item.show()
         self.last_normal_force_result = normal_force_result
@@ -474,6 +487,7 @@ class PressureMapWidget(QWidget):
 
     def update_package_displays(self, packages: list[PressureMapPackageDisplay]) -> None:
         """Render multiple array sensor packages in their configured grid cells."""
+        self._set_view_mode("packages" if packages else "empty")
         self._clear_dynamic_items(clear_image=False)
         self.image_item.hide()
         self.last_package_displays = list(packages)
@@ -512,7 +526,18 @@ class PressureMapWidget(QWidget):
             self._update_package_label(index, package, center_x, center_y)
 
         self._hide_unused_package_items(len(packages))
-        self._set_package_ranges(packages, centers, half_extent)
+        range_signature = self._package_view_range_signature(
+            packages,
+            centers,
+            half_extent,
+        )
+        if range_signature != self._view_range_signature:
+            self._set_package_ranges(
+                packages,
+                centers,
+                half_extent,
+                range_signature,
+            )
         self._update_package_readout(packages)
         self.plot_widget.getPlotItem().getViewBox().update()
 
@@ -522,6 +547,7 @@ class PressureMapWidget(QWidget):
         packages: list[PressureMapPackageDisplay],
     ) -> None:
         """Render one array-level pressure image with per-package overlays."""
+        self._set_view_mode("array" if packages else "empty")
         self._clear_dynamic_items(clear_image=False)
         self.image_item.show()
         self.last_array_result = array_result
@@ -563,7 +589,9 @@ class PressureMapWidget(QWidget):
             self._update_package_label(index, package, center_x, center_y)
 
         self._hide_unused_package_items(len(packages))
-        self._set_array_ranges(array_result)
+        range_signature = self._array_view_range_signature(array_result)
+        if range_signature != self._view_range_signature:
+            self._set_array_ranges(array_result, range_signature)
         self._update_package_readout(packages, preserve_saturation=True)
         self.plot_widget.getPlotItem().getViewBox().update()
 
@@ -617,8 +645,9 @@ class PressureMapWidget(QWidget):
         )
         self.debug_backend_maximum = float(np.max(np.abs(pressure_result.pressure_grid)))
         self.debug_saturation_mask = np.abs(pressure_result.pressure_grid) >= self.max_intensity
-        self.plot_widget.setXRange(image_rect.left(), image_rect.right(), padding=SHEAR_ZERO_VALUE)
-        self.plot_widget.setYRange(image_rect.top(), image_rect.bottom(), padding=SHEAR_ZERO_VALUE)
+        range_signature = self._single_view_range_signature(pressure_result, image_rect)
+        if range_signature != self._view_range_signature:
+            self._set_single_ranges(image_rect, range_signature)
 
     def _update_array_image(
         self,
@@ -626,7 +655,7 @@ class PressureMapWidget(QWidget):
         packages: list[PressureMapPackageDisplay],
     ) -> None:
         level_source = packages[0].normal_force_result
-        grid = self._display_grid(array_result.pressure_grid)
+        grid = self._array_display_grid(array_result)
         if self.mirror:
             grid = np.fliplr(grid)
         levels = self._pressure_levels(level_source, grid)
@@ -644,10 +673,10 @@ class PressureMapWidget(QWidget):
             cache_key=self._image_cache_key(array_result.frame_id),
         )
         self.saturated_pixel_percentage = self._saturated_pixel_percentage(
-            array_result.pressure_grid
+            grid
         )
-        self.debug_backend_maximum = float(np.max(np.abs(array_result.pressure_grid)))
-        self.debug_saturation_mask = np.abs(array_result.pressure_grid) >= self.max_intensity
+        self.debug_backend_maximum = float(np.max(np.abs(grid)))
+        self.debug_saturation_mask = np.abs(grid) >= self.max_intensity
 
     def _update_cached_image_item(
         self,
@@ -1230,11 +1259,91 @@ class PressureMapWidget(QWidget):
         arrow_line_item.hide()
         arrow_head_item.hide()
 
+    def _set_view_mode(self, mode: str) -> None:
+        """Invalidate the cached range when the rendering structure changes."""
+
+        if self._view_mode == mode:
+            return
+        self._view_mode = mode
+        self._invalidate_view_range()
+
+    def _invalidate_view_range(self) -> None:
+        self._view_range_signature = None
+
+    @staticmethod
+    def _pressure_geometry_signature(result: PressureMapResult) -> tuple[object, ...]:
+        """Return only geometry that can affect a pressure-map viewport."""
+
+        return (
+            float(result.total_extent_mm),
+            tuple(float(value) for value in result.support_bounds_mm),
+            float(result.sensor_spacing_mm),
+            float(result.package_center_spacing_mm),
+            float(result.outer_boundary_reach_mm),
+            float(result.near_outer_peak_offset_mm),
+            float(result.pixels_per_mm),
+            int(result.x_coordinates_mm.size),
+            int(result.y_coordinates_mm.size),
+        )
+
+    def _single_view_range_signature(
+        self,
+        pressure_result: PressureMapResult,
+        image_rect: QRectF,
+    ) -> tuple[object, ...]:
+        return (
+            "single",
+            bool(self.mirror),
+            _rect_tuple(image_rect),
+            self._pressure_geometry_signature(pressure_result),
+        )
+
+    def _set_single_ranges(
+        self,
+        image_rect: QRectF,
+        signature: tuple[object, ...],
+    ) -> None:
+        self.plot_widget.setXRange(
+            image_rect.left(),
+            image_rect.right(),
+            padding=SHEAR_ZERO_VALUE,
+        )
+        self.plot_widget.setYRange(
+            image_rect.top(),
+            image_rect.bottom(),
+            padding=SHEAR_ZERO_VALUE,
+        )
+        self._view_range_signature = signature
+
+    def _package_view_range_signature(
+        self,
+        packages: list[PressureMapPackageDisplay],
+        centers: list[tuple[float, float]],
+        fallback_half_extent: float,
+    ) -> tuple[object, ...]:
+        package_geometry = tuple(sorted(
+            (
+                str(package.sensor_id),
+                package.grid_position,
+                float(package_center_x),
+                float(package_center_y),
+                self._pressure_geometry_signature(package.pressure_result),
+            )
+            for package, (package_center_x, package_center_y) in zip(packages, centers)
+        ))
+        return (
+            "packages",
+            bool(self.mirror),
+            float(fallback_half_extent),
+            package_geometry,
+        )
+
     def _set_package_ranges(
         self,
         packages: list[PressureMapPackageDisplay],
         centers: list[tuple[float, float]],
         fallback_half_extent: float,
+        signature: tuple[object, ...],
     ) -> None:
         if not centers or not packages:
             return
@@ -1271,8 +1380,51 @@ class PressureMapWidget(QWidget):
             center_y + range_half_span,
             padding=SHEAR_ZERO_VALUE,
         )
+        self._view_range_signature = signature
 
-    def _set_array_ranges(self, array_result: PressureMapArrayResult) -> None:
+    def _array_view_range_signature(
+        self,
+        array_result: PressureMapArrayResult,
+    ) -> tuple[object, ...]:
+        return (
+            "array",
+            bool(self.mirror),
+            int(array_result.x_coordinates_mm.size),
+            int(array_result.y_coordinates_mm.size),
+            float(array_result.x_coordinates_mm[0]),
+            float(array_result.x_coordinates_mm[-1]),
+            float(array_result.y_coordinates_mm[0]),
+            float(array_result.y_coordinates_mm[-1]),
+            float(array_result.cell_size_x_mm),
+            float(array_result.cell_size_y_mm),
+            float(array_result.package_center_spacing_mm),
+            float(array_result.outer_boundary_reach_mm),
+            float(array_result.actual_pixels_per_mm),
+            float(array_result.mid_boundary_half_width_mm),
+            float(array_result.outer_boundary_half_width_mm),
+            tuple(sorted(
+                (
+                    str(sensor_id),
+                    float(center[0]),
+                    float(center[1]),
+                )
+                for sensor_id, center in array_result.package_centers.items()
+            )),
+            tuple(sorted(array_result.structural_pairs)),
+            tuple(sorted(
+                (
+                    str(sensor_id),
+                    tuple(float(value) for value in bounds),
+                )
+                for sensor_id, bounds in array_result.candidate_support_bounds_mm.items()
+            )),
+        )
+
+    def _set_array_ranges(
+        self,
+        array_result: PressureMapArrayResult,
+        signature: tuple[object, ...],
+    ) -> None:
         x_min = float(array_result.x_coordinates_mm[0])
         x_max = float(array_result.x_coordinates_mm[-1])
         y_min = float(array_result.y_coordinates_mm[0])
@@ -1288,6 +1440,7 @@ class PressureMapWidget(QWidget):
         padding = max(SHEAR_ZERO_VALUE, half_span * PRESSURE_MAP_PACKAGE_VIEW_PADDING_FRACTION)
         self.plot_widget.setXRange(center_x - half_span - padding, center_x + half_span + padding, padding=SHEAR_ZERO_VALUE)
         self.plot_widget.setYRange(center_y - half_span - padding, center_y + half_span + padding, padding=SHEAR_ZERO_VALUE)
+        self._view_range_signature = signature
 
     def _update_package_readout(
         self, packages: list[PressureMapPackageDisplay], *, preserve_saturation: bool = False

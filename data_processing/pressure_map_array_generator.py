@@ -14,6 +14,11 @@ from itertools import count
 import numpy as np
 
 from constants.pressure_map import (
+    ACTIVE_BOTTOM,
+    ACTIVE_CENTER,
+    ACTIVE_LEFT,
+    ACTIVE_RIGHT,
+    ACTIVE_TOP,
     DEFAULT_PRESSURE_OUTER_BOUNDARY_REACH_MM,
     DEFAULT_PRESSURE_PACKAGE_CENTER_SPACING_MM,
     DEFAULT_PRESSURE_PIXELS_PER_MM,
@@ -35,6 +40,21 @@ PRESSURE_DIAGONAL_REGULARIZATION_SCALE = 0.05
 _FRAME_IDS = count(1)
 
 
+def overlap_bounds_to_slice(
+    overlap: tuple[float, float, float, float],
+    x_coordinates_mm: np.ndarray,
+    y_coordinates_mm: np.ndarray,
+) -> tuple[slice, slice]:
+    """Convert world overlap bounds to the minimally enclosing raster slice."""
+
+    x0, x1, y0, y1 = overlap
+    x_start = int(np.searchsorted(x_coordinates_mm, x0, side="left"))
+    x_end = int(np.searchsorted(x_coordinates_mm, x1, side="right"))
+    y_start = int(np.searchsorted(y_coordinates_mm, y0, side="left"))
+    y_end = int(np.searchsorted(y_coordinates_mm, y1, side="right"))
+    return slice(y_start, y_end), slice(x_start, x_end)
+
+
 @dataclass(frozen=True, slots=True)
 class PressureMapArrayPackage:
     """One complete package positioned in the physical array layout."""
@@ -50,13 +70,15 @@ class PressureMapArrayResult:
     """Combined array field plus its source-package geometry."""
 
     pressure_grid: np.ndarray
+    magnitude_pressure_grid: np.ndarray
     x_coordinates_mm: np.ndarray
     y_coordinates_mm: np.ndarray
     x_grid_mm: np.ndarray
     y_grid_mm: np.ndarray
     package_centers: dict[str, tuple[float, float]]
     package_results: dict[str, PressureMapResult]
-    overlap_pairs: tuple[tuple[str, str], ...]
+    structural_pairs: tuple[tuple[str, str], ...]
+    active_overlap_pairs: tuple[tuple[str, str], ...]
     cell_size_x_mm: float
     cell_size_y_mm: float
     cell_size_mm: float
@@ -73,8 +95,13 @@ class PressureMapArrayResult:
 
     @property
     def adjacent_pairs(self) -> tuple[tuple[str, str], ...]:
-        """Compatibility alias for callers predating diagonal overlaps."""
-        return self.overlap_pairs
+        """Compatibility alias for stable direct/diagonal grid adjacency."""
+        return self.structural_pairs
+
+    @property
+    def overlap_pairs(self) -> tuple[tuple[str, str], ...]:
+        """Compatibility alias for signal-dependent active overlap pairs."""
+        return self.active_overlap_pairs
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +113,7 @@ class _PackageCandidate:
     support_mask: np.ndarray
     support_confidence: np.ndarray
     activity_confidence: float
+    local_present: np.ndarray
 
 
 class PressureMapArrayGenerator:
@@ -165,18 +193,32 @@ class PressureMapArrayGenerator:
             self._evaluate_candidate(package, centers[package.sensor_id], support_bounds[package.sensor_id], x_grid, y_grid)
             for package in complete_packages
         )
+        structural_candidate_pairs = self._eligible_neighbor_pairs(candidates)
+        structural_pairs = tuple(
+            (first.package.sensor_id, second.package.sensor_id)
+            for first, second in structural_candidate_pairs
+        )
         (
             pressure_grid,
-            overlap_pairs,
+            magnitude_pressure_grid,
+            active_overlap_pairs,
             pair_denominator,
             candidate_denominator,
             pair_effective_weights,
-        ) = self._blend_candidates(candidates, x_grid, y_grid)
+        ) = self._blend_candidates(
+            candidates,
+            structural_candidate_pairs,
+            x_grid,
+            y_grid,
+            x_coordinates,
+            y_coordinates,
+        )
         array_support_mask = np.logical_or.reduce(
             tuple(candidate.support_mask for candidate in candidates)
         )
         # Preserve the local support contract after every blend mode too.
         pressure_grid[~array_support_mask] = 0.0
+        magnitude_pressure_grid[~array_support_mask] = 0.0
         diagnostics = None
         if self.debug:
             diagnostics = {
@@ -184,22 +226,34 @@ class PressureMapArrayGenerator:
                     candidate.package.sensor_id: candidate.support_confidence.copy()
                     for candidate in candidates
                 },
+                "local_presence": {
+                    candidate.package.sensor_id: candidate.local_present.copy()
+                    for candidate in candidates
+                },
+                "structural_pairs": structural_pairs,
+                "active_overlap_pairs": active_overlap_pairs,
+                # Compatibility diagnostic name; these are structural,
+                # signal-independent neighbor pairs.
+                "eligible_neighbor_pairs": structural_pairs,
                 "pair_confidence_denominator": pair_denominator,
                 "candidate_fallback_denominator": candidate_denominator,
                 "effective_pair_weights": pair_effective_weights,
                 "array_support_mask": array_support_mask.copy(),
                 "final_array_field": pressure_grid.copy(),
+                "final_magnitude_array_field": magnitude_pressure_grid.copy(),
             }
 
         return PressureMapArrayResult(
             pressure_grid=pressure_grid,
+            magnitude_pressure_grid=magnitude_pressure_grid,
             x_coordinates_mm=x_coordinates,
             y_coordinates_mm=y_coordinates,
             x_grid_mm=x_grid,
             y_grid_mm=y_grid,
             package_centers=dict(centers),
             package_results={package.sensor_id: package.pressure_result for package in complete_packages},
-            overlap_pairs=overlap_pairs,
+            structural_pairs=structural_pairs,
+            active_overlap_pairs=active_overlap_pairs,
             cell_size_x_mm=float(x_coordinates[1] - x_coordinates[0]),
             cell_size_y_mm=float(y_coordinates[1] - y_coordinates[0]),
             # Compatibility scalar; callers that need physical integration
@@ -309,6 +363,7 @@ class PressureMapArrayGenerator:
         support_confidence = self._support_confidence(local_x, local_y)
         support_confidence[~support_mask] = 0.0
         values[~support_mask] = 0.0
+        local_present = support_mask & (np.abs(values) > PRESSURE_ARRAY_BLEND_EPSILON)
         return _PackageCandidate(
             package,
             center,
@@ -317,6 +372,7 @@ class PressureMapArrayGenerator:
             support_mask,
             support_confidence,
             package.pressure_result.package_activity_confidence,
+            local_present,
         )
 
     def _support_confidence(self, local_x: np.ndarray, local_y: np.ndarray) -> np.ndarray:
@@ -337,65 +393,143 @@ class PressureMapArrayGenerator:
     def _blend_candidates(
         self,
         candidates: Sequence[_PackageCandidate],
+        structural_candidate_pairs: Sequence[tuple[_PackageCandidate, _PackageCandidate]],
         x_grid_mm: np.ndarray,
         y_grid_mm: np.ndarray,
+        x_coordinates_mm: np.ndarray,
+        y_coordinates_mm: np.ndarray,
     ) -> tuple[
+        np.ndarray,
         np.ndarray,
         tuple[tuple[str, str], ...],
         np.ndarray,
         np.ndarray,
         dict[tuple[str, str], tuple[np.ndarray, np.ndarray]],
     ]:
-        """Use confidence-weighted pair aggregation without contributor branches."""
+        """Blend local candidates using only present neighboring overlap regions."""
 
         candidate_numerator = np.zeros_like(x_grid_mm, dtype=np.float64)
+        candidate_magnitude_numerator = np.zeros_like(x_grid_mm, dtype=np.float64)
         candidate_denominator = np.zeros_like(x_grid_mm, dtype=np.float64)
         for candidate in candidates:
-            candidate_weight = candidate.support_confidence * candidate.activity_confidence
+            candidate_weight = (
+                candidate.support_confidence
+                * candidate.activity_confidence
+                * candidate.local_present
+            )
             candidate_numerator += candidate_weight * candidate.values
+            candidate_magnitude_numerator += candidate_weight * np.abs(candidate.values)
             candidate_denominator += candidate_weight
 
         pair_numerator = np.zeros_like(x_grid_mm, dtype=np.float64)
+        pair_magnitude_numerator = np.zeros_like(x_grid_mm, dtype=np.float64)
         pair_denominator = np.zeros_like(x_grid_mm, dtype=np.float64)
-        overlap_pairs: list[tuple[str, str]] = []
+        active_overlap_pairs: list[tuple[str, str]] = []
         pair_effective_weights: dict[tuple[str, str], tuple[np.ndarray, np.ndarray]] = {}
-        for first_index, first in enumerate(candidates):
-            for second in candidates[first_index + 1:]:
-                overlap = self._support_overlap(first, second)
-                if overlap is None:
-                    continue
-                overlap_pairs.append((first.package.sensor_id, second.package.sensor_id))
-                pair_values, effective_weights = self._pair_blend(
-                    first,
-                    second,
-                    overlap,
-                    x_grid_mm,
-                    y_grid_mm,
-                    include_effective_weights=self.debug,
-                )
-                if effective_weights is not None:
-                    pair_effective_weights[(first.package.sensor_id, second.package.sensor_id)] = effective_weights
-                pair_confidence = (
-                    first.support_confidence
-                    * second.support_confidence
-                    * min(first.activity_confidence, second.activity_confidence)
-                )
-                pair_numerator += pair_confidence * pair_values
-                pair_denominator += pair_confidence
+        for first, second in structural_candidate_pairs:
+            if not self._pair_is_sensor_relevant(first, second):
+                continue
+            overlap = self._support_overlap(first, second)
+            if overlap is None:
+                continue
+            y_slice, x_slice = overlap_bounds_to_slice(
+                overlap, x_coordinates_mm, y_coordinates_mm
+            )
+            region = np.s_[y_slice, x_slice]
+            if x_grid_mm[region].size == 0:
+                continue
+            pair_values, magnitude_pair_values, pair_present, effective_weights = self._pair_blend(
+                first,
+                second,
+                overlap,
+                x_grid_mm[region],
+                y_grid_mm[region],
+                region,
+                include_effective_weights=self.debug,
+            )
+            if not np.any(pair_present):
+                continue
+            pair_key = (first.package.sensor_id, second.package.sensor_id)
+            active_overlap_pairs.append(pair_key)
+            if effective_weights is not None:
+                pair_effective_weights[pair_key] = effective_weights
+            pair_confidence = (
+                first.support_confidence[region]
+                * second.support_confidence[region]
+                * min(first.activity_confidence, second.activity_confidence)
+                * pair_present
+            )
+            pair_numerator[region] += pair_confidence * pair_values
+            pair_magnitude_numerator[region] += pair_confidence * magnitude_pair_values
+            pair_denominator[region] += pair_confidence
 
         pressure_grid = np.zeros_like(x_grid_mm, dtype=np.float64)
+        magnitude_pressure_grid = np.zeros_like(x_grid_mm, dtype=np.float64)
         pair_valid = pair_denominator > PRESSURE_ARRAY_BLEND_EPSILON
         pressure_grid[pair_valid] = pair_numerator[pair_valid] / pair_denominator[pair_valid]
+        magnitude_pressure_grid[pair_valid] = (
+            pair_magnitude_numerator[pair_valid] / pair_denominator[pair_valid]
+        )
         candidate_valid = ~pair_valid & (candidate_denominator > PRESSURE_ARRAY_BLEND_EPSILON)
         pressure_grid[candidate_valid] = (
             candidate_numerator[candidate_valid] / candidate_denominator[candidate_valid]
         )
+        magnitude_pressure_grid[candidate_valid] = (
+            candidate_magnitude_numerator[candidate_valid] / candidate_denominator[candidate_valid]
+        )
         return (
             pressure_grid,
-            tuple(overlap_pairs),
+            magnitude_pressure_grid,
+            tuple(active_overlap_pairs),
             pair_denominator,
             candidate_denominator,
             pair_effective_weights,
+        )
+
+    def _eligible_neighbor_pairs(
+        self, candidates: Sequence[_PackageCandidate]
+    ) -> tuple[tuple[_PackageCandidate, _PackageCandidate], ...]:
+        """Enumerate only direct/diagonal grid neighbors in linear time."""
+
+        by_position = {candidate.package.grid_position: candidate for candidate in candidates}
+        pairs: list[tuple[_PackageCandidate, _PackageCandidate]] = []
+        # These four offsets cover each undirected eight-neighbor pair once.
+        for first in candidates:
+            row, col = first.package.grid_position
+            for row_delta, col_delta in ((0, 1), (1, -1), (1, 0), (1, 1)):
+                second = by_position.get((row + row_delta, col + col_delta))
+                if second is not None:
+                    pairs.append((first, second))
+        return tuple(pairs)
+
+    def _pair_is_sensor_relevant(
+        self, first: _PackageCandidate, second: _PackageCandidate
+    ) -> bool:
+        """Cheap bitmask prefilter before evaluating an overlap slice."""
+
+        first_row, first_col = first.package.grid_position
+        second_row, second_col = second.package.grid_position
+        row_delta = second_row - first_row
+        col_delta = second_col - first_col
+        first_facing = 0
+        second_facing = 0
+        if col_delta > 0:
+            first_facing |= ACTIVE_RIGHT
+            second_facing |= ACTIVE_LEFT
+        elif col_delta < 0:
+            first_facing |= ACTIVE_LEFT
+            second_facing |= ACTIVE_RIGHT
+        if row_delta > 0:
+            first_facing |= ACTIVE_BOTTOM
+            second_facing |= ACTIVE_TOP
+        elif row_delta < 0:
+            first_facing |= ACTIVE_TOP
+            second_facing |= ACTIVE_BOTTOM
+        first_mask = first.package.pressure_result.active_sensor_mask
+        second_mask = second.package.pressure_result.active_sensor_mask
+        return bool(
+            (first_mask & (ACTIVE_CENTER | first_facing))
+            or (second_mask & (ACTIVE_CENTER | second_facing))
         )
 
     def _support_overlap(self, first: _PackageCandidate, second: _PackageCandidate) -> tuple[float, float, float, float] | None:
@@ -418,9 +552,10 @@ class PressureMapArrayGenerator:
         overlap: tuple[float, float, float, float],
         x_grid_mm: np.ndarray,
         y_grid_mm: np.ndarray,
+        region: tuple[slice, slice],
         *,
         include_effective_weights: bool,
-    ) -> tuple[np.ndarray, tuple[np.ndarray, np.ndarray] | None]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, tuple[np.ndarray, np.ndarray] | None]:
         x0, x1, y0, y1 = overlap
         first_center_x, first_center_y = first.center
         second_center_x, second_center_y = second.center
@@ -459,19 +594,34 @@ class PressureMapArrayGenerator:
             area_blend = 3.0 * normalized_sum ** 2 - 2.0 * normalized_sum ** 3
             first_weight = area_blend * normalized_area + (1.0 - area_blend) * distance_weight
             second_weight = 1.0 - first_weight
-        effective_first = first_weight * first.activity_confidence
-        effective_second = second_weight * second.activity_confidence
-        normalizer = effective_first + effective_second
-        pair_values = np.zeros_like(first.values, dtype=np.float64)
-        valid = normalizer > PRESSURE_ARRAY_BLEND_EPSILON
-        pair_values[valid] = (
-            effective_first[valid] * first.values[valid]
-            + effective_second[valid] * second.values[valid]
-        ) / normalizer[valid]
+        first_values = first.values[region]
+        second_values = second.values[region]
+        first_present = first.local_present[region]
+        second_present = second.local_present[region]
+        only_first = first_present & ~second_present
+        only_second = second_present & ~first_present
+        both_present = first_present & second_present
+        pair_present = first_present | second_present
+        pair_values = np.zeros_like(first_values, dtype=np.float64)
+        magnitude_pair_values = np.zeros_like(first_values, dtype=np.float64)
+        pair_values[only_first] = first_values[only_first]
+        pair_values[only_second] = second_values[only_second]
+        magnitude_pair_values[only_first] = np.abs(first_values[only_first])
+        magnitude_pair_values[only_second] = np.abs(second_values[only_second])
+        pair_values[both_present] = (
+            first_weight[both_present] * first_values[both_present]
+            + second_weight[both_present] * second_values[both_present]
+        )
+        magnitude_pair_values[both_present] = (
+            first_weight[both_present] * np.abs(first_values[both_present])
+            + second_weight[both_present] * np.abs(second_values[both_present])
+        )
         if not include_effective_weights:
-            return pair_values, None
-        normalized_first = np.zeros_like(first.values, dtype=np.float64)
-        normalized_second = np.zeros_like(first.values, dtype=np.float64)
-        normalized_first[valid] = effective_first[valid] / normalizer[valid]
-        normalized_second[valid] = effective_second[valid] / normalizer[valid]
-        return pair_values, (normalized_first, normalized_second)
+            return pair_values, magnitude_pair_values, pair_present, None
+        applied_first = np.zeros_like(first_values, dtype=np.float64)
+        applied_second = np.zeros_like(first_values, dtype=np.float64)
+        applied_first[only_first] = 1.0
+        applied_second[only_second] = 1.0
+        applied_first[both_present] = first_weight[both_present]
+        applied_second[both_present] = second_weight[both_present]
+        return pair_values, magnitude_pair_values, pair_present, (applied_first, applied_second)

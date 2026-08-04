@@ -222,6 +222,125 @@ class PressureMapGeneratorTests(unittest.TestCase):
             self.assertEqual(result.quadrant_planes[0].peak_point, expected_point)
             self.assertGreater(float(result.quadrant_planes[0].peak_height), 4.0)
 
+    def test_isolated_outer_peak_has_equal_post_peak_axis_and_transverse_decay(self):
+        result = self.generator.generate({"C": 0.0, "R": 5.0, "T": 0.0, "L": 0.0, "B": 0.0})
+        peak_x = self.generator.sensor_spacing_mm + self.generator.near_outer_peak_offset_mm
+        delta = 0.5
+        along_axis = evaluate_pressure_map_result_at(
+            result,
+            np.asarray([peak_x + delta]),
+            np.asarray([0.0]),
+        )[0]
+        transverse = evaluate_pressure_map_result_at(
+            result,
+            np.asarray([peak_x]),
+            np.asarray([delta]),
+        )[0]
+
+        self.assertGreater(float(along_axis), 0.0)
+        self.assertGreater(float(transverse), 0.0)
+        self.assertAlmostEqual(float(along_axis), float(transverse), places=10)
+
+    def test_isolated_circular_model_preserves_all_signed_sensor_anchors(self):
+        for sensor, coordinates in self.generator.sensor_positions.items():
+            if sensor == "C":
+                continue
+            signals = {position: 0.0 for position in SHEAR_SENSOR_POSITIONS}
+            signals[sensor] = -0.56
+            result = self.generator.generate(signals)
+
+            center_value = evaluate_pressure_map_result_at(
+                result, np.asarray([0.0]), np.asarray([0.0])
+            )[0]
+            sensor_value = evaluate_pressure_map_result_at(
+                result,
+                np.asarray([coordinates[0]]),
+                np.asarray([coordinates[1]]),
+            )[0]
+            self.assertAlmostEqual(float(center_value), 0.0, places=10)
+            self.assertAlmostEqual(float(sensor_value), signals[sensor], places=10)
+            for other_sensor, other_coordinates in self.generator.sensor_positions.items():
+                if other_sensor in ("C", sensor):
+                    continue
+                other_value = evaluate_pressure_map_result_at(
+                    result,
+                    np.asarray([other_coordinates[0]]),
+                    np.asarray([other_coordinates[1]]),
+                )[0]
+                self.assertAlmostEqual(float(other_value), 0.0, places=10)
+
+    def test_isolated_peak_metadata_uses_actual_circular_peak_and_gain_cap(self):
+        generator = PressureMapGenerator(debug=True)
+        result = generator.generate({"C": 0.0, "R": 0.38, "T": 0.0, "L": 0.0, "B": 0.0})
+        measured = 0.38
+        peak = float(result.field_model.peak_height)
+
+        self.assertGreater(abs(peak), abs(measured))
+        self.assertEqual(np.sign(peak), np.sign(measured))
+        self.assertLessEqual(
+            float(result.diagnostics["isolated_actual_peak_gain"]),
+            generator.maximum_peak_gain + 1e-10,
+        )
+        self.assertTrue(result.diagnostics["isolated_gain_cap_satisfied"])
+        self.assertAlmostEqual(
+            float(result.diagnostics["isolated_actual_peak_value"]),
+            peak,
+            places=12,
+        )
+
+    def test_isolated_gain_cap_fallback_preserves_sensor_anchor(self):
+        generator = PressureMapGenerator(near_outer_peak_offset_mm=1.5, debug=True)
+        result = generator.generate({"C": 0.0, "R": 5.0, "T": 0.0, "L": 0.0, "B": 0.0})
+
+        sensor_value = evaluate_pressure_map_result_at(
+            result, np.asarray([generator.sensor_spacing_mm]), np.asarray([0.0])
+        )[0]
+        self.assertAlmostEqual(float(sensor_value), 5.0, places=10)
+        self.assertFalse(result.diagnostics["isolated_gain_cap_satisfied"])
+        self.assertGreater(float(result.diagnostics["isolated_actual_peak_gain"]), generator.maximum_peak_gain)
+
+    def test_isolated_model_is_rotationally_equivalent_for_all_outer_sensors(self):
+        generator = PressureMapGenerator()
+        right = generator.generate({"C": 0.0, "R": 1.01, "T": 0.0, "L": 0.0, "B": 0.0})
+        for sensor in ("L", "T", "B"):
+            signals = {position: 0.0 for position in SHEAR_SENSOR_POSITIONS}
+            signals[sensor] = 1.01
+            rotated = generator.generate(signals)
+            if sensor == "L":
+                expected = np.fliplr(right.pressure_grid)
+            elif sensor == "T":
+                expected = right.pressure_grid.T
+            else:
+                expected = np.flipud(right.pressure_grid.T)
+            np.testing.assert_allclose(rotated.pressure_grid, expected, rtol=1e-10, atol=1e-10)
+
+    def test_isolated_model_is_continuous_and_monotonic_on_active_axis(self):
+        generator = PressureMapGenerator()
+        result = generator.generate({"C": 0.0, "R": 5.0, "T": 0.0, "L": 0.0, "B": 0.0})
+        spacing = generator.sensor_spacing_mm
+        peak_axis = spacing + generator.near_outer_peak_offset_mm
+        epsilon = 1e-6
+        profile = evaluate_pressure_map_result_at(
+            result,
+            np.asarray([peak_axis - epsilon, peak_axis, peak_axis + epsilon]),
+            np.zeros(3),
+        )
+        self.assertLess(abs(float(profile[0] - profile[1])), 1e-4)
+        self.assertLess(abs(float(profile[2] - profile[1])), 1e-4)
+
+        increasing = evaluate_pressure_map_result_at(
+            result,
+            np.linspace(0.0, peak_axis, 32),
+            np.zeros(32),
+        )
+        decreasing = evaluate_pressure_map_result_at(
+            result,
+            np.linspace(peak_axis, result.support_bounds_mm[1] - 0.01, 32),
+            np.zeros(32),
+        )
+        self.assertTrue(np.all(np.diff(increasing) >= -1e-10))
+        self.assertTrue(np.all(np.diff(decreasing) <= 1e-10))
+
     def test_center_or_two_outer_sensors_do_not_use_isolated_outer_mode(self):
         center_active = self.generator.generate({"C": 1.0, "R": 5.0, "T": 0.0, "L": 0.0, "B": 0.0})
         two_outer_active = self.generator.generate({"C": 0.0, "R": 5.0, "T": 4.0, "L": 0.0, "B": 0.0})

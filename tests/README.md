@@ -439,6 +439,7 @@ Tests `PressureMapArrayGenerator`, the GUI-independent candidate-first pressure 
 - test_deprecated_gap_parameters_have_no_effect() — verifies historic gap tuning cannot affect the new algorithm.
 - test_candidates_are_zero_at_their_outer_support_boundaries() — verifies continuous maximum-support limits.
 - test_four_package_overlap_uses_logged_all_pairs_fallback() — verifies the explicit four-or-more contributor fallback.
+- test_isolated_outer_peak_has_equal_post_peak_axis_and_transverse_decay() — verifies the isolated inferred peak forms a rounded oval lobe with equal decay at equal world-space distances along and across the active axis.
 
 ### test_rosette_plotting.py
 

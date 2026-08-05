@@ -514,6 +514,86 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         self.assertTrue(harness.pressure_map_widget.outer_boundary_item.isVisible())
         self.assertIn("showing the previous valid frame", harness.log_messages[-1])
 
+    def test_single_package_refresh_reuses_the_generated_package_display(self):
+        harness = SignalIntegrationPanelHarness()
+        harness.pressure_map_widget = PressureMapWidget()
+        self.addCleanup(harness.pressure_map_widget.close)
+        harness.shear_noise_threshold_spin = DummySpinBox(0.0)
+        harness._latest_signal_integration_values_by_package = {
+            "PZT3": {"C": 2.0, "R": 1.0, "T": 0.0, "L": 0.0, "B": 0.0},
+        }
+        harness._latest_signal_integration_package_layout = [
+            {"sensor_id": "PZT3", "grid_position": (0, 0), "color_slot": 0},
+        ]
+
+        class CountingDetector:
+            def __init__(self):
+                self.real = ShearDetector()
+                self.calls = 0
+
+            def detect(self, values):
+                self.calls += 1
+                return self.real.detect(values)
+
+        class CountingCalculator:
+            def __init__(self):
+                self.real = NormalForceCalculator()
+                self.calls = 0
+
+            def compute(self, values):
+                self.calls += 1
+                return self.real.compute(values)
+
+        class CountingGenerator:
+            def __init__(self):
+                self.real = PressureMapGenerator()
+                self.calls = 0
+
+            def generate(self, values):
+                self.calls += 1
+                return self.real.generate(values)
+
+        harness.shear_detector = CountingDetector()
+        harness.normal_force_calculator = CountingCalculator()
+        harness.pressure_map_generator = CountingGenerator()
+        widget_calls = []
+        original_update = harness.pressure_map_widget.update_display
+
+        def capture_update(normal, pressure, shear):
+            widget_calls.append((normal, pressure, shear))
+            return original_update(normal, pressure, shear)
+
+        harness.pressure_map_widget.update_display = capture_update
+        harness._update_shear_visualization_from_latest()
+
+        self.assertEqual(harness.shear_detector.calls, 1)
+        self.assertEqual(harness.normal_force_calculator.calls, 1)
+        self.assertEqual(harness.pressure_map_generator.calls, 1)
+        self.assertEqual(len(widget_calls), 1)
+        normal, pressure, shear = widget_calls[0]
+        self.assertIs(harness._latest_normal_force_result, normal)
+        self.assertIs(harness._latest_pressure_map_result, pressure)
+        self.assertIs(harness._latest_shear_result, shear)
+
+    def test_no_package_display_uses_the_single_result_compatibility_path(self):
+        harness = SignalIntegrationPanelHarness()
+        harness.pressure_map_widget = PressureMapWidget()
+        self.addCleanup(harness.pressure_map_widget.close)
+        harness.normal_force_calculator = NormalForceCalculator()
+        harness.pressure_map_generator = PressureMapGenerator()
+        harness._latest_shear_result = ShearDetector().detect(
+            {"C": 2.0, "R": 1.0, "T": 0.0, "L": 0.0, "B": 0.0}
+        )
+
+        harness._update_pressure_map_from_latest()
+
+        self.assertIsNotNone(harness._latest_normal_force_result)
+        self.assertIsNotNone(harness._latest_pressure_map_result)
+        self.assertIs(
+            harness.pressure_map_widget.last_pressure_result,
+            harness._latest_pressure_map_result,
+        )
+
     def test_multi_package_force_mode_enabled_only_for_multiple_array_packages(self):
         harness = SignalIntegrationPanelHarness()
         harness.config = {"channel_selection_source": "array", "selected_array_sensors": ["PZT3", "PZT5"]}

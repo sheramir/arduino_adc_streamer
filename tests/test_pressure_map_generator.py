@@ -19,6 +19,7 @@ from constants.shear import (
 )
 from data_processing.pressure_map_generator import (
     DEFAULT_PRESSURE_SHOW_NEGATIVE,
+    PRESSURE_MAX_RADIUS_SEARCH_ITERATIONS,
     PRESSURE_PACKAGE_MODE_CENTER_PLUS_ONE_OUTER,
     PRESSURE_PACKAGE_MODE_CENTER_ONLY,
     PRESSURE_PACKAGE_MODE_ALL_INACTIVE,
@@ -30,6 +31,8 @@ from data_processing.pressure_map_generator import (
     PRESSURE_QUADRANT_MODE_SINGLE_AXIS_PEAKED,
     PressureMapGenerator,
     _natural_decay_reach,
+    _radius_search_tolerance_mm,
+    _smoothstep_fade_scalar,
     build_active_sensor_mask,
     evaluate_pressure_map_result_at,
     ray_square_exit_distance,
@@ -522,6 +525,89 @@ class PressureMapGeneratorTests(unittest.TestCase):
         self.assertGreater(float(values[0]), 0.0)
         self.assertEqual(float(values[1]), 0.0)
         self.assertEqual(float(values[2]), 0.0)
+
+    def test_scalar_smoothstep_matches_vectorized_compact_support(self):
+        for distance, reach in (
+            (0.0, 0.0),
+            (0.0, 1.0),
+            (-1.0, 1.0),
+            (0.5, 1.0),
+            (np.nextafter(1.0, 0.0), 1.0),
+            (1.0, 1.0),
+            (1.1, 1.0),
+            (np.inf, 1.0),
+            (1.0, np.inf),
+        ):
+            scalar = _smoothstep_fade_scalar(distance, reach)
+            vectorized = float(smoothstep_fade(distance, reach))
+            self.assertGreaterEqual(scalar, 0.0)
+            self.assertAlmostEqual(scalar, vectorized, places=15)
+
+    def test_radius_search_tolerance_tracks_aligned_resolution(self):
+        for pixels_per_mm, expected in ((2.0, 0.05), (4.0, 0.025), (8.0, 0.0125), (20.0, 0.005)):
+            geometry = PressureMapGeometry(
+                sensor_spacing_mm=2.0,
+                package_center_spacing_mm=8.0,
+                outer_boundary_reach_mm=2.0,
+                near_outer_peak_offset_mm=0.5,
+                pixels_per_mm=pixels_per_mm,
+            )
+            generator = PressureMapGenerator(geometry=geometry)
+            expected_tolerance = min(
+                0.05,
+                max(0.005, 0.1 * generator.geometry.aligned_cell_size_mm),
+            )
+            self.assertAlmostEqual(_radius_search_tolerance_mm(generator), expected_tolerance, places=12)
+            self.assertAlmostEqual(expected_tolerance, expected, places=12)
+
+    def test_circular_radius_searches_skip_or_stop_at_resolution_tolerance(self):
+        generator = PressureMapGenerator(natural_decay_reference_distance_mm=1.5)
+        balanced = generator.generate({"C": 4.0, "R": 4.0, "T": 0.0, "L": 0.0, "B": 0.0})
+        self.assertEqual(balanced.field_model.center_outer_fade_safe_search_iterations, 0)
+        self.assertEqual(balanced.field_model.center_outer_gain_cap_search_iterations, 0)
+
+        edge = generator.generate({"C": 0.1, "R": 1.0, "T": 0.0, "L": 0.0, "B": 0.0})
+        edge_model = edge.field_model
+        tolerance = _radius_search_tolerance_mm(edge_model)
+        for iterations in (
+            edge_model.center_outer_fade_safe_search_iterations,
+            edge_model.center_outer_gain_cap_search_iterations,
+        ):
+            self.assertGreater(iterations, 0)
+            self.assertLessEqual(iterations, PRESSURE_MAX_RADIUS_SEARCH_ITERATIONS)
+        peak_axis = edge_model.peak_point[0]
+        farthest_anchor = max(peak_axis, generator.sensor_spacing_mm - peak_axis)
+        self.assertLessEqual(
+            (edge_model.center_outer_geometric_maximum_radius_mm - farthest_anchor)
+            / 2 ** edge_model.center_outer_fade_safe_search_iterations,
+            tolerance,
+        )
+        initial_gain_radius = max(
+            edge_model.center_outer_fade_safe_minimum_radius_mm,
+            min(
+                max(edge_model.center_outer_natural_radius_mm, farthest_anchor),
+                edge_model.center_outer_geometric_maximum_radius_mm,
+            ),
+        )
+        self.assertLessEqual(
+            (edge_model.center_outer_geometric_maximum_radius_mm - initial_gain_radius)
+            / 2 ** edge_model.center_outer_gain_cap_search_iterations,
+            tolerance,
+        )
+
+        isolated = generator.generate({"C": 0.0, "R": 1.0, "T": 0.0, "L": 0.0, "B": 0.0})
+        isolated_model = isolated.field_model
+        isolated_iterations = isolated_model.isolated_gain_cap_search_iterations
+        self.assertGreater(isolated_iterations, 0)
+        self.assertLessEqual(isolated_iterations, PRESSURE_MAX_RADIUS_SEARCH_ITERATIONS)
+        peak_x, peak_y = isolated_model.peak_point
+        left, right, bottom, top = generator.support_bounds_mm
+        maximum_radius = min(peak_x - left, right - peak_x, peak_y - bottom, top - peak_y)
+        self.assertLessEqual(
+            (maximum_radius - generator.geometry.near_outer_peak_offset_mm)
+            / 2 ** isolated_iterations,
+            _radius_search_tolerance_mm(isolated_model),
+        )
 
     def test_center_outer_fade_safe_radius_preserves_imbalanced_anchors(self):
         generator = PressureMapGenerator(natural_decay_reference_distance_mm=1.5, debug=True)

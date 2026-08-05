@@ -2509,6 +2509,13 @@ class PressureMapPanelMixin:
             self._update_pressure_map_from_latest()
             return
 
+        # The package-display builder owns the complete package pipeline,
+        # including shear detection.  Reusing it avoids an otherwise unused
+        # preliminary single-package shear result.
+        if package_id is not None:
+            self._update_pressure_map_from_latest()
+            return
+
         calibrated_values = self._calibrate_signal_integration_values_for_shear(latest_values, package_id)
         shear_result = self.shear_detector.detect(calibrated_values)
         self._update_pressure_map_from_latest(shear_result)
@@ -2526,12 +2533,6 @@ class PressureMapPanelMixin:
             if pending_shear_result is not None
             else self._latest_shear_result
         )
-        if shear_result is None:
-            self._latest_normal_force_result = None
-            self._latest_pressure_map_result = None
-            self.pressure_map_widget.update_display(None, None, None)
-            return
-
         try:
             package_displays = self._build_pressure_map_package_displays()
             if len(package_displays) > 1:
@@ -2546,6 +2547,24 @@ class PressureMapPanelMixin:
                 self._latest_shear_result = first_package.shear_result
                 self._latest_normal_force_result = first_package.normal_force_result
                 self._latest_pressure_map_result = first_package.pressure_result
+                return
+
+            if len(package_displays) == 1:
+                package = package_displays[0]
+                self.pressure_map_widget.update_display(
+                    package.normal_force_result,
+                    package.pressure_result,
+                    package.shear_result,
+                )
+                self._latest_shear_result = package.shear_result
+                self._latest_normal_force_result = package.normal_force_result
+                self._latest_pressure_map_result = package.pressure_result
+                return
+
+            if shear_result is None:
+                self._latest_normal_force_result = None
+                self._latest_pressure_map_result = None
+                self.pressure_map_widget.update_display(None, None, None)
                 return
 
             normal_force_result = self.normal_force_calculator.compute(

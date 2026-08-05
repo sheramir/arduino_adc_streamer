@@ -58,6 +58,10 @@ from data_processing.pressure_map_geometry import PressureMapGeometry
 
 PRESSURE_GEOMETRY_EPSILON = 0.001
 PRESSURE_NUMERIC_EPSILON = 1e-14
+PRESSURE_RADIUS_SEARCH_TOLERANCE_FRACTION = 0.1
+PRESSURE_RADIUS_SEARCH_TOLERANCE_MIN_MM = 0.005
+PRESSURE_RADIUS_SEARCH_TOLERANCE_MAX_MM = 0.05
+PRESSURE_MAX_RADIUS_SEARCH_ITERATIONS = 32
 
 PRESSURE_PACKAGE_MODE_ALL_INACTIVE = "all-inactive"
 PRESSURE_PACKAGE_MODE_CENTER_ONLY = "center-only"
@@ -139,6 +143,20 @@ def smoothstep_fade(distance: np.ndarray | float, reach: np.ndarray | float) -> 
     result[valid] = one_minus_t ** 2 * (1.0 + 2.0 * t[valid])
     result[distance_array >= reach_array] = 0.0
     return result
+
+
+def _smoothstep_fade_scalar(distance: float, reach: float) -> float:
+    """Return the scalar equivalent of :func:`smoothstep_fade`."""
+
+    distance = float(distance)
+    reach = float(reach)
+    if np.isnan(distance) or np.isnan(reach):
+        return 0.0
+    if reach <= PRESSURE_NUMERIC_EPSILON or distance >= reach:
+        return 0.0
+    t = min(1.0, max(0.0, distance / reach))
+    result = (1.0 - t) ** 2 * (1.0 + 2.0 * t)
+    return float(result) if np.isfinite(result) and result >= 0.0 else 0.0
 
 
 def ray_square_exit_distance(
@@ -260,6 +278,7 @@ class PressureFieldModel:
     isolated_measured_sensor_value: float | None = None
     isolated_actual_peak_gain: float | None = None
     isolated_gain_cap_satisfied: bool | None = None
+    isolated_gain_cap_search_iterations: int | None = None
     center_outer_circular_radius_mm: float | None = None
     center_outer_center_scale: float | None = None
     center_outer_outer_scale: float | None = None
@@ -270,6 +289,8 @@ class PressureFieldModel:
     center_outer_geometric_maximum_radius_mm: float | None = None
     center_outer_center_factor: float | None = None
     center_outer_outer_factor: float | None = None
+    center_outer_fade_safe_search_iterations: int | None = None
+    center_outer_gain_cap_search_iterations: int | None = None
     center_outer_used_fallback: bool = False
 
     def signal(self, sensor: str) -> float:
@@ -587,6 +608,7 @@ class PressureMapGenerator:
                     "isolated_actual_peak_value": model.peak_height,
                     "isolated_actual_peak_gain": model.isolated_actual_peak_gain,
                     "isolated_gain_cap_satisfied": model.isolated_gain_cap_satisfied,
+                    "isolated_gain_cap_search_iterations": model.isolated_gain_cap_search_iterations,
                 }
             )
         if (
@@ -614,6 +636,8 @@ class PressureMapGenerator:
                     "center_outer_geometric_maximum_radius_mm": model.center_outer_geometric_maximum_radius_mm,
                     "center_outer_center_factor": model.center_outer_center_factor,
                     "center_outer_outer_factor": model.center_outer_outer_factor,
+                    "center_outer_fade_safe_search_iterations": model.center_outer_fade_safe_search_iterations,
+                    "center_outer_gain_cap_search_iterations": model.center_outer_gain_cap_search_iterations,
                     "center_outer_used_fallback": model.center_outer_used_fallback,
                     "center_outer_extension_decay_factors_applicable": False,
                 }
@@ -748,7 +772,14 @@ class PressureMapGenerator:
             active_axis_sensor=axis_sensor, peak_point=peak_point, peak_height=peak_height,
         )
         if package_mode == PRESSURE_PACKAGE_MODE_ISOLATED_OUTER:
-            radius, measured_value, inferred_peak_value, actual_gain, cap_satisfied = (
+            (
+                radius,
+                measured_value,
+                inferred_peak_value,
+                actual_gain,
+                cap_satisfied,
+                gain_cap_search_iterations,
+            ) = (
                 _isolated_circular_profile(model, self.support_bounds_mm)
             )
             plane = replace(
@@ -764,6 +795,7 @@ class PressureMapGenerator:
                 isolated_measured_sensor_value=measured_value,
                 isolated_actual_peak_gain=actual_gain,
                 isolated_gain_cap_satisfied=cap_satisfied,
+                isolated_gain_cap_search_iterations=gain_cap_search_iterations,
             )
         elif (
             package_mode == PRESSURE_PACKAGE_MODE_CENTER_PLUS_ONE_OUTER
@@ -796,6 +828,8 @@ class PressureMapGenerator:
                     center_outer_geometric_maximum_radius_mm=profile.geometric_maximum_radius,
                     center_outer_center_factor=profile.center_factor,
                     center_outer_outer_factor=profile.outer_factor,
+                    center_outer_fade_safe_search_iterations=profile.fade_safe_search_iterations,
+                    center_outer_gain_cap_search_iterations=profile.gain_cap_search_iterations,
                 )
         return model
 
@@ -1129,47 +1163,54 @@ def _natural_decay_reach(strength: np.ndarray, model: PressureFieldModel | Press
     return np.clip(np.where(normalized <= 1.0, low_reach, high_reach), minimum, maximum)
 
 
+def _radius_search_tolerance_mm(model: PressureFieldModel | PressureMapGenerator) -> float:
+    """Return the resolution-aware scalar radius-search tolerance."""
+
+    return float(np.clip(
+        PRESSURE_RADIUS_SEARCH_TOLERANCE_FRACTION * model.geometry.aligned_cell_size_mm,
+        PRESSURE_RADIUS_SEARCH_TOLERANCE_MIN_MM,
+        PRESSURE_RADIUS_SEARCH_TOLERANCE_MAX_MM,
+    ))
+
+
 def _minimum_radius_for_gain_cap(
+    model: PressureFieldModel,
     offset: float,
     maximum_peak_gain: float,
     maximum_radius: float,
-) -> float:
+) -> tuple[float, int]:
     """Find the smallest circular radius that satisfies the peak-gain cap."""
 
     epsilon = PRESSURE_NUMERIC_EPSILON
     if maximum_radius <= offset + epsilon or maximum_peak_gain <= 1.0 + epsilon:
-        return maximum_radius
+        return maximum_radius, 0
     target_factor = 1.0 / float(maximum_peak_gain)
-    high_factor = float(
-        smoothstep_fade(
-            np.asarray(offset, dtype=np.float64),
-            np.asarray(maximum_radius, dtype=np.float64),
-        )
-    )
+    high_factor = _smoothstep_fade_scalar(offset, maximum_radius)
     if high_factor < target_factor:
-        return maximum_radius
+        return maximum_radius, 0
 
     low = offset + epsilon
     high = maximum_radius
-    for _ in range(32):
+    tolerance = _radius_search_tolerance_mm(model)
+    iterations = 0
+    while (
+        high - low > tolerance
+        and iterations < PRESSURE_MAX_RADIUS_SEARCH_ITERATIONS
+    ):
         midpoint = (low + high) / 2.0
-        midpoint_factor = float(
-            smoothstep_fade(
-                np.asarray(offset, dtype=np.float64),
-                np.asarray(midpoint, dtype=np.float64),
-            )
-        )
+        midpoint_factor = _smoothstep_fade_scalar(offset, midpoint)
         if midpoint_factor >= target_factor:
             high = midpoint
         else:
             low = midpoint
-    return high
+        iterations += 1
+    return high, iterations
 
 
 def _isolated_circular_radius(
     model: PressureFieldModel,
     support_bounds: tuple[float, float, float, float],
-) -> tuple[float, bool]:
+) -> tuple[float, bool, int]:
     """Return the support-limited circular radius and gain-cap status."""
 
     sensor = model.active_axis_sensor
@@ -1193,21 +1234,18 @@ def _isolated_circular_radius(
     natural_radius = float(
         _natural_decay_reach(np.asarray(measured_value, dtype=np.float64), model)
     )
-    required_radius = _minimum_radius_for_gain_cap(
-        offset,
-        float(model.maximum_peak_gain),
-        boundary_radius,
-    )
-    radius = min(
-        max(natural_radius, required_radius),
-        boundary_radius,
-    )
-    sensor_factor = float(
-        smoothstep_fade(
-            np.asarray(offset, dtype=np.float64),
-            np.asarray(radius, dtype=np.float64),
+    radius = min(max(natural_radius, np.nextafter(offset, np.inf)), boundary_radius)
+    sensor_factor = _smoothstep_fade_scalar(offset, radius)
+    target_factor = 1.0 / float(model.maximum_peak_gain)
+    gain_cap_search_iterations = 0
+    if sensor_factor < target_factor:
+        radius, gain_cap_search_iterations = _minimum_radius_for_gain_cap(
+            model,
+            offset,
+            float(model.maximum_peak_gain),
+            boundary_radius,
         )
-    )
+        sensor_factor = _smoothstep_fade_scalar(offset, radius)
     if sensor_factor <= PRESSURE_NUMERIC_EPSILON:
         raise ValueError(
             "isolated circular lobe cannot preserve the active sensor value "
@@ -1215,27 +1253,24 @@ def _isolated_circular_radius(
         )
     actual_gain = 1.0 / sensor_factor
     cap_satisfied = actual_gain <= float(model.maximum_peak_gain) + 1e-10
-    return radius, cap_satisfied
+    return radius, cap_satisfied, gain_cap_search_iterations
 
 
 def _isolated_circular_profile(
     model: PressureFieldModel,
     support_bounds: tuple[float, float, float, float],
-) -> tuple[float, float, float, float, bool]:
+) -> tuple[float, float, float, float, bool, int]:
     """Return radius, measured value, inferred peak, gain, and cap status."""
 
-    radius, cap_satisfied = _isolated_circular_radius(model, support_bounds)
+    radius, cap_satisfied, gain_cap_search_iterations = _isolated_circular_radius(
+        model, support_bounds
+    )
     sensor = model.active_axis_sensor
     if sensor is None:
         raise ValueError("isolated circular lobe requires an active outer sensor")
     measured_value = float(model.signal(sensor))
     offset = float(model.geometry.near_outer_peak_offset_mm)
-    sensor_factor = float(
-        smoothstep_fade(
-            np.asarray(offset, dtype=np.float64),
-            np.asarray(radius, dtype=np.float64),
-        )
-    )
+    sensor_factor = _smoothstep_fade_scalar(offset, radius)
     if sensor_factor <= PRESSURE_NUMERIC_EPSILON:
         raise ValueError(
             "isolated circular lobe cannot preserve the active sensor value "
@@ -1243,7 +1278,14 @@ def _isolated_circular_profile(
         )
     inferred_peak_value = measured_value / sensor_factor
     actual_gain = abs(inferred_peak_value / measured_value) if measured_value else 0.0
-    return radius, measured_value, inferred_peak_value, actual_gain, cap_satisfied
+    return (
+        radius,
+        measured_value,
+        inferred_peak_value,
+        actual_gain,
+        cap_satisfied,
+        gain_cap_search_iterations,
+    )
 
 
 def _axis_distance_from_peak_point(
@@ -1277,6 +1319,8 @@ class _CenterOuterCircularProfile:
     geometric_maximum_radius: float
     center_factor: float
     outer_factor: float
+    fade_safe_search_iterations: int
+    gain_cap_search_iterations: int
 
 
 def _center_outer_circular_profile(
@@ -1317,32 +1361,47 @@ def _center_outer_circular_profile(
 
     def anchor_factors(candidate_radius: float) -> tuple[float, float]:
         return (
-            float(smoothstep_fade(distance_to_center, candidate_radius)),
-            float(smoothstep_fade(distance_to_outer, candidate_radius)),
+            _smoothstep_fade_scalar(distance_to_center, candidate_radius),
+            _smoothstep_fade_scalar(distance_to_outer, candidate_radius),
         )
 
     maximum_center_factor, maximum_outer_factor = anchor_factors(maximum_radius)
     if min(maximum_center_factor, maximum_outer_factor) <= PRESSURE_NUMERIC_EPSILON:
         return None
 
-    # A radius merely one numerical epsilon beyond the farther anchor remains
-    # too close to the cubic endpoint to provide a usable factor.  Find the
-    # smallest representable radius that does instead.
-    low = farthest_anchor_distance
-    high = maximum_radius
-    for _ in range(48):
-        midpoint = (low + high) / 2.0
-        if min(anchor_factors(midpoint)) > PRESSURE_NUMERIC_EPSILON:
-            high = midpoint
-        else:
-            low = midpoint
-    fade_safe_minimum_radius = high
-
     anchor_strength = max(abs(center), abs(outer))
     natural_radius = float(
         _natural_decay_reach(np.asarray(anchor_strength, dtype=np.float64), model)
     )
-    radius = float(np.clip(natural_radius, fade_safe_minimum_radius, maximum_radius))
+    natural_candidate = float(np.clip(
+        natural_radius,
+        farthest_anchor_distance,
+        maximum_radius,
+    ))
+    natural_center_factor, natural_outer_factor = anchor_factors(natural_candidate)
+    fade_safe_search_iterations = 0
+    if min(natural_center_factor, natural_outer_factor) > PRESSURE_NUMERIC_EPSILON:
+        fade_safe_minimum_radius = natural_candidate
+    else:
+        # Search only when the natural candidate is too close to the compact
+        # support endpoint, returning the known-valid high side.
+        low = farthest_anchor_distance
+        high = maximum_radius
+        tolerance = _radius_search_tolerance_mm(model)
+        iterations = 0
+        while (
+            high - low > tolerance
+            and iterations < PRESSURE_MAX_RADIUS_SEARCH_ITERATIONS
+        ):
+            midpoint = (low + high) / 2.0
+            if min(anchor_factors(midpoint)) > PRESSURE_NUMERIC_EPSILON:
+                high = midpoint
+            else:
+                low = midpoint
+            iterations += 1
+        fade_safe_minimum_radius = high
+        fade_safe_search_iterations = iterations
+    radius = max(natural_candidate, fade_safe_minimum_radius)
     if not np.isfinite(radius):
         return None
 
@@ -1375,19 +1434,27 @@ def _center_outer_circular_profile(
     initial_profile = profile_at(radius)
     if initial_profile is None:
         return None
+    gain_cap_search_iterations = 0
     if initial_profile[-1] > model.maximum_peak_gain + 1e-10:
         maximum_profile = profile_at(maximum_radius)
         if maximum_profile is not None and maximum_profile[-1] <= model.maximum_peak_gain + 1e-10:
             low = radius
             high = maximum_radius
-            for _ in range(32):
+            tolerance = _radius_search_tolerance_mm(model)
+            iterations = 0
+            while (
+                high - low > tolerance
+                and iterations < PRESSURE_MAX_RADIUS_SEARCH_ITERATIONS
+            ):
                 midpoint = (low + high) / 2.0
                 midpoint_profile = profile_at(midpoint)
                 if midpoint_profile is not None and midpoint_profile[-1] <= model.maximum_peak_gain:
                     high = midpoint
                 else:
                     low = midpoint
+                iterations += 1
             radius = high
+            gain_cap_search_iterations = iterations
         else:
             radius = maximum_radius
 
@@ -1412,6 +1479,8 @@ def _center_outer_circular_profile(
         geometric_maximum_radius=maximum_radius,
         center_factor=center_factor,
         outer_factor=outer_factor,
+        fade_safe_search_iterations=fade_safe_search_iterations,
+        gain_cap_search_iterations=gain_cap_search_iterations,
     )
 
 
@@ -1731,7 +1800,7 @@ def _evaluate_isolated_model(model: PressureFieldModel, x_values: np.ndarray, y_
     radius = model.isolated_circular_radius_mm
     inferred_peak_value = model.peak_height
     if radius is None or inferred_peak_value is None:
-        radius, _measured, inferred_peak_value, _gain, _cap = _isolated_circular_profile(
+        radius, _measured, inferred_peak_value, _gain, _cap, _iterations = _isolated_circular_profile(
             model, support_bounds
         )
     u, v = _axis_coordinates(sensor, x_values, y_values)

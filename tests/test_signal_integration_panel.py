@@ -5,6 +5,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 
@@ -25,6 +26,7 @@ from constants.pressure_map import (
     SIGNAL_INTEGRATION_DISABLED_HPF_CUTOFF_HZ,
 )
 from constants.shear import SHEAR_SENSOR_POSITIONS
+from config.pressure_map_mask_config import MaskConfigStore
 from data_processing.adc_filter_engine import ADCFilterEngine
 from data_processing.normal_force_calculator import NormalForceCalculator
 from data_processing.pressure_map_array_generator import PressureMapArrayGenerator
@@ -1062,6 +1064,100 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             self.assertFalse(harness.signal_integration_update_timer.isActive())
         finally:
             tab.close()
+
+    def _install_mask_store(self, harness, temp_dir: Path) -> MaskConfigStore:
+        bundled_dir = temp_dir / "bundled_masks"
+        bundled_dir.mkdir()
+        (bundled_dir / "Bundle.json").write_text(
+            json.dumps({"name": "Bundle", "points_mm": [[-2, -2], [2, -2], [0, 2]]}),
+            encoding="utf-8",
+        )
+        store = MaskConfigStore(
+            file_path=temp_dir / "user_masks" / "mask_library.json",
+            bundled_masks_path=bundled_dir,
+        )
+        harness.pressure_map_mask_store = store
+        harness._reload_pressure_map_mask_selector()
+        return store
+
+    def test_pressure_map_mask_controls_populate_and_imported_mask_is_selectable(self):
+        harness = SignalIntegrationPanelHarness()
+        with tempfile.TemporaryDirectory() as raw_temp_dir:
+            temp_dir = Path(raw_temp_dir)
+            harness._last_shear_settings_path = temp_dir / "last_settings.json"
+            tab = harness.create_signal_integration_tab()
+            try:
+                store = self._install_mask_store(harness, temp_dir)
+                names = [harness.pressure_map_mask_name_combo.itemText(index)
+                         for index in range(harness.pressure_map_mask_name_combo.count())]
+                self.assertEqual(names, ["None", "Bundle"])
+
+                source_file = temp_dir / "Imported.json"
+                source_file.write_text(
+                    json.dumps({"name": "Imported", "points_mm": [[0, 0], [3, 0], [0, 3]]}),
+                    encoding="utf-8",
+                )
+                with patch(
+                    "gui.signal_integration_panel.QFileDialog.getOpenFileName",
+                    return_value=(str(source_file), "Mask JSON Files (*.json)"),
+                ):
+                    harness.on_import_pressure_map_mask_clicked()
+
+                self.assertEqual(harness.pressure_map_mask_name_combo.currentText(), "Imported")
+                self.assertIn("Imported", harness.pressure_map_masks_by_name)
+                self.assertFalse(harness.pressure_map_mask_enabled_check.isChecked())
+                self.assertEqual([mask.name for mask in store.load()], ["Bundle", "Imported"])
+            finally:
+                tab.close()
+
+    def test_pressure_map_mask_settings_round_trip_and_legacy_fallback_apply_once(self):
+        harness = SignalIntegrationPanelHarness()
+        with tempfile.TemporaryDirectory() as raw_temp_dir:
+            temp_dir = Path(raw_temp_dir)
+            settings_path = temp_dir / "settings.json"
+            harness._last_shear_settings_path = temp_dir / "last_settings.json"
+            tab = harness.create_signal_integration_tab()
+            try:
+                self._install_mask_store(harness, temp_dir)
+                harness.pressure_map_mask_name_combo.setCurrentText("Bundle")
+                harness.pressure_map_mask_enabled_check.setChecked(True)
+                harness.save_shear_settings_to_path(settings_path, log_message=False)
+                payload = json.loads(settings_path.read_text(encoding="utf-8"))
+                pressure_map = payload["shear_settings"]["pressure_map"]
+                self.assertTrue(pressure_map["mask_enabled"])
+                self.assertEqual(pressure_map["mask_name"], "Bundle")
+
+                original_configure = harness.pressure_map_widget.configure_mask
+                configure_calls = []
+
+                def record_configure(**kwargs):
+                    configure_calls.append(kwargs)
+                    return original_configure(**kwargs)
+
+                harness.pressure_map_widget.configure_mask = record_configure
+                harness.pressure_map_mask_enabled_check.setChecked(False)
+                harness.pressure_map_mask_name_combo.setCurrentText("None")
+                configure_calls.clear()
+                self.assertTrue(harness.load_shear_settings_from_path(settings_path, log_message=False))
+                self.assertTrue(harness.pressure_map_mask_enabled_check.isChecked())
+                self.assertEqual(harness.pressure_map_mask_name_combo.currentText(), "Bundle")
+                self.assertEqual(len(configure_calls), 1)
+
+                pressure_map.pop("mask_enabled")
+                pressure_map.pop("mask_name")
+                settings_path.write_text(json.dumps(payload), encoding="utf-8")
+                self.assertTrue(harness.load_shear_settings_from_path(settings_path, log_message=False))
+                self.assertFalse(harness.pressure_map_mask_enabled_check.isChecked())
+                self.assertEqual(harness.pressure_map_mask_name_combo.currentText(), "None")
+
+                pressure_map["mask_enabled"] = True
+                pressure_map["mask_name"] = "Missing"
+                settings_path.write_text(json.dumps(payload), encoding="utf-8")
+                self.assertTrue(harness.load_shear_settings_from_path(settings_path, log_message=False))
+                self.assertFalse(harness.pressure_map_mask_enabled_check.isChecked())
+                self.assertEqual(harness.pressure_map_mask_name_combo.currentText(), "None")
+            finally:
+                tab.close()
 
 
 if __name__ == "__main__":

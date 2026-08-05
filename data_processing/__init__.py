@@ -32,6 +32,7 @@ from data_processing.pressure_map_array_generator import (
     PressureMapArrayPackage,
     PressureMapArrayResult,
 )
+from data_processing.pressure_map_mask import PressureMapMaskGeometry, mask_inside_grid
 from data_processing.shear_detector import ShearDetector, ShearResult
 from data_processing.signal_integrator import SignalIntegrator
 from data_processing.signal_integration_processor import SignalIntegrationProcessorMixin
@@ -74,6 +75,8 @@ __all__ = [
     'PressureMapArrayGenerator',
     'PressureMapArrayPackage',
     'PressureMapArrayResult',
+    'PressureMapMaskGeometry',
+    'mask_inside_grid',
     'ShearDetector',
     'ShearResult',
     'SignalIntegrator',

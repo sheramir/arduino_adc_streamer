@@ -3,6 +3,7 @@
 import os
 import unittest
 from dataclasses import replace
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -19,6 +20,7 @@ from constants.pressure_map import (
 )
 from data_processing.normal_force_calculator import NormalForceCalculator
 from data_processing.pressure_map_array_generator import PressureMapArrayGenerator, PressureMapArrayPackage
+from data_processing.pressure_map_mask import mask_inside_grid
 from data_processing.pressure_map_generator import PressureMapGenerator
 from data_processing.shear_detector import ShearDetector
 from gui.pressure_map_widget import (
@@ -847,6 +849,121 @@ class PressureMapWidgetTests(unittest.TestCase):
             rtol=1e-7,
             atol=1e-7,
         )
+
+
+class PressureMapMaskWidgetTests(unittest.TestCase):
+    """Verify array-only alpha masking and its reusable polygon overlay."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        self.widget = PressureMapWidget()
+        self.calculator = NormalForceCalculator()
+        self.generator = PressureMapGenerator()
+
+    def tearDown(self):
+        self.widget.close()
+
+    def _array_frame(self):
+        first_normal = self.calculator.compute({"C": 0.0, "L": 0.0, "R": 4.0, "T": 0.0, "B": 0.0})
+        second_normal = self.calculator.compute({"C": 0.0, "L": 2.0, "R": 0.0, "T": 0.0, "B": 0.0})
+        first_pressure = self.generator.generate(first_normal.normalized)
+        second_pressure = self.generator.generate(second_normal.normalized)
+        packages = [
+            PressureMapPackageDisplay("PZT1", first_normal, first_pressure, grid_position=(0, 0)),
+            PressureMapPackageDisplay("PZT2", second_normal, second_pressure, grid_position=(0, 1)),
+        ]
+        array_result = PressureMapArrayGenerator().generate([
+            PressureMapArrayPackage(package.sensor_id, package.grid_position, package.normal_force_result, package.pressure_result)
+            for package in packages
+        ])
+        return packages, array_result
+
+    def test_mask_alpha_preserves_inside_floor_fade_and_backend_grid(self):
+        packages, array_result = self._array_frame()
+        points = ((-2.0, -4.0), (2.0, -4.0), (2.0, 4.0), (-2.0, 4.0))
+        original_grid = array_result.pressure_grid.copy()
+        self.widget.configure_mask(mask_enabled=True, mask_points_mm=points)
+        visibility_mask, _ = self.widget._array_visibility_mask(array_result)
+        grid = self.widget._array_display_grid(array_result)
+        levels = self.widget._pressure_levels(packages[0].normal_force_result, grid)
+
+        unmasked = self.widget._rgba_image(grid, levels)
+        masked = self.widget._rgba_image(grid, levels, visibility_mask=visibility_mask)
+
+        self.assertTrue(np.all(masked[..., 3][~visibility_mask] == 0))
+        np.testing.assert_array_equal(masked[..., 3][visibility_mask], unmasked[..., 3][visibility_mask])
+        np.testing.assert_array_equal(array_result.pressure_grid, original_grid)
+
+    def test_mask_cache_reuses_identical_grid_and_invalidates_resolution(self):
+        _packages, array_result = self._array_frame()
+        self.widget.configure_mask(
+            mask_enabled=True,
+            mask_points_mm=((-2.0, -4.0), (2.0, -4.0), (2.0, 4.0), (-2.0, 4.0)),
+        )
+        with patch("gui.pressure_map_widget.mask_inside_grid", wraps=mask_inside_grid) as rasterize:
+            first_mask, _ = self.widget._array_visibility_mask(array_result)
+            second_mask, _ = self.widget._array_visibility_mask(array_result)
+            self.assertIs(first_mask, second_mask)
+            self.assertEqual(rasterize.call_count, 1)
+
+            x_coords = np.linspace(
+                array_result.x_coordinates_mm[0], array_result.x_coordinates_mm[-1], array_result.x_coordinates_mm.size + 2,
+            )
+            y_coords = np.linspace(
+                array_result.y_coordinates_mm[0], array_result.y_coordinates_mm[-1], array_result.y_coordinates_mm.size + 2,
+            )
+            x_grid, y_grid = np.meshgrid(x_coords, y_coords)
+            resized = replace(
+                array_result,
+                pressure_grid=np.zeros_like(x_grid),
+                magnitude_pressure_grid=np.zeros_like(x_grid),
+                x_coordinates_mm=x_coords,
+                y_coordinates_mm=y_coords,
+                x_grid_mm=x_grid,
+                y_grid_mm=y_grid,
+                cell_size_x_mm=float(x_coords[1] - x_coords[0]),
+                cell_size_y_mm=float(y_coords[1] - y_coords[0]),
+                actual_pixels_per_mm=array_result.actual_pixels_per_mm * 2.0,
+            )
+            self.widget._array_visibility_mask(resized)
+            self.assertEqual(rasterize.call_count, 2)
+
+    def test_mask_mirrors_with_image_and_outline_and_hides_outside_array_mode(self):
+        packages, array_result = self._array_frame()
+        points = ((-2.0, -4.0), (2.0, -4.0), (2.0, 4.0), (-2.0, 4.0))
+        self.widget.configure_mask(mask_enabled=True, mask_points_mm=points)
+        self.widget.update_array_display(array_result, packages)
+
+        outline = self.widget.mask_outline_item
+        self.assertTrue(outline.isVisible())
+        self.assertEqual(outline.brush().style(), Qt.BrushStyle.NoBrush)
+        self.assertTrue(outline.pen().isCosmetic())
+        original_x = [outline.polygon().at(index).x() for index in range(outline.polygon().count())]
+        self.widget.configure_mirror(mirror=True)
+        mirrored_x = [outline.polygon().at(index).x() for index in range(outline.polygon().count())]
+        np.testing.assert_allclose(mirrored_x, -np.asarray(original_x))
+
+        self.widget.update_package_displays(packages)
+        self.assertFalse(outline.isVisible())
+        self.widget.update_display(packages[0].normal_force_result, packages[0].pressure_result)
+        self.assertFalse(outline.isVisible())
+        self.widget.update_display(None, None)
+        self.assertFalse(outline.isVisible())
+
+    def test_disabled_mask_uses_original_rgba_image(self):
+        grid = np.asarray([[0.0, 1.0], [0.5, 0.75]])
+        points = ((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))
+        visible = np.asarray([[True, False], [True, False]])
+        self.widget.configure_mask(mask_enabled=True, mask_points_mm=points)
+        cropped = self.widget._rgba_image(grid, (0.0, 1.0), visibility_mask=visible)
+        self.widget.configure_mask(mask_enabled=False)
+        restored = self.widget._rgba_image(grid, (0.0, 1.0))
+
+        self.assertTrue(np.any(cropped[..., 3] != restored[..., 3]))
+        np.testing.assert_array_equal(restored, self.widget._rgba_image(grid, (0.0, 1.0)))
 
 
 if __name__ == "__main__":

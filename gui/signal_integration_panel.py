@@ -35,6 +35,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QFileDialog,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QTabWidget,
@@ -53,6 +54,7 @@ from constants.sensor_config import (
     SENSOR_POLARITY_NORMAL_MULTIPLIER,
     SENSOR_POLARITY_REVERSED_MULTIPLIER,
 )
+from config.pressure_map_mask_config import MaskConfigStore
 from config.sensor_config import normalize_array_cell
 from constants.ui import PRESSURE_MAP_TAB_NAME
 from constants.pressure_map import (
@@ -79,6 +81,8 @@ from constants.pressure_map import (
     PRESSURE_DISPLAY_MODE_SIGNED,
     DEFAULT_PRESSURE_MAP_MAX_INTENSITY,
     DEFAULT_PRESSURE_MIRROR,
+    DEFAULT_PRESSURE_MASK_ENABLED,
+    DEFAULT_PRESSURE_MASK_NAME,
     DEFAULT_PRESSURE_SENSOR_SPACING_MM,
     DEFAULT_DISPLAY_WINDOW_SEC,
     DEFAULT_HPF_CUTOFF_HZ,
@@ -233,6 +237,10 @@ class PressureMapPanelMixin:
         """
         self._shear_settings_loading = False
         self._shear_autosave_enabled = True
+        self.pressure_map_mask_store = MaskConfigStore()
+        self.pressure_map_masks = []
+        self.pressure_map_masks_by_name = {}
+        self._load_pressure_map_masks()
 
         tab = QWidget()
         tab.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -479,6 +487,7 @@ class PressureMapPanelMixin:
         display_layout.addWidget(self.pressure_map_widget, stretch=PRESSURE_MAP_STRETCH)
         settings_layout.addWidget(self._create_shear_visualization_settings_group())
         settings_layout.addWidget(self._create_pressure_map_settings_group())
+        settings_layout.addWidget(self._create_pressure_map_mask_settings_group())
         settings_layout.addWidget(self._create_pressure_map_color_scale_settings_group())
         settings_layout.addWidget(self._create_pressure_package_gain_settings_group())
         settings_layout.addStretch()
@@ -760,6 +769,138 @@ class PressureMapPanelMixin:
         actions.addWidget(self.shear_load_settings_btn)
         actions.addStretch()
         return actions
+
+    def _load_pressure_map_masks(self) -> None:
+        """Load the bundled/user mask library without exposing duplicate names."""
+
+        store = getattr(self, "pressure_map_mask_store", None)
+        if store is None:
+            self.pressure_map_masks = []
+            self.pressure_map_masks_by_name = {}
+            return
+        try:
+            masks = store.load()
+        except Exception as exc:
+            masks = []
+            if hasattr(self, "log_status"):
+                self.log_status(f"Warning: could not load pressure-map masks: {exc}")
+        lookup = {}
+        for mask in masks:
+            lookup.setdefault(mask.name, mask)
+        self.pressure_map_masks = list(lookup.values())
+        self.pressure_map_masks_by_name = lookup
+
+    def _reload_pressure_map_mask_selector(self, preferred_name: str | None = None) -> str:
+        """Refresh the selector while retaining a valid requested selection."""
+
+        combo = getattr(self, "pressure_map_mask_name_combo", None)
+        current_name = (
+            str(combo.currentText())
+            if preferred_name is None and combo is not None and hasattr(combo, "currentText")
+            else str(preferred_name or DEFAULT_PRESSURE_MASK_NAME)
+        )
+        self._load_pressure_map_masks()
+        if combo is None or not all(hasattr(combo, method) for method in ("clear", "addItem", "setCurrentText")):
+            return current_name if current_name in self.pressure_map_masks_by_name else DEFAULT_PRESSURE_MASK_NAME
+
+        previous_signal_state = combo.blockSignals(True) if hasattr(combo, "blockSignals") else None
+        try:
+            combo.clear()
+            combo.addItem(DEFAULT_PRESSURE_MASK_NAME)
+            for mask in self.pressure_map_masks:
+                if mask.name != DEFAULT_PRESSURE_MASK_NAME:
+                    combo.addItem(mask.name)
+            selected_name = (
+                current_name
+                if current_name in self.pressure_map_masks_by_name
+                else DEFAULT_PRESSURE_MASK_NAME
+            )
+            combo.setCurrentText(selected_name)
+        finally:
+            if previous_signal_state is not None:
+                combo.blockSignals(previous_signal_state)
+        return selected_name
+
+    def _create_pressure_map_mask_settings_group(self) -> QGroupBox:
+        """Build the array-only visual pressure-map crop controls."""
+
+        group = QGroupBox("Pressure Map Mask")
+        layout = QGridLayout(group)
+        layout.setHorizontalSpacing(SHEAR_SETTINGS_HORIZONTAL_SPACING_PX)
+        layout.setVerticalSpacing(SHEAR_SETTINGS_VERTICAL_SPACING_PX)
+
+        self.pressure_map_mask_enabled_check = QCheckBox("Enable mask")
+        self.pressure_map_mask_enabled_check.setChecked(
+            bool(getattr(self, "pressure_map_mask_enabled", DEFAULT_PRESSURE_MASK_ENABLED))
+        )
+        self.pressure_map_mask_enabled_check.setToolTip(
+            "Display only the combined multi-package pressure image inside the selected polygon."
+        )
+        self.pressure_map_mask_enabled_check.toggled.connect(self.on_pressure_mask_settings_changed)
+        layout.addWidget(self.pressure_map_mask_enabled_check, 0, 0)
+
+        layout.addWidget(QLabel("Mask:"), 0, 1)
+        self.pressure_map_mask_name_combo = QComboBox()
+        self.pressure_map_mask_name_combo.setToolTip(
+            "Select a bundled or imported world-space pressure-map mask."
+        )
+        self._reload_pressure_map_mask_selector(
+            str(getattr(self, "pressure_map_mask_name", DEFAULT_PRESSURE_MASK_NAME))
+        )
+        self.pressure_map_mask_name_combo.currentTextChanged.connect(self.on_pressure_mask_settings_changed)
+        layout.addWidget(self.pressure_map_mask_name_combo, 0, 2)
+
+        self.pressure_map_mask_import_btn = QPushButton("Import Mask...")
+        self.pressure_map_mask_import_btn.setToolTip("Import a pressure-map polygon from a JSON file.")
+        self.pressure_map_mask_import_btn.clicked.connect(self.on_import_pressure_map_mask_clicked)
+        layout.addWidget(self.pressure_map_mask_import_btn, 0, 3)
+        layout.setColumnStretch(2, 1)
+        return group
+
+    def on_pressure_mask_settings_changed(self, _value: object | None = None) -> None:
+        """Apply the current mask selection through the widget display refresh path."""
+
+        selected_name = self._combo_text("pressure_map_mask_name_combo", DEFAULT_PRESSURE_MASK_NAME)
+        geometry = getattr(self, "pressure_map_masks_by_name", {}).get(selected_name)
+        enabled = self._check_bool("pressure_map_mask_enabled_check", DEFAULT_PRESSURE_MASK_ENABLED)
+        self.pressure_map_mask_enabled = enabled
+        self.pressure_map_mask_name = selected_name
+        widget = getattr(self, "pressure_map_widget", None)
+        if widget is not None and hasattr(widget, "configure_mask"):
+            widget.configure_mask(
+                mask_enabled=bool(enabled and geometry is not None),
+                mask_points_mm=geometry.points_mm if geometry is not None else (),
+            )
+        self.save_last_shear_settings()
+
+    def on_import_pressure_map_mask_clicked(self) -> None:
+        """Import one standalone mask JSON file and make it immediately selectable."""
+
+        store = getattr(self, "pressure_map_mask_store", None)
+        if store is None:
+            return
+        default_dir = store.file_path.parent
+        default_dir.mkdir(parents=True, exist_ok=True)
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Import Pressure Map Mask",
+            str(default_dir),
+            "Mask JSON Files (*.json);;All Files (*)",
+        )
+        if not file_path:
+            return
+        try:
+            imported_name = store.import_file(file_path)
+            self._reload_pressure_map_mask_selector(imported_name)
+            self.on_pressure_mask_settings_changed()
+        except Exception as exc:
+            if hasattr(self, "log_status"):
+                self.log_status(f"ERROR: failed to import pressure-map mask - {exc}")
+            QMessageBox.critical(
+                self,
+                "Import Pressure Map Mask",
+                f"Could not import the pressure-map mask:\n{exc}",
+            )
 
     def _create_pressure_map_settings_group(self) -> QGroupBox:
         """Build persistent Pressure Map geometry and rendering controls.
@@ -1360,6 +1501,14 @@ class PressureMapPanelMixin:
                     "pressure_show_mid_boundary_check",
                     DEFAULT_PRESSURE_SHOW_MID_BOUNDARY,
                 ),
+                "mask_enabled": self._check_bool(
+                    "pressure_map_mask_enabled_check",
+                    DEFAULT_PRESSURE_MASK_ENABLED,
+                ),
+                "mask_name": self._combo_text(
+                    "pressure_map_mask_name_combo",
+                    DEFAULT_PRESSURE_MASK_NAME,
+                ),
             },
         }
 
@@ -1717,6 +1866,7 @@ class PressureMapPanelMixin:
             pressure_map,
             "show_mid_boundary",
         )
+        changed |= self._restore_pressure_map_mask_settings(pressure_map)
         for widget_name, key, default in (
             (
                 "pressure_show_near_outer_boundary_check",
@@ -1762,6 +1912,41 @@ class PressureMapPanelMixin:
             self.on_shear_processing_settings_changed()
             self.on_shear_visualization_settings_changed()
             self.on_pressure_map_settings_changed()
+            self.on_pressure_mask_settings_changed()
+        return changed
+
+    def _restore_pressure_map_mask_settings(self, pressure_map: dict) -> bool:
+        """Restore mask state once, safely disabling a no-longer-available name."""
+
+        enabled_check = getattr(self, "pressure_map_mask_enabled_check", None)
+        name_combo = getattr(self, "pressure_map_mask_name_combo", None)
+        if enabled_check is None or name_combo is None:
+            return False
+
+        self._reload_pressure_map_mask_selector()
+        requested_name = str(pressure_map.get("mask_name", DEFAULT_PRESSURE_MASK_NAME)).strip()
+        selected_name = (
+            requested_name
+            if requested_name in getattr(self, "pressure_map_masks_by_name", {})
+            else DEFAULT_PRESSURE_MASK_NAME
+        )
+        requested_enabled = bool(pressure_map.get("mask_enabled", DEFAULT_PRESSURE_MASK_ENABLED))
+        effective_enabled = bool(requested_enabled and selected_name != DEFAULT_PRESSURE_MASK_NAME)
+        changed = (
+            bool(enabled_check.isChecked()) != effective_enabled
+            or str(name_combo.currentText()) != selected_name
+        )
+
+        check_signal_state = enabled_check.blockSignals(True) if hasattr(enabled_check, "blockSignals") else None
+        combo_signal_state = name_combo.blockSignals(True) if hasattr(name_combo, "blockSignals") else None
+        try:
+            enabled_check.setChecked(effective_enabled)
+            name_combo.setCurrentText(selected_name)
+        finally:
+            if check_signal_state is not None:
+                enabled_check.blockSignals(check_signal_state)
+            if combo_signal_state is not None:
+                name_combo.blockSignals(combo_signal_state)
         return changed
 
     def _settings_section(self, settings: dict, section_name: str) -> dict:

@@ -7,6 +7,7 @@ ADC configuration and MCU detection.
 from .mcu_detector import MCUDetectorMixin
 from .config_handlers import ConfigurationMixin
 from .sensor_config import SensorConfigStore
+from .pressure_map_mask_config import MaskConfigStore
 from .adc_configuration_service import ADCConfigurationService
 from .adc_configuration_runner import ADCConfigurationRunner
 from .mcu_profile import MCUProfile, resolve_mcu_profile
@@ -40,6 +41,7 @@ __all__ = [
     'MCUDetectorMixin',
     'ConfigurationMixin',
     'SensorConfigStore',
+    'MaskConfigStore',
     'ADCConfigurationService',
     'ADCConfigurationRunner',
     'MCUProfile',

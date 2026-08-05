@@ -31,6 +31,8 @@ from PyQt6.QtWidgets import (
 )
 
 from constants.pressure_map import (
+    DEFAULT_PRESSURE_MASK_COLOR,
+    DEFAULT_PRESSURE_MASK_ENABLED,
     DEFAULT_PRESSURE_MAP_MAX_INTENSITY,
     DEFAULT_PRESSURE_DISPLAY_FLOOR_HIGH,
     DEFAULT_PRESSURE_DISPLAY_FLOOR_LOW,
@@ -48,6 +50,7 @@ from constants.pressure_map import (
     PRESSURE_MAP_LEVEL_EPSILON,
     PRESSURE_MAP_LEVEL_SCALE_ALL_SENSORS,
     PRESSURE_MAP_LEVEL_SCALE_SINGLE_SENSOR,
+    PRESSURE_MAP_MASK_OUTLINE_Z,
     PRESSURE_MAP_MAX_INTENSITY_MIN,
     PRESSURE_MAP_OVERLAY_COLOR,
     PRESSURE_MAP_PACKAGE_COLORS,
@@ -67,6 +70,7 @@ from constants.pressure_map import (
     PRESSURE_MAP_WIDGET_MIN_HEIGHT_PX,
     PRESSURE_MAP_ZERO_LEVEL_MAX,
     PRESSURE_MAP_ZERO_LEVEL_MIN,
+    PRESSURE_MASK_OUTLINE_WIDTH_PX,
     PRESSURE_SUPPORT_SIDE_COUNT,
 )
 from constants.shear import (
@@ -96,6 +100,7 @@ from constants.shear import (
 )
 from data_processing.normal_force_calculator import NormalForceResult
 from data_processing.pressure_map_array_generator import PressureMapArrayResult
+from data_processing.pressure_map_mask import PressureMapMaskGeometry, mask_inside_grid
 from data_processing.pressure_map_generator import PressureMapResult
 from data_processing.shear_detector import ShearResult
 from gui.shear_visualization_widget import ShearArrowGeometry
@@ -237,6 +242,12 @@ class PressureMapWidget(QWidget):
         self.debug_backend_maximum = 0.0
         self.debug_saturation_mask: np.ndarray | None = None
         self.mirror = bool(DEFAULT_PRESSURE_MIRROR)
+        # Masking is an array-rendering-only alpha crop.  The source pressure
+        # grids and every downstream calculation remain untouched.
+        self.mask_enabled = bool(DEFAULT_PRESSURE_MASK_ENABLED)
+        self.mask_points_mm: tuple[tuple[float, float], ...] = ()
+        self.mask_color = DEFAULT_PRESSURE_MASK_COLOR
+        self._mask_grid_cache: tuple[tuple[object, ...], np.ndarray] | None = None
         self.color_scale = "Grayscale"
         self.display_mode = PRESSURE_DISPLAY_MODE_MAGNITUDE
         self._color_maps: dict[str, pg.ColorMap] = {}
@@ -262,6 +273,13 @@ class PressureMapWidget(QWidget):
         self.image_item.setZValue(PRESSURE_MAP_IMAGE_Z)
         self.image_item.setLookupTable(self._color_lookup_table())
         self.plot_widget.addItem(self.image_item)
+
+        self.mask_outline_item = QGraphicsPolygonItem()
+        self.mask_outline_item.setZValue(PRESSURE_MAP_MASK_OUTLINE_Z)
+        self.mask_outline_item.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        self.plot_widget.addItem(self.mask_outline_item)
+        self._style_mask_outline()
+        self._hide_mask_outline()
 
         self.circle_item: QGraphicsEllipseItem | QGraphicsRectItem | None = None
         self.outer_boundary_item: QGraphicsRectItem | None = None
@@ -406,6 +424,44 @@ class PressureMapWidget(QWidget):
             self._invalidate_view_range()
             self._refresh_cached_display()
 
+    def configure_mask(
+        self,
+        *,
+        mask_enabled: bool | None = None,
+        mask_points_mm: tuple[tuple[float, float], ...] | list[tuple[float, float]] | None = None,
+        mask_color: str | None = None,
+    ) -> None:
+        """Configure the display-only polygon crop used for array images."""
+
+        changed = False
+        if mask_enabled is not None:
+            updated_enabled = bool(mask_enabled)
+            if updated_enabled != self.mask_enabled:
+                self.mask_enabled = updated_enabled
+                changed = True
+
+        if mask_points_mm is not None:
+            raw_points = tuple(mask_points_mm)
+            updated_points = (
+                PressureMapMaskGeometry("mask", raw_points).points_mm
+                if raw_points
+                else ()
+            )
+            if updated_points != self.mask_points_mm:
+                self.mask_points_mm = updated_points
+                self._mask_grid_cache = None
+                changed = True
+
+        if mask_color is not None:
+            updated_color = str(mask_color)
+            if updated_color != self.mask_color:
+                self.mask_color = updated_color
+                self._style_mask_outline()
+                changed = True
+
+        if changed:
+            self._refresh_cached_display()
+
     def configure_display_mode(self, *, display_mode: str | None = None) -> None:
         """Choose magnitude (default) or signed pressure rendering only."""
         if display_mode not in (PRESSURE_DISPLAY_MODE_MAGNITUDE, PRESSURE_DISPLAY_MODE_SIGNED):
@@ -465,6 +521,7 @@ class PressureMapWidget(QWidget):
             "single" if normal_force_result is not None and pressure_result is not None else "empty"
         )
         self._clear_package_items()
+        self._hide_mask_outline()
         self.image_item.show()
         self.last_normal_force_result = normal_force_result
         self.last_pressure_result = pressure_result
@@ -489,6 +546,7 @@ class PressureMapWidget(QWidget):
         """Render multiple array sensor packages in their configured grid cells."""
         self._set_view_mode("packages" if packages else "empty")
         self._clear_dynamic_items(clear_image=False)
+        self._hide_mask_outline()
         self.image_item.hide()
         self.last_package_displays = list(packages)
         self.last_array_result = None
@@ -566,6 +624,7 @@ class PressureMapWidget(QWidget):
         self.last_shear_result = first_package.shear_result
         self._ensure_package_item_count(len(packages))
         self._update_array_image(array_result, packages)
+        self._update_mask_outline(array_result)
 
         for image_item in self.package_image_items:
             image_item.hide()
@@ -606,6 +665,7 @@ class PressureMapWidget(QWidget):
         self.sensor_marker_item.setData([])
         self.peak_marker_item.setData([])
         self._hide_arrow()
+        self._hide_mask_outline()
         if self.circle_item is not None:
             self.circle_item.setVisible(False)
         if self.outer_boundary_item is not None:
@@ -656,8 +716,11 @@ class PressureMapWidget(QWidget):
     ) -> None:
         level_source = packages[0].normal_force_result
         grid = self._array_display_grid(array_result)
+        visibility_mask, mask_cache_key = self._array_visibility_mask(array_result)
         if self.mirror:
             grid = np.fliplr(grid)
+            if visibility_mask is not None:
+                visibility_mask = np.fliplr(visibility_mask)
         levels = self._pressure_levels(level_source, grid)
         rect = _rect_tuple(image_rect_from_centers(
             array_result.x_coordinates_mm,
@@ -670,7 +733,8 @@ class PressureMapWidget(QWidget):
             grid,
             levels,
             rect,
-            cache_key=self._image_cache_key(array_result.frame_id),
+            cache_key=(*self._image_cache_key(array_result.frame_id), mask_cache_key),
+            visibility_mask=visibility_mask,
         )
         self.saturated_pixel_percentage = self._saturated_pixel_percentage(
             grid
@@ -687,9 +751,10 @@ class PressureMapWidget(QWidget):
         rect: tuple[float, float, float, float],
         *,
         cache_key: tuple[object, ...],
+        visibility_mask: np.ndarray | None = None,
     ) -> _PressureMapImageCache:
         if cache is None or cache.cache_key != cache_key or cache.levels != levels:
-            rgba = self._rgba_image(pressure_grid, levels)
+            rgba = self._rgba_image(pressure_grid, levels, visibility_mask=visibility_mask)
             image_item.setImage(
                 np.transpose(rgba, (1, 0, 2)),
                 autoLevels=False,
@@ -709,7 +774,13 @@ class PressureMapWidget(QWidget):
             self.max_intensity, self.display_floor_low, self.display_floor_high,
         )
 
-    def _rgba_image(self, pressure_grid: np.ndarray, levels: tuple[float, float]) -> np.ndarray:
+    def _rgba_image(
+        self,
+        pressure_grid: np.ndarray,
+        levels: tuple[float, float],
+        *,
+        visibility_mask: np.ndarray | None = None,
+    ) -> np.ndarray:
         """Map the display grid to RGBA with a magnitude-based smooth alpha."""
 
         lower, upper = levels
@@ -732,7 +803,72 @@ class PressureMapWidget(QWidget):
         alpha_t = np.clip((magnitude - fade_low) / (fade_high - fade_low), 0.0, 1.0)
         alpha = 3.0 * alpha_t ** 2 - 2.0 * alpha_t ** 3
         rgba[..., 3] = np.rint(rgba[..., 3].astype(np.float64) * alpha).astype(np.uint8)
+        if visibility_mask is not None:
+            visible = np.asarray(visibility_mask, dtype=bool)
+            if visible.shape != pressure_grid.shape:
+                raise ValueError("pressure-map visibility mask shape must match the pressure grid")
+            rgba[..., 3] = np.where(visible, rgba[..., 3], 0).astype(np.uint8)
         return rgba
+
+    def _array_visibility_mask(
+        self,
+        array_result: PressureMapArrayResult,
+    ) -> tuple[np.ndarray | None, tuple[object, ...]]:
+        """Return the cached world-space mask for the current array raster."""
+
+        if not self.mask_enabled or not self.mask_points_mm:
+            return None, ("mask-disabled",)
+
+        x_grid = np.asarray(array_result.x_grid_mm, dtype=np.float64)
+        y_grid = np.asarray(array_result.y_grid_mm, dtype=np.float64)
+        if x_grid.shape != y_grid.shape:
+            raise ValueError("array pressure-map coordinate grids must have matching shapes")
+        if x_grid.shape != array_result.pressure_grid.shape:
+            raise ValueError("array pressure-map coordinate grid must match pressure-grid shape")
+
+        cache_key = (
+            "mask",
+            self.mask_points_mm,
+            x_grid.shape,
+            float(np.nanmin(x_grid)),
+            float(np.nanmax(x_grid)),
+            float(np.nanmin(y_grid)),
+            float(np.nanmax(y_grid)),
+            float(array_result.cell_size_x_mm),
+            float(array_result.cell_size_y_mm),
+            float(array_result.actual_pixels_per_mm),
+        )
+        if self._mask_grid_cache is not None and self._mask_grid_cache[0] == cache_key:
+            return self._mask_grid_cache[1], cache_key
+
+        visibility_mask = mask_inside_grid(self.mask_points_mm, x_grid, y_grid)
+        self._mask_grid_cache = (cache_key, visibility_mask)
+        return visibility_mask, cache_key
+
+    def _style_mask_outline(self) -> None:
+        pen = QPen(QColor(self.mask_color))
+        pen.setStyle(Qt.PenStyle.SolidLine)
+        pen.setWidthF(float(PRESSURE_MASK_OUTLINE_WIDTH_PX))
+        pen.setCosmetic(True)
+        self.mask_outline_item.setPen(pen)
+        self.mask_outline_item.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+
+    def _update_mask_outline(self, array_result: PressureMapArrayResult) -> None:
+        """Update the one reusable polygon overlay for the active array view."""
+
+        _ = array_result  # The mask is already expressed in array world coordinates.
+        if not self.mask_enabled or not self.mask_points_mm or self._view_mode != "array":
+            self._hide_mask_outline()
+            return
+        self._style_mask_outline()
+        self.mask_outline_item.setPolygon(QPolygonF([
+            QPointF(self._mirror_x(x_coord), y_coord)
+            for x_coord, y_coord in self.mask_points_mm
+        ]))
+        self.mask_outline_item.setVisible(True)
+
+    def _hide_mask_outline(self) -> None:
+        self.mask_outline_item.setVisible(False)
 
     def _saturated_pixel_percentage(self, pressure_grid: np.ndarray) -> float:
         if self.max_intensity <= PRESSURE_MAP_LEVEL_EPSILON:

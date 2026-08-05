@@ -64,14 +64,17 @@ from constants.pressure_map import (
     DEFAULT_PRESSURE_SHOW_NEAR_OUTER_BOUNDARY,
     DEFAULT_PRESSURE_SHOW_OUTER_BOUNDARY,
     DEFAULT_PRESSURE_SHOW_MARKER,
-    DEFAULT_PRESSURE_PEAK_HEIGHT_REFERENCE_DISTANCE_MM,
-    DEFAULT_PRESSURE_PEAK_HEIGHT_DECAY_RATE,
+    DEFAULT_PRESSURE_PEAK_GAIN_SLOPE_PER_MM,
     DEFAULT_PRESSURE_MAXIMUM_PEAK_GAIN,
     DEFAULT_PRESSURE_NATURAL_DECAY_REFERENCE_DISTANCE_MM,
     DEFAULT_PRESSURE_DECAY_AMPLITUDE_REFERENCE,
     DEFAULT_PRESSURE_MINIMUM_DECAY_REACH_MM,
     DEFAULT_PRESSURE_MAXIMUM_DECAY_REACH_MM,
     DEFAULT_PRESSURE_SIGNAL_ACTIVITY_THRESHOLD,
+    PRESSURE_PEAK_GAIN_SLOPE_DECIMALS,
+    PRESSURE_PEAK_GAIN_SLOPE_MAX_PER_MM,
+    PRESSURE_PEAK_GAIN_SLOPE_MIN_PER_MM,
+    PRESSURE_PEAK_GAIN_SLOPE_STEP_PER_MM,
     PRESSURE_DISPLAY_MODE_MAGNITUDE,
     PRESSURE_DISPLAY_MODE_SIGNED,
     DEFAULT_PRESSURE_MAP_MAX_INTENSITY,
@@ -885,8 +888,20 @@ class PressureMapPanelMixin:
         self.pressure_display_mode_combo.currentTextChanged.connect(self.on_pressure_map_settings_changed)
         layout.addWidget(self.pressure_display_mode_combo, 2, 3)
 
-        self._add_pressure_shape_spin(layout, "Peak ref:", "pressure_peak_height_reference_distance_spin", DEFAULT_PRESSURE_PEAK_HEIGHT_REFERENCE_DISTANCE_MM, 2, 4, "Peak-height reference distance (mm).")
-        self._add_pressure_shape_spin(layout, "Peak rate:", "pressure_peak_height_decay_rate_spin", DEFAULT_PRESSURE_PEAK_HEIGHT_DECAY_RATE, 2, 6, "Peak-height extrapolation rate.")
+        self._add_pressure_shape_spin(
+            layout,
+            "Peak gain slope:",
+            "pressure_peak_gain_slope_spin",
+            DEFAULT_PRESSURE_PEAK_GAIN_SLOPE_PER_MM,
+            2,
+            4,
+            "Additional inferred peak gain per millimetre from a sensor anchor.",
+            suffix=" /mm",
+            minimum=PRESSURE_PEAK_GAIN_SLOPE_MIN_PER_MM,
+            maximum=PRESSURE_PEAK_GAIN_SLOPE_MAX_PER_MM,
+            decimals=PRESSURE_PEAK_GAIN_SLOPE_DECIMALS,
+            step=PRESSURE_PEAK_GAIN_SLOPE_STEP_PER_MM,
+        )
         self._add_pressure_shape_spin(layout, "Peak gain cap:", "pressure_maximum_peak_gain_spin", DEFAULT_PRESSURE_MAXIMUM_PEAK_GAIN, 3, 0, "Maximum inferred peak gain.")
         self._add_pressure_shape_spin(layout, "Natural reach:", "pressure_natural_decay_reference_distance_spin", DEFAULT_PRESSURE_NATURAL_DECAY_REFERENCE_DISTANCE_MM, 3, 2, "Natural spatial decay reach (mm) at the amplitude reference.")
         self._add_pressure_shape_spin(layout, "Decay amplitude ref:", "pressure_decay_amplitude_reference_spin", DEFAULT_PRESSURE_DECAY_AMPLITUDE_REFERENCE, 3, 4, "Representative integrated-signal magnitude for the reference decay reach.")
@@ -935,13 +950,29 @@ class PressureMapPanelMixin:
 
         return group
 
-    def _add_pressure_shape_spin(self, layout, label, attribute, value, row, column, tooltip):
+    def _add_pressure_shape_spin(
+        self,
+        layout,
+        label,
+        attribute,
+        value,
+        row,
+        column,
+        tooltip,
+        *,
+        suffix="",
+        minimum=0.0,
+        maximum=1_000_000.0,
+        decimals=6,
+        step=0.05,
+    ):
         layout.addWidget(self._create_tooltip_label(label, tooltip), row, column)
         spin = QDoubleSpinBox()
         spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
-        spin.setRange(0.0, 1_000_000.0)
-        spin.setDecimals(6)
-        spin.setSingleStep(0.05)
+        spin.setRange(minimum, maximum)
+        spin.setDecimals(decimals)
+        spin.setSingleStep(step)
+        spin.setSuffix(suffix)
         spin.setValue(value)
         spin.setToolTip(tooltip)
         spin.valueChanged.connect(self.on_pressure_map_settings_changed)
@@ -1280,8 +1311,7 @@ class PressureMapPanelMixin:
                     "pressure_pixels_per_mm_spin",
                     DEFAULT_PRESSURE_PIXELS_PER_MM,
                 ),
-                "peak_height_reference_distance_mm": self._spin_float("pressure_peak_height_reference_distance_spin", DEFAULT_PRESSURE_PEAK_HEIGHT_REFERENCE_DISTANCE_MM),
-                "peak_height_decay_rate": self._spin_float("pressure_peak_height_decay_rate_spin", DEFAULT_PRESSURE_PEAK_HEIGHT_DECAY_RATE),
+                "peak_gain_slope_per_mm": self._spin_float("pressure_peak_gain_slope_spin", DEFAULT_PRESSURE_PEAK_GAIN_SLOPE_PER_MM),
                 "maximum_peak_gain": self._spin_float("pressure_maximum_peak_gain_spin", DEFAULT_PRESSURE_MAXIMUM_PEAK_GAIN),
                 "natural_decay_reference_distance_mm": self._spin_float("pressure_natural_decay_reference_distance_spin", DEFAULT_PRESSURE_NATURAL_DECAY_REFERENCE_DISTANCE_MM),
                 "decay_amplitude_reference": self._spin_float("pressure_decay_amplitude_reference_spin", DEFAULT_PRESSURE_DECAY_AMPLITUDE_REFERENCE),
@@ -1637,8 +1667,7 @@ class PressureMapPanelMixin:
             float,
         )
         for widget_name, key, default in (
-            ("pressure_peak_height_reference_distance_spin", "peak_height_reference_distance_mm", DEFAULT_PRESSURE_PEAK_HEIGHT_REFERENCE_DISTANCE_MM),
-            ("pressure_peak_height_decay_rate_spin", "peak_height_decay_rate", DEFAULT_PRESSURE_PEAK_HEIGHT_DECAY_RATE),
+            ("pressure_peak_gain_slope_spin", "peak_gain_slope_per_mm", DEFAULT_PRESSURE_PEAK_GAIN_SLOPE_PER_MM),
             ("pressure_maximum_peak_gain_spin", "maximum_peak_gain", DEFAULT_PRESSURE_MAXIMUM_PEAK_GAIN),
             ("pressure_natural_decay_reference_distance_spin", "natural_decay_reference_distance_mm", pressure_map.get("decay_ref_distance_mm", DEFAULT_PRESSURE_NATURAL_DECAY_REFERENCE_DISTANCE_MM)),
             ("pressure_decay_amplitude_reference_spin", "decay_amplitude_reference", DEFAULT_PRESSURE_DECAY_AMPLITUDE_REFERENCE),
@@ -2034,8 +2063,7 @@ class PressureMapPanelMixin:
             )
             self.pressure_map_generator = PressureMapGenerator(
                 geometry=self.pressure_map_geometry,
-                peak_height_reference_distance_mm=self._spin_float("pressure_peak_height_reference_distance_spin", DEFAULT_PRESSURE_PEAK_HEIGHT_REFERENCE_DISTANCE_MM),
-                peak_height_decay_rate=self._spin_float("pressure_peak_height_decay_rate_spin", DEFAULT_PRESSURE_PEAK_HEIGHT_DECAY_RATE),
+                peak_gain_slope_per_mm=self._spin_float("pressure_peak_gain_slope_spin", DEFAULT_PRESSURE_PEAK_GAIN_SLOPE_PER_MM),
                 maximum_peak_gain=self._spin_float("pressure_maximum_peak_gain_spin", DEFAULT_PRESSURE_MAXIMUM_PEAK_GAIN),
                 natural_decay_reference_distance_mm=self._spin_float("pressure_natural_decay_reference_distance_spin", DEFAULT_PRESSURE_NATURAL_DECAY_REFERENCE_DISTANCE_MM),
                 decay_amplitude_reference=self._spin_float("pressure_decay_amplitude_reference_spin", DEFAULT_PRESSURE_DECAY_AMPLITUDE_REFERENCE),

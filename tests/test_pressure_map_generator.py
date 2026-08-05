@@ -8,6 +8,7 @@ from constants.pressure_map import (
     ACTIVE_CENTER,
     ACTIVE_RIGHT,
     DEFAULT_PRESSURE_SENSOR_SPACING_MM,
+    DEFAULT_PRESSURE_PEAK_GAIN_SLOPE_PER_MM,
     PRESSURE_ACTIVE_QUADRANTS,
     PRESSURE_QUADRANT_BOTTOM_LEFT,
     PRESSURE_QUADRANT_BOTTOM_RIGHT,
@@ -525,6 +526,39 @@ class PressureMapGeneratorTests(unittest.TestCase):
         self.assertGreater(float(values[0]), 0.0)
         self.assertEqual(float(values[1]), 0.0)
         self.assertEqual(float(values[2]), 0.0)
+
+    def test_peak_gain_slope_is_the_only_peak_extrapolation_parameter(self):
+        generator = PressureMapGenerator(
+            peak_gain_slope_per_mm=0.3,
+            maximum_peak_gain=100.0,
+        )
+        signals = {"C": 4.0, "R": 8.0, "T": 2.0, "L": 0.0, "B": 0.0}
+        quadrant = generator.quadrants[0]
+        peak_x, peak_y = generator._pressure_point(signals, quadrant)
+        expected_sum = 0.0
+        weight_sum = 0.0
+        for sensor in quadrant.sensors:
+            sensor_x, sensor_y = generator.sensor_positions[sensor]
+            distance = float(np.hypot(sensor_x - peak_x, sensor_y - peak_y))
+            weight = 1.0 / max(generator.geometry_epsilon, distance) ** 2
+            expected_sum += signals[sensor] * (1.0 + distance * 0.3) * weight
+            weight_sum += weight
+        self.assertAlmostEqual(
+            generator._pressure_point_height(signals, quadrant, peak_x, peak_y),
+            expected_sum / weight_sum,
+            places=12,
+        )
+        result = generator.generate(signals)
+        self.assertEqual(result.peak_gain_slope_per_mm, 0.3)
+        self.assertEqual(result.field_model.peak_gain_slope_per_mm, 0.3)
+        self.assertFalse(hasattr(generator, "peak_height_reference_distance_mm"))
+        self.assertFalse(hasattr(generator, "peak_height_decay_rate"))
+        self.assertFalse(hasattr(result, "peak_height_reference_distance_mm"))
+        self.assertFalse(hasattr(result.field_model, "peak_height_decay_rate"))
+        self.assertEqual(
+            PressureMapGenerator().peak_gain_slope_per_mm,
+            DEFAULT_PRESSURE_PEAK_GAIN_SLOPE_PER_MM,
+        )
 
     def test_scalar_smoothstep_matches_vectorized_compact_support(self):
         for distance, reach in (

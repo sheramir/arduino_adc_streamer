@@ -29,8 +29,7 @@ from constants.pressure_map import (
     DEFAULT_PRESSURE_NEAR_OUTER_PEAK_OFFSET_MM,
     DEFAULT_PRESSURE_OUTER_BOUNDARY_REACH_MM,
     DEFAULT_PRESSURE_PACKAGE_CENTER_SPACING_MM,
-    DEFAULT_PRESSURE_PEAK_HEIGHT_DECAY_RATE,
-    DEFAULT_PRESSURE_PEAK_HEIGHT_REFERENCE_DISTANCE_MM,
+    DEFAULT_PRESSURE_PEAK_GAIN_SLOPE_PER_MM,
     DEFAULT_PRESSURE_PIXELS_PER_MM,
     DEFAULT_PRESSURE_SENSOR_SPACING_MM,
     DEFAULT_PRESSURE_SHOW_NEGATIVE,
@@ -262,8 +261,7 @@ class PressureFieldModel:
     model_strength: float
     decay_rate: float
     decay_ref_distance_mm: float
-    peak_height_reference_distance_mm: float
-    peak_height_decay_rate: float
+    peak_gain_slope_per_mm: float
     maximum_peak_gain: float
     natural_decay_reference_distance_mm: float
     decay_amplitude_reference: float
@@ -339,8 +337,7 @@ class PressureMapResult:
     outer_boundary_half_width_mm: float
     decay_rate: float
     decay_ref_distance_mm: float
-    peak_height_reference_distance_mm: float
-    peak_height_decay_rate: float
+    peak_gain_slope_per_mm: float
     maximum_peak_gain: float
     natural_decay_reference_distance_mm: float
     decay_amplitude_reference: float
@@ -381,8 +378,7 @@ class PressureMapGenerator:
         pixels_per_mm: float = DEFAULT_PRESSURE_PIXELS_PER_MM,
         decay_rate: float = DEFAULT_PRESSURE_DECAY_RATE,
         decay_ref_distance_mm: float = DEFAULT_PRESSURE_DECAY_REF_DISTANCE_MM,
-        peak_height_reference_distance_mm: float = DEFAULT_PRESSURE_PEAK_HEIGHT_REFERENCE_DISTANCE_MM,
-        peak_height_decay_rate: float = DEFAULT_PRESSURE_PEAK_HEIGHT_DECAY_RATE,
+        peak_gain_slope_per_mm: float = DEFAULT_PRESSURE_PEAK_GAIN_SLOPE_PER_MM,
         maximum_peak_gain: float = DEFAULT_PRESSURE_MAXIMUM_PEAK_GAIN,
         natural_decay_reference_distance_mm: float | None = None,
         decay_amplitude_reference: float = DEFAULT_PRESSURE_DECAY_AMPLITUDE_REFERENCE,
@@ -424,8 +420,7 @@ class PressureMapGenerator:
         self.pixels_per_mm = self.geometry.pixels_per_mm
         self.decay_rate = float(decay_rate)
         self.decay_ref_distance_mm = float(decay_ref_distance_mm)
-        self.peak_height_reference_distance_mm = float(peak_height_reference_distance_mm)
-        self.peak_height_decay_rate = float(peak_height_decay_rate)
+        self.peak_gain_slope_per_mm = float(peak_gain_slope_per_mm)
         self.maximum_peak_gain = float(maximum_peak_gain)
         self.natural_decay_reference_distance_mm = float(
             decay_ref_distance_mm
@@ -521,8 +516,7 @@ class PressureMapGenerator:
             mid_boundary_half_width_mm=self.mid_boundary_half_width_mm,
             outer_boundary_half_width_mm=self.outer_boundary_half_width_mm,
             decay_rate=self.decay_rate, decay_ref_distance_mm=self.decay_ref_distance_mm,
-            peak_height_reference_distance_mm=self.peak_height_reference_distance_mm,
-            peak_height_decay_rate=self.peak_height_decay_rate,
+            peak_gain_slope_per_mm=self.peak_gain_slope_per_mm,
             maximum_peak_gain=self.maximum_peak_gain,
             natural_decay_reference_distance_mm=self.natural_decay_reference_distance_mm,
             decay_amplitude_reference=self.decay_amplitude_reference,
@@ -760,8 +754,7 @@ class PressureMapGenerator:
             decay_origin=(float(decay_origin[0]), float(decay_origin[1])),
             model_strength=float(model_strength), decay_rate=self.decay_rate,
             decay_ref_distance_mm=self.decay_ref_distance_mm,
-            peak_height_reference_distance_mm=self.peak_height_reference_distance_mm,
-            peak_height_decay_rate=self.peak_height_decay_rate,
+            peak_gain_slope_per_mm=self.peak_gain_slope_per_mm,
             maximum_peak_gain=self.maximum_peak_gain,
             natural_decay_reference_distance_mm=self.natural_decay_reference_distance_mm,
             decay_amplitude_reference=self.decay_amplitude_reference,
@@ -849,7 +842,7 @@ class PressureMapGenerator:
     def _validate_parameters(self) -> None:
         if self.decay_ref_distance_mm <= 0.0:
             raise ValueError("decay_ref_distance_mm must be positive")
-        if self.peak_height_reference_distance_mm <= 0.0 or self.maximum_peak_gain < 1.0:
+        if self.peak_gain_slope_per_mm < 0.0 or self.maximum_peak_gain < 1.0:
             raise ValueError("peak-height shaping parameters are invalid")
         if self.natural_decay_reference_distance_mm <= 0.0 or self.decay_amplitude_reference <= 0.0:
             raise ValueError("natural decay parameters must be positive")
@@ -1063,7 +1056,7 @@ class PressureMapGenerator:
             distance = float(np.hypot(sensor_x - peak_x, sensor_y - peak_y))
             gain = min(
                 self.maximum_peak_gain,
-                1.0 + self.peak_height_decay_rate * distance / self.peak_height_reference_distance_mm,
+                1.0 + distance * self.peak_gain_slope_per_mm,
             )
             weight = 1.0 / max(self.geometry_epsilon, distance) ** 2
             estimate_sum += float(signals[sensor]) * gain * weight

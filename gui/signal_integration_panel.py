@@ -19,6 +19,7 @@ Dependencies:
 from __future__ import annotations
 
 import math
+import time
 from pathlib import Path
 from typing import Hashable
 
@@ -824,8 +825,8 @@ class PressureMapPanelMixin:
         layout.addWidget(self.pressure_pixels_per_mm_spin, 0, 5)
 
         near_outer_peak_tooltip = (
-            "For exactly one active outer sensor, place the inferred pressure peak this many "
-            "millimeters outside that sensor without increasing its value."
+            "For exactly one active outer sensor, place an amplified inferred peak this "
+            "distance outside the sensor while preserving the measured sensor value."
         )
         layout.addWidget(self._create_tooltip_label("Near-Outer Peak Offset:", near_outer_peak_tooltip), 1, 4)
         self.pressure_near_outer_peak_offset_spin = QDoubleSpinBox()
@@ -2509,15 +2510,23 @@ class PressureMapPanelMixin:
             return
 
         calibrated_values = self._calibrate_signal_integration_values_for_shear(latest_values, package_id)
-        self._latest_shear_result = self.shear_detector.detect(calibrated_values)
-        self._update_pressure_map_from_latest()
+        shear_result = self.shear_detector.detect(calibrated_values)
+        self._update_pressure_map_from_latest(shear_result)
 
-    def _update_pressure_map_from_latest(self) -> None:
+    def _update_pressure_map_from_latest(
+        self,
+        pending_shear_result: ShearResult | None = None,
+    ) -> None:
         if not hasattr(self, "pressure_map_widget"):
             return
         if not self._should_refresh_pressure_map_display():
             return
-        if self._latest_shear_result is None:
+        shear_result = (
+            pending_shear_result
+            if pending_shear_result is not None
+            else self._latest_shear_result
+        )
+        if shear_result is None:
             self._latest_normal_force_result = None
             self._latest_pressure_map_result = None
             self.pressure_map_widget.update_display(None, None, None)
@@ -2527,33 +2536,54 @@ class PressureMapPanelMixin:
             package_displays = self._build_pressure_map_package_displays()
             if len(package_displays) > 1:
                 first_package = package_displays[0]
-                self._latest_shear_result = first_package.shear_result
-                self._latest_normal_force_result = first_package.normal_force_result
-                self._latest_pressure_map_result = first_package.pressure_result
                 array_result = self._build_pressure_map_array_result(package_displays)
                 if array_result is not None:
                     self.pressure_map_widget.update_array_display(array_result, package_displays)
                 else:
                     self.pressure_map_widget.update_package_displays(package_displays)
+                # Commit the visible/live state only after all packages and
+                # the optional array field have been generated successfully.
+                self._latest_shear_result = first_package.shear_result
+                self._latest_normal_force_result = first_package.normal_force_result
+                self._latest_pressure_map_result = first_package.pressure_result
                 return
 
-            self._latest_normal_force_result = self.normal_force_calculator.compute(
-                self._latest_shear_result.residual,
+            normal_force_result = self.normal_force_calculator.compute(
+                shear_result.residual,
             )
-            self._latest_pressure_map_result = self.pressure_map_generator.generate(
-                self._latest_normal_force_result.normalized,
+            pressure_map_result = self.pressure_map_generator.generate(
+                normal_force_result.normalized,
             )
             self.pressure_map_widget.update_display(
-                self._latest_normal_force_result,
-                self._latest_pressure_map_result,
-                self._latest_shear_result,
+                normal_force_result,
+                pressure_map_result,
+                shear_result,
             )
+            self._latest_shear_result = shear_result
+            self._latest_normal_force_result = normal_force_result
+            self._latest_pressure_map_result = pressure_map_result
         except Exception as exc:
-            self._latest_normal_force_result = None
-            self._latest_pressure_map_result = None
-            self.pressure_map_widget.update_display(None, None, None)
-            if hasattr(self, "log_status"):
-                self.log_status(f"ERROR updating Pressure Map visualization: {exc}")
+            # A single bad live frame must not erase the previous image,
+            # boundaries, arrows, or stable view range.  The next successful
+            # frame replaces it transactionally.
+            self._log_pressure_map_update_error(exc)
+
+    def _log_pressure_map_update_error(self, exc: Exception) -> None:
+        """Rate-limit repeated live pressure-map failures."""
+
+        if not hasattr(self, "log_status"):
+            return
+        message = str(exc)
+        now = time.monotonic()
+        previous_message = getattr(self, "_pressure_map_last_error_message", None)
+        previous_time = float(getattr(self, "_pressure_map_last_error_time", float("-inf")))
+        if message != previous_message or now - previous_time >= 5.0:
+            self.log_status(
+                f"ERROR updating Pressure Map visualization: {message}; "
+                "showing the previous valid frame"
+            )
+            self._pressure_map_last_error_message = message
+            self._pressure_map_last_error_time = now
 
     def _build_pressure_map_package_displays(self) -> list[PressureMapPackageDisplay]:
         values_by_package = getattr(self, "_latest_signal_integration_values_by_package", {})
@@ -2610,12 +2640,7 @@ class PressureMapPanelMixin:
                 )
             )
 
-        try:
-            array_result = self.pressure_map_array_generator.generate(array_packages)
-        except Exception as exc:
-            if hasattr(self, "log_status"):
-                self.log_status(f"Pressure Map array interpolation unavailable: {exc}")
-            return None
+        array_result = self.pressure_map_array_generator.generate(array_packages)
         # Display routing must depend only on the configured layout. Active
         # overlaps can legitimately appear and disappear with live signals.
         return array_result if array_result.structural_pairs else None

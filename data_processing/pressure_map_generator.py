@@ -74,6 +74,24 @@ PRESSURE_QUADRANT_MODE_SINGLE_AXIS_PEAKED = "single-axis-peaked"
 PRESSURE_QUADRANT_MODE_ISOLATED_OUTER_PEAKED = "isolated-outer-peaked"
 
 _FRAME_IDS = count(1)
+
+
+def _peak_position_weight(value: float) -> float:
+    """Return the square-root magnitude weight used for inferred positions."""
+
+    return float(np.sqrt(abs(float(value))))
+
+
+def _center_outer_peak_axis(center: float, outer: float, spacing: float) -> float:
+    """Return the canonical center-to-outer peak position."""
+
+    center_weight = _peak_position_weight(center)
+    outer_weight = _peak_position_weight(outer)
+    return float(
+        spacing
+        * outer_weight
+        / max(PRESSURE_NUMERIC_EPSILON, center_weight + outer_weight)
+    )
 _OUTER_SENSORS = (
     SHEAR_POSITION_LEFT,
     SHEAR_POSITION_RIGHT,
@@ -115,7 +133,10 @@ def smoothstep_fade(distance: np.ndarray | float, reach: np.ndarray | float) -> 
         return result
     t = np.zeros_like(distance_array, dtype=np.float64)
     t[valid] = np.clip(distance_array[valid] / reach_array[valid], 0.0, 1.0)
-    result[valid] = 1.0 - (3.0 * t[valid] ** 2) + (2.0 * t[valid] ** 3)
+    # The factored form avoids cancellation in ``1 - 3t² + 2t³`` when the
+    # sample is immediately inside the compact-support endpoint.
+    one_minus_t = 1.0 - t[valid]
+    result[valid] = one_minus_t ** 2 * (1.0 + 2.0 * t[valid])
     result[distance_array >= reach_array] = 0.0
     return result
 
@@ -239,6 +260,17 @@ class PressureFieldModel:
     isolated_measured_sensor_value: float | None = None
     isolated_actual_peak_gain: float | None = None
     isolated_gain_cap_satisfied: bool | None = None
+    center_outer_circular_radius_mm: float | None = None
+    center_outer_center_scale: float | None = None
+    center_outer_outer_scale: float | None = None
+    center_outer_actual_peak_gain: float | None = None
+    center_outer_gain_cap_satisfied: bool | None = None
+    center_outer_natural_radius_mm: float | None = None
+    center_outer_fade_safe_minimum_radius_mm: float | None = None
+    center_outer_geometric_maximum_radius_mm: float | None = None
+    center_outer_center_factor: float | None = None
+    center_outer_outer_factor: float | None = None
+    center_outer_used_fallback: bool = False
 
     def signal(self, sensor: str) -> float:
         return dict(self.sensor_values)[sensor]
@@ -420,6 +452,32 @@ class PressureMapGenerator:
         signals = self._normalize_signals(raw_signals)
         model = self._build_package_field_model(signals, raw_signals)
         pressure_grid = model.evaluate(self.x_grid_mm, self.y_grid_mm)
+        if not np.isfinite(pressure_grid).all():
+            # The circular profile is optional enhancement only.  Preserve a
+            # bounded field for live input even if an unexpected numeric edge
+            # case escapes its construction-time validation.
+            if (
+                model.package_mode == PRESSURE_PACKAGE_MODE_CENTER_PLUS_ONE_OUTER
+                and model.peak_height is not None
+                and model.quadrant_planes
+            ):
+                fallback_plane = replace(model.quadrant_planes[0], peak_height=None)
+                model = replace(
+                    model,
+                    quadrant_planes=(fallback_plane,),
+                    peak_height=None,
+                    center_outer_circular_radius_mm=None,
+                    center_outer_center_scale=None,
+                    center_outer_outer_scale=None,
+                    center_outer_actual_peak_gain=None,
+                    center_outer_gain_cap_satisfied=None,
+                    center_outer_center_factor=None,
+                    center_outer_outer_factor=None,
+                    center_outer_used_fallback=True,
+                )
+                pressure_grid = model.evaluate(self.x_grid_mm, self.y_grid_mm)
+            if not np.isfinite(pressure_grid).all():
+                raise ValueError("pressure-map evaluation produced non-finite values")
         diagnostics = self._build_diagnostics(model, pressure_grid) if self.debug else None
         return PressureMapResult(
             pressure_grid=pressure_grid,
@@ -480,6 +538,17 @@ class PressureMapGenerator:
                     model.support_bounds_mm,
                     core_mask[core_mask],
                 )
+            elif (
+                model.package_mode == PRESSURE_PACKAGE_MODE_CENTER_PLUS_ONE_OUTER
+                and model.peak_height is not None
+            ):
+                core_surface[core_mask] = _evaluate_center_outer_circular_model(
+                    model,
+                    self.x_grid_mm[core_mask],
+                    self.y_grid_mm[core_mask],
+                    model.support_bounds_mm,
+                    core_mask[core_mask],
+                )
             else:
                 core_surface[core_mask] = _evaluate_core(
                     model, self.x_grid_mm[core_mask], self.y_grid_mm[core_mask]
@@ -520,6 +589,35 @@ class PressureMapGenerator:
                     "isolated_gain_cap_satisfied": model.isolated_gain_cap_satisfied,
                 }
             )
+        if (
+            model.package_mode == PRESSURE_PACKAGE_MODE_CENTER_PLUS_ONE_OUTER
+            and model.active_axis_sensor is not None
+        ):
+            peak_axis = (
+                _axis_distance_from_peak_point(model.active_axis_sensor, model.peak_point)
+                if model.peak_point is not None
+                else None
+            )
+            diagnostics.update(
+                {
+                    "center_outer_peak_axis_mm": peak_axis,
+                    "center_outer_circular_radius_mm": model.center_outer_circular_radius_mm,
+                    "center_outer_measured_center_value": model.signal(SHEAR_POSITION_CENTER),
+                    "center_outer_measured_outer_value": model.signal(model.active_axis_sensor),
+                    "center_outer_actual_peak_value": model.peak_height,
+                    "center_outer_actual_peak_gain": model.center_outer_actual_peak_gain,
+                    "center_outer_center_scale": model.center_outer_center_scale,
+                    "center_outer_outer_scale": model.center_outer_outer_scale,
+                    "center_outer_gain_cap_satisfied": model.center_outer_gain_cap_satisfied,
+                    "center_outer_natural_radius_mm": model.center_outer_natural_radius_mm,
+                    "center_outer_fade_safe_minimum_radius_mm": model.center_outer_fade_safe_minimum_radius_mm,
+                    "center_outer_geometric_maximum_radius_mm": model.center_outer_geometric_maximum_radius_mm,
+                    "center_outer_center_factor": model.center_outer_center_factor,
+                    "center_outer_outer_factor": model.center_outer_outer_factor,
+                    "center_outer_used_fallback": model.center_outer_used_fallback,
+                    "center_outer_extension_decay_factors_applicable": False,
+                }
+            )
         return diagnostics
 
     def _diagnostic_decay_factor(self, model: PressureFieldModel, *, natural: bool) -> np.ndarray:
@@ -530,6 +628,14 @@ class PressureMapGenerator:
         factors[inside] = 1.0
         if model.package_mode == PRESSURE_PACKAGE_MODE_ISOLATED_OUTER:
             return factors
+        if (
+            model.package_mode == PRESSURE_PACKAGE_MODE_CENTER_PLUS_ONE_OUTER
+            and model.peak_height is not None
+        ):
+            # Circular center-plus-one fields have no core/extension decay
+            # split.  The retained generic factors are explicitly marked as
+            # not applicable in the diagnostics payload.
+            return np.zeros_like(factors)
         spacing = self.geometry.sensor_spacing_mm
         extension = inside & ((np.abs(self.x_grid_mm) > spacing) | (np.abs(self.y_grid_mm) > spacing))
         if model.package_mode == PRESSURE_PACKAGE_MODE_CENTER_PLUS_ONE_OUTER:
@@ -659,6 +765,38 @@ class PressureMapGenerator:
                 isolated_actual_peak_gain=actual_gain,
                 isolated_gain_cap_satisfied=cap_satisfied,
             )
+        elif (
+            package_mode == PRESSURE_PACKAGE_MODE_CENTER_PLUS_ONE_OUTER
+            and model.peak_point is not None
+            and model.signal(SHEAR_POSITION_CENTER) * model.signal(axis_sensor) > 0.0
+        ):
+            profile = _center_outer_circular_profile(model, self.support_bounds_mm)
+            if profile is None:
+                # Keep the pre-circular bounded axis interpolation as a
+                # deterministic live-data fallback when no circular radius is
+                # geometrically/numerically feasible.
+                model = replace(model, center_outer_used_fallback=True)
+            else:
+                plane = replace(
+                    model.quadrant_planes[0],
+                    peak_height=profile.actual_peak_value,
+                )
+                model = replace(
+                    model,
+                    quadrant_planes=(plane,),
+                    model_strength=max(model.model_strength, abs(profile.actual_peak_value)),
+                    peak_height=profile.actual_peak_value,
+                    center_outer_circular_radius_mm=profile.radius,
+                    center_outer_center_scale=profile.center_scale,
+                    center_outer_outer_scale=profile.outer_scale,
+                    center_outer_actual_peak_gain=profile.actual_peak_gain,
+                    center_outer_gain_cap_satisfied=profile.gain_cap_satisfied,
+                    center_outer_natural_radius_mm=profile.natural_radius,
+                    center_outer_fade_safe_minimum_radius_mm=profile.fade_safe_minimum_radius,
+                    center_outer_geometric_maximum_radius_mm=profile.geometric_maximum_radius,
+                    center_outer_center_factor=profile.center_factor,
+                    center_outer_outer_factor=profile.outer_factor,
+                )
         return model
 
     def _classify_package(self, signals: Mapping[str, float]) -> tuple[str, list[str]]:
@@ -751,9 +889,12 @@ class PressureMapGenerator:
         peak_height: float | None = None
         mode = PRESSURE_QUADRANT_MODE_SIGNED_TRANSITION
         if same_sign:
-            peak_axis = self.sensor_spacing_mm * abs(outer) / (abs(center) + abs(outer))
+            peak_axis = _center_outer_peak_axis(
+                center,
+                outer,
+                self.sensor_spacing_mm,
+            )
             peak_point = self._point_on_sensor_axis(sensor, peak_axis)
-            peak_height = self._two_anchor_peak_height(center, outer, peak_axis)
             mode = PRESSURE_QUADRANT_MODE_SINGLE_AXIS_PEAKED
         a, b = self._axis_plane_coefficients(sensor, center, outer)
         return PressureQuadrantPlane(
@@ -865,9 +1006,9 @@ class PressureMapGenerator:
         )
 
     def _pressure_point(self, signals: Mapping[str, float], quadrant: _QuadrantDefinition) -> tuple[float, float]:
-        center = abs(float(signals[SHEAR_POSITION_CENTER]))
-        horizontal = abs(float(signals[quadrant.horizontal_sensor]))
-        vertical = abs(float(signals[quadrant.vertical_sensor]))
+        center = _peak_position_weight(signals[SHEAR_POSITION_CENTER])
+        horizontal = _peak_position_weight(signals[quadrant.horizontal_sensor])
+        vertical = _peak_position_weight(signals[quadrant.vertical_sensor])
         return (
             quadrant.horizontal_sign * self.sensor_spacing_mm * horizontal / (horizontal + center) if horizontal + center else 0.0,
             quadrant.vertical_sign * self.sensor_spacing_mm * vertical / (vertical + center) if vertical + center else 0.0,
@@ -894,21 +1035,6 @@ class PressureMapGenerator:
             estimate_sum += float(signals[sensor]) * gain * weight
             weight_sum += weight
         return estimate_sum / weight_sum if weight_sum else 0.0
-
-    def _two_anchor_peak_height(self, center: float, outer: float, peak_axis: float) -> float:
-        distances = (peak_axis, self.sensor_spacing_mm - peak_axis)
-        values = (center, outer)
-        estimate_sum = 0.0
-        weight_sum = 0.0
-        for value, distance in zip(values, distances):
-            gain = min(
-                self.maximum_peak_gain,
-                1.0 + self.peak_height_decay_rate * distance / self.peak_height_reference_distance_mm,
-            )
-            weight = 1.0 / max(self.geometry_epsilon, distance) ** 2
-            estimate_sum += value * gain * weight
-            weight_sum += weight
-        return estimate_sum / weight_sum if weight_sum else center
 
     def _build_peakless_triangles(self, signals: Mapping[str, float], quadrant: _QuadrantDefinition, corner_value: float) -> tuple[PressureTrianglePlane, ...]:
         spacing = self.sensor_spacing_mm
@@ -1120,6 +1246,175 @@ def _isolated_circular_profile(
     return radius, measured_value, inferred_peak_value, actual_gain, cap_satisfied
 
 
+def _axis_distance_from_peak_point(
+    sensor: str,
+    peak_point: tuple[float, float],
+) -> float:
+    """Return the positive canonical-axis coordinate of a retained peak."""
+
+    peak_x, peak_y = peak_point
+    if sensor == SHEAR_POSITION_RIGHT:
+        return float(peak_x)
+    if sensor == SHEAR_POSITION_LEFT:
+        return float(-peak_x)
+    if sensor == SHEAR_POSITION_TOP:
+        return float(peak_y)
+    return float(-peak_y)
+
+
+@dataclass(frozen=True, slots=True)
+class _CenterOuterCircularProfile:
+    """One validated, retained circular center-plus-one profile."""
+
+    radius: float
+    actual_peak_value: float
+    center_scale: float
+    outer_scale: float
+    actual_peak_gain: float
+    gain_cap_satisfied: bool
+    natural_radius: float
+    fade_safe_minimum_radius: float
+    geometric_maximum_radius: float
+    center_factor: float
+    outer_factor: float
+
+
+def _center_outer_circular_profile(
+    model: PressureFieldModel,
+    support_bounds: tuple[float, float, float, float],
+) -> _CenterOuterCircularProfile | None:
+    """Build a feasible retained circular center-plus-one profile.
+
+    ``None`` deliberately selects the established bounded axis interpolation
+    fallback.  Transient live data must not become a generator exception.
+    """
+
+    sensor = model.active_axis_sensor
+    if sensor is None or model.peak_point is None:
+        return None
+    center = float(model.signal(SHEAR_POSITION_CENTER))
+    outer = float(model.signal(sensor))
+    spacing = float(model.geometry.sensor_spacing_mm)
+    peak_axis = _axis_distance_from_peak_point(sensor, model.peak_point)
+    distance_to_center = peak_axis
+    distance_to_outer = spacing - peak_axis
+    farthest_anchor_distance = max(distance_to_center, distance_to_outer)
+    inactive_sensor_limit = min(
+        spacing + peak_axis,
+        float(np.hypot(peak_axis, spacing)),
+    )
+    peak_x, peak_y = model.peak_point
+    left, right, bottom, top = (float(value) for value in support_bounds)
+    boundary_limit = min(
+        peak_x - left,
+        right - peak_x,
+        peak_y - bottom,
+        top - peak_y,
+    )
+    maximum_radius = min(inactive_sensor_limit, boundary_limit)
+    if not np.isfinite(maximum_radius) or maximum_radius <= farthest_anchor_distance:
+        return None
+
+    def anchor_factors(candidate_radius: float) -> tuple[float, float]:
+        return (
+            float(smoothstep_fade(distance_to_center, candidate_radius)),
+            float(smoothstep_fade(distance_to_outer, candidate_radius)),
+        )
+
+    maximum_center_factor, maximum_outer_factor = anchor_factors(maximum_radius)
+    if min(maximum_center_factor, maximum_outer_factor) <= PRESSURE_NUMERIC_EPSILON:
+        return None
+
+    # A radius merely one numerical epsilon beyond the farther anchor remains
+    # too close to the cubic endpoint to provide a usable factor.  Find the
+    # smallest representable radius that does instead.
+    low = farthest_anchor_distance
+    high = maximum_radius
+    for _ in range(48):
+        midpoint = (low + high) / 2.0
+        if min(anchor_factors(midpoint)) > PRESSURE_NUMERIC_EPSILON:
+            high = midpoint
+        else:
+            low = midpoint
+    fade_safe_minimum_radius = high
+
+    anchor_strength = max(abs(center), abs(outer))
+    natural_radius = float(
+        _natural_decay_reach(np.asarray(anchor_strength, dtype=np.float64), model)
+    )
+    radius = float(np.clip(natural_radius, fade_safe_minimum_radius, maximum_radius))
+    if not np.isfinite(radius):
+        return None
+
+    def profile_at(
+        candidate_radius: float,
+    ) -> tuple[float, float, float, float, float, float] | None:
+        center_factor, outer_factor = anchor_factors(candidate_radius)
+        if min(center_factor, outer_factor) <= PRESSURE_NUMERIC_EPSILON:
+            return None
+        required_peak_magnitude = max(
+            abs(center) / center_factor,
+            abs(outer) / outer_factor,
+        )
+        field_sign = 1.0 if center > 0.0 else -1.0
+        actual_peak_value = field_sign * required_peak_magnitude
+        center_scale = center / (actual_peak_value * center_factor)
+        outer_scale = outer / (actual_peak_value * outer_factor)
+        reference_magnitude = max(abs(center), abs(outer))
+        actual_peak_gain = abs(actual_peak_value) / reference_magnitude
+        values = (
+            center_factor,
+            outer_factor,
+            actual_peak_value,
+            center_scale,
+            outer_scale,
+            actual_peak_gain,
+        )
+        return values if all(np.isfinite(value) for value in values) else None
+
+    initial_profile = profile_at(radius)
+    if initial_profile is None:
+        return None
+    if initial_profile[-1] > model.maximum_peak_gain + 1e-10:
+        maximum_profile = profile_at(maximum_radius)
+        if maximum_profile is not None and maximum_profile[-1] <= model.maximum_peak_gain + 1e-10:
+            low = radius
+            high = maximum_radius
+            for _ in range(32):
+                midpoint = (low + high) / 2.0
+                midpoint_profile = profile_at(midpoint)
+                if midpoint_profile is not None and midpoint_profile[-1] <= model.maximum_peak_gain:
+                    high = midpoint
+                else:
+                    low = midpoint
+            radius = high
+        else:
+            radius = maximum_radius
+
+    final_profile = profile_at(radius)
+    if final_profile is None:
+        return None
+    center_factor, outer_factor, actual_peak_value, center_scale, outer_scale, actual_peak_gain = final_profile
+    if not (
+        0.0 < center_scale <= 1.0 + 1e-10
+        and 0.0 < outer_scale <= 1.0 + 1e-10
+    ):
+        return None
+    return _CenterOuterCircularProfile(
+        radius=radius,
+        actual_peak_value=actual_peak_value,
+        center_scale=center_scale,
+        outer_scale=outer_scale,
+        actual_peak_gain=actual_peak_gain,
+        gain_cap_satisfied=actual_peak_gain <= model.maximum_peak_gain + 1e-10,
+        natural_radius=natural_radius,
+        fade_safe_minimum_radius=fade_safe_minimum_radius,
+        geometric_maximum_radius=maximum_radius,
+        center_factor=center_factor,
+        outer_factor=outer_factor,
+    )
+
+
 def _evaluate_pressure_field_model(model: PressureFieldModel, x_values: np.ndarray, y_values: np.ndarray, support_bounds: tuple[float, float, float, float]) -> np.ndarray:
     x_values, y_values = np.broadcast_arrays(x_values, y_values)
     values = np.zeros_like(x_values, dtype=np.float64)
@@ -1138,6 +1433,20 @@ def _evaluate_pressure_field_model(model: PressureFieldModel, x_values: np.ndarr
         return _numeric_cleanup(values)
     if model.package_mode == PRESSURE_PACKAGE_MODE_ISOLATED_OUTER:
         values = _evaluate_isolated_model(model, x_values, y_values, support_bounds, inside)
+        values[~inside] = 0.0
+        return _numeric_cleanup(values)
+    if (
+        model.package_mode == PRESSURE_PACKAGE_MODE_CENTER_PLUS_ONE_OUTER
+        and model.peak_point is not None
+        and model.peak_height is not None
+    ):
+        values = _evaluate_center_outer_circular_model(
+            model,
+            x_values,
+            y_values,
+            support_bounds,
+            inside,
+        )
         values[~inside] = 0.0
         return _numeric_cleanup(values)
     spacing = model.geometry.sensor_spacing_mm
@@ -1301,9 +1610,10 @@ def _evaluate_axis_lobe(model: PressureFieldModel, x_values: np.ndarray, y_value
     outer = signal[sensor]
     u, v = _axis_coordinates(sensor, x_values, y_values)
     spacing = model.geometry.sensor_spacing_mm
-    peak_axis = spacing * abs(outer) / max(
-        PRESSURE_NUMERIC_EPSILON,
-        abs(center) + abs(outer),
+    peak_axis = (
+        _axis_distance_from_peak_point(sensor, model.peak_point)
+        if model.peak_point is not None
+        else spacing
     )
     peak_value = model.peak_height if model.peak_height is not None else outer
     if model.peak_height is None:
@@ -1438,6 +1748,75 @@ def _evaluate_isolated_model(model: PressureFieldModel, x_values: np.ndarray, y_
     )
     axial_gate = 3.0 * q**2 - 2.0 * q**3
     values[inside] = inferred_peak_value * radial_factor[inside] * axial_gate[inside]
+    values[~inside] = 0.0
+    return _numeric_cleanup(values)
+
+
+def _evaluate_center_outer_circular_model(
+    model: PressureFieldModel,
+    x_values: np.ndarray,
+    y_values: np.ndarray,
+    support_bounds: tuple[float, float, float, float],
+    inside: np.ndarray,
+) -> np.ndarray:
+    """Evaluate the retained same-sign center-plus-one circular profile."""
+
+    values = np.zeros_like(x_values, dtype=np.float64)
+    sensor = model.active_axis_sensor
+    if sensor is None or model.peak_point is None or model.peak_height is None:
+        return values
+    radius = model.center_outer_circular_radius_mm
+    center_scale = model.center_outer_center_scale
+    outer_scale = model.center_outer_outer_scale
+    if radius is None or center_scale is None or outer_scale is None:
+        profile = _center_outer_circular_profile(model, support_bounds)
+        if profile is None:
+            return values
+        radius = profile.radius
+        center_scale = profile.center_scale
+        outer_scale = profile.outer_scale
+    u, v = _axis_coordinates(sensor, x_values, y_values)
+    peak_axis = _axis_distance_from_peak_point(sensor, model.peak_point)
+    spacing = model.geometry.sensor_spacing_mm
+    radial_distance = np.hypot(u - peak_axis, v)
+    radial_factor = smoothstep_fade(
+        radial_distance,
+        np.asarray(radius, dtype=np.float64),
+    )
+    before_t = np.clip(
+        u / max(peak_axis, PRESSURE_NUMERIC_EPSILON),
+        0.0,
+        1.0,
+    )
+    before_scale = _smooth_interpolate(
+        float(center_scale),
+        1.0,
+        before_t,
+    )
+    after_t = np.clip(
+        (u - peak_axis) / max(spacing - peak_axis, PRESSURE_NUMERIC_EPSILON),
+        0.0,
+        1.0,
+    )
+    after_scale = _smooth_interpolate(
+        1.0,
+        float(outer_scale),
+        after_t,
+    )
+    axial_scale = np.where(
+        u <= 0.0,
+        float(center_scale),
+        np.where(
+            u < peak_axis,
+            before_scale,
+            np.where(u < spacing, after_scale, float(outer_scale)),
+        ),
+    )
+    values[inside] = (
+        float(model.peak_height)
+        * radial_factor[inside]
+        * axial_scale[inside]
+    )
     values[~inside] = 0.0
     return _numeric_cleanup(values)
 

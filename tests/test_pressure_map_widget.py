@@ -97,6 +97,20 @@ class PressureMapWidgetTests(unittest.TestCase):
         self.widget.update_display(normal_result, refreshed)
         self.assertEqual(len(uploads), 1)
 
+    def test_rapid_center_outer_edge_frames_never_blank_the_widget(self):
+        generator = PressureMapGenerator(natural_decay_reference_distance_mm=1.5)
+        self.widget.configure_boundary_visibility(show_outer_boundary=True)
+        for index in range(20):
+            center, outer = ((0.1, 1.0) if index % 2 else (1.0, 0.4))
+            normal_result = self.calculator.compute(
+                {"C": center, "R": outer, "T": 0.0, "L": 0.0, "B": 0.0}
+            )
+            pressure_result = generator.generate(normal_result.normalized)
+            self.widget.update_display(normal_result, pressure_result)
+            self.assertIs(self.widget.last_pressure_result, pressure_result)
+            self.assertTrue(self.widget.outer_boundary_item.isVisible())
+            self.assertNotEqual(self.widget.readout_label.text(), "No Data")
+
     def test_pressure_map_uses_combined_dark_axisless_overlay(self):
         shear_result = self.detector.detect({"C": 0.0, "L": -1.0, "R": 1.0, "T": 0.0, "B": 0.0})
         normal_result = self.calculator.compute(shear_result.residual)

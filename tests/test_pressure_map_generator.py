@@ -435,6 +435,148 @@ class PressureMapGeneratorTests(unittest.TestCase):
         off_axis = self._grid_value(result, peak_x, spacing / 2.0)
         self.assertGreater(on_axis, off_axis)
 
+    def test_center_plus_one_peak_position_uses_square_root_weights(self):
+        spacing = self.generator.sensor_spacing_mm
+        for center, outer, expected_fraction in ((9.0, 4.0, 0.4), (4.0, 9.0, 0.6), (4.0, 4.0, 0.5)):
+            result = PressureMapGenerator(debug=True).generate({"C": center, "R": outer, "T": 0.0, "L": 0.0, "B": 0.0})
+            model = result.field_model
+            plane = result.quadrant_planes[0]
+            expected_axis = spacing * expected_fraction
+            self.assertAlmostEqual(model.peak_point[0], expected_axis, places=12)
+            self.assertAlmostEqual(plane.peak_point[0], expected_axis, places=12)
+            self.assertIsNotNone(result.diagnostics)
+            self.assertAlmostEqual(result.diagnostics["center_outer_peak_axis_mm"], expected_axis, places=12)
+            peak = evaluate_pressure_map_result_at(result, np.asarray([expected_axis]), np.asarray([0.0]))[0]
+            self.assertAlmostEqual(float(peak), float(model.peak_height), places=10)
+
+    def test_general_quadrant_peak_position_uses_square_root_weights(self):
+        result = self.generator.generate({"C": 9.0, "R": 4.0, "T": 16.0, "L": 0.0, "B": 0.0})
+        plane = self._planes_by_label(result)[PRESSURE_QUADRANT_TOP_RIGHT]
+        spacing = self.generator.sensor_spacing_mm
+        self.assertAlmostEqual(plane.peak_point[0], spacing * 2.0 / 5.0, places=12)
+        self.assertAlmostEqual(plane.peak_point[1], spacing * 4.0 / 7.0, places=12)
+
+    def test_same_sign_center_plus_one_preserves_active_anchors_and_zeroes_inactive_sensors(self):
+        coordinates = {"R": (2.0, 0.0), "L": (-2.0, 0.0), "T": (0.0, 2.0), "B": (0.0, -2.0)}
+        for sensor, coordinate in coordinates.items():
+            for sign in (1.0, -1.0):
+                signals = {position: 0.0 for position in SHEAR_SENSOR_POSITIONS}
+                signals["C"] = sign * 9.0
+                signals[sensor] = sign * 4.0
+                result = self.generator.generate(signals)
+                for active_sensor, expected in (("C", signals["C"]), (sensor, signals[sensor])):
+                    point = result.sensor_positions[active_sensor]
+                    actual = evaluate_pressure_map_result_at(result, np.asarray([point[0]]), np.asarray([point[1]]))[0]
+                    self.assertAlmostEqual(float(actual), expected, places=10)
+                for inactive_sensor, point in result.sensor_positions.items():
+                    if inactive_sensor not in ("C", sensor):
+                        actual = evaluate_pressure_map_result_at(result, np.asarray([point[0]]), np.asarray([point[1]]))[0]
+                        self.assertEqual(float(actual), 0.0)
+                peak_point = result.field_model.peak_point
+                peak = evaluate_pressure_map_result_at(result, np.asarray([peak_point[0]]), np.asarray([peak_point[1]]))[0]
+                self.assertGreater(abs(float(peak)), 9.0)
+                self.assertEqual(np.sign(float(peak)), np.sign(sign))
+
+    def test_center_outer_circular_profile_is_symmetric_and_opposite_signs_keep_transition(self):
+        result = self.generator.generate({"C": 5.0, "R": 3.0, "T": 0.0, "L": 0.0, "B": 0.0})
+        peak = result.field_model.peak_point[0]
+        for delta in (0.25, 0.5):
+            transverse_up = evaluate_pressure_map_result_at(result, np.asarray([peak]), np.asarray([delta]))[0]
+            transverse_down = evaluate_pressure_map_result_at(result, np.asarray([peak]), np.asarray([-delta]))[0]
+            self.assertAlmostEqual(float(transverse_up), float(transverse_down), places=10)
+            self.assertGreater(float(transverse_up), 0.0)
+        centerline_before = evaluate_pressure_map_result_at(result, np.asarray([peak - 0.25]), np.asarray([0.0]))[0]
+        centerline_peak = evaluate_pressure_map_result_at(result, np.asarray([peak]), np.asarray([0.0]))[0]
+        centerline_after = evaluate_pressure_map_result_at(result, np.asarray([peak + 0.25]), np.asarray([0.0]))[0]
+        self.assertLessEqual(float(centerline_before), float(centerline_peak))
+        self.assertLessEqual(float(centerline_after), float(centerline_peak))
+        opposite = self.generator.generate({"C": 5.0, "R": -3.0, "T": 0.0, "L": 0.0, "B": 0.0})
+        self.assertIsNone(opposite.field_model.peak_height)
+        self.assertEqual(opposite.quadrant_planes[0].mode, PRESSURE_QUADRANT_MODE_SIGNED_TRANSITION)
+        before_zero = evaluate_pressure_map_result_at(opposite, np.asarray([1.0]), np.asarray([0.0]))[0]
+        after_zero = evaluate_pressure_map_result_at(opposite, np.asarray([1.5]), np.asarray([0.0]))[0]
+        self.assertGreater(float(before_zero), 0.0)
+        self.assertLess(float(after_zero), 0.0)
+
+    def test_center_outer_circular_gain_cap_reports_constrained_fallback(self):
+        generator = PressureMapGenerator(maximum_peak_gain=1.1)
+        result = generator.generate({"C": 9.0, "R": 4.0, "T": 0.0, "L": 0.0, "B": 0.0})
+        model = result.field_model
+        self.assertFalse(model.center_outer_gain_cap_satisfied)
+        self.assertGreater(model.center_outer_actual_peak_gain, generator.maximum_peak_gain)
+        self.assertAlmostEqual(float(evaluate_pressure_map_result_at(result, np.asarray([0.0]), np.asarray([0.0]))[0]), 9.0, places=10)
+        self.assertAlmostEqual(float(evaluate_pressure_map_result_at(result, np.asarray([2.0]), np.asarray([0.0]))[0]), 4.0, places=10)
+
+    def test_smoothstep_fade_is_stable_at_and_near_its_endpoint(self):
+        reach = 1.0
+        values = smoothstep_fade(
+            np.asarray([
+                np.nextafter(reach, 0.0),
+                reach,
+                np.nextafter(reach, np.inf),
+            ]),
+            reach,
+        )
+        self.assertTrue(np.isfinite(values).all())
+        self.assertTrue(np.all(values >= 0.0))
+        self.assertGreater(float(values[0]), 0.0)
+        self.assertEqual(float(values[1]), 0.0)
+        self.assertEqual(float(values[2]), 0.0)
+
+    def test_center_outer_fade_safe_radius_preserves_imbalanced_anchors(self):
+        generator = PressureMapGenerator(natural_decay_reference_distance_mm=1.5, debug=True)
+        for center, outer in ((0.1, 1.0), (1.0, 0.1), (-0.1, -1.0), (-1.0, -0.1)):
+            result = generator.generate({"C": center, "R": outer, "T": 0.0, "L": 0.0, "B": 0.0})
+            model = result.field_model
+            self.assertTrue(np.isfinite(result.pressure_grid).all())
+            self.assertFalse(model.center_outer_used_fallback)
+            self.assertGreater(model.center_outer_center_factor, 0.0)
+            self.assertGreater(model.center_outer_outer_factor, 0.0)
+            self.assertGreaterEqual(
+                model.center_outer_circular_radius_mm,
+                model.center_outer_fade_safe_minimum_radius_mm,
+            )
+            self.assertLessEqual(
+                model.center_outer_circular_radius_mm,
+                model.center_outer_geometric_maximum_radius_mm,
+            )
+            center_actual, outer_actual = evaluate_pressure_map_result_at(
+                result,
+                np.asarray([0.0, self.generator.sensor_spacing_mm]),
+                np.asarray([0.0, 0.0]),
+            )
+            self.assertAlmostEqual(float(center_actual), center, places=10)
+            self.assertAlmostEqual(float(outer_actual), outer, places=10)
+            self.assertEqual(result.diagnostics["center_outer_center_factor"], model.center_outer_center_factor)
+
+    def test_impossible_center_outer_circle_uses_bounded_axis_fallback(self):
+        geometry = PressureMapGeometry(
+            sensor_spacing_mm=2.0,
+            package_center_spacing_mm=4.2,
+            outer_boundary_reach_mm=0.95,
+            pixels_per_mm=10.0,
+        )
+        result = PressureMapGenerator(geometry=geometry, debug=True).generate(
+            {"C": 0.01, "R": 1.0, "T": 0.0, "L": 0.0, "B": 0.0}
+        )
+        self.assertTrue(np.isfinite(result.pressure_grid).all())
+        self.assertTrue(result.field_model.center_outer_used_fallback)
+        self.assertIsNone(result.field_model.peak_height)
+        self.assertTrue(result.diagnostics["center_outer_used_fallback"])
+        center, outer = evaluate_pressure_map_result_at(
+            result, np.asarray([0.0, 2.0]), np.asarray([0.0, 0.0])
+        )
+        self.assertAlmostEqual(float(center), 0.01, places=10)
+        self.assertAlmostEqual(float(outer), 1.0, places=10)
+
+    def test_rapid_center_outer_edge_case_alternation_stays_finite(self):
+        generator = PressureMapGenerator(natural_decay_reference_distance_mm=1.5)
+        for index in range(20):
+            center, outer = ((0.1, 1.0) if index % 2 else (1.0, 0.4))
+            result = generator.generate({"C": center, "R": outer, "T": 0.0, "L": 0.0, "B": 0.0})
+            self.assertTrue(np.isfinite(result.pressure_grid).all())
+            self.assertTrue(np.any(result.pressure_grid != 0.0))
+
     def test_general_model_has_no_duplicated_quadrant_single_axis_lobes(self):
         result = self.generator.generate({"C": 5.0, "R": 0.0, "T": 8.0, "L": 3.0, "B": 2.0})
         planes = self._planes_by_label(result)

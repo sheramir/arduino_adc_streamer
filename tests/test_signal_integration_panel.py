@@ -483,6 +483,37 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         self.assertIsNone(getattr(harness, "_latest_normal_force_result", None))
         self.assertIsNone(getattr(harness, "_latest_pressure_map_result", None))
 
+    def test_pressure_map_generation_error_retains_the_last_rendered_frame(self):
+        harness = SignalIntegrationPanelHarness()
+        harness.pressure_map_widget = PressureMapWidget()
+        self.addCleanup(harness.pressure_map_widget.close)
+        harness.pressure_map_widget.configure_boundary_visibility(show_outer_boundary=True)
+        harness.shear_detector = ShearDetector()
+        harness.normal_force_calculator = NormalForceCalculator()
+        harness.pressure_map_generator = PressureMapGenerator()
+        harness._latest_shear_result = harness.shear_detector.detect(
+            {"C": 2.0, "R": 1.0, "T": 0.0, "L": 0.0, "B": 0.0}
+        )
+
+        harness._update_pressure_map_from_latest()
+        previous_pressure = harness._latest_pressure_map_result
+        previous_normal = harness._latest_normal_force_result
+        self.assertIsNotNone(previous_pressure)
+        self.assertTrue(harness.pressure_map_widget.outer_boundary_item.isVisible())
+
+        class FailingPressureMapGenerator:
+            def generate(self, _normalized):
+                raise ValueError("transient profile failure")
+
+        harness.pressure_map_generator = FailingPressureMapGenerator()
+        harness._update_pressure_map_from_latest()
+
+        self.assertIs(harness._latest_pressure_map_result, previous_pressure)
+        self.assertIs(harness._latest_normal_force_result, previous_normal)
+        self.assertIs(harness.pressure_map_widget.last_pressure_result, previous_pressure)
+        self.assertTrue(harness.pressure_map_widget.outer_boundary_item.isVisible())
+        self.assertIn("showing the previous valid frame", harness.log_messages[-1])
+
     def test_multi_package_force_mode_enabled_only_for_multiple_array_packages(self):
         harness = SignalIntegrationPanelHarness()
         harness.config = {"channel_selection_source": "array", "selected_array_sensors": ["PZT3", "PZT5"]}
@@ -714,7 +745,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
                 "pressure_sensor_spacing_spin": "sensor spacing",
                 "pressure_package_center_spacing_spin": "between neighbouring package centers",
                 "pressure_pixels_per_mm_spin": "grid density",
-                "pressure_near_outer_peak_offset_spin": "outside that sensor",
+                "pressure_near_outer_peak_offset_spin": "amplified inferred peak",
                 "pressure_outer_boundary_reach_spin": "distance from the mid boundary",
                 "pressure_max_intensity_spin": "upper intensity mapped to white",
                 "pressure_show_near_outer_boundary_check": "near-outer peak support circle",

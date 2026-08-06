@@ -154,9 +154,9 @@ class ArchiveLoaderMixin:
                                 sweeps.append(sweep_data)
                                 archive_timestamps.append(None)
 
-                            # Unknown format: skip
+                            # Unknown format: skip without recording a timestamp,
+                            # so archive_timestamps stays aligned with sweeps.
                             else:
-                                archive_timestamps.append(None)
                                 unknown_archive_entries += 1
                                 continue
                         except json.JSONDecodeError:
@@ -180,7 +180,7 @@ class ArchiveLoaderMixin:
                     sidecar_base_us = None
                     with open(self._block_timing_path, 'r', encoding='utf-8', newline='') as f:
                         reader = csv.reader(f)
-                        header = next(reader, None)  # Skip header row
+                        next(reader, None)  # Skip header row
 
                         # The CSV columns are: sample_count, samples_per_sweep, sweeps_in_block,
                         # avg_dt_us, block_start_us, block_end_us, mcu_gap_us

@@ -182,14 +182,7 @@ class HeatmapPanelMixin:
 
     def _is_display_mirror_enabled(self) -> bool:
         checkbox = getattr(self, "heatmap_mirror_check", None)
-        if checkbox is None:
-            checkbox = getattr(self, "display_mirror_check", None)
         return bool(checkbox is not None and checkbox.isChecked())
-
-    def _on_display_mirror_toggled(self, _checked=False):
-        self._update_display_plot_view()
-        if hasattr(self, "trigger_plot_update"):
-            self.trigger_plot_update()
 
     def _on_heatmap_mirror_toggled(self, _checked=False):
         self._update_display_plot_view()
@@ -605,7 +598,7 @@ class HeatmapPanelMixin:
         # Note: Per-sensor threshold and gain spinboxes are connected in _build_per_sensor_calibration_ui()
 
     def _on_heatmap_circle_overlay_toggled(self, _state=False):
-        self._refresh_heatmap_background_overlay(force=True)
+        self._refresh_heatmap_background_overlay()
         if not getattr(self, "_heatmap_settings_loading", False):
             self.save_last_heatmap_settings()
 
@@ -752,7 +745,6 @@ class HeatmapPanelMixin:
         self.display_circle_diameter = 240.0
         self.display_cell_spacing = 240.0
         self.display_heatmap_size = self.display_circle_diameter * float(HEATMAP_COORD_EXTENT)
-        self.display_canvas_extra_margin = 0.0
         self.display_items = []
         for _ in range(MAX_SENSOR_PACKAGES):
             image = self._create_heatmap_image_item()
@@ -783,8 +775,7 @@ class HeatmapPanelMixin:
         self.heatmap_status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.heatmap_status_label)
         group.setLayout(layout)
-        self.heatmap_overlay_mode = None
-        self._refresh_heatmap_background_overlay(force=True)
+        self._refresh_heatmap_background_overlay()
         self.update_visible_heatmap_cards(1)
         return group
 
@@ -965,7 +956,6 @@ class HeatmapPanelMixin:
         visible_count = getattr(self, "display_visible_count", 1)
         centers = self._get_display_package_centers(visible_count)
         heatmap_size = self._get_display_heatmap_size_value()
-        extra_margin = float(getattr(self, "display_canvas_extra_margin", 0.0))
         if not centers:
             half = heatmap_size * 0.5 + 40.0
             self._set_display_plot_range(-half, half, -half, half)
@@ -976,9 +966,9 @@ class HeatmapPanelMixin:
         content_half = heatmap_size * 0.5
 
         if hasattr(self, "is_array_sensor_selection_mode") and self.is_array_sensor_selection_mode():
-            margin = max(0.0, extra_margin)
+            margin = 0.0
         else:
-            margin = max(8.0, heatmap_size * 0.04 + extra_margin)
+            margin = max(8.0, heatmap_size * 0.04)
 
         x_min = min(x_centers) - content_half - margin
         x_max = max(x_centers) + content_half + margin
@@ -1022,52 +1012,6 @@ class HeatmapPanelMixin:
                 label.setText(self._get_channel_group_title(index), color=(235, 235, 235))
                 label.setPos(center_x, center_y + (radius * 0.72))
                 label.setVisible(show_labels)
-
-    def create_display_tab(self):
-        display_widget = QWidget()
-        main_layout = QVBoxLayout()
-
-        controls_layout = QHBoxLayout()
-        self.display_mirror_check = QCheckBox("Mirror")
-        self.display_mirror_check.setToolTip("Mirror Display tab layout horizontally (left/right swapped)")
-        self.display_mirror_check.setChecked(False)
-        self.display_mirror_check.toggled.connect(self._on_display_mirror_toggled)
-        controls_layout.addWidget(self.display_mirror_check)
-        controls_layout.addStretch()
-        main_layout.addLayout(controls_layout)
-
-        display_group = QGroupBox("Display")
-        group_layout = QVBoxLayout()
-        self.display_plot_widget = pg.GraphicsLayoutWidget()
-        self.display_plot_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.display_plot = self.display_plot_widget.addPlot()
-        self.display_plot.setAspectLocked(True, ratio=1.0)
-        self.display_plot.invertY(True)
-        self.display_plot.showAxis("left", False)
-        self.display_plot.showAxis("bottom", False)
-        self.display_plot.setMouseEnabled(x=False, y=False)
-
-        self.display_cell_spacing = 220.0
-        self.display_heatmap_size = 280.0
-        self.display_canvas_extra_margin = 24.0
-        self.display_items = []
-        for _ in range(MAX_SENSOR_PACKAGES):
-            image = self._create_heatmap_image_item()
-            image.setColorMap(self._get_heatmap_color_map())
-            self._set_heatmap_image(image, np.zeros((HEATMAP_HEIGHT, HEATMAP_WIDTH), dtype=np.float32))
-            image.setVisible(False)
-            self.display_plot.addItem(image)
-
-            self.display_items.append({
-                "image": image,
-            })
-
-        group_layout.addWidget(self.display_plot_widget)
-        display_group.setLayout(group_layout)
-        main_layout.addWidget(display_group)
-        display_widget.setLayout(main_layout)
-        self.update_visible_display_cards(1)
-        return display_widget
 
     def _render_point_tracking_display(self, package_results, settings):
         sensor_ids, sensor_positions, sensor_centers = self._get_visible_array_display_context(len(package_results))
@@ -1151,14 +1095,13 @@ class HeatmapPanelMixin:
             if circle is not None:
                 circle.setVisible(False)
 
-    def _refresh_heatmap_background_overlay(self, force=False):
+    def _refresh_heatmap_background_overlay(self):
         self._clear_heatmap_background_overlay()
         show_circle = bool(
             hasattr(self, "show_heatmap_circle_check")
             and self.show_heatmap_circle_check.isChecked()
         )
         if not show_circle:
-            self.heatmap_overlay_mode = "heatmap_only"
             self._refresh_display_item_overlays()
             return
 
@@ -1179,7 +1122,6 @@ class HeatmapPanelMixin:
             card["plot"].addItem(circle)
             card["circle"] = circle
 
-        self.heatmap_overlay_mode = "circle"
         self._refresh_display_item_overlays()
 
     def update_visible_heatmap_cards(self, visible_count):
@@ -1557,7 +1499,7 @@ class HeatmapPanelMixin:
                 self.load_last_shear_settings()
 
         if mode_changed or sensors_changed:
-            self._refresh_heatmap_background_overlay(force=True)
+            self._refresh_heatmap_background_overlay()
 
     def update_heatmap_plot(self):
         if getattr(self, "_heatmap_updating_plot", False):

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import numbers
-from typing import Iterable, Sequence
+from typing import Sequence
 
 import numpy as np
 

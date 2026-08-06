@@ -12,6 +12,7 @@ from PyQt6.QtCore import QThread, pyqtSignal
 
 from constants.serial import (
     FORCE_READER_IDLE_MS,
+    SERIAL_ASCII_LINE_MAX_BYTES,
     SERIAL_PACKET_AVG_SAMPLE_TIME_BYTES,
     SERIAL_PACKET_AVG_SAMPLE_TIME_MAX_US,
     SERIAL_PACKET_AVG_SAMPLE_TIME_MIN_US,
@@ -247,6 +248,17 @@ class SerialReaderThread(QThread):
             if b0 == ord('#'):
                 try:
                     newline_idx = buffer.index(ord('\n'), buf_start)
+                except ValueError:
+                    # Terminator has not arrived yet. Wait for the rest of the line
+                    # instead of consuming the '#', which would destroy a line split
+                    # across two reads. Resync only once the unterminated tail grows
+                    # past any plausible line length.
+                    if buf_len - buf_start < SERIAL_ASCII_LINE_MAX_BYTES:
+                        break
+                    buf_start += 1
+                    continue
+
+                try:
                     line = bytes(buffer[buf_start:newline_idx]).decode('utf-8', errors='strict').strip()
                     if line and line.isprintable():
                         self.data_received.emit(line)

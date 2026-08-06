@@ -96,6 +96,30 @@ class ArchiveIoTests(unittest.TestCase):
             self.assertEqual(sweeps, [[1, 2], [3, 4]])
             self.assertEqual(timestamps, [0.0, 0.5])
 
+    def test_archive_loader_keeps_embedded_timestamps_despite_unknown_entry(self):
+        with workspace_tempdir("archive_unknown_entry") as tmpdir:
+            archive_path = tmpdir / "capture.jsonl"
+            archive_path.write_text(
+                "\n".join(
+                    [
+                        json.dumps({"metadata": {"channels": [1, 2]}}),
+                        json.dumps({"timestamp_s": 1.0, "samples": [1, 2]}),
+                        json.dumps("unsupported entry"),
+                        json.dumps({"timestamp_s": 2.0, "samples": [3, 4]}),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            loader = DummyArchiveLoader(archive_path)
+            sweeps, timestamps = loader.load_archive_data()
+
+            # One junk record must not discard the real per-sweep timestamps.
+            self.assertEqual(sweeps, [[1, 2], [3, 4]])
+            self.assertEqual(timestamps, [1.0, 2.0])
+            self.assertTrue(any("unsupported entries" in msg for msg in loader.log_messages))
+
     def test_archive_loader_reconstructs_timestamps_from_sidecar(self):
         with workspace_tempdir("archive_sidecar") as tmpdir:
             archive_path = tmpdir / "capture.jsonl"

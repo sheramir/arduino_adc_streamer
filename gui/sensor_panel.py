@@ -985,6 +985,6 @@ class SensorPanelMixin:
         if hasattr(self, "reset_signal_integration_state"):
             self.reset_signal_integration_state()
         if hasattr(self, "_refresh_heatmap_background_overlay"):
-            self._refresh_heatmap_background_overlay(force=True)
+            self._refresh_heatmap_background_overlay()
         if hasattr(self, "refresh_shear_background_overlay"):
             self.refresh_shear_background_overlay()

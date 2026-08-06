@@ -48,6 +48,9 @@ SERIAL_PACKET_AVG_SAMPLE_TIME_MAX_US = 200_000
 SERIAL_PACKET_SPAN_MIN_FACTOR = 0.25
 SERIAL_PACKET_SPAN_MAX_FACTOR = 12.0
 SERIAL_PACKET_SPAN_TOLERANCE_US = 2000
+# Longest '#' ASCII line the reader will wait to complete before resyncing.
+# Matches shared_proto::kMaxCmdLen in the Teensy firmware (SharedProtocol.h).
+SERIAL_ASCII_LINE_MAX_BYTES = 512
 
 # MCU Detection Constants
 MCU_DETECTION_TIMEOUT_SEC = 2.0

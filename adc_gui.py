@@ -226,8 +226,6 @@ class ADCStreamerGUI(
         self._adc_curves = {}
         self._rosette_curves = {}
         self.rosette_plot_baselines = {}
-        self._adc_curve_names = {}
-        self._adc_curve_legend_added = {}
         self._force_x_curve = None
         self._force_z_curve = None
         self._rosette_force_x_curve = None
@@ -435,10 +433,6 @@ class ADCStreamerGUI(
         if current_index < 0:
             return ""
         return self.visualization_tabs.tabText(current_index)
-
-    def is_live_visualization_only_tab(self) -> bool:
-        """Return True when current tab should avoid time-series capture by default."""
-        return False
 
     def should_store_capture_data(self) -> bool:
         """Return True when capture should persist/archive time-series data."""

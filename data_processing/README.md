@@ -299,7 +299,6 @@ GUI-independent generator that builds a piecewise-linear 2D pressure surface (pe
 - PressureMapGenerator._build_triangle_planes(signals, quadrant, peak_x, peak_y, peak_height) — builds the four sub-triangle planes for a peaked quadrant.
 - PressureMapGenerator._corner_value / _solve_triangle_plane — geometry helpers for triangle plane solving.
 - PressureMapGenerator._quadrant_sign(*values) / _value_sign(value) — sign helpers for quadrant activation.
-- PressureMapGenerator._build_pressure_grid(quadrant_planes) / _evaluate_planes_at(...) — evaluates the full numerical field independently of the visual circle.
 - PressureMapGenerator._evaluate_quadrant_for_region(...) — dispatches to peaked/single-axis/plane evaluation plus one radial compact-support decay.
 - PressureMapGenerator._evaluate_isolated_outer_plane(...) — evaluates the localized outer-sensor response through its inferred external peak.
 - PressureMapGenerator._apply_support_decay(...) — applies amplitude-dependent radial smoothstep compact support.

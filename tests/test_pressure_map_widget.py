@@ -10,7 +10,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import numpy as np
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
-from PyQt6.QtWidgets import QGraphicsEllipseItem, QGraphicsRectItem
+from PyQt6.QtWidgets import QGraphicsEllipseItem
 
 from constants.pressure_map import (
     PRESSURE_DISPLAY_MODE_MAGNITUDE,

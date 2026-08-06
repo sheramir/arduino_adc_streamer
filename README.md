@@ -102,7 +102,6 @@ Main application entry point. Defines `ADCStreamerGUI`, a `QMainWindow` subclass
 - `ADCStreamerGUI.closeEvent(event)` — persists spectrum/heatmap/shear settings, disconnects serial ports, and shuts down background workers on window close.
 - `ADCStreamerGUI.on_visualization_tab_changed(index)` — starts/stops spectrum updates and triggers the relevant plot refresh when the active visualization tab changes.
 - `ADCStreamerGUI.get_current_visualization_tab_name()` — returns the title of the currently active visualization tab.
-- `ADCStreamerGUI.is_live_visualization_only_tab()` — returns `False`; placeholder hook for tabs that should skip default time-series capture.
 - `ADCStreamerGUI.should_store_capture_data()` — returns whether captured data should be persisted/archived.
 - `ADCStreamerGUI.should_update_live_timeseries_display()` — returns whether the active tab is one of the live time-series/PZT-RS/Rosette tabs.
 - `ADCStreamerGUI.should_update_signal_integration_display()` — returns whether the Pressure Map tab is active.

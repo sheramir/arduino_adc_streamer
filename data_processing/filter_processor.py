@@ -281,14 +281,14 @@ class FilterProcessorMixin:
         if self._timeseries_filter_pending_key == snapshot_key:
             return data_array, sweep_timestamps_sec
 
-        requested = self.request_live_timeseries_filter_snapshot(
+        # Submits the snapshot to the filter worker; the unfiltered arrays are
+        # returned either way and the filtered result arrives asynchronously.
+        self.request_live_timeseries_filter_snapshot(
             filter_data_array,
             filter_timestamps_sec,
             snapshot_key,
             display_sweeps=display_sweeps,
         )
-        if requested:
-            return data_array, sweep_timestamps_sec
         return data_array, sweep_timestamps_sec
 
     def get_spectrum_source_state(self):

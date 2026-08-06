@@ -11,13 +11,12 @@ import time
 from pathlib import Path
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QGroupBox,
+    QWidget, QVBoxLayout, QGridLayout, QGroupBox,
     QLabel, QPushButton, QComboBox, QSpinBox, QTableWidget, QTableWidgetItem,
-    QFileDialog, QHeaderView, QScrollArea
+    QFileDialog, QHeaderView
 )
 from PyQt6.QtCore import Qt
 
-from constants.ui import FORCE_CALIBRATION_TAB_NAME
 from constants.force import (
     FORCE_CALIBRATION_SETTINGS_DIRNAME,
     FORCE_CALIBRATION_SETTINGS_SUBDIR,
@@ -28,7 +27,6 @@ from data_processing.force_calibration_state import (
     ForceCalibrationSignalSource,
     get_calibration_rows_for_family,
 )
-from data_processing.force_state import get_force_runtime_state
 from file_operations.settings_persistence import save_settings_payload, load_settings_payload
 
 
@@ -36,7 +34,6 @@ class ForceCalibrationPanelMixin:
     """Mixin for Force Calibration tab and workflow."""
 
     _FORCE_CALIBRATION_SENSOR_ORDER = ("T", "B", "R", "L", "C")
-    _FORCE_CALIBRATION_TABLE_ORDER = ("T", "B", "L", "R", "C")
     _FORCE_CALIBRATION_SIGNAL_SOURCE_CHOICES = (
         ("raw", "Raw Piezo"),
         ("heatmap", "Heatmap Signals"),
@@ -415,8 +412,10 @@ class ForceCalibrationPanelMixin:
             return
 
         top, bottom, left, right, center, total = self._sensor_values_to_calibration_fields(sensor_values)
+        # Stored in _FORCE_CALIBRATION_SENSOR_ORDER (T, B, R, L, C) so that
+        # _sync_active_row_with_latest_values decodes it with the same convention.
         self.force_calibration_state.active_measurement_window.update_live_sensor_values(
-            [top, bottom, left, right, center],
+            [top, bottom, right, left, center],
             total_value=total,
         )
         if shear_tb is not None:
@@ -453,7 +452,6 @@ class ForceCalibrationPanelMixin:
     
     def _on_force_calib_start_stop_clicked(self):
         """Toggle measurement capture."""
-        force_state = get_force_runtime_state(self)
         port = getattr(self, "force_serial_port", None)
         
         if port is None or not getattr(port, "is_open", False):
@@ -571,7 +569,6 @@ class ForceCalibrationPanelMixin:
     
     def _on_force_calib_load_clicked(self):
         """Load calibration from file."""
-        family = self.force_calibration_state.selected_sensor_family
         default_dir = Path.home() / FORCE_CALIBRATION_SETTINGS_DIRNAME / FORCE_CALIBRATION_SETTINGS_SUBDIR
         
         file_path, _ = QFileDialog.getOpenFileName(

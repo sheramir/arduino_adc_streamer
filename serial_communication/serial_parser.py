@@ -59,6 +59,6 @@ class SerialParserMixin:
                         '3V3': 'vdd'
                     }
                     self.arduino_status.reference = ref_map.get(value, value.lower())
-        except Exception as e:
+        except Exception:
             # Silently ignore parse errors
             pass

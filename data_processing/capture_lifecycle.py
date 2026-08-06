@@ -68,7 +68,7 @@ class CaptureLifecycleMixin:
         """Reset capture timing fields, histories, and optional UI labels."""
         if hasattr(self, 'first_sweep_timestamp_us'):
             if log_timestamp_clear:
-                self.log_status(f"Clearing first_sweep_timestamp_us (was {self.first_sweep_timestamp_us} Âµs)")
+                self.log_status(f"Clearing first_sweep_timestamp_us (was {self.first_sweep_timestamp_us} µs)")
             delattr(self, 'first_sweep_timestamp_us')
         elif log_timestamp_clear:
             self.log_status("first_sweep_timestamp_us already cleared")
@@ -78,7 +78,7 @@ class CaptureLifecycleMixin:
         if reset_labels:
             self.per_channel_rate_label.setText("- Hz")
             self.total_rate_label.setText("- Hz")
-            self.between_samples_label.setText("- Âµs")
+            self.between_samples_label.setText("- µs")
             self.block_gap_label.setText("- ms")
 
     def _reset_signal_processing_state(self, *, reset_shear=False):
@@ -276,7 +276,7 @@ class CaptureLifecycleMixin:
         if timing.arduino_sample_times:
             avg_sample_time = sum(timing.arduino_sample_times) / len(timing.arduino_sample_times)
             total_rate = 1000000.0 / avg_sample_time if avg_sample_time > 0 else 0
-            self.log_status(f"Capture complete - Sample interval: {avg_sample_time:.2f} Âµs, Total rate: {total_rate:.2f} Hz")
+            self.log_status(f"Capture complete - Sample interval: {avg_sample_time:.2f} µs, Total rate: {total_rate:.2f} Hz")
 
         if timing.buffer_gap_times:
             avg_gap = sum(timing.buffer_gap_times) / len(timing.buffer_gap_times)

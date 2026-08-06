@@ -1,7 +1,9 @@
 import unittest
+from unittest import mock
 
 from config.mcu_detector import MCUDetectorMixin
 from constants.serial import COMMAND_TERMINATOR
+from serial_communication import adc_session as adc_session_module
 from serial_communication.adc_serial import ADCSerialMixin
 from serial_communication.adc_session import ADCSessionController
 
@@ -102,6 +104,43 @@ class AdcSerialRoutingTests(unittest.TestCase):
         self.assertEqual(harness.current_mcu, "Teensy4.1")
         self.assertEqual(harness.mcu_label.text, "MCU: Teensy4.1")
         self.assertIn("Detected MCU: Teensy4.1", harness.logged)
+
+
+class FailingSerialPort:
+    """Serial port that fails once the reset step is reached."""
+
+    def __init__(self):
+        self.is_open = True
+        self.close_calls = 0
+
+    def reset_input_buffer(self):
+        raise OSError("device disappeared during reset")
+
+    def reset_output_buffer(self):
+        return None
+
+    def close(self):
+        self.close_calls += 1
+        self.is_open = False
+
+
+class AdcSessionConnectCleanupTests(unittest.TestCase):
+    def test_failed_connect_closes_port_and_leaves_no_session_state(self):
+        port = FailingSerialPort()
+        session = ADCSessionController(
+            lambda line: None,
+            lambda *args: None,
+            lambda message: None,
+        )
+
+        with mock.patch.object(adc_session_module.serial, "Serial", return_value=port), \
+                mock.patch.object(adc_session_module.time, "sleep", lambda *_: None):
+            with self.assertRaises(OSError):
+                session.connect("COM9")
+
+        self.assertEqual(port.close_calls, 1)
+        self.assertIsNone(session.serial_port)
+        self.assertIsNone(session.serial_thread)
 
 
 if __name__ == "__main__":

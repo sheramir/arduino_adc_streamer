@@ -1,7 +1,6 @@
 import unittest
 
 from config.adc_configuration_service import (
-    ADCCommandResult,
     ADCConfigurationRequest,
     ADCConfigurationService,
 )

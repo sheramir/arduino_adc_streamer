@@ -115,13 +115,21 @@ class AnalysisPanelMixin:
                 return
             _path, payload = load_settings_payload(path, payload_key="analysis_settings")
             if isinstance(payload, dict):
+                # Capture the nested defaults first: update() replaces nested dicts
+                # wholesale, which would drop any key the saved payload omits.
+                default_overlays = dict(self.analysis_state.get("overlays", {}))
+                default_pzt_force = dict(self.analysis_state.get("pzt_force", {}))
+
                 self.analysis_state.update(payload)
+
                 overlays = payload.get("overlays")
                 if isinstance(overlays, dict):
-                    self.analysis_state["overlays"].update(overlays)
+                    default_overlays.update(overlays)
+                    self.analysis_state["overlays"] = default_overlays
                 pzt_force = payload.get("pzt_force")
                 if isinstance(pzt_force, dict):
-                    self.analysis_state["pzt_force"].update(pzt_force)
+                    default_pzt_force.update(pzt_force)
+                    self.analysis_state["pzt_force"] = default_pzt_force
                 visible = payload.get("visible_labels")
                 if isinstance(visible, dict):
                     self.analysis_state["visible_labels"] = visible

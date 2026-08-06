@@ -72,8 +72,11 @@ aliases.
   `HEATMAP_MIRROR_DISPLAY`, `SMOOTH_ALPHA`, `HEATMAP_THRESHOLD`, `CONFIDENCE_INTENSITY_REF`,
   `SIGMA_SPREAD_FACTOR`, `AXIS_SIGMA_FACTOR`, `RMS_WINDOW_MS`, `BIAS_CALIBRATION_DURATION_SEC`,
   `HPF_CUTOFF_HZ`, `HEATMAP_DC_REMOVAL_MODE`, `REMOVE_NEGATIVES`, `HEATMAP_CHANNEL_SENSOR_MAP`,
-  `HEATMAP_REQUIRED_CHANNELS`, `MAX_SENSOR_PACKAGES`, `PZR_ZERO_BASELINE_WINDOW_SEC`,
-  `PZR_AUTO_BASELINE_DELAY_SEC`, `R_HEATMAP_*` aliases.
+  `HEATMAP_REQUIRED_CHANNELS`, `MAX_SENSOR_PACKAGES`, `R_HEATMAP_*` aliases.
+
+  Note: `PZR_ZERO_BASELINE_WINDOW_SEC` and `PZR_AUTO_BASELINE_DELAY_SEC` live in
+  `constants/plotting.py`, which is the only definition the app reads. Duplicate
+  copies previously here were unused and one of them disagreed on the value.
 
   `SENSOR_SIZE` is the physical sensor diameter in millimeters used by the Heatmap display geometry.
   `POINT_TRACKING_ENABLED` and `POINT_TRACKING_GAP_MM` define the default array point-tracking state

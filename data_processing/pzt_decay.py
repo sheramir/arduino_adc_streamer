@@ -8,7 +8,7 @@ and prevents a second copy of the MUX/channel mapping from growing in the UI.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from collections import deque
 from enum import Enum

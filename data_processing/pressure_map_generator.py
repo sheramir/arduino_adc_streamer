@@ -25,7 +25,6 @@ from constants.pressure_map import (
     DEFAULT_PRESSURE_MAXIMUM_DECAY_REACH_MM,
     DEFAULT_PRESSURE_MAXIMUM_PEAK_GAIN,
     DEFAULT_PRESSURE_MINIMUM_DECAY_REACH_MM,
-    DEFAULT_PRESSURE_NATURAL_DECAY_REFERENCE_DISTANCE_MM,
     DEFAULT_PRESSURE_NEAR_OUTER_PEAK_OFFSET_MM,
     DEFAULT_PRESSURE_OUTER_BOUNDARY_REACH_MM,
     DEFAULT_PRESSURE_PACKAGE_CENTER_SPACING_MM,
@@ -37,7 +36,6 @@ from constants.pressure_map import (
     PRESSURE_ACTIVE_QUADRANTS,
     PRESSURE_AXIS_NEGATIVE_DIRECTION,
     PRESSURE_AXIS_POSITIVE_DIRECTION,
-    PRESSURE_OUTSIDE_MASK_VALUE,
     PRESSURE_QUADRANT_BOTTOM_LEFT,
     PRESSURE_QUADRANT_BOTTOM_RIGHT,
     PRESSURE_QUADRANT_TOP_LEFT,
@@ -1119,20 +1117,6 @@ class PressureMapGenerator:
 
     def _value_sign(self, value: float) -> float:
         return PRESSURE_AXIS_POSITIVE_DIRECTION if value > 0.0 else PRESSURE_AXIS_NEGATIVE_DIRECTION if value < 0.0 else 0.0
-
-    # Compatibility helpers retained for older focused callers.  New code uses
-    # the immutable model retained on PressureMapResult.
-    def _build_pressure_grid(self, quadrant_planes: tuple[PressureQuadrantPlane, ...]) -> np.ndarray:
-        return self._evaluate_planes_at(quadrant_planes, self.x_grid_mm, self.y_grid_mm, support_bounds_mm=self.support_bounds_mm)
-
-    def _evaluate_planes_at(self, quadrant_planes: tuple[PressureQuadrantPlane, ...], x_values_mm: np.ndarray, y_values_mm: np.ndarray, *, support_bounds_mm: tuple[float, float, float, float]) -> np.ndarray:
-        signals = {sensor: 0.0 for sensor in SHEAR_SENSOR_POSITIONS}
-        for plane in quadrant_planes:
-            for sensor in plane.sensors:
-                if sensor == SHEAR_POSITION_CENTER:
-                    signals[sensor] = plane.c
-        model = self._build_package_field_model(signals)
-        return model.evaluate(x_values_mm, y_values_mm, support_bounds_mm)
 
     def _evaluate_quadrant_for_region(self, plane: PressureQuadrantPlane, x_values_mm: np.ndarray, y_values_mm: np.ndarray, *, support_bounds_mm: tuple[float, float, float, float] | None = None) -> np.ndarray:
         if plane.triangles:

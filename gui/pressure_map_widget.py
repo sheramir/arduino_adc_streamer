@@ -1238,7 +1238,6 @@ class PressureMapWidget(QWidget):
         near_item.setVisible(bool(self.show_near_outer_boundary))
 
         outer_item = self.package_outer_boundary_items[index]
-        bounds = support_bounds_mm or package.pressure_result.support_bounds_mm
         outer_radius = float(package.pressure_result.outer_boundary_half_width_mm)
         self._style_boundary_item(
             outer_item,

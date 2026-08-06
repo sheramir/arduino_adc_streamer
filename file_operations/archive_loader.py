@@ -10,7 +10,7 @@ from pathlib import Path
 
 import numpy as np
 
-from constants.pzt_rs import get_pzt_rs_ohms_per_wire_unit
+from constants.pzt_rs import extract_archive_rs_units, get_pzt_rs_ohms_per_wire_unit
 from data_processing.force_state import get_force_runtime_state
 
 
@@ -127,12 +127,7 @@ class ArchiveLoaderMixin:
                 if first_line.strip():
                     try:
                         metadata = json.loads(first_line)
-                        if isinstance(metadata, dict):
-                            archive_rs_units = (
-                                metadata.get('metadata', {}).get('pzt_rs_rs_units')
-                                if isinstance(metadata.get('metadata'), dict)
-                                else metadata.get('pzt_rs_rs_units')
-                            )
+                        archive_rs_units = extract_archive_rs_units(metadata)
                     except json.JSONDecodeError:
                         pass
                 

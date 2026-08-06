@@ -21,6 +21,7 @@ from constants.plotting import (
     ROSETTE_FIXED_Y_MAX_DEFAULT_OHMS,
     ROSETTE_FIXED_Y_MIN_DEFAULT_OHMS,
 )
+from data_processing.circular_buffer import recent_window_slices, take_recent
 from constants.sensor_config import (
     SENSOR_POLARITY_NORMAL_MULTIPLIER,
     SENSOR_POLARITY_REVERSED_MULTIPLIER,
@@ -231,46 +232,15 @@ class ADCPlottingMixin:
 
     def _extract_recent_buffer_window(self, active_data_buffer, actual_sweeps, current_write_index, window_sweeps):
         """Copy the requested trailing window from the circular sweep buffers."""
-        window_sweeps = min(window_sweeps, actual_sweeps)
-        if window_sweeps <= 0:
+        slices = recent_window_slices(
+            actual_sweeps, current_write_index, window_sweeps, self.MAX_SWEEPS_BUFFER
+        )
+        if not slices:
             return None
 
-        if actual_sweeps < self.MAX_SWEEPS_BUFFER:
-            start_idx = max(0, actual_sweeps - window_sweeps)
-            return (
-                active_data_buffer[start_idx:actual_sweeps, :].copy(),
-                self.sweep_timestamps_buffer[start_idx:actual_sweeps].copy(),
-            )
-
-        write_pos = current_write_index % self.MAX_SWEEPS_BUFFER
-        if window_sweeps >= self.MAX_SWEEPS_BUFFER:
-            return (
-                np.concatenate([
-                    active_data_buffer[write_pos:, :],
-                    active_data_buffer[:write_pos, :],
-                ]),
-                np.concatenate([
-                    self.sweep_timestamps_buffer[write_pos:],
-                    self.sweep_timestamps_buffer[:write_pos],
-                ]),
-            )
-
-        start_pos = (write_pos - window_sweeps) % self.MAX_SWEEPS_BUFFER
-        if start_pos < write_pos:
-            return (
-                active_data_buffer[start_pos:write_pos, :].copy(),
-                self.sweep_timestamps_buffer[start_pos:write_pos].copy(),
-            )
-
         return (
-            np.concatenate([
-                active_data_buffer[start_pos:, :],
-                active_data_buffer[:write_pos, :],
-            ]),
-            np.concatenate([
-                self.sweep_timestamps_buffer[start_pos:],
-                self.sweep_timestamps_buffer[:write_pos],
-            ]),
+            take_recent(active_data_buffer, slices),
+            take_recent(self.sweep_timestamps_buffer, slices),
         )
 
     def _get_plot_data_snapshot(self, active_data_buffer):

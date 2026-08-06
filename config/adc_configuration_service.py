@@ -16,6 +16,12 @@ from config.buffer_utils import validate_and_limit_sweeps_per_block
 from constants.serial import INTER_COMMAND_DELAY
 from constants.serial import ARRAY_PZT_MAX_MUX_PAIRS_PER_BLOCK
 from constants.serial import ARRAY_PZT_RS_MAX_SWEEPS_PER_BLOCK
+from constants.defaults_555 import ANALYZER555_BUFFER_SIZE_MAX
+from constants.serial import DEFAULT_CONFIG_BUFFER_SIZE
+from constants.pzt_rs import (
+    PZT_RS_CHANNELS_PER_SENSOR,
+    PZT_RS_OUTPUTS_PER_SENSOR,
+)
 from serial_communication.adc_connection_state import ArduinoStatus, build_default_arduino_status
 
 
@@ -62,6 +68,16 @@ class ADCConfigurationResult:
     arduino_status: ArduinoStatus
     normalized_buffer_size: int
     messages: list[str] = field(default_factory=list)
+
+
+def _build_555_tuning_commands(request: ADCConfigurationRequest) -> list[tuple[str, str]]:
+    """Return the 555 analog-tuning commands, in the order the firmware expects."""
+    return [
+        ("rb", str(int(round(request.rb_ohms)))),
+        ("rk", str(int(round(request.rk_ohms)))),
+        ("cf", f"{request.cf_farads:.12g}"),
+        ("rxmax", str(int(round(request.rxmax_ohms)))),
+    ]
 
 
 class ADCConfigurationService:
@@ -214,7 +230,7 @@ class ADCConfigurationService:
                 arduino_status.channels = [int(value.strip()) for value in echoed.split(",") if value.strip()]
             else:
                 all_success = False
-        time.sleep(0.05)
+        time.sleep(INTER_COMMAND_DELAY)
 
         if request.is_array_pzt_pzr_mode and str(request.array_operation_mode).strip().upper() == "PZT_RS":
             pzt_muxes_text = ",".join(str(mux) for mux in request.pzt_muxes_to_send)
@@ -228,7 +244,7 @@ class ADCConfigurationService:
                 else:
                     messages.append(f"PZT_RS config command failed: pztmuxes {pzt_muxes_text}")
                     all_success = False
-            time.sleep(0.05)
+            time.sleep(INTER_COMMAND_DELAY)
 
             rs_channels_text = ",".join(str(channel) for channel in request.rs_channels_to_send)
             if not rs_channels_text:
@@ -241,14 +257,9 @@ class ADCConfigurationService:
                 else:
                     messages.append(f"PZT_RS config command failed: rschannels {rs_channels_text}")
                     all_success = False
-            time.sleep(0.05)
+            time.sleep(INTER_COMMAND_DELAY)
 
-            command_values = [
-                ("rb", str(int(round(request.rb_ohms)))),
-                ("rk", str(int(round(request.rk_ohms)))),
-                ("cf", f"{request.cf_farads:.12g}"),
-                ("rxmax", str(int(round(request.rxmax_ohms)))),
-            ]
+            command_values = _build_555_tuning_commands(request)
             for command, value in command_values:
                 success, received = self._send_command_and_wait_ack(f"{command} {value}", None)
                 if success:
@@ -256,7 +267,7 @@ class ADCConfigurationService:
                 else:
                     messages.append(f"PZT_RS config command failed: {command} {value}")
                     all_success = False
-                time.sleep(0.05)
+                time.sleep(INTER_COMMAND_DELAY)
 
         repeat_text = str(request.repeat)
         success, received = self._send_command_and_wait_ack(f"repeat {repeat_text}", repeat_text)
@@ -264,7 +275,7 @@ class ADCConfigurationService:
             arduino_status.repeat = int(received) if received not in (None, "") else request.repeat
         else:
             all_success = False
-        time.sleep(0.05)
+        time.sleep(INTER_COMMAND_DELAY)
 
         effective_use_ground = bool(request.use_ground)
         effective_ground_pin = int(request.ground_pin)
@@ -291,7 +302,7 @@ class ADCConfigurationService:
                 arduino_status.use_ground = False
             else:
                 all_success = False
-        time.sleep(0.05)
+        time.sleep(INTER_COMMAND_DELAY)
 
         normalized_buffer_size = self._normalize_adc_buffer_size(request)
         buffer_text = str(normalized_buffer_size)
@@ -321,7 +332,7 @@ class ADCConfigurationService:
             else:
                 messages.append(f"555 config command failed: channels {channels_text}")
                 all_success = False
-            time.sleep(0.05)
+            time.sleep(INTER_COMMAND_DELAY)
 
         repeat_text = str(request.repeat)
         success, received = self._send_command_and_wait_ack(f"repeat {repeat_text}", None)
@@ -333,9 +344,9 @@ class ADCConfigurationService:
         else:
             messages.append(f"555 config command failed: repeat {repeat_text}")
             all_success = False
-        time.sleep(0.05)
+        time.sleep(INTER_COMMAND_DELAY)
 
-        normalized_buffer_size = max(1, min(int(request.buffer_size), 256))
+        normalized_buffer_size = max(1, min(int(request.buffer_size), ANALYZER555_BUFFER_SIZE_MAX))
         buffer_text = str(normalized_buffer_size)
         success, received = self._send_command_and_wait_ack(f"buffer {buffer_text}", None)
         if success:
@@ -346,20 +357,15 @@ class ADCConfigurationService:
         else:
             messages.append(f"555 config command failed: buffer {buffer_text}")
             all_success = False
-        time.sleep(0.05)
+        time.sleep(INTER_COMMAND_DELAY)
 
-        command_values = [
-            ("rb", str(int(round(request.rb_ohms)))),
-            ("rk", str(int(round(request.rk_ohms)))),
-            ("cf", f"{request.cf_farads:.12g}"),
-            ("rxmax", str(int(round(request.rxmax_ohms)))),
-        ]
+        command_values = _build_555_tuning_commands(request)
         for command, value in command_values:
             success, _ = self._send_command_and_wait_ack(f"{command} {value}", None)
             if not success:
                 messages.append(f"555 config command failed: {command} {value}")
                 all_success = False
-            time.sleep(0.05)
+            time.sleep(INTER_COMMAND_DELAY)
 
         return all_success, normalized_buffer_size
 
@@ -416,13 +422,13 @@ class ADCConfigurationService:
             and str(request.array_operation_mode).strip().upper() == "PZT_RS"
             and request.is_array_sensor_selection_mode
         ):
-            pzt_sensor_count = max(1, len(request.channels) // 5)
-            channel_count = pzt_sensor_count * 7
+            pzt_sensor_count = max(1, len(request.channels) // PZT_RS_CHANNELS_PER_SENSOR)
+            channel_count = pzt_sensor_count * PZT_RS_OUTPUTS_PER_SENSOR
         else:
             channel_count = len(request.channels_to_send) * max(1, int(request.effective_channel_multiplier))
         buffer_size = int(request.buffer_size)
         if buffer_size <= 0:
-            return 128
+            return DEFAULT_CONFIG_BUFFER_SIZE
         normalized = validate_and_limit_sweeps_per_block(buffer_size, channel_count, request.repeat)
         if request.is_array_mcu and int(request.effective_channel_multiplier) == 2:
             mux_pair_count = len(request.channels_to_send) * max(1, int(request.repeat))

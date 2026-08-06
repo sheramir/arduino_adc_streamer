@@ -12,6 +12,9 @@ from typing import Dict, List
 import numpy as np
 from PyQt6.QtCore import QThread, pyqtSignal
 
+from constants.ui import SPECTRUM_RATE_ESTIMATE_MAX_SWEEPS
+from data_processing.circular_buffer import recent_window_slices, take_recent
+
 from data_processing.adc_filter_engine import ADCFilterEngine, SCIPY_FILTERS_AVAILABLE
 
 
@@ -332,29 +335,24 @@ class SpectrumProcessorMixin:
 
         # Fallback: estimate from sweep timestamps if available
         if self.sweep_timestamps_buffer is not None and self.samples_per_sweep > 0:
+            sweep_ts = None
             with self.buffer_lock:
                 current_sweep_count = self.sweep_count
                 current_write_index = self.buffer_write_index
 
                 actual_sweeps = min(current_sweep_count, self.MAX_SWEEPS_BUFFER)
                 if actual_sweeps >= 3:
-                    sample_count = min(actual_sweeps, 200)
-                    write_pos = current_write_index % self.MAX_SWEEPS_BUFFER
+                    sweep_ts = take_recent(
+                        self.sweep_timestamps_buffer,
+                        recent_window_slices(
+                            actual_sweeps,
+                            current_write_index,
+                            min(actual_sweeps, SPECTRUM_RATE_ESTIMATE_MAX_SWEEPS),
+                            self.MAX_SWEEPS_BUFFER,
+                        ),
+                    )
 
-                    if actual_sweeps < self.MAX_SWEEPS_BUFFER:
-                        start_idx = max(0, actual_sweeps - sample_count)
-                        sweep_ts = self.sweep_timestamps_buffer[start_idx:actual_sweeps].copy()
-                    else:
-                        start_pos = (write_pos - sample_count) % self.MAX_SWEEPS_BUFFER
-                        if start_pos < write_pos:
-                            sweep_ts = self.sweep_timestamps_buffer[start_pos:write_pos].copy()
-                        else:
-                            sweep_ts = np.concatenate([
-                                self.sweep_timestamps_buffer[start_pos:],
-                                self.sweep_timestamps_buffer[:write_pos]
-                            ])
-
-            if 'sweep_ts' in locals() and sweep_ts.size >= 3:
+            if sweep_ts is not None and sweep_ts.size >= 3:
                 dt = np.diff(sweep_ts)
                 dt = dt[dt > 0]
                 if dt.size > 0:

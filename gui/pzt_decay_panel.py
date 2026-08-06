@@ -21,9 +21,11 @@ from data_processing.pzt_decay import (
     resolve_pzt_decay_signal_mapping,
 )
 from file_operations.pzt_decay_exporter import PztDecayExporter
+# Re-exported so existing importers of this module keep working; the tab name
+# itself lives with the other tab titles in constants/ui.py.
+from constants.ui import PZT_DECAY_TAB_NAME  # noqa: F401
 
 
-PZT_DECAY_TAB_NAME = "PZT_Decay_Calc"
 PZT_DECAY_REPEAT_COUNT = 50
 PZT_DECAY_WAIT_REPEAT_COUNT = 1
 PZT_DECAY_VMID_REPEAT_COUNT = 100

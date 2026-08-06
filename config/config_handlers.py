@@ -18,10 +18,11 @@ from config.config_view_state import (
     build_start_ready_state,
     build_start_unavailable_state,
 )
-from config.config_snapshot import build_adc_configuration_snapshot
+from config.config_snapshot import VREF_LABEL_TO_COMMAND, build_adc_configuration_snapshot
 from config.mcu_profile import resolve_mcu_profile
-from constants.serial import MAX_SAMPLES_BUFFER
+from constants.serial import DEFAULT_CONFIG_BUFFER_SIZE, MAX_SAMPLES_BUFFER
 from constants.defaults_555 import (
+    ANALYZER555_BUFFER_SIZE_MAX,
     ANALYZER555_DEFAULT_CF_UNIT,
     ANALYZER555_DEFAULT_CF_VALUE,
     ANALYZER555_DEFAULT_CF_FARADS,
@@ -29,7 +30,12 @@ from constants.defaults_555 import (
     ANALYZER555_DEFAULT_RK_OHMS,
     ANALYZER555_DEFAULT_RXMAX_OHMS,
 )
-from constants.pzt_rs import PZT_RS_RS_OHMS_PER_WIRE_UNIT
+from constants.pzt_rs import (
+    PZT_RS_FIRST_RS_SLOT,
+    PZT_RS_OUTPUTS_PER_SENSOR,
+    PZT_RS_RS_OHMS_PER_WIRE_UNIT,
+    PZT_RS_RS_VALUES_PER_SENSOR,
+)
 from constants.ui import MAX_PLOT_COLUMNS
 from config.buffer_utils import validate_and_limit_sweeps_per_block
 
@@ -505,7 +511,7 @@ class ConfigurationMixin:
                 group for group in self.get_array_selected_sensor_groups()
                 if str(group.get('sensor_id', '')).startswith("PZT")
             ])
-            return sensor_count * 7 * max(1, int(repeat_count))
+            return sensor_count * PZT_RS_OUTPUTS_PER_SENSOR * max(1, int(repeat_count))
         physical_channels = list(channels or [])
         if self.is_array_pzt1_mode() and self.is_array_sensor_selection_mode():
             physical_channels = self.get_channels_for_arduino_command()
@@ -587,9 +593,9 @@ class ConfigurationMixin:
                     sample_indices = []
                     if local_idx < len(seq_positions):
                         if is_pzt_rs:
-                            base_idx = pzt_sensor_index * repeat_count * 7
+                            base_idx = pzt_sensor_index * repeat_count * PZT_RS_OUTPUTS_PER_SENSOR
                             for repeat_idx in range(repeat_count):
-                                sample_indices.append(base_idx + (repeat_idx * 7) + local_idx)
+                                sample_indices.append(base_idx + (repeat_idx * PZT_RS_OUTPUTS_PER_SENSOR) + local_idx)
                         elif is_pzt1:
                             unique_idx = unique_channel_positions.get(channel)
                             if unique_idx is not None:
@@ -706,12 +712,12 @@ class ConfigurationMixin:
                 # When rs_channels is empty the ADC input pin is unconfigured; use -1 as
                 # a placeholder so RS data at the fixed slot positions 5 and 6 within the
                 # 7-sample-per-sensor block is still plotted.
-                for rs_idx in range(2):
+                for rs_idx in range(PZT_RS_RS_VALUES_PER_SENSOR):
                     rs_channel = rs_channels[rs_idx] if rs_idx < len(rs_channels) else -1
                     sample_indices = []
-                    base_idx = pzt_sensor_index * repeat_count * 7
+                    base_idx = pzt_sensor_index * repeat_count * PZT_RS_OUTPUTS_PER_SENSOR
                     for repeat_idx in range(repeat_count):
-                        sample_indices.append(base_idx + (repeat_idx * 7) + 5 + rs_idx)
+                        sample_indices.append(base_idx + (repeat_idx * PZT_RS_OUTPUTS_PER_SENSOR) + PZT_RS_FIRST_RS_SLOT + rs_idx)
 
                     specs.append({
                         'key': ('rs', sensor_id, int(rs_idx) + 1, int(rs_channel)),
@@ -730,11 +736,11 @@ class ConfigurationMixin:
             for seq_idx, seq_channel in enumerate(list(channels or [])):
                 if seq_channel != channel:
                     continue
-                base_idx = seq_idx * repeat_count * 7
+                base_idx = seq_idx * repeat_count * PZT_RS_OUTPUTS_PER_SENSOR
                 for repeat_idx in range(repeat_count):
                     sample_indices.extend([
-                        base_idx + (repeat_idx * 7) + 5,
-                        base_idx + (repeat_idx * 7) + 6,
+                        base_idx + (repeat_idx * PZT_RS_OUTPUTS_PER_SENSOR) + PZT_RS_FIRST_RS_SLOT,
+                        base_idx + (repeat_idx * PZT_RS_OUTPUTS_PER_SENSOR) + PZT_RS_FIRST_RS_SLOT + 1,
                     ])
 
             specs.append({
@@ -803,11 +809,7 @@ class ConfigurationMixin:
     
     def on_vref_changed(self, text: str):
         """Handle voltage reference change."""
-        vref_map = {
-            "1.2V (Internal)": "1.2",
-            "3.3V (VDD)": "vdd"
-        }
-        vref_cmd = vref_map.get(text, "vdd")
+        vref_cmd = VREF_LABEL_TO_COMMAND.get(text, "vdd")
         self.config['reference'] = vref_cmd
         self.config_is_valid = False
         self.update_start_button_state()
@@ -1008,7 +1010,7 @@ class ConfigurationMixin:
 
         snapshot.apply_to_config(self.config)
         self.refresh_adc_mux_timing()
-        buffer_size = int(self.buffer_spin.value()) if hasattr(self, 'buffer_spin') else 128
+        buffer_size = int(self.buffer_spin.value()) if hasattr(self, 'buffer_spin') else DEFAULT_CONFIG_BUFFER_SIZE
 
         return ADCConfigurationRequest(
             current_mcu=self.current_mcu,
@@ -1046,9 +1048,9 @@ class ConfigurationMixin:
         normalized_buffer_size = int(result.normalized_buffer_size)
         current_buffer_size = int(self.buffer_spin.value()) if hasattr(self, 'buffer_spin') else normalized_buffer_size
         if normalized_buffer_size != current_buffer_size:
-            if getattr(self, 'device_mode', 'adc') == '555' and current_buffer_size > 256:
+            if getattr(self, 'device_mode', 'adc') == '555' and current_buffer_size > ANALYZER555_BUFFER_SIZE_MAX:
                 self.log_status(f"555 mode buffer limited from {current_buffer_size} to {normalized_buffer_size}")
-            elif normalized_buffer_size == 128 and current_buffer_size <= 0:
+            elif normalized_buffer_size == DEFAULT_CONFIG_BUFFER_SIZE and current_buffer_size <= 0:
                 self.log_status(f"Invalid buffer size, using default value: {normalized_buffer_size}")
             else:
                 self.log_status(f"Buffer size limited to {normalized_buffer_size} sweeps (Arduino buffer capacity)")

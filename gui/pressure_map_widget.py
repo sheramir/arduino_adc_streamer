@@ -81,14 +81,7 @@ from constants.shear import (
     DEFAULT_ARROW_MIN_THRESHOLD,
     DEFAULT_ARROW_WIDTH_SCALES,
     NORMAL_FORCE_SENSOR_COUNT,
-    SHEAR_ARROW_HEAD_LENGTH_FRACTION,
-    SHEAR_ARROW_HEAD_WIDTH_FRACTION,
-    SHEAR_ARROW_MAX_WIDTH_PX,
-    SHEAR_ARROW_MIN_HEAD_LENGTH_MM,
-    SHEAR_ARROW_MIN_HEAD_WIDTH_MM,
     SHEAR_ARROW_PEN_IS_COSMETIC,
-    SHEAR_ARROW_WIDTH_REFERENCE_MAGNITUDE,
-    SHEAR_ARROW_WIDTH_SCALE_RANGE_PX,
     SHEAR_ARROW_Z,
     SHEAR_AXIS_EQUAL_ASPECT_LOCKED,
     SHEAR_COMPONENT_DECIMALS,
@@ -103,7 +96,7 @@ from data_processing.pressure_map_array_generator import PressureMapArrayResult
 from data_processing.pressure_map_mask import PressureMapMaskGeometry, mask_inside_grid
 from data_processing.pressure_map_generator import PressureMapResult
 from data_processing.shear_detector import ShearResult
-from gui.shear_visualization_widget import ShearArrowGeometry
+from gui.shear_visualization_widget import ShearArrowGeometry, ShearArrowRenderMixin
 
 
 def image_rect_from_centers(
@@ -161,7 +154,7 @@ class _PressureMapImageCache:
     rect: tuple[float, float, float, float]
 
 
-class PressureMapWidget(QWidget):
+class PressureMapWidget(ShearArrowRenderMixin, QWidget):
     """Display a pressure heatmap and normal-force numeric readout.
 
     Args:
@@ -1647,92 +1640,3 @@ class PressureMapWidget(QWidget):
             angle_deg=angle_deg,
         )
 
-    def _apply_arrow_geometry(self, geometry: ShearArrowGeometry) -> None:
-        pen = QPen(QColor(self.arrow_color))
-        pen.setWidthF(float(geometry.width_px))
-        pen.setCosmetic(SHEAR_ARROW_PEN_IS_COSMETIC)
-        self.arrow_line_item.setPen(pen)
-        base_x, base_y = self._calculate_arrow_head_base(geometry)
-        self.arrow_line_item.setLine(
-            geometry.origin_x,
-            geometry.origin_y,
-            base_x,
-            base_y,
-        )
-
-        polygon = self._build_arrow_head_polygon(geometry)
-        self.arrow_head_item.setPolygon(polygon)
-        head_pen = QPen(QColor(self.arrow_color))
-        head_pen.setCosmetic(SHEAR_ARROW_PEN_IS_COSMETIC)
-        self.arrow_head_item.setPen(head_pen)
-        self.arrow_head_item.setBrush(QBrush(QColor(self.arrow_color)))
-        self.arrow_line_item.setVisible(True)
-        self.arrow_head_item.setVisible(True)
-        self.last_arrow_geometry = geometry
-
-    def _build_arrow_head_polygon(self, geometry: ShearArrowGeometry) -> QPolygonF:
-        angle_rad = math.radians(geometry.angle_deg)
-        unit_x = math.cos(angle_rad)
-        unit_y = math.sin(angle_rad)
-        perpendicular_x = -unit_y
-        perpendicular_y = unit_x
-
-        half_head_width = self._calculate_arrow_head_half_width(geometry)
-        base_x, base_y = self._calculate_arrow_head_base(geometry)
-
-        return QPolygonF([
-            QPointF(
-                base_x + (half_head_width * perpendicular_x),
-                base_y + (half_head_width * perpendicular_y),
-            ),
-            QPointF(geometry.tip_x, geometry.tip_y),
-            QPointF(
-                base_x - (half_head_width * perpendicular_x),
-                base_y - (half_head_width * perpendicular_y),
-            ),
-        ])
-
-    def _calculate_arrow_head_base(self, geometry: ShearArrowGeometry) -> tuple[float, float]:
-        angle_rad = math.radians(geometry.angle_deg)
-        unit_x = math.cos(angle_rad)
-        unit_y = math.sin(angle_rad)
-        head_length = min(
-            geometry.length,
-            max(SHEAR_ARROW_MIN_HEAD_LENGTH_MM, geometry.length * SHEAR_ARROW_HEAD_LENGTH_FRACTION),
-        )
-        return (
-            geometry.tip_x - (head_length * unit_x),
-            geometry.tip_y - (head_length * unit_y),
-        )
-
-    def _calculate_arrow_head_half_width(self, geometry: ShearArrowGeometry) -> float:
-        return max(
-            SHEAR_ARROW_MIN_HEAD_WIDTH_MM,
-            geometry.length * SHEAR_ARROW_HEAD_WIDTH_FRACTION,
-        )
-
-    def _hide_arrow(self) -> None:
-        self.arrow_line_item.setVisible(False)
-        self.arrow_head_item.setVisible(False)
-        self.last_arrow_geometry = self._hidden_arrow_geometry()
-
-    def _hidden_arrow_geometry(self) -> ShearArrowGeometry:
-        return ShearArrowGeometry(
-            visible=False,
-            origin_x=SHEAR_ZERO_VALUE,
-            origin_y=SHEAR_ZERO_VALUE,
-            tip_x=SHEAR_ZERO_VALUE,
-            tip_y=SHEAR_ZERO_VALUE,
-            length=SHEAR_ZERO_VALUE,
-            width_px=float(self.arrow_base_width_px),
-            angle_deg=SHEAR_ZERO_VALUE,
-        )
-
-    def _calculate_arrow_width(self, magnitude: float) -> float:
-        base_width = float(self.arrow_base_width_px)
-        if not self.arrow_width_scales:
-            return base_width
-        reference = max(SHEAR_ZERO_VALUE, SHEAR_ARROW_WIDTH_REFERENCE_MAGNITUDE)
-        magnitude_fraction = SHEAR_ZERO_VALUE if not reference else min(1.0, abs(float(magnitude)) / reference)
-        scaled_width = base_width + (magnitude_fraction * SHEAR_ARROW_WIDTH_SCALE_RANGE_PX)
-        return min(scaled_width, max(base_width, SHEAR_ARROW_MAX_WIDTH_PX))

@@ -31,6 +31,7 @@ from constants.pressure_map import (
     SIGNAL_INTEGRATION_DISABLED_HPF_CUTOFF_HZ,
     SIGNAL_INTEGRATION_FALLBACK_MEAN_WINDOW_MULTIPLIER,
     SIGNAL_INTEGRATION_HPF_FILTER_ORDER,
+    SIGNAL_INTEGRATION_MIN_CHANNEL_COUNT,
     SIGNAL_INTEGRATION_WINDOW_MIN_SAMPLES,
 )
 
@@ -294,7 +295,7 @@ class SignalIntegrator:
     @staticmethod
     def _validate_channel_count(channel_count: int) -> int:
         count = int(channel_count)
-        if count < SIGNAL_INTEGRATION_WINDOW_MIN_SAMPLES:
+        if count < SIGNAL_INTEGRATION_MIN_CHANNEL_COUNT:
             raise ValueError("channel_count must be at least 1.")
         return count
 

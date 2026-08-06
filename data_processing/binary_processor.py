@@ -213,7 +213,7 @@ class BinaryProcessorMixin:
                         block_write_base + np.arange(sweeps_in_block)
                     ) % self.MAX_SWEEPS_BUFFER
                     self.raw_data_buffer[positions] = block_samples_array
-                    self.processed_data_buffer[positions] = block_samples_array.astype(np.float32, copy=False)
+                    self.processed_data_buffer[positions] = block_samples_array
                     self.sweep_timestamps_buffer[positions] = sweep_timestamps_sec
                     self.buffer_write_index += sweeps_in_block
                     self.sweep_count += sweeps_in_block
@@ -292,7 +292,9 @@ class BinaryProcessorMixin:
                         >= self._CAPTURE_STATUS_UPDATE_INTERVAL_SEC
                     ):
                         self._last_capture_status_update_time = now
-                        total_samples = int(self.sweep_count) * samples_per_sweep
+                        # Whole-capture total, distinct from the per-block
+                        # total_samples used earlier in this function.
+                        capture_total_samples = int(self.sweep_count) * samples_per_sweep
                         force_samples = len(force_state.data)
                         sweep_note = None
                         if self.is_full_view:
@@ -306,14 +308,14 @@ class BinaryProcessorMixin:
                         if hasattr(self, "update_plot_info_label"):
                             self.update_plot_info_label(
                                 sweep_count=int(self.sweep_count),
-                                total_samples=total_samples,
+                                total_samples=capture_total_samples,
                                 force_samples=force_samples,
                                 sweep_note=sweep_note,
                             )
                         else:
                             note_text = f" ({sweep_note})" if sweep_note else ""
                             self.plot_info_label.setText(
-                                f"ADC - Sweeps: {int(self.sweep_count)}{note_text} | Samples: {total_samples}  |  "
+                                f"ADC - Sweeps: {int(self.sweep_count)}{note_text} | Samples: {capture_total_samples}  |  "
                                 f"Force: {force_samples} samples"
                             )
                 

@@ -17,6 +17,7 @@ from constants.heatmap import (
     R_HEATMAP_COP_SMOOTH_ALPHA,
     MAX_SENSOR_PACKAGES,
 )
+from data_processing.circular_buffer import recent_window_slices, take_recent
 from data_processing.heatmap_signal_processing import (
     heatmap_sensor_label_order,
     resolve_heatmap_blob_sigmas,
@@ -108,16 +109,12 @@ class Heatmap555ProcessorMixin:
             if take_count <= 0:
                 return np.empty((0, self.samples_per_sweep), dtype=np.float32), current_sweep_count
 
-            write_pos = current_write_index % self.MAX_SWEEPS_BUFFER
-            start_pos = (write_pos - take_count) % self.MAX_SWEEPS_BUFFER
-
-            if start_pos < write_pos:
-                data = self.raw_data_buffer[start_pos:write_pos, :].copy()
-            else:
-                data = np.concatenate([
-                    self.raw_data_buffer[start_pos:, :],
-                    self.raw_data_buffer[:write_pos, :]
-                ])
+            data = take_recent(
+                self.raw_data_buffer,
+                recent_window_slices(
+                    available, current_write_index, take_count, self.MAX_SWEEPS_BUFFER
+                ),
+            )
 
         return data, current_sweep_count
 
@@ -206,7 +203,7 @@ class Heatmap555ProcessorMixin:
 
         package_count = min(len(unique_channels) // required_channels, MAX_SENSOR_PACKAGES)
         package_results = []
-        display_sensor_order = ['T', 'B', 'R', 'L', 'C']
+        display_sensor_order = self._threshold_label_order()
 
         for package_index in range(package_count):
             package_channels = unique_channels[

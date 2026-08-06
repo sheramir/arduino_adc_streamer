@@ -13,7 +13,7 @@ import numpy as np
 from PyQt6.QtWidgets import QMessageBox
 
 from constants.plotting import IADC_RESOLUTION_BITS
-from constants.pzt_rs import get_pzt_rs_ohms_per_wire_unit
+from constants.pzt_rs import extract_archive_rs_units, get_pzt_rs_ohms_per_wire_unit
 from data_processing.force_state import get_force_runtime_state
 from data_processing.adc_mux_timing import adc_mux_timing_log, calculate_adc_mux_timing_for_acquisition
 from file_operations.force_export_alignment import (
@@ -24,6 +24,35 @@ from file_operations.force_export_alignment import (
     resolve_export_start_datetime,
 )
 from file_operations.export_metadata import build_vmid_noise_metadata
+
+
+def build_export_row(
+    sweep,
+    row_time,
+    *,
+    rs_round_indices,
+    export_column_indices,
+    is_555_mode,
+    force_series,
+    export_start_datetime,
+):
+    """Build one CSV row: RS rounding, column selection, time columns, force values.
+
+    Shared by the archive-streaming and in-memory export paths so their column
+    layouts cannot drift apart.
+    """
+    row = np.asarray(sweep).tolist()
+    if rs_round_indices:
+        for index in rs_round_indices:
+            if index < len(row):
+                row[index] = round(row[index], 2)
+    if export_column_indices:
+        row = [row[index] for index in export_column_indices if 0 <= index < len(row)]
+    row.insert(0, format_export_clock_time(export_start_datetime, row_time))
+    if is_555_mode:
+        row.insert(1, float(row_time if row_time is not None else 0.0))
+    row.extend(list(get_nearest_force_values(force_series, row_time)))
+    return row
 
 
 class DataExporterMixin:
@@ -359,11 +388,7 @@ class DataExporterMixin:
         filter_runtime = None
         total_fs_hz = 0.0
         archive_metadata = self._read_archive_metadata(archive_path)
-        archive_rs_units = (
-            archive_metadata.get('metadata', {}).get('pzt_rs_rs_units')
-            if isinstance(archive_metadata.get('metadata'), dict)
-            else archive_metadata.get('pzt_rs_rs_units')
-        )
+        archive_rs_units = extract_archive_rs_units(archive_metadata)
 
         if apply_filter:
             total_fs_hz = float(self._get_filter_total_sample_rate_hz())
@@ -415,18 +440,15 @@ class DataExporterMixin:
                 data = self.adc_filter_engine.filter_block(filter_runtime, data.astype(np.float32, copy=True))
 
             for sweep, row_time in zip(data, chunk_row_times):
-                row = np.asarray(sweep).tolist()
-                if rs_round_indices:
-                    for _i in rs_round_indices:
-                        if _i < len(row):
-                            row[_i] = round(row[_i], 2)
-                if export_column_indices:
-                    row = [row[index] for index in export_column_indices if 0 <= index < len(row)]
-                row.insert(0, format_export_clock_time(export_start_datetime, row_time))
-                if is_555_mode:
-                    row.insert(1, float(row_time if row_time is not None else 0.0))
-                row.extend(list(get_nearest_force_values(force_series, row_time)))
-                writer.writerow(row)
+                writer.writerow(build_export_row(
+                    sweep,
+                    row_time,
+                    rs_round_indices=rs_round_indices,
+                    export_column_indices=export_column_indices,
+                    is_555_mode=is_555_mode,
+                    force_series=force_series,
+                    export_start_datetime=export_start_datetime,
+                ))
                 saved_index += 1
 
             chunk_sweeps = []
@@ -691,19 +713,15 @@ class DataExporterMixin:
                         row_time = None
                         if row_timestamps is not None and saved_index < len(row_timestamps):
                             row_time = float(row_timestamps[saved_index])
-                        row = np.asarray(sweep).tolist()
-                        if rs_round_indices:
-                            for _i in rs_round_indices:
-                                if _i < len(row):
-                                    row[_i] = round(row[_i], 2)
-                        if export_column_indices:
-                            row = [row[index] for index in export_column_indices if 0 <= index < len(row)]
-                        row.insert(0, format_export_clock_time(export_start_datetime, row_time))
-                        if is_555_mode:
-                            timestamp_to_write = row_time if row_time is not None else 0.0
-                            row.insert(1, float(timestamp_to_write))
-                        row.extend(list(get_nearest_force_values(force_series, row_time)))
-                        writer.writerow(row)
+                        writer.writerow(build_export_row(
+                            sweep,
+                            row_time,
+                            rs_round_indices=rs_round_indices,
+                            export_column_indices=export_column_indices,
+                            is_555_mode=is_555_mode,
+                            force_series=force_series,
+                            export_start_datetime=export_start_datetime,
+                        ))
 
                     saved_index = saved_total
 

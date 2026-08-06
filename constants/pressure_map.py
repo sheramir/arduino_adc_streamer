@@ -25,6 +25,9 @@ SIGNAL_INTEGRATION_NYQUIST_DIVISOR = 2.0
 DEFAULT_INTEGRATION_WINDOW_SAMPLES = 30
 DEFAULT_INTEGRATION_SCALE_BY_DT = False
 SIGNAL_INTEGRATION_WINDOW_MIN_SAMPLES = 1
+# Separate from the window minimum above: raising one must not silently move
+# the other, even though both currently equal 1.
+SIGNAL_INTEGRATION_MIN_CHANNEL_COUNT = 1
 SIGNAL_INTEGRATION_WINDOW_MAX_SAMPLES = 100000
 
 # Display buffer and window defaults

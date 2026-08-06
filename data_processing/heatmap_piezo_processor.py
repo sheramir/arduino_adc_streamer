@@ -13,6 +13,7 @@ from constants.heatmap import (
     HEATMAP_REQUIRED_CHANNELS, MAX_SENSOR_PACKAGES, CONFIDENCE_INTENSITY_REF, SIGMA_SPREAD_FACTOR,
     AXIS_SIGMA_FACTOR,
 )
+from data_processing.circular_buffer import recent_window_slices, take_recent
 from data_processing.heatmap_signal_processing import (
     heatmap_sensor_label_order,
     resolve_heatmap_blob_sigmas,
@@ -240,25 +241,11 @@ class PiezoHeatmapProcessorMixin:
         window_sweeps = min(window_sweeps, actual_sweeps)
 
         with self.buffer_lock:
-            write_pos = current_write_index % self.MAX_SWEEPS_BUFFER
-            if actual_sweeps < self.MAX_SWEEPS_BUFFER:
-                start_idx = max(0, actual_sweeps - window_sweeps)
-                data_array = self.raw_data_buffer[start_idx:actual_sweeps, :].copy()
-                timestamps = self.sweep_timestamps_buffer[start_idx:actual_sweeps].copy()
-            else:
-                start_pos = (write_pos - window_sweeps) % self.MAX_SWEEPS_BUFFER
-                if start_pos < write_pos:
-                    data_array = self.raw_data_buffer[start_pos:write_pos, :].copy()
-                    timestamps = self.sweep_timestamps_buffer[start_pos:write_pos].copy()
-                else:
-                    data_array = np.concatenate([
-                        self.raw_data_buffer[start_pos:, :],
-                        self.raw_data_buffer[:write_pos, :]
-                    ])
-                    timestamps = np.concatenate([
-                        self.sweep_timestamps_buffer[start_pos:],
-                        self.sweep_timestamps_buffer[:write_pos]
-                    ])
+            slices = recent_window_slices(
+                actual_sweeps, current_write_index, window_sweeps, self.MAX_SWEEPS_BUFFER
+            )
+            data_array = take_recent(self.raw_data_buffer, slices)
+            timestamps = take_recent(self.sweep_timestamps_buffer, slices)
 
         return data_array, timestamps, avg_sample_time_us
 
@@ -384,7 +371,7 @@ class PiezoHeatmapProcessorMixin:
         channel_to_sensor = settings.get('channel_sensor_map', [])
         use_time_series_median_baseline = bool(settings.get('use_time_series_median_baseline', False))
         channel_to_baseline = settings.get('channel_to_baseline', {}) if use_time_series_median_baseline else {}
-        sensor_labels = ['T', 'B', 'R', 'L', 'C']
+        sensor_labels = self._threshold_label_order()
         package_sensor_values = []
 
         for package_index, group in enumerate(sensor_package_groups):

@@ -290,8 +290,7 @@ class TimingDisplayMixin:
         cf_farads = float(self.config.get('cf_farads', ANALYZER555_DEFAULT_CF_FARADS))
         rb_ohms = float(self.config.get('rb_ohms', ANALYZER555_DEFAULT_RB_OHMS))
         rk_ohms = float(self.config.get('rk_ohms', ANALYZER555_DEFAULT_RK_OHMS))
-        ln2 = 0.69314718056
-
+        ln2 = math.log(2.0)
         t_discharge = ln2 * cf_farads * rb_ohms
 
         if not latest_channel_values:

@@ -862,6 +862,27 @@ class AnalysisPanelMixin:
         curve.setPen(pg.mkPen(color=color, width=2))
         self._analysis_pen_colors[cache_key] = color
 
+    def _upsert_analysis_curve(self, group, store, plot, key, color, trace, visible=True):
+        """Create or update one analysis curve and return it."""
+        curve = store.get(key)
+        if curve is None:
+            curve = plot.plot([], [], pen=pg.mkPen(color=color, width=2), name=key)
+            curve.setClipToView(True)
+            curve.setDownsampling(auto=True, method="peak")
+            store[key] = curve
+            self._analysis_pen_colors[(group, key)] = color
+        curve.setData(trace.x, trace.y)
+        self._apply_analysis_curve_pen(group, key, curve, color)
+        curve.setVisible(visible)
+        return curve
+
+    @staticmethod
+    def _hide_stale_analysis_curves(store, desired):
+        """Hide curves whose key is no longer present in the prepared data."""
+        for key, curve in store.items():
+            if key not in desired:
+                curve.setVisible(False)
+
     def _render_analysis_prepared(self):
         prepared = self.analysis_prepared
         if prepared is None:
@@ -876,16 +897,9 @@ class AnalysisPanelMixin:
             desired_signal.add(key)
             color = PLOT_COLORS[index % len(PLOT_COLORS)]
             self.analysis_trace_colors[key] = color
-            curve = self.analysis_signal_curves.get(key)
-            if curve is None:
-                curve = self.analysis_signal_plot.plot([], [], pen=pg.mkPen(color=color, width=2), name=key)
-                curve.setClipToView(True)
-                curve.setDownsampling(auto=True, method="peak")
-                self.analysis_signal_curves[key] = curve
-                self._analysis_pen_colors[("signal", key)] = color
-            curve.setData(trace.x, trace.y)
-            self._apply_analysis_curve_pen("signal", key, curve, color)
-            curve.setVisible(True)
+            self._upsert_analysis_curve(
+                "signal", self.analysis_signal_curves, self.analysis_signal_plot, key, color, trace
+            )
 
         integration_traces = [trace for trace in prepared.overlay_traces if trace.group == "integration"]
         derived_traces = [trace for trace in prepared.overlay_traces if trace.group != "integration"]
@@ -894,64 +908,33 @@ class AnalysisPanelMixin:
             desired_integration.add(key)
             source_label = self._analysis_integrated_source_label(key)
             color = self.analysis_trace_colors.get(source_label, PLOT_COLORS[index % len(PLOT_COLORS)])
-            curve = self.analysis_integration_curves.get(key)
-            if curve is None:
-                curve = self.analysis_integration_plot.plot([], [], pen=pg.mkPen(color=color, width=2), name=key)
-                curve.setClipToView(True)
-                curve.setDownsampling(auto=True, method="peak")
-                self.analysis_integration_curves[key] = curve
-                self._analysis_pen_colors[("integration", key)] = color
-            curve.setData(trace.x, trace.y)
-            self._apply_analysis_curve_pen("integration", key, curve, color)
-            curve.setVisible(True)
+            self._upsert_analysis_curve(
+                "integration", self.analysis_integration_curves, self.analysis_integration_plot,
+                key, color, trace,
+            )
 
         for index, trace in enumerate(derived_traces):
             key = trace.label
             desired_derived.add(key)
             color = PLOT_COLORS[(index + 6) % len(PLOT_COLORS)]
-            curve = self.analysis_derived_curves.get(key)
-            if curve is None:
-                curve = self.analysis_derived_plot.plot(
-                    [], [], pen=pg.mkPen(color=color, width=2), name=key
-                )
-                curve.setClipToView(True)
-                curve.setDownsampling(auto=True, method="peak")
-                self.analysis_derived_curves[key] = curve
-                self._analysis_pen_colors[("derived", key)] = color
-            curve.setData(trace.x, trace.y)
-            self._apply_analysis_curve_pen("derived", key, curve, color)
-            curve.setVisible(True)
+            self._upsert_analysis_curve(
+                "derived", self.analysis_derived_curves, self.analysis_derived_plot, key, color, trace
+            )
 
         for index, trace in enumerate(prepared.force_traces):
             key = trace.label
             desired_force.add(key)
             color = self._analysis_force_trace_color(key, index)
-            curve = self.analysis_force_curves.get(key)
-            if curve is None:
-                curve = self.analysis_force_plot.plot(
-                    [], [], pen=pg.mkPen(color=color, width=2), name=key
-                )
-                curve.setClipToView(True)
-                curve.setDownsampling(auto=True, method="peak")
-                self.analysis_force_curves[key] = curve
-                self._analysis_pen_colors[("force", key)] = color
-            curve.setData(trace.x, trace.y)
-            self._apply_analysis_curve_pen("force", key, curve, color)
             force_check = self.analysis_force_checks.get(key)
-            curve.setVisible(force_check.isChecked() if force_check is not None else True)
+            self._upsert_analysis_curve(
+                "force", self.analysis_force_curves, self.analysis_force_plot, key, color, trace,
+                visible=force_check.isChecked() if force_check is not None else True,
+            )
 
-        for key, curve in self.analysis_signal_curves.items():
-            if key not in desired_signal:
-                curve.setVisible(False)
-        for key, curve in self.analysis_integration_curves.items():
-            if key not in desired_integration:
-                curve.setVisible(False)
-        for key, curve in self.analysis_derived_curves.items():
-            if key not in desired_derived:
-                curve.setVisible(False)
-        for key, curve in self.analysis_force_curves.items():
-            if key not in desired_force:
-                curve.setVisible(False)
+        self._hide_stale_analysis_curves(self.analysis_signal_curves, desired_signal)
+        self._hide_stale_analysis_curves(self.analysis_integration_curves, desired_integration)
+        self._hide_stale_analysis_curves(self.analysis_derived_curves, desired_derived)
+        self._hide_stale_analysis_curves(self.analysis_force_curves, desired_force)
 
         visible_force = any(
             self.analysis_force_checks.get(trace.label).isChecked()

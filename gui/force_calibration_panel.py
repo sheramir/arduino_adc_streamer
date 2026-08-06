@@ -21,6 +21,7 @@ from constants.force import (
     FORCE_CALIBRATION_SETTINGS_DIRNAME,
     FORCE_CALIBRATION_SETTINGS_SUBDIR,
 )
+from data_processing.heatmap_signal_processing import HEATMAP_SENSOR_LABEL_ORDER
 from data_processing.force_calibration_state import (
     build_default_force_calibration_state,
     CalibrationRow,
@@ -33,7 +34,8 @@ from file_operations.settings_persistence import save_settings_payload, load_set
 class ForceCalibrationPanelMixin:
     """Mixin for Force Calibration tab and workflow."""
 
-    _FORCE_CALIBRATION_SENSOR_ORDER = ("T", "B", "R", "L", "C")
+    # Incoming live values follow the shared heatmap sensor order.
+    _FORCE_CALIBRATION_SENSOR_ORDER = HEATMAP_SENSOR_LABEL_ORDER
     _FORCE_CALIBRATION_SIGNAL_SOURCE_CHOICES = (
         ("raw", "Raw Piezo"),
         ("heatmap", "Heatmap Signals"),

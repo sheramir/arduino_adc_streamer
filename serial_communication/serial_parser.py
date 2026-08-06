@@ -59,6 +59,8 @@ class SerialParserMixin:
                         '3V3': 'vdd'
                     }
                     self.arduino_status.reference = ref_map.get(value, value.lower())
-        except Exception:
-            # Silently ignore parse errors
+        except (ValueError, IndexError):
+            # Malformed firmware status output: ignore this line rather than
+            # letting it break the reader. Anything else is a real defect and
+            # is deliberately allowed to propagate.
             pass

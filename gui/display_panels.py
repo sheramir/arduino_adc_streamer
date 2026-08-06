@@ -20,6 +20,7 @@ from constants.ui import (
     FORCE_CALIBRATION_TAB_NAME,
     HEATMAP_TAB_NAME,
     PRESSURE_MAP_TAB_NAME,
+    PZT_DECAY_TAB_NAME,
     PZT_RS_PZT_TAB_NAME,
     ROSETTE_TAB_NAME,
     SENSOR_TAB_NAME,
@@ -56,45 +57,36 @@ class DisplayPanelsMixin:
         
         # Create time-series tab
         timeseries_tab = self.create_timeseries_tab()
-        self.visualization_tabs.addTab(timeseries_tab, TIME_SERIES_TAB_NAME)
-        self.timeseries_tab_index = 0
+        self.timeseries_tab_index = self.visualization_tabs.addTab(timeseries_tab, TIME_SERIES_TAB_NAME)
 
         rosette_tab = self.create_rosette_timeseries_tab()
-        self.visualization_tabs.addTab(rosette_tab, ROSETTE_TAB_NAME)
-        self.rosette_tab_index = 1
+        self.rosette_tab_index = self.visualization_tabs.addTab(rosette_tab, ROSETTE_TAB_NAME)
         self.visualization_tabs.setTabVisible(self.rosette_tab_index, False)
 
             # Create pressure map tab (from PressureMapPanelMixin)
         signal_integration_tab = self.create_signal_integration_tab()
-        self.visualization_tabs.addTab(signal_integration_tab, PRESSURE_MAP_TAB_NAME)
-        self.signal_integration_tab_index = 2
+        self.signal_integration_tab_index = self.visualization_tabs.addTab(signal_integration_tab, PRESSURE_MAP_TAB_NAME)
 
         heatmap_tab = self.create_heatmap_tab()
-        self.visualization_tabs.addTab(heatmap_tab, HEATMAP_TAB_NAME)
-        self.heatmap_tab_index = 3
+        self.heatmap_tab_index = self.visualization_tabs.addTab(heatmap_tab, HEATMAP_TAB_NAME)
 
         # Create force calibration tab (from ForceCalibrationPanelMixin)
         force_calib_tab = self.create_force_calibration_tab()
-        self.visualization_tabs.addTab(force_calib_tab, FORCE_CALIBRATION_TAB_NAME)
-        self.force_calibration_tab_index = 4
+        self.force_calibration_tab_index = self.visualization_tabs.addTab(force_calib_tab, FORCE_CALIBRATION_TAB_NAME)
 
         # Create spectrum tab (from SpectrumPanelMixin)
         spectrum_tab = self.create_spectrum_tab()
-        self.visualization_tabs.addTab(spectrum_tab, SPECTRUM_TAB_NAME)
-        self.spectrum_tab_index = 5
+        self.spectrum_tab_index = self.visualization_tabs.addTab(spectrum_tab, SPECTRUM_TAB_NAME)
 
         analysis_tab = self.create_analysis_tab()
-        self.visualization_tabs.addTab(analysis_tab, ANALYSIS_TAB_NAME)
-        self.analysis_tab_index = 6
+        self.analysis_tab_index = self.visualization_tabs.addTab(analysis_tab, ANALYSIS_TAB_NAME)
 
         pzt_decay_tab = self.create_pzt_decay_tab()
-        self.visualization_tabs.addTab(pzt_decay_tab, "PZT_Decay_Calc")
-        self.pzt_decay_tab_index = 7
+        self.pzt_decay_tab_index = self.visualization_tabs.addTab(pzt_decay_tab, PZT_DECAY_TAB_NAME)
 
         # Create sensor tab last (from SensorPanelMixin)
         sensor_tab = self.create_sensor_tab()
-        self.visualization_tabs.addTab(sensor_tab, SENSOR_TAB_NAME)
-        self.sensor_tab_index = 8
+        self.sensor_tab_index = self.visualization_tabs.addTab(sensor_tab, SENSOR_TAB_NAME)
         
         return self.visualization_tabs
     

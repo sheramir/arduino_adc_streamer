@@ -662,85 +662,61 @@ class PressureMapPanelMixin:
         noise_threshold_tooltip = (
             "Zeros each integrated channel before gain and shear detection when its magnitude is below this value."
         )
-        layout.addWidget(self._create_tooltip_label("Noise threshold:", noise_threshold_tooltip), 0, 0)
-        self.shear_noise_threshold_spin = QDoubleSpinBox()
-        self.shear_noise_threshold_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
-        self.shear_noise_threshold_spin.setRange(SHEAR_NOISE_THRESHOLD_MIN, SHEAR_NOISE_THRESHOLD_MAX)
-        self.shear_noise_threshold_spin.setDecimals(SHEAR_NOISE_THRESHOLD_DECIMALS)
-        self.shear_noise_threshold_spin.setSingleStep(SHEAR_NOISE_THRESHOLD_STEP)
-        self.shear_noise_threshold_spin.setValue(DEFAULT_SHEAR_NOISE_THRESHOLD)
-        self.shear_noise_threshold_spin.setToolTip(noise_threshold_tooltip)
-        self.shear_noise_threshold_spin.valueChanged.connect(self.on_shear_processing_settings_changed)
-        layout.addWidget(self.shear_noise_threshold_spin, 0, 1)
+        self._add_pressure_shape_spin(
+            layout, "Noise threshold:", "shear_noise_threshold_spin",
+            DEFAULT_SHEAR_NOISE_THRESHOLD, 0, 0, noise_threshold_tooltip,
+            minimum=SHEAR_NOISE_THRESHOLD_MIN, maximum=SHEAR_NOISE_THRESHOLD_MAX,
+            decimals=SHEAR_NOISE_THRESHOLD_DECIMALS, step=SHEAR_NOISE_THRESHOLD_STEP,
+            slot=self.on_shear_processing_settings_changed,
+        )
 
         arrow_row = 1
         arrow_gain_tooltip = (
             "Scales detected shear magnitude into displayed arrow length. "
             "Higher values make the arrow longer for the same shear."
         )
-        layout.addWidget(self._create_tooltip_label("Arrow gain:", arrow_gain_tooltip), arrow_row, 0)
-        self.shear_arrow_gain_spin = QDoubleSpinBox()
-        self.shear_arrow_gain_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
-        self.shear_arrow_gain_spin.setRange(SHEAR_ARROW_GAIN_MIN, SHEAR_ARROW_GAIN_MAX)
-        self.shear_arrow_gain_spin.setDecimals(SHEAR_ARROW_GAIN_DECIMALS)
-        self.shear_arrow_gain_spin.setSingleStep(SHEAR_ARROW_GAIN_STEP)
-        self.shear_arrow_gain_spin.setValue(DEFAULT_ARROW_GAIN)
-        self.shear_arrow_gain_spin.setToolTip(arrow_gain_tooltip)
-        self.shear_arrow_gain_spin.valueChanged.connect(self.on_shear_visualization_settings_changed)
-        layout.addWidget(self.shear_arrow_gain_spin, arrow_row, 1)
+        self._add_pressure_shape_spin(
+            layout, "Arrow gain:", "shear_arrow_gain_spin",
+            DEFAULT_ARROW_GAIN, arrow_row, 0, arrow_gain_tooltip,
+            minimum=SHEAR_ARROW_GAIN_MIN, maximum=SHEAR_ARROW_GAIN_MAX,
+            decimals=SHEAR_ARROW_GAIN_DECIMALS, step=SHEAR_ARROW_GAIN_STEP,
+            slot=self.on_shear_visualization_settings_changed,
+        )
 
         arrow_threshold_tooltip = (
             "Hides only the displayed arrow when detected shear magnitude is below this value."
         )
-        layout.addWidget(self._create_tooltip_label("Arrow threshold:", arrow_threshold_tooltip), arrow_row, 2)
-        self.shear_arrow_threshold_spin = QDoubleSpinBox()
-        self.shear_arrow_threshold_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
-        self.shear_arrow_threshold_spin.setRange(
-            SHEAR_ARROW_MIN_THRESHOLD_MIN,
-            SHEAR_ARROW_MIN_THRESHOLD_MAX,
+        self._add_pressure_shape_spin(
+            layout, "Arrow threshold:", "shear_arrow_threshold_spin",
+            DEFAULT_ARROW_MIN_THRESHOLD, arrow_row, 2, arrow_threshold_tooltip,
+            minimum=SHEAR_ARROW_MIN_THRESHOLD_MIN, maximum=SHEAR_ARROW_MIN_THRESHOLD_MAX,
+            decimals=SHEAR_ARROW_MIN_THRESHOLD_DECIMALS, step=SHEAR_ARROW_MIN_THRESHOLD_STEP,
+            slot=self.on_shear_visualization_settings_changed,
         )
-        self.shear_arrow_threshold_spin.setDecimals(SHEAR_ARROW_MIN_THRESHOLD_DECIMALS)
-        self.shear_arrow_threshold_spin.setSingleStep(SHEAR_ARROW_MIN_THRESHOLD_STEP)
-        self.shear_arrow_threshold_spin.setValue(DEFAULT_ARROW_MIN_THRESHOLD)
-        self.shear_arrow_threshold_spin.setToolTip(arrow_threshold_tooltip)
-        self.shear_arrow_threshold_spin.valueChanged.connect(self.on_shear_visualization_settings_changed)
-        layout.addWidget(self.shear_arrow_threshold_spin, arrow_row, 3)
 
         arrow_max_radius_tooltip = (
             "Caps arrow length as a multiple of the visualization circle radius. "
             "A value of 1.0 reaches the circle edge."
         )
-        layout.addWidget(self._create_tooltip_label("Arrow max radius:", arrow_max_radius_tooltip), arrow_row, 4)
-        self.shear_arrow_max_length_spin = QDoubleSpinBox()
-        self.shear_arrow_max_length_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
-        self.shear_arrow_max_length_spin.setRange(
-            SHEAR_ARROW_MAX_LENGTH_MIN,
-            SHEAR_ARROW_MAX_LENGTH_MAX,
+        self._add_pressure_shape_spin(
+            layout, "Arrow max radius:", "shear_arrow_max_length_spin",
+            DEFAULT_ARROW_MAX_LENGTH_PX, arrow_row, 4, arrow_max_radius_tooltip,
+            minimum=SHEAR_ARROW_MAX_LENGTH_MIN, maximum=SHEAR_ARROW_MAX_LENGTH_MAX,
+            decimals=SHEAR_ARROW_MAX_LENGTH_DECIMALS, step=SHEAR_ARROW_MAX_LENGTH_STEP,
+            slot=self.on_shear_visualization_settings_changed,
         )
-        self.shear_arrow_max_length_spin.setDecimals(SHEAR_ARROW_MAX_LENGTH_DECIMALS)
-        self.shear_arrow_max_length_spin.setSingleStep(SHEAR_ARROW_MAX_LENGTH_STEP)
-        self.shear_arrow_max_length_spin.setValue(DEFAULT_ARROW_MAX_LENGTH_PX)
-        self.shear_arrow_max_length_spin.setToolTip(arrow_max_radius_tooltip)
-        self.shear_arrow_max_length_spin.valueChanged.connect(self.on_shear_visualization_settings_changed)
-        layout.addWidget(self.shear_arrow_max_length_spin, arrow_row, 5)
 
         arrow_width_tooltip = (
             "Base shaft width in screen pixels. With Scale width enabled, "
             "this becomes the minimum width before magnitude-based widening."
         )
-        layout.addWidget(self._create_tooltip_label("Arrow width:", arrow_width_tooltip), arrow_row, 6)
-        self.shear_arrow_base_width_spin = QDoubleSpinBox()
-        self.shear_arrow_base_width_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
-        self.shear_arrow_base_width_spin.setRange(
-            SHEAR_ARROW_BASE_WIDTH_MIN_PX,
-            SHEAR_ARROW_BASE_WIDTH_MAX_PX,
+        self._add_pressure_shape_spin(
+            layout, "Arrow width:", "shear_arrow_base_width_spin",
+            DEFAULT_ARROW_BASE_WIDTH_PX, arrow_row, 6, arrow_width_tooltip,
+            minimum=SHEAR_ARROW_BASE_WIDTH_MIN_PX, maximum=SHEAR_ARROW_BASE_WIDTH_MAX_PX,
+            decimals=SHEAR_ARROW_BASE_WIDTH_DECIMALS, step=SHEAR_ARROW_BASE_WIDTH_STEP_PX,
+            slot=self.on_shear_visualization_settings_changed,
         )
-        self.shear_arrow_base_width_spin.setDecimals(SHEAR_ARROW_BASE_WIDTH_DECIMALS)
-        self.shear_arrow_base_width_spin.setSingleStep(SHEAR_ARROW_BASE_WIDTH_STEP_PX)
-        self.shear_arrow_base_width_spin.setValue(DEFAULT_ARROW_BASE_WIDTH_PX)
-        self.shear_arrow_base_width_spin.setToolTip(arrow_width_tooltip)
-        self.shear_arrow_base_width_spin.valueChanged.connect(self.on_shear_visualization_settings_changed)
-        layout.addWidget(self.shear_arrow_base_width_spin, arrow_row, 7)
 
         self.shear_arrow_width_scales_check = QCheckBox("Scale width")
         self.shear_arrow_width_scales_check.setChecked(DEFAULT_ARROW_WIDTH_SCALES)
@@ -1106,7 +1082,13 @@ class PressureMapPanelMixin:
         maximum=1_000_000.0,
         decimals=6,
         step=0.05,
+        slot=None,
     ):
+        """Add a labelled QDoubleSpinBox and bind it to ``attribute``.
+
+        ``slot`` defaults to the pressure-map settings handler; the shear
+        controls pass their own handler.
+        """
         layout.addWidget(self._create_tooltip_label(label, tooltip), row, column)
         spin = QDoubleSpinBox()
         spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
@@ -1116,7 +1098,7 @@ class PressureMapPanelMixin:
         spin.setSuffix(suffix)
         spin.setValue(value)
         spin.setToolTip(tooltip)
-        spin.valueChanged.connect(self.on_pressure_map_settings_changed)
+        spin.valueChanged.connect(slot if slot is not None else self.on_pressure_map_settings_changed)
         setattr(self, attribute, spin)
         layout.addWidget(spin, row, column + 1)
 

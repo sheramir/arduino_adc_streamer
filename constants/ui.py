@@ -4,6 +4,8 @@
 FORCE_PLOT_DEBOUNCE_MS = 100
 CONFIG_CHECK_INTERVAL = 100
 SPECTRUM_UPDATE_INTERVAL_MS = 100
+# Trailing sweeps sampled when estimating the sample rate from sweep timestamps.
+SPECTRUM_RATE_ESTIMATE_MAX_SWEEPS = 200
 
 # Window and Layout Settings
 WINDOW_WIDTH = 1200
@@ -27,6 +29,7 @@ HEATMAP_TAB_NAME = "Heatmap"
 FORCE_CALIBRATION_TAB_NAME = "Force Calibration"
 SPECTRUM_TAB_NAME = "Spectrum"
 ANALYSIS_TAB_NAME = "Analysis"
+PZT_DECAY_TAB_NAME = "PZT_Decay_Calc"
 SENSOR_TAB_NAME = "Sensor"
 
 # Sweep range spinners

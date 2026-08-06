@@ -9,6 +9,7 @@ from __future__ import annotations
 import numpy as np
 
 from constants.filtering_defaults import FILTER_DEFAULT_ENABLED
+from data_processing.circular_buffer import recent_window_slices, take_recent
 from data_processing.adc_filter_worker import ADCFilterWorkerThread
 from data_processing.adc_filter_engine import (
     ADCFilterEngine,
@@ -318,6 +319,14 @@ class FilterProcessorMixin:
         return default_buffer, default_start_abs, default_end_abs
 
     def _get_filter_total_sample_rate_hz(self) -> float:
+        """Total sample rate for filter planning.
+
+        Deliberately narrower than SpectrumProcessorMixin._get_total_sample_rate_hz,
+        which additionally estimates the rate from buffered sweep timestamps.
+        Filtering wants only rates the MCU actually reported or the user
+        configured, so do not merge the two without deciding that the timestamp
+        estimate is acceptable here.
+        """
         timing = self.timing_state
 
         if timing.arduino_sample_times:
@@ -346,14 +355,12 @@ class FilterProcessorMixin:
             if actual_sweeps <= 0:
                 return None
 
-            write_pos = current_write_index % self.MAX_SWEEPS_BUFFER
-            if actual_sweeps < self.MAX_SWEEPS_BUFFER:
-                return self.sweep_timestamps_buffer[:actual_sweeps].copy()
-
-            return np.concatenate([
-                self.sweep_timestamps_buffer[write_pos:],
-                self.sweep_timestamps_buffer[:write_pos],
-            ])
+            return take_recent(
+                self.sweep_timestamps_buffer,
+                recent_window_slices(
+                    actual_sweeps, current_write_index, actual_sweeps, self.MAX_SWEEPS_BUFFER
+                ),
+            )
 
     def _build_filter_stream_map(self):
         """Return {signal_name: sweep positions} for array-PZT modes, else None.

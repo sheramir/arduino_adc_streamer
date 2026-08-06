@@ -28,7 +28,10 @@ from constants.heatmap import (
 from file_operations.settings_persistence import load_settings_payload, save_settings_payload
 from config.channel_utils import unique_channels_in_order
 from data_processing.heatmap_point_tracker import resolve_point_tracking_target
-from data_processing.heatmap_signal_processing import resolve_heatmap_blob_sigmas
+from data_processing.heatmap_signal_processing import (
+    HEATMAP_SENSOR_LABEL_ORDER,
+    resolve_heatmap_blob_sigmas,
+)
 
 
 # Unit-circle samples reused by every overlay redraw; constant, so building them
@@ -151,16 +154,8 @@ class HeatmapPanelMixin:
             and self.is_array_sensor_selection_mode()
         )
 
-    def _on_heatmap_geometry_changed(self, _value=None):
-        self._update_display_plot_view()
-        self._refresh_display_item_overlays()
-        if getattr(self, "_heatmap_settings_loading", False):
-            return
-        self.save_last_heatmap_settings()
-        if hasattr(self, "trigger_heatmap_update"):
-            self.trigger_heatmap_update()
-
-    def _on_heatmap_point_tracking_toggled(self, _state=False):
+    def _on_heatmap_layout_changed(self, _value=None):
+        """Geometry/point-tracking change: re-fit the view, then persist."""
         self._update_display_plot_view()
         self._refresh_display_item_overlays()
         if getattr(self, "_heatmap_settings_loading", False):
@@ -381,7 +376,7 @@ class HeatmapPanelMixin:
             # Threshold row - same pattern as Global Sensor Calibration
             threshold_row = QHBoxLayout()
             threshold_row.addWidget(QLabel(f"Extra Thresholds {'(%)' if is_pzr_mode else ''}  [T,B,R,L,C]:"))
-            for name in ["T", "B", "R", "L", "C"]:
+            for name in HEATMAP_SENSOR_LABEL_ORDER:
                 spin = self._create_numeric_line_edit(0.0, 0.0, 1000.0 if is_pzr_mode else 1e6)
                 self.sensor_calibration_spins[sensor_id]['threshold_spins'].append(spin)
                 threshold_row.addWidget(QLabel(f"{name}:"))
@@ -391,8 +386,8 @@ class HeatmapPanelMixin:
 
             # Gain row - same pattern as Global Sensor Calibration
             gain_row = QHBoxLayout()
-            gain_row.addWidget(QLabel(f"Gains  [T,B,R,L,C]:"))
-            for name in ["T", "B", "R", "L", "C"]:
+            gain_row.addWidget(QLabel("Gains  [T,B,R,L,C]:"))
+            for name in HEATMAP_SENSOR_LABEL_ORDER:
                 spin = self._create_numeric_line_edit(1.0, 0.0, 1000.0)
                 self.sensor_calibration_spins[sensor_id]['gain_spins'].append(spin)
                 gain_row.addWidget(QLabel(f"{name}:"))
@@ -594,13 +589,13 @@ class HeatmapPanelMixin:
         self.dc_removal_combo.currentIndexChanged.connect(self.save_last_heatmap_settings)
         self.heatmap_colormap_combo.currentTextChanged.connect(self._on_heatmap_colormap_changed)
         self.show_heatmap_position_labels_check.stateChanged.connect(self._on_heatmap_position_labels_toggled)
-        self.ellipse_shape_check.stateChanged.connect(self._on_heatmap_ellipse_shape_toggled)
+        self.ellipse_shape_check.stateChanged.connect(self._on_heatmap_setting_toggled)
         self.heatmap_mirror_check.stateChanged.connect(self._on_heatmap_mirror_toggled)
-        self.remove_negatives_check.stateChanged.connect(self._on_heatmap_remove_negatives_toggled)
-        self.heatmap_use_median_baseline_check.stateChanged.connect(self._on_heatmap_median_baseline_toggled)
-        self.sensor_size_spin.valueChanged.connect(self._on_heatmap_geometry_changed)
-        self.heatmap_gap_spin.valueChanged.connect(self._on_heatmap_geometry_changed)
-        self.heatmap_point_tracking_check.stateChanged.connect(self._on_heatmap_point_tracking_toggled)
+        self.remove_negatives_check.stateChanged.connect(self._on_heatmap_setting_toggled)
+        self.heatmap_use_median_baseline_check.stateChanged.connect(self._on_heatmap_setting_toggled)
+        self.sensor_size_spin.valueChanged.connect(self._on_heatmap_layout_changed)
+        self.heatmap_gap_spin.valueChanged.connect(self._on_heatmap_layout_changed)
+        self.heatmap_point_tracking_check.stateChanged.connect(self._on_heatmap_layout_changed)
         # Note: Per-sensor threshold and gain spinboxes are connected in _build_per_sensor_calibration_ui()
 
     def _on_heatmap_circle_overlay_toggled(self, _state=False):
@@ -608,31 +603,18 @@ class HeatmapPanelMixin:
         if not getattr(self, "_heatmap_settings_loading", False):
             self.save_last_heatmap_settings()
 
+    def _on_heatmap_setting_toggled(self, _state=False):
+        """Processing-option toggle: persist and re-run the heatmap."""
+        if getattr(self, "_heatmap_settings_loading", False):
+            return
+        self.save_last_heatmap_settings()
+        if hasattr(self, "trigger_heatmap_update"):
+            self.trigger_heatmap_update()
+
     def _on_heatmap_position_labels_toggled(self, _state=False):
         self._refresh_display_item_overlays()
         if not getattr(self, "_heatmap_settings_loading", False):
             self.save_last_heatmap_settings()
-
-    def _on_heatmap_ellipse_shape_toggled(self, _state=False):
-        if getattr(self, "_heatmap_settings_loading", False):
-            return
-        self.save_last_heatmap_settings()
-        if hasattr(self, "trigger_heatmap_update"):
-            self.trigger_heatmap_update()
-
-    def _on_heatmap_remove_negatives_toggled(self, _state=False):
-        if getattr(self, "_heatmap_settings_loading", False):
-            return
-        self.save_last_heatmap_settings()
-        if hasattr(self, "trigger_heatmap_update"):
-            self.trigger_heatmap_update()
-
-    def _on_heatmap_median_baseline_toggled(self, _state=False):
-        if getattr(self, "_heatmap_settings_loading", False):
-            return
-        self.save_last_heatmap_settings()
-        if hasattr(self, "trigger_heatmap_update"):
-            self.trigger_heatmap_update()
 
     def _create_heatmap_image_item(self):
         return pg.ImageItem(axisOrder="row-major")
@@ -669,7 +651,7 @@ class HeatmapPanelMixin:
         row1.addStretch()
         row2 = QHBoxLayout()
         sensor_labels = []
-        for name in ["T", "B", "R", "L", "C"]:
+        for name in HEATMAP_SENSOR_LABEL_ORDER:
             label = QLabel(f"{name}: 0")
             label.setStyleSheet("font-family: monospace;")
             sensor_labels.append(label)

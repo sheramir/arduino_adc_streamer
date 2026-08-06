@@ -25,7 +25,7 @@ from constants.pressure_map import (
     DEFAULT_PRESSURE_MAXIMUM_DECAY_REACH_MM,
     DEFAULT_PRESSURE_MAXIMUM_PEAK_GAIN,
     DEFAULT_PRESSURE_MINIMUM_DECAY_REACH_MM,
-    DEFAULT_PRESSURE_NEAR_OUTER_PEAK_OFFSET_MM,
+    DEFAULT_PRESSURE_PEAK_POSITION_OUTER_OFFSET_MM,
     DEFAULT_PRESSURE_OUTER_BOUNDARY_REACH_MM,
     DEFAULT_PRESSURE_PACKAGE_CENTER_SPACING_MM,
     DEFAULT_PRESSURE_PEAK_GAIN_SLOPE_PER_MM,
@@ -233,6 +233,8 @@ class PressureQuadrantPlane:
     sensors: tuple[str, ...]
     mode: str = PRESSURE_QUADRANT_MODE_PEAKLESS
     peak_point: tuple[float, float] | None = None
+    target_peak_point: tuple[float, float] | None = None
+    outboard_peak: bool = False
     peak_height: float | None = None
     corner_value: float | None = None
     triangles: tuple[PressureTrianglePlane, ...] = ()
@@ -269,6 +271,9 @@ class PressureFieldModel:
     minimum_lateral_width_mm: float
     active_axis_sensor: str | None = None
     peak_point: tuple[float, float] | None = None
+    target_peak_point: tuple[float, float] | None = None
+    peak_position_geometry_limited: bool = False
+    peak_position_limit_reason: str | None = None
     peak_height: float | None = None
     isolated_circular_radius_mm: float | None = None
     isolated_measured_sensor_value: float | None = None
@@ -347,11 +352,17 @@ class PressureMapResult:
     package_activity_confidence: float
     geometry_epsilon: float
     show_negative: bool
-    near_outer_peak_offset_mm: float
+    peak_position_outer_offset_mm: float
     field_model: PressureFieldModel
     package_mode: str
     frame_id: int
     diagnostics: dict[str, object] | None = None
+
+    @property
+    def near_outer_peak_offset_mm(self) -> float:
+        """Deprecated compatibility alias for the renamed setting."""
+
+        return self.peak_position_outer_offset_mm
 
 
 @dataclass(frozen=True, slots=True)
@@ -384,7 +395,8 @@ class PressureMapGenerator:
         maximum_decay_reach_mm: float = DEFAULT_PRESSURE_MAXIMUM_DECAY_REACH_MM,
         signal_activity_threshold: float = DEFAULT_PRESSURE_SIGNAL_ACTIVITY_THRESHOLD,
         geometry: PressureMapGeometry | None = None,
-        near_outer_peak_offset_mm: float = DEFAULT_PRESSURE_NEAR_OUTER_PEAK_OFFSET_MM,
+        peak_position_outer_offset_mm: float = DEFAULT_PRESSURE_PEAK_POSITION_OUTER_OFFSET_MM,
+        near_outer_peak_offset_mm: float | None = None,
         geometry_epsilon: float = PRESSURE_GEOMETRY_EPSILON,
         show_negative: bool = DEFAULT_PRESSURE_SHOW_NEGATIVE,
         debug: bool = False,
@@ -397,24 +409,31 @@ class PressureMapGenerator:
                 (package_center_spacing_mm, DEFAULT_PRESSURE_PACKAGE_CENTER_SPACING_MM, geometry.package_center_spacing_mm),
                 (outer_boundary_reach_mm, DEFAULT_PRESSURE_OUTER_BOUNDARY_REACH_MM, geometry.outer_boundary_reach_mm),
                 (pixels_per_mm, DEFAULT_PRESSURE_PIXELS_PER_MM, geometry.pixels_per_mm),
-                (near_outer_peak_offset_mm, DEFAULT_PRESSURE_NEAR_OUTER_PEAK_OFFSET_MM, geometry.near_outer_peak_offset_mm),
+                (peak_position_outer_offset_mm, DEFAULT_PRESSURE_PEAK_POSITION_OUTER_OFFSET_MM, geometry.peak_position_outer_offset_mm),
             )
             if any(
                 not np.isclose(value, default) and not np.isclose(value, geometry_value)
                 for value, default, geometry_value in conflicting_scalars
             ):
                 raise ValueError("scalar pressure-map geometry conflicts with supplied geometry")
+        if near_outer_peak_offset_mm is not None:
+            if (
+                peak_position_outer_offset_mm != DEFAULT_PRESSURE_PEAK_POSITION_OUTER_OFFSET_MM
+                and not np.isclose(peak_position_outer_offset_mm, near_outer_peak_offset_mm)
+            ):
+                raise ValueError("conflicting outer peak-position offsets")
+            peak_position_outer_offset_mm = near_outer_peak_offset_mm
         self.geometry = geometry or PressureMapGeometry(
             sensor_spacing_mm=float(sensor_spacing_mm),
             package_center_spacing_mm=float(package_center_spacing_mm),
             outer_boundary_reach_mm=float(outer_boundary_reach_mm),
-            near_outer_peak_offset_mm=float(near_outer_peak_offset_mm),
+            peak_position_outer_offset_mm=float(peak_position_outer_offset_mm),
             pixels_per_mm=float(pixels_per_mm),
         )
         self.sensor_spacing_mm = self.geometry.sensor_spacing_mm
         self.package_center_spacing_mm = self.geometry.package_center_spacing_mm
         self.outer_boundary_reach_mm = self.geometry.outer_boundary_reach_mm
-        self.near_outer_peak_offset_mm = self.geometry.near_outer_peak_offset_mm
+        self.peak_position_outer_offset_mm = self.geometry.peak_position_outer_offset_mm
         self.pixels_per_mm = self.geometry.pixels_per_mm
         self.decay_rate = float(decay_rate)
         self.decay_ref_distance_mm = float(decay_ref_distance_mm)
@@ -436,6 +455,7 @@ class PressureMapGenerator:
         self.debug = bool(debug)
         self._validate_parameters()
         self.sensor_positions = self._build_sensor_positions()
+        self.virtual_outer_positions = self._build_virtual_outer_positions()
         self.quadrants = self._build_quadrant_definitions()
         self._quadrant_by_label = {quadrant.label: quadrant for quadrant in self.quadrants}
         self.facing_sensor_gap_mm = self.geometry.facing_sensor_gap_mm
@@ -458,6 +478,16 @@ class PressureMapGenerator:
         self.x_grid_mm, self.y_grid_mm = np.meshgrid(self.x_coordinates_mm, self.y_coordinates_mm)
         # A visual overlay compatibility mask only; it never clips the field.
         self.circle_mask = np.hypot(self.x_grid_mm, self.y_grid_mm) <= self.visual_boundary_radius_mm
+
+    @property
+    def near_outer_peak_offset_mm(self) -> float:
+        """Deprecated compatibility alias for the renamed setting."""
+
+        return self.peak_position_outer_offset_mm
+
+    @property
+    def virtual_outer_spacing_mm(self) -> float:
+        return self.geometry.virtual_outer_spacing_mm
 
     def generate(self, normalized_signals: Mapping[str, float]) -> PressureMapResult:
         """Threshold input signals, then build and rasterize one signed model."""
@@ -525,7 +555,7 @@ class PressureMapGenerator:
             active_sensor_mask=model.active_sensor_mask,
             package_activity_confidence=model.package_activity_confidence,
             geometry_epsilon=self.geometry_epsilon, show_negative=self.show_negative,
-            near_outer_peak_offset_mm=self.near_outer_peak_offset_mm,
+            peak_position_outer_offset_mm=self.peak_position_outer_offset_mm,
             field_model=model, package_mode=model.package_mode, frame_id=next(_FRAME_IDS),
             diagnostics=diagnostics,
         )
@@ -562,11 +592,34 @@ class PressureMapGenerator:
                     model.support_bounds_mm,
                     core_mask[core_mask],
                 )
+            elif any(plane.outboard_peak for plane in model.quadrant_planes):
+                core_surface[core_mask] = _evaluate_pressure_field_model(
+                    model,
+                    self.x_grid_mm[core_mask],
+                    self.y_grid_mm[core_mask],
+                    model.support_bounds_mm,
+                )
             else:
                 core_surface[core_mask] = _evaluate_core(
                     model, self.x_grid_mm[core_mask], self.y_grid_mm[core_mask]
                 )
         diagnostics = {
+            "physical_outer_spacing_mm": self.sensor_spacing_mm,
+            "virtual_outer_spacing_mm": self.virtual_outer_spacing_mm,
+            "peak_position_outer_offset_mm": self.peak_position_outer_offset_mm,
+            "virtual_outer_positions": dict(self.virtual_outer_positions),
+            "target_peak_point": model.target_peak_point,
+            "final_peak_point": model.peak_point,
+            "target_peak_points": {
+                plane.label: plane.target_peak_point
+                for plane in model.quadrant_planes if plane.target_peak_point is not None
+            },
+            "final_peak_points": {
+                plane.label: plane.peak_point
+                for plane in model.quadrant_planes if plane.peak_point is not None
+            },
+            "peak_position_geometry_limited": model.peak_position_geometry_limited,
+            "peak_position_limit_reason": model.peak_position_limit_reason,
             "raw_sensor_values": dict(model.raw_sensor_values),
             "thresholded_sensor_values": dict(model.sensor_values),
             "active_sensor_mask": model.active_sensor_mask,
@@ -580,7 +633,7 @@ class PressureMapGenerator:
                 plane.label: plane.decay_origin for plane in model.quadrant_planes
             },
             "peaks": tuple(
-                (plane.label, plane.peak_point, plane.peak_height)
+                (plane.label, plane.target_peak_point, plane.peak_point, plane.peak_height)
                 for plane in model.quadrant_planes if plane.peak_point is not None
             ),
             "core_surface": core_surface,
@@ -632,6 +685,14 @@ class PressureMapGenerator:
                     "center_outer_gain_cap_search_iterations": model.center_outer_gain_cap_search_iterations,
                     "center_outer_used_fallback": model.center_outer_used_fallback,
                     "center_outer_extension_decay_factors_applicable": False,
+                    "distance_to_real_center_anchor": abs(float(peak_axis)) if peak_axis is not None else None,
+                    "distance_to_real_outer_anchor": abs(float(peak_axis) - self.sensor_spacing_mm) if peak_axis is not None else None,
+                    "circular_radius": model.center_outer_circular_radius_mm,
+                    "center_factor": model.center_outer_center_factor,
+                    "outer_factor": model.center_outer_outer_factor,
+                    "actual_peak_gain": model.center_outer_actual_peak_gain,
+                    "gain_cap_satisfied": model.center_outer_gain_cap_satisfied,
+                    "used_fallback": model.center_outer_used_fallback,
                 }
             )
         return diagnostics
@@ -651,6 +712,10 @@ class PressureMapGenerator:
             # Circular center-plus-one fields have no core/extension decay
             # split.  The retained generic factors are explicitly marked as
             # not applicable in the diagnostics payload.
+            return np.zeros_like(factors)
+        if any(plane.outboard_peak for plane in model.quadrant_planes):
+            # Outboard quadrants are evaluated by their direct anchor surface,
+            # not by the core-to-extension decay path.
             return np.zeros_like(factors)
         spacing = self.geometry.sensor_spacing_mm
         extension = inside & ((np.abs(self.x_grid_mm) > spacing) | (np.abs(self.y_grid_mm) > spacing))
@@ -740,6 +805,27 @@ class PressureMapGenerator:
             ) and planes
             else (0.0, 0.0)
         )
+        target_peak_point = (
+            planes[0].target_peak_point
+            if package_mode in (
+                PRESSURE_PACKAGE_MODE_ISOLATED_OUTER,
+                PRESSURE_PACKAGE_MODE_CENTER_PLUS_ONE_OUTER,
+            ) and planes else None
+        )
+        limited_planes = tuple(
+            plane for plane in planes
+            if plane.target_peak_point is not None
+            and plane.peak_point is not None
+            and not np.allclose(plane.target_peak_point, plane.peak_point)
+        )
+        limit_reason = (
+            "target lies outside the physical core triangulation"
+            if package_mode == PRESSURE_PACKAGE_MODE_GENERAL_MULTI_SENSOR and limited_planes
+            else (
+                "circular profile must retain room for both real anchors and the outer boundary"
+                if limited_planes else None
+            )
+        )
         model = PressureFieldModel(
             geometry=self.geometry, package_mode=package_mode,
             raw_sensor_values=tuple(
@@ -761,6 +847,9 @@ class PressureMapGenerator:
             geometry_epsilon=self.geometry_epsilon,
             minimum_lateral_width_mm=max(3.0 * self.cell_size_mm, self.geometry_epsilon),
             active_axis_sensor=axis_sensor, peak_point=peak_point, peak_height=peak_height,
+            target_peak_point=target_peak_point,
+            peak_position_geometry_limited=bool(limited_planes),
+            peak_position_limit_reason=limit_reason,
         )
         if package_mode == PRESSURE_PACKAGE_MODE_ISOLATED_OUTER:
             (
@@ -859,6 +948,17 @@ class PressureMapGenerator:
             SHEAR_POSITION_BOTTOM: (0.0, -spacing),
         }
 
+    def _build_virtual_outer_positions(self) -> dict[str, tuple[float, float]]:
+        """Return inferred-peak positions without changing physical anchors."""
+
+        spacing = self.virtual_outer_spacing_mm
+        return {
+            SHEAR_POSITION_LEFT: (-spacing, 0.0),
+            SHEAR_POSITION_RIGHT: (spacing, 0.0),
+            SHEAR_POSITION_TOP: (0.0, spacing),
+            SHEAR_POSITION_BOTTOM: (0.0, -spacing),
+        }
+
     def _build_quadrant_definitions(self) -> tuple[_QuadrantDefinition, ...]:
         return (
             _QuadrantDefinition(PRESSURE_QUADRANT_TOP_RIGHT, SHEAR_POSITION_RIGHT, SHEAR_POSITION_TOP, 1.0, 1.0, (SHEAR_POSITION_CENTER, SHEAR_POSITION_RIGHT, SHEAR_POSITION_TOP)),
@@ -914,18 +1014,21 @@ class PressureMapGenerator:
         peak_height: float | None = None
         mode = PRESSURE_QUADRANT_MODE_SIGNED_TRANSITION
         if same_sign:
-            peak_axis = _center_outer_peak_axis(
+            target_peak_axis = _center_outer_peak_axis(
                 center,
                 outer,
-                self.sensor_spacing_mm,
+                self.virtual_outer_spacing_mm,
             )
+            peak_axis, _limited, _reason = self._limit_center_outer_peak_axis(target_peak_axis)
             peak_point = self._point_on_sensor_axis(sensor, peak_axis)
             mode = PRESSURE_QUADRANT_MODE_SINGLE_AXIS_PEAKED
         a, b = self._axis_plane_coefficients(sensor, center, outer)
         return PressureQuadrantPlane(
             label=sensor, a=a, b=b, c=center, sign=sign,
             sensors=(SHEAR_POSITION_CENTER, sensor), mode=mode,
-            peak_point=peak_point, peak_height=peak_height,
+            peak_point=peak_point, target_peak_point=(
+                self._point_on_sensor_axis(sensor, target_peak_axis) if same_sign else None
+            ), peak_height=peak_height,
             single_axis_peak_sensor=sensor, single_axis_center_value=center,
             single_axis_outer_value=outer,
             decay_origin=peak_point or self._axis_decay_origin(signals, sensor),
@@ -933,14 +1036,14 @@ class PressureMapGenerator:
 
     def _build_isolated_outer_plane(self, signals: Mapping[str, float], sensor: str) -> PressureQuadrantPlane:
         value = float(signals[sensor])
-        peak_axis = self.sensor_spacing_mm + self.near_outer_peak_offset_mm
+        peak_axis = self.virtual_outer_spacing_mm
         peak_point = self._point_on_sensor_axis(sensor, peak_axis)
         a, b = self._axis_plane_coefficients(sensor, 0.0, value)
         return PressureQuadrantPlane(
             label=sensor, a=a, b=b, c=0.0, sign=self._value_sign(value),
             sensors=(SHEAR_POSITION_CENTER, sensor),
             mode=PRESSURE_QUADRANT_MODE_ISOLATED_OUTER_PEAKED,
-            peak_point=peak_point, peak_height=None,
+            peak_point=peak_point, target_peak_point=peak_point, peak_height=None,
             single_outer_decay_sensor=sensor, single_axis_peak_sensor=sensor,
             single_axis_center_value=0.0, single_axis_outer_value=value,
             decay_origin=peak_point,
@@ -961,7 +1064,30 @@ class PressureMapGenerator:
                 triangles=self._build_peakless_triangles(signals, quadrant, corner_value),
                 decay_origin=weighted_origin,
             )
-        peak_x, peak_y = self._pressure_point(signals, quadrant)
+        # A virtual peak refines a same-sign center-plus-two-outer inference.
+        # With no active center there is no center-relative weighting anchor,
+        # so preserve the established peakless outer-ring interpolation.
+        if not self.is_signal_active(signals[SHEAR_POSITION_CENTER]):
+            return PressureQuadrantPlane(
+                label=quadrant.label, a=a, b=b, c=c, sign=sign, sensors=quadrant.sensors,
+                mode=PRESSURE_QUADRANT_MODE_PEAKLESS, corner_value=corner_value,
+                triangles=self._build_peakless_triangles(signals, quadrant, corner_value),
+                decay_origin=weighted_origin,
+            )
+        target_peak_x, target_peak_y = self._pressure_point(signals, quadrant)
+        peak_x, peak_y = target_peak_x, target_peak_y
+        outboard_peak = (
+            peak_x * quadrant.horizontal_sign > self.sensor_spacing_mm - self.geometry_epsilon
+            or peak_y * quadrant.vertical_sign > self.sensor_spacing_mm - self.geometry_epsilon
+        )
+        if outboard_peak:
+            peak_height = self._pressure_point_height(signals, quadrant, peak_x, peak_y)
+            return PressureQuadrantPlane(
+                label=quadrant.label, a=a, b=b, c=c, sign=sign, sensors=quadrant.sensors,
+                mode=PRESSURE_QUADRANT_MODE_PEAKED, peak_point=(peak_x, peak_y),
+                target_peak_point=(target_peak_x, target_peak_y), outboard_peak=True,
+                peak_height=peak_height, corner_value=corner_value, decay_origin=(peak_x, peak_y),
+            )
         if not self._is_peaked_pressure_point(peak_x, peak_y, quadrant):
             return PressureQuadrantPlane(
                 label=quadrant.label, a=a, b=b, c=c, sign=sign, sensors=quadrant.sensors,
@@ -981,6 +1107,7 @@ class PressureMapGenerator:
         return PressureQuadrantPlane(
             label=quadrant.label, a=a, b=b, c=c, sign=sign, sensors=quadrant.sensors,
             mode=PRESSURE_QUADRANT_MODE_PEAKED, peak_point=(peak_x, peak_y),
+            target_peak_point=(target_peak_x, target_peak_y),
             peak_height=peak_height, corner_value=corner_value, triangles=triangles,
             decay_origin=(peak_x, peak_y),
         )
@@ -1035,8 +1162,21 @@ class PressureMapGenerator:
         horizontal = _peak_position_weight(signals[quadrant.horizontal_sensor])
         vertical = _peak_position_weight(signals[quadrant.vertical_sensor])
         return (
-            quadrant.horizontal_sign * self.sensor_spacing_mm * horizontal / (horizontal + center) if horizontal + center else 0.0,
-            quadrant.vertical_sign * self.sensor_spacing_mm * vertical / (vertical + center) if vertical + center else 0.0,
+            quadrant.horizontal_sign * self.virtual_outer_spacing_mm * horizontal / (horizontal + center) if horizontal + center else 0.0,
+            quadrant.vertical_sign * self.virtual_outer_spacing_mm * vertical / (vertical + center) if vertical + center else 0.0,
+        )
+
+    def _limit_center_outer_peak_axis(self, target_axis: float) -> tuple[float, bool, str | None]:
+        """Keep a circular profile inside support while retaining the target when feasible."""
+
+        maximum_axis = min(
+            self.outer_boundary_half_width_mm / 2.0 - (2.0 * self.geometry_epsilon),
+            self.outer_boundary_half_width_mm - self.geometry_epsilon,
+        )
+        final_axis = float(np.clip(target_axis, self.geometry_epsilon, maximum_axis))
+        return final_axis, not np.isclose(final_axis, target_axis), (
+            "circular profile must retain room for both real anchors and the outer boundary"
+            if not np.isclose(final_axis, target_axis) else None
         )
 
     def _is_peaked_pressure_point(self, peak_x: float, peak_y: float, quadrant: _QuadrantDefinition) -> bool:
@@ -1194,7 +1334,7 @@ def _isolated_circular_radius(
     if sensor is None or model.peak_point is None:
         raise ValueError("isolated circular lobe requires an active outer sensor and peak point")
     measured_value = abs(float(model.signal(sensor)))
-    offset = float(model.geometry.near_outer_peak_offset_mm)
+    offset = float(model.geometry.peak_position_outer_offset_mm)
     peak_x, peak_y = model.peak_point
     left, right, bottom, top = (float(value) for value in support_bounds)
     boundary_radius = min(
@@ -1246,7 +1386,7 @@ def _isolated_circular_profile(
     if sensor is None:
         raise ValueError("isolated circular lobe requires an active outer sensor")
     measured_value = float(model.signal(sensor))
-    offset = float(model.geometry.near_outer_peak_offset_mm)
+    offset = float(model.geometry.peak_position_outer_offset_mm)
     sensor_factor = _smoothstep_fade_scalar(offset, radius)
     if sensor_factor <= PRESSURE_NUMERIC_EPSILON:
         raise ValueError(
@@ -1317,8 +1457,8 @@ def _center_outer_circular_profile(
     outer = float(model.signal(sensor))
     spacing = float(model.geometry.sensor_spacing_mm)
     peak_axis = _axis_distance_from_peak_point(sensor, model.peak_point)
-    distance_to_center = peak_axis
-    distance_to_outer = spacing - peak_axis
+    distance_to_center = abs(peak_axis)
+    distance_to_outer = abs(peak_axis - spacing)
     farthest_anchor_distance = max(distance_to_center, distance_to_outer)
     inactive_sensor_limit = min(
         spacing + peak_axis,
@@ -1492,11 +1632,29 @@ def _evaluate_pressure_field_model(model: PressureFieldModel, x_values: np.ndarr
             inside,
         )
         return _numeric_cleanup(values)
+    # Outboard virtual targets use one smooth, exact-anchor interpolator for
+    # their complete quadrant.  Quadrant masks are disjoint, avoiding seams
+    # or multiply-covered pixels while leaving physical axis anchors to the
+    # established axis interpolation below.
+    processed = np.zeros_like(inside, dtype=bool)
+    by_label = {plane.label: plane for plane in model.quadrant_planes}
+    quadrant_masks = {
+        PRESSURE_QUADRANT_TOP_RIGHT: inside & (x_values > 0.0) & (y_values > 0.0),
+        PRESSURE_QUADRANT_TOP_LEFT: inside & (x_values < 0.0) & (y_values > 0.0),
+        PRESSURE_QUADRANT_BOTTOM_LEFT: inside & (x_values < 0.0) & (y_values < 0.0),
+        PRESSURE_QUADRANT_BOTTOM_RIGHT: inside & (x_values > 0.0) & (y_values < 0.0),
+    }
+    for label, mask in quadrant_masks.items():
+        plane = by_label.get(label)
+        if plane is not None and plane.outboard_peak and np.any(mask):
+            values[mask] = _evaluate_outboard_quadrant_peak(model, plane, x_values[mask], y_values[mask])
+            processed[mask] = True
+
     spacing = model.geometry.sensor_spacing_mm
-    core_mask = inside & (np.abs(x_values) <= spacing) & (np.abs(y_values) <= spacing)
+    core_mask = inside & ~processed & (np.abs(x_values) <= spacing) & (np.abs(y_values) <= spacing)
     if np.any(core_mask):
         values[core_mask] = _evaluate_core(model, x_values[core_mask], y_values[core_mask])
-    extension_mask = inside & ~core_mask
+    extension_mask = inside & ~processed & ~core_mask
     if np.any(extension_mask):
         if model.package_mode == PRESSURE_PACKAGE_MODE_CENTER_PLUS_ONE_OUTER:
             values[extension_mask] = _evaluate_core_extension(
@@ -1547,6 +1705,50 @@ def _evaluate_core(model: PressureFieldModel, x_values: np.ndarray, y_values: np
     if model.package_mode == PRESSURE_PACKAGE_MODE_CENTER_PLUS_ONE_OUTER:
         return _evaluate_axis_lobe(model, x_values, y_values)
     return _evaluate_general_core(model, x_values, y_values)
+
+
+def _evaluate_outboard_quadrant_peak(
+    model: PressureFieldModel,
+    plane: PressureQuadrantPlane,
+    x_values: np.ndarray,
+    y_values: np.ndarray,
+) -> np.ndarray:
+    """Interpolate an outboard quadrant peak from real anchors exactly.
+
+    Inverse-distance weights are a smooth convex blend away from the four
+    anchors, so same-sign fields cannot overshoot the inferred peak.  Exact
+    anchor masks remove the otherwise unavoidable finite-epsilon error at a
+    sensor or at the virtual peak itself.
+    """
+
+    if plane.peak_point is None or plane.peak_height is None:
+        return np.zeros_like(x_values, dtype=np.float64)
+    signal = dict(model.sensor_values)
+    spacing = model.geometry.sensor_spacing_mm
+    sensor_positions = {
+        SHEAR_POSITION_CENTER: (0.0, 0.0),
+        SHEAR_POSITION_RIGHT: (spacing, 0.0),
+        SHEAR_POSITION_LEFT: (-spacing, 0.0),
+        SHEAR_POSITION_TOP: (0.0, spacing),
+        SHEAR_POSITION_BOTTOM: (0.0, -spacing),
+    }
+    points = [sensor_positions[sensor] for sensor in plane.sensors] + [plane.peak_point]
+    anchors = [signal[sensor] for sensor in plane.sensors] + [float(plane.peak_height)]
+    numerator = np.zeros_like(x_values, dtype=np.float64)
+    denominator = np.zeros_like(x_values, dtype=np.float64)
+    exact_value = np.zeros_like(x_values, dtype=np.float64)
+    exact = np.zeros_like(x_values, dtype=bool)
+    for (anchor_x, anchor_y), anchor_value in zip(points, anchors):
+        distance_squared = (x_values - anchor_x) ** 2 + (y_values - anchor_y) ** 2
+        at_anchor = distance_squared <= PRESSURE_NUMERIC_EPSILON ** 2
+        weight = 1.0 / np.maximum(distance_squared, model.geometry_epsilon ** 2)
+        numerator += float(anchor_value) * weight
+        denominator += weight
+        exact_value[at_anchor] = float(anchor_value)
+        exact |= at_anchor
+    values = numerator / np.maximum(denominator, PRESSURE_NUMERIC_EPSILON)
+    values[exact] = exact_value[exact]
+    return values
 
 
 def _evaluate_center_only_model(
@@ -1778,7 +1980,7 @@ def _evaluate_isolated_model(model: PressureFieldModel, x_values: np.ndarray, y_
             model, support_bounds
         )
     u, v = _axis_coordinates(sensor, x_values, y_values)
-    peak_axis = model.geometry.sensor_spacing_mm + model.geometry.near_outer_peak_offset_mm
+    peak_axis = model.geometry.virtual_outer_spacing_mm
     radial_distance = np.hypot(u - peak_axis, v)
     radial_factor = smoothstep_fade(
         radial_distance,
@@ -1826,35 +2028,43 @@ def _evaluate_center_outer_circular_model(
         radial_distance,
         np.asarray(radius, dtype=np.float64),
     )
-    before_t = np.clip(
-        u / max(peak_axis, PRESSURE_NUMERIC_EPSILON),
-        0.0,
-        1.0,
-    )
-    before_scale = _smooth_interpolate(
-        float(center_scale),
-        1.0,
-        before_t,
-    )
-    after_t = np.clip(
-        (u - peak_axis) / max(spacing - peak_axis, PRESSURE_NUMERIC_EPSILON),
-        0.0,
-        1.0,
-    )
-    after_scale = _smooth_interpolate(
-        1.0,
-        float(outer_scale),
-        after_t,
-    )
-    axial_scale = np.where(
-        u <= 0.0,
-        float(center_scale),
-        np.where(
-            u < peak_axis,
-            before_scale,
-            np.where(u < spacing, after_scale, float(outer_scale)),
-        ),
-    )
+    # The real anchors and inferred peak can occur in either order.  Keep
+    # the measured outer point at the physical spacing and interpolate over
+    # ordered knots so an outboard inferred peak has no negative segment.
+    if peak_axis <= spacing:
+        before_scale = _smooth_interpolate(
+            float(center_scale), 1.0,
+            np.clip(u / max(peak_axis, PRESSURE_NUMERIC_EPSILON), 0.0, 1.0),
+        )
+        after_scale = _smooth_interpolate(
+            1.0, float(outer_scale),
+            np.clip(
+                (u - peak_axis) / max(spacing - peak_axis, PRESSURE_NUMERIC_EPSILON),
+                0.0, 1.0,
+            ),
+        )
+        axial_scale = np.where(
+            u <= 0.0, float(center_scale),
+            np.where(u < peak_axis, before_scale,
+                     np.where(u < spacing, after_scale, float(outer_scale))),
+        )
+    else:
+        before_outer = _smooth_interpolate(
+            float(center_scale), float(outer_scale),
+            np.clip(u / max(spacing, PRESSURE_NUMERIC_EPSILON), 0.0, 1.0),
+        )
+        after_outer = _smooth_interpolate(
+            float(outer_scale), 1.0,
+            np.clip(
+                (u - spacing) / max(peak_axis - spacing, PRESSURE_NUMERIC_EPSILON),
+                0.0, 1.0,
+            ),
+        )
+        axial_scale = np.where(
+            u <= 0.0, float(center_scale),
+            np.where(u < spacing, before_outer,
+                     np.where(u < peak_axis, after_outer, 1.0)),
+        )
     values[inside] = (
         float(model.peak_height)
         * radial_factor[inside]

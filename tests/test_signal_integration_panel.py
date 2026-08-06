@@ -695,7 +695,8 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             self.assertNotIn("peak_height_decay_rate", settings["pressure_map"])
             self.assertNotIn("decay_rate", settings["pressure_map"])
             self.assertNotIn("decay_ref_distance_mm", settings["pressure_map"])
-            self.assertEqual(settings["pressure_map"]["near_outer_peak_offset_mm"], 1.25)
+            self.assertEqual(settings["pressure_map"]["peak_position_outer_offset_mm"], 1.25)
+            self.assertNotIn("near_outer_peak_offset_mm", settings["pressure_map"])
             self.assertEqual(settings["pressure_map"]["outer_boundary_reach_mm"], 1.5)
             self.assertEqual(settings["pressure_map"]["max_intensity"], 7.5)
             self.assertNotIn("show_negative", settings["pressure_map"])
@@ -776,7 +777,8 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             pressure_map.pop("package_center_spacing_mm")
             pressure_map.pop("pixels_per_mm")
             pressure_map.pop("peak_gain_slope_per_mm")
-            pressure_map.pop("near_outer_peak_offset_mm")
+            pressure_map.pop("peak_position_outer_offset_mm")
+            pressure_map["near_outer_peak_offset_mm"] = 1.25
             pressure_map["outer_boundary_reach_mm"] = None
             pressure_map.pop("show_near_outer_boundary")
             pressure_map.pop("show_outer_boundary")
@@ -807,7 +809,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
                 harness.pressure_peak_gain_slope_spin.value(),
                 DEFAULT_PRESSURE_PEAK_GAIN_SLOPE_PER_MM,
             )
-            self.assertEqual(harness.pressure_near_outer_peak_offset_spin.value(), 1.0)
+            self.assertEqual(harness.pressure_near_outer_peak_offset_spin.value(), 1.25)
             self.assertEqual(harness.pressure_outer_boundary_reach_spin.value(), DEFAULT_PRESSURE_OUTER_BOUNDARY_REACH_MM)
             self.assertFalse(harness.pressure_show_near_outer_boundary_check.isChecked())
             self.assertTrue(harness.pressure_show_outer_boundary_check.isChecked())
@@ -841,7 +843,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
                 "pressure_package_center_spacing_spin": "between neighbouring package centers",
                 "pressure_pixels_per_mm_spin": "grid density",
                 "pressure_peak_gain_slope_spin": "additional inferred peak gain per millimetre",
-                "pressure_near_outer_peak_offset_spin": "amplified inferred peak",
+                "pressure_near_outer_peak_offset_spin": "inferred peak-location calculations",
                 "pressure_outer_boundary_reach_spin": "distance from the mid boundary",
                 "pressure_max_intensity_spin": "upper intensity mapped to white",
                 "pressure_show_near_outer_boundary_check": "near-outer peak support circle",

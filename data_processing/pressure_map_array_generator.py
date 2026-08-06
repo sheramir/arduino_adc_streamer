@@ -291,7 +291,7 @@ class PressureMapArrayGenerator:
                 (result.sensor_spacing_mm, self.geometry.sensor_spacing_mm),
                 (result.package_center_spacing_mm, self.geometry.package_center_spacing_mm),
                 (result.outer_boundary_reach_mm, self.geometry.outer_boundary_reach_mm),
-                (result.near_outer_peak_offset_mm, self.geometry.near_outer_peak_offset_mm),
+                (result.peak_position_outer_offset_mm, self.geometry.peak_position_outer_offset_mm),
                 (result.pixels_per_mm, self.geometry.pixels_per_mm),
             )
         )
@@ -328,7 +328,7 @@ class PressureMapArrayGenerator:
                 available = -bounds[2]
                 required = -peak_y
             if required >= available - PRESSURE_ARRAY_GEOMETRY_EPSILON:
-                raise ValueError("near_outer_peak_offset_mm must remain inside the applicable outer support")
+                raise ValueError("peak_position_outer_offset_mm must remain inside the applicable outer support")
 
     def _array_coordinates(self, packages: Sequence[PressureMapArrayPackage], centers: Mapping[str, tuple[float, float]], support_bounds: Mapping[str, tuple[float, float, float, float]]) -> tuple[np.ndarray, np.ndarray]:
         min_x = min(centers[package.sensor_id][0] + support_bounds[package.sensor_id][0] for package in packages)

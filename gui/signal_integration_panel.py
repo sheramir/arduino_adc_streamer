@@ -58,7 +58,7 @@ from config.pressure_map_mask_config import MaskConfigStore
 from config.sensor_config import normalize_array_cell
 from constants.ui import PRESSURE_MAP_TAB_NAME
 from constants.pressure_map import (
-    DEFAULT_PRESSURE_NEAR_OUTER_PEAK_OFFSET_MM,
+    DEFAULT_PRESSURE_PEAK_POSITION_OUTER_OFFSET_MM,
     DEFAULT_PRESSURE_OUTER_BOUNDARY_REACH_MM,
     DEFAULT_PRESSURE_PACKAGE_CENTER_SPACING_MM,
     DEFAULT_PRESSURE_PIXELS_PER_MM,
@@ -92,10 +92,10 @@ from constants.pressure_map import (
     DEFAULT_SIGNAL_INTEGRATION_ROSETTE_RS2_ENABLED,
     DEFAULT_SIGNAL_INTEGRATION_ROSETTE_Y_MAX_OHMS,
     DEFAULT_SIGNAL_INTEGRATION_ROSETTE_Y_MIN_OHMS,
-    PRESSURE_NEAR_OUTER_PEAK_OFFSET_DECIMALS,
-    PRESSURE_NEAR_OUTER_PEAK_OFFSET_MAX_MM,
-    PRESSURE_NEAR_OUTER_PEAK_OFFSET_MIN_MM,
-    PRESSURE_NEAR_OUTER_PEAK_OFFSET_STEP_MM,
+    PRESSURE_PEAK_POSITION_OUTER_OFFSET_DECIMALS,
+    PRESSURE_PEAK_POSITION_OUTER_OFFSET_MAX_MM,
+    PRESSURE_PEAK_POSITION_OUTER_OFFSET_MIN_MM,
+    PRESSURE_PEAK_POSITION_OUTER_OFFSET_STEP_MM,
     PRESSURE_OUTER_BOUNDARY_REACH_DECIMALS,
     PRESSURE_OUTER_BOUNDARY_REACH_MAX_MM,
     PRESSURE_OUTER_BOUNDARY_REACH_MIN_MM,
@@ -944,24 +944,28 @@ class PressureMapPanelMixin:
         self.pressure_pixels_per_mm_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
         layout.addWidget(self.pressure_pixels_per_mm_spin, 0, 5)
 
-        near_outer_peak_tooltip = (
-            "For exactly one active outer sensor, place an amplified inferred peak this "
-            "distance outside the sensor while preserving the measured sensor value."
+        peak_position_outer_offset_tooltip = (
+            "For inferred peak-location calculations, treat each outer sensor as if it "
+            "were this distance farther from the package center. Physical sensor markers "
+            "and measured sensor anchors remain at their actual positions."
         )
-        layout.addWidget(self._create_tooltip_label("Near-Outer Peak Offset:", near_outer_peak_tooltip), 1, 4)
-        self.pressure_near_outer_peak_offset_spin = QDoubleSpinBox()
-        self.pressure_near_outer_peak_offset_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
-        self.pressure_near_outer_peak_offset_spin.setRange(
-            PRESSURE_NEAR_OUTER_PEAK_OFFSET_MIN_MM,
-            PRESSURE_NEAR_OUTER_PEAK_OFFSET_MAX_MM,
+        layout.addWidget(self._create_tooltip_label("Peak-position outer offset:", peak_position_outer_offset_tooltip), 1, 4)
+        self.pressure_peak_position_outer_offset_spin = QDoubleSpinBox()
+        self.pressure_peak_position_outer_offset_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
+        self.pressure_peak_position_outer_offset_spin.setRange(
+            PRESSURE_PEAK_POSITION_OUTER_OFFSET_MIN_MM,
+            PRESSURE_PEAK_POSITION_OUTER_OFFSET_MAX_MM,
         )
-        self.pressure_near_outer_peak_offset_spin.setDecimals(PRESSURE_NEAR_OUTER_PEAK_OFFSET_DECIMALS)
-        self.pressure_near_outer_peak_offset_spin.setSingleStep(PRESSURE_NEAR_OUTER_PEAK_OFFSET_STEP_MM)
-        self.pressure_near_outer_peak_offset_spin.setSuffix(" mm")
-        self.pressure_near_outer_peak_offset_spin.setValue(DEFAULT_PRESSURE_NEAR_OUTER_PEAK_OFFSET_MM)
-        self.pressure_near_outer_peak_offset_spin.setToolTip(near_outer_peak_tooltip)
-        self.pressure_near_outer_peak_offset_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
-        layout.addWidget(self.pressure_near_outer_peak_offset_spin, 1, 5)
+        self.pressure_peak_position_outer_offset_spin.setDecimals(PRESSURE_PEAK_POSITION_OUTER_OFFSET_DECIMALS)
+        self.pressure_peak_position_outer_offset_spin.setSingleStep(PRESSURE_PEAK_POSITION_OUTER_OFFSET_STEP_MM)
+        self.pressure_peak_position_outer_offset_spin.setSuffix(" mm")
+        self.pressure_peak_position_outer_offset_spin.setValue(DEFAULT_PRESSURE_PEAK_POSITION_OUTER_OFFSET_MM)
+        self.pressure_peak_position_outer_offset_spin.setToolTip(peak_position_outer_offset_tooltip)
+        self.pressure_peak_position_outer_offset_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
+        # Compatibility for extensions/tests that still resolve the old widget
+        # attribute.  Persistence below writes only the renamed key.
+        self.pressure_near_outer_peak_offset_spin = self.pressure_peak_position_outer_offset_spin
+        layout.addWidget(self.pressure_peak_position_outer_offset_spin, 1, 5)
 
         outer_boundary_reach_tooltip = (
             "Distance from the Mid Boundary to the package Outer Boundary. "
@@ -1441,9 +1445,9 @@ class PressureMapPanelMixin:
                 "minimum_decay_reach_mm": self._spin_float("pressure_minimum_decay_reach_spin", DEFAULT_PRESSURE_MINIMUM_DECAY_REACH_MM),
                 "maximum_decay_reach_mm": self._spin_float("pressure_maximum_decay_reach_spin", DEFAULT_PRESSURE_MAXIMUM_DECAY_REACH_MM),
                 "signal_activity_threshold": self._spin_float("pressure_signal_activity_threshold_spin", DEFAULT_PRESSURE_SIGNAL_ACTIVITY_THRESHOLD),
-                "near_outer_peak_offset_mm": self._spin_float(
-                    "pressure_near_outer_peak_offset_spin",
-                    DEFAULT_PRESSURE_NEAR_OUTER_PEAK_OFFSET_MM,
+                "peak_position_outer_offset_mm": self._spin_float(
+                    self._peak_position_outer_offset_widget_name(),
+                    DEFAULT_PRESSURE_PEAK_POSITION_OUTER_OFFSET_MM,
                 ),
                 "outer_boundary_reach_mm": self._spin_float(
                     "pressure_outer_boundary_reach_spin",
@@ -1761,9 +1765,13 @@ class PressureMapPanelMixin:
         )
         changed |= self._set_spin_value("pressure_pixels_per_mm_spin", pressure_map, "pixels_per_mm", float)
         changed |= self._set_spin_value(
-            "pressure_near_outer_peak_offset_spin",
-            pressure_map,
-            "near_outer_peak_offset_mm",
+            self._peak_position_outer_offset_widget_name(),
+            pressure_map if "peak_position_outer_offset_mm" in pressure_map else {
+                "peak_position_outer_offset_mm": pressure_map.get(
+                    "near_outer_peak_offset_mm", DEFAULT_PRESSURE_PEAK_POSITION_OUTER_OFFSET_MM
+                )
+            },
+            "peak_position_outer_offset_mm",
             float,
         )
         if pressure_map.get("outer_boundary_reach_mm") is None:
@@ -1786,7 +1794,6 @@ class PressureMapPanelMixin:
             ("pressure_sensor_spacing_spin", "sensor_spacing_mm", DEFAULT_PRESSURE_SENSOR_SPACING_MM),
             ("pressure_package_center_spacing_spin", "package_center_spacing_mm", DEFAULT_PRESSURE_PACKAGE_CENTER_SPACING_MM),
             ("pressure_pixels_per_mm_spin", "pixels_per_mm", DEFAULT_PRESSURE_PIXELS_PER_MM),
-            ("pressure_near_outer_peak_offset_spin", "near_outer_peak_offset_mm", DEFAULT_PRESSURE_NEAR_OUTER_PEAK_OFFSET_MM),
             ("pressure_outer_boundary_reach_spin", "outer_boundary_reach_mm", DEFAULT_PRESSURE_OUTER_BOUNDARY_REACH_MM),
         ):
             if key not in pressure_map:
@@ -1934,6 +1941,13 @@ class PressureMapPanelMixin:
     def _settings_section(self, settings: dict, section_name: str) -> dict:
         section = settings.get(section_name)
         return section if isinstance(section, dict) else settings
+
+    def _peak_position_outer_offset_widget_name(self) -> str:
+        """Return the renamed control while supporting pre-rename harnesses."""
+
+        if hasattr(self, "pressure_peak_position_outer_offset_spin"):
+            return "pressure_peak_position_outer_offset_spin"
+        return "pressure_near_outer_peak_offset_spin"
 
     def _spin_float(self, widget_name: str, fallback: float) -> float:
         widget = getattr(self, widget_name, None)
@@ -2219,9 +2233,9 @@ class PressureMapPanelMixin:
                 sensor_spacing_mm=sensor_spacing_mm,
                 package_center_spacing_mm=package_center_spacing_mm,
                 outer_boundary_reach_mm=outer_boundary_reach_mm,
-                near_outer_peak_offset_mm=self._spin_float(
-                    "pressure_near_outer_peak_offset_spin",
-                    DEFAULT_PRESSURE_NEAR_OUTER_PEAK_OFFSET_MM,
+                peak_position_outer_offset_mm=self._spin_float(
+                    self._peak_position_outer_offset_widget_name(),
+                    DEFAULT_PRESSURE_PEAK_POSITION_OUTER_OFFSET_MM,
                 ),
                 pixels_per_mm=self._spin_float(
                     "pressure_pixels_per_mm_spin",

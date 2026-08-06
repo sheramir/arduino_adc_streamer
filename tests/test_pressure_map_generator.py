@@ -74,6 +74,45 @@ class PressureMapGeneratorTests(unittest.TestCase):
             x_mm, y_mm = result.sensor_positions[sensor]
             self.assertAlmostEqual(self._grid_value(result, x_mm, y_mm), expected_value, places=6)
 
+    def test_virtual_outer_positions_move_peaks_without_moving_physical_anchors(self):
+        generator = PressureMapGenerator(peak_position_outer_offset_mm=1.0, debug=True)
+        self.assertEqual(generator.sensor_positions["R"], (2.0, 0.0))
+        self.assertEqual(generator.virtual_outer_positions["R"], (3.0, 0.0))
+
+        axis_result = generator.generate({"C": 9.0, "R": 4.0, "T": 0.0, "L": 0.0, "B": 0.0})
+        self.assertAlmostEqual(axis_result.field_model.peak_point[0], 1.2, places=12)
+        self.assertAlmostEqual(
+            float(evaluate_pressure_map_result_at(axis_result, np.asarray([2.0]), np.asarray([0.0]))[0]),
+            4.0,
+            places=10,
+        )
+        self.assertEqual(axis_result.diagnostics["physical_outer_spacing_mm"], 2.0)
+        self.assertEqual(axis_result.diagnostics["virtual_outer_spacing_mm"], 3.0)
+        self.assertEqual(axis_result.diagnostics["peak_position_outer_offset_mm"], 1.0)
+
+        legacy = PressureMapGenerator(near_outer_peak_offset_mm=0.0)
+        legacy_result = legacy.generate({"C": 9.0, "R": 4.0, "T": 0.0, "L": 0.0, "B": 0.0})
+        self.assertAlmostEqual(legacy_result.field_model.peak_point[0], 0.8, places=12)
+
+    def test_outboard_quadrant_target_is_rendered_not_silently_peakless(self):
+        result = PressureMapGenerator(debug=True).generate(
+            {"C": 0.1, "R": 1.0, "T": 1.0, "L": 0.0, "B": 0.0}
+        )
+        plane = self._planes_by_label(result)[PRESSURE_QUADRANT_TOP_RIGHT]
+        self.assertEqual(plane.mode, PRESSURE_QUADRANT_MODE_PEAKED)
+        self.assertGreater(plane.target_peak_point[0], self.generator.sensor_spacing_mm)
+        self.assertEqual(plane.peak_point, plane.target_peak_point)
+        self.assertTrue(plane.outboard_peak)
+        self.assertFalse(result.diagnostics["peak_position_geometry_limited"])
+        peak_value = evaluate_pressure_map_result_at(
+            result, np.asarray([plane.peak_point[0]]), np.asarray([plane.peak_point[1]])
+        )[0]
+        self.assertAlmostEqual(float(peak_value), float(plane.peak_height), places=10)
+        self.assertEqual(
+            result.diagnostics["target_peak_points"][PRESSURE_QUADRANT_TOP_RIGHT],
+            plane.target_peak_point,
+        )
+
     def test_peak_height_is_reproduced_at_peak_location(self):
         generator = PressureMapGenerator()
         result = generator.generate({position: 5.0 for position in SHEAR_SENSOR_POSITIONS})
@@ -81,8 +120,8 @@ class PressureMapGeneratorTests(unittest.TestCase):
         peak_x, peak_y = tr_plane.peak_point
 
         self.assertEqual(tr_plane.mode, PRESSURE_QUADRANT_MODE_PEAKED)
-        self.assertAlmostEqual(peak_x, DEFAULT_PRESSURE_SENSOR_SPACING_MM / 2.0)
-        self.assertAlmostEqual(peak_y, DEFAULT_PRESSURE_SENSOR_SPACING_MM / 2.0)
+        self.assertAlmostEqual(peak_x, self.generator.virtual_outer_spacing_mm / 2.0)
+        self.assertAlmostEqual(peak_y, self.generator.virtual_outer_spacing_mm / 2.0)
         self.assertAlmostEqual(
             float(tr_plane.peak_height),
             self._grid_value(result, peak_x, peak_y),
@@ -445,7 +484,7 @@ class PressureMapGeneratorTests(unittest.TestCase):
             result = PressureMapGenerator(debug=True).generate({"C": center, "R": outer, "T": 0.0, "L": 0.0, "B": 0.0})
             model = result.field_model
             plane = result.quadrant_planes[0]
-            expected_axis = spacing * expected_fraction
+            expected_axis = self.generator.virtual_outer_spacing_mm * expected_fraction
             self.assertAlmostEqual(model.peak_point[0], expected_axis, places=12)
             self.assertAlmostEqual(plane.peak_point[0], expected_axis, places=12)
             self.assertIsNotNone(result.diagnostics)
@@ -457,8 +496,8 @@ class PressureMapGeneratorTests(unittest.TestCase):
         result = self.generator.generate({"C": 9.0, "R": 4.0, "T": 16.0, "L": 0.0, "B": 0.0})
         plane = self._planes_by_label(result)[PRESSURE_QUADRANT_TOP_RIGHT]
         spacing = self.generator.sensor_spacing_mm
-        self.assertAlmostEqual(plane.peak_point[0], spacing * 2.0 / 5.0, places=12)
-        self.assertAlmostEqual(plane.peak_point[1], spacing * 4.0 / 7.0, places=12)
+        self.assertAlmostEqual(plane.peak_point[0], self.generator.virtual_outer_spacing_mm * 2.0 / 5.0, places=12)
+        self.assertAlmostEqual(plane.peak_point[1], self.generator.virtual_outer_spacing_mm * 4.0 / 7.0, places=12)
 
     def test_same_sign_center_plus_one_preserves_active_anchors_and_zeroes_inactive_sensors(self):
         coordinates = {"R": (2.0, 0.0), "L": (-2.0, 0.0), "T": (0.0, 2.0), "B": (0.0, -2.0)}
@@ -680,9 +719,10 @@ class PressureMapGeneratorTests(unittest.TestCase):
             {"C": 0.01, "R": 1.0, "T": 0.0, "L": 0.0, "B": 0.0}
         )
         self.assertTrue(np.isfinite(result.pressure_grid).all())
-        self.assertTrue(result.field_model.center_outer_used_fallback)
-        self.assertIsNone(result.field_model.peak_height)
-        self.assertTrue(result.diagnostics["center_outer_used_fallback"])
+        self.assertTrue(result.field_model.peak_position_geometry_limited)
+        self.assertFalse(result.field_model.center_outer_used_fallback)
+        self.assertIsNotNone(result.field_model.peak_height)
+        self.assertTrue(result.diagnostics["peak_position_geometry_limited"])
         center, outer = evaluate_pressure_map_result_at(
             result, np.asarray([0.0, 2.0]), np.asarray([0.0, 0.0])
         )

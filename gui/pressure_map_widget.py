@@ -1408,7 +1408,7 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
             float(result.sensor_spacing_mm),
             float(result.package_center_spacing_mm),
             float(result.outer_boundary_reach_mm),
-            float(result.near_outer_peak_offset_mm),
+            float(result.peak_position_outer_offset_mm),
             float(result.pixels_per_mm),
             int(result.x_coordinates_mm.size),
             int(result.y_coordinates_mm.size),

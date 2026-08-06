@@ -7,7 +7,7 @@ from functools import reduce
 import math
 
 from constants.pressure_map import (
-    DEFAULT_PRESSURE_NEAR_OUTER_PEAK_OFFSET_MM,
+    DEFAULT_PRESSURE_PEAK_POSITION_OUTER_OFFSET_MM,
     DEFAULT_PRESSURE_OUTER_BOUNDARY_REACH_MM,
     DEFAULT_PRESSURE_PACKAGE_CENTER_SPACING_MM,
     DEFAULT_PRESSURE_PIXELS_PER_MM,
@@ -15,22 +15,56 @@ from constants.pressure_map import (
 )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class PressureMapGeometry:
     """Validated physical layout shared by local and array pressure fields."""
 
     sensor_spacing_mm: float = DEFAULT_PRESSURE_SENSOR_SPACING_MM
     package_center_spacing_mm: float = DEFAULT_PRESSURE_PACKAGE_CENTER_SPACING_MM
     outer_boundary_reach_mm: float = DEFAULT_PRESSURE_OUTER_BOUNDARY_REACH_MM
-    near_outer_peak_offset_mm: float = DEFAULT_PRESSURE_NEAR_OUTER_PEAK_OFFSET_MM
+    peak_position_outer_offset_mm: float = DEFAULT_PRESSURE_PEAK_POSITION_OUTER_OFFSET_MM
     pixels_per_mm: float = DEFAULT_PRESSURE_PIXELS_PER_MM
+
+    def __init__(
+        self,
+        sensor_spacing_mm: float = DEFAULT_PRESSURE_SENSOR_SPACING_MM,
+        package_center_spacing_mm: float = DEFAULT_PRESSURE_PACKAGE_CENTER_SPACING_MM,
+        outer_boundary_reach_mm: float = DEFAULT_PRESSURE_OUTER_BOUNDARY_REACH_MM,
+        peak_position_outer_offset_mm: float = DEFAULT_PRESSURE_PEAK_POSITION_OUTER_OFFSET_MM,
+        pixels_per_mm: float = DEFAULT_PRESSURE_PIXELS_PER_MM,
+        *,
+        near_outer_peak_offset_mm: float | None = None,
+    ) -> None:
+        """Create physical geometry, accepting the retired offset name on input."""
+
+        if near_outer_peak_offset_mm is not None:
+            if (
+                peak_position_outer_offset_mm != DEFAULT_PRESSURE_PEAK_POSITION_OUTER_OFFSET_MM
+                and not math.isclose(
+                    peak_position_outer_offset_mm, near_outer_peak_offset_mm
+                )
+            ):
+                raise ValueError("conflicting outer peak-position offsets")
+            peak_position_outer_offset_mm = near_outer_peak_offset_mm
+        object.__setattr__(self, "sensor_spacing_mm", float(sensor_spacing_mm))
+        object.__setattr__(self, "package_center_spacing_mm", float(package_center_spacing_mm))
+        object.__setattr__(self, "outer_boundary_reach_mm", float(outer_boundary_reach_mm))
+        object.__setattr__(self, "peak_position_outer_offset_mm", float(peak_position_outer_offset_mm))
+        object.__setattr__(self, "pixels_per_mm", float(pixels_per_mm))
+        self.__post_init__()
+
+    @property
+    def near_outer_peak_offset_mm(self) -> float:
+        """Deprecated compatibility alias for the renamed offset."""
+
+        return self.peak_position_outer_offset_mm
 
     def __post_init__(self) -> None:
         values = (
             self.sensor_spacing_mm,
             self.package_center_spacing_mm,
             self.outer_boundary_reach_mm,
-            self.near_outer_peak_offset_mm,
+            self.peak_position_outer_offset_mm,
             self.pixels_per_mm,
         )
         if not all(math.isfinite(float(value)) for value in values):
@@ -39,10 +73,10 @@ class PressureMapGeometry:
             raise ValueError("sensor_spacing_mm and pixels_per_mm must be positive")
         if self.package_center_spacing_mm <= 2 * self.sensor_spacing_mm:
             raise ValueError("package_center_spacing_mm must exceed twice sensor_spacing_mm")
-        if self.outer_boundary_reach_mm <= 0 or self.near_outer_peak_offset_mm < 0:
-            raise ValueError("outer boundary reach must be positive and near-outer offset non-negative")
+        if self.outer_boundary_reach_mm <= 0 or self.peak_position_outer_offset_mm < 0:
+            raise ValueError("outer boundary reach must be positive and peak-position offset non-negative")
         if self.near_outer_circle_radius_mm >= self.outer_boundary_half_width_mm:
-            raise ValueError("near_outer_peak_offset_mm must remain inside the outer boundary")
+            raise ValueError("peak_position_outer_offset_mm must remain inside the outer boundary")
 
     @property
     def facing_sensor_gap_mm(self) -> float:
@@ -58,7 +92,13 @@ class PressureMapGeometry:
 
     @property
     def near_outer_circle_radius_mm(self) -> float:
-        return self.sensor_spacing_mm + self.near_outer_peak_offset_mm
+        return self.virtual_outer_spacing_mm
+
+    @property
+    def virtual_outer_spacing_mm(self) -> float:
+        """Outer virtual position used only for inferred peak locations."""
+
+        return self.sensor_spacing_mm + self.peak_position_outer_offset_mm
 
     @property
     def support_bounds_mm(self) -> tuple[float, float, float, float]:
@@ -85,7 +125,7 @@ class PressureMapGeometry:
             self.sensor_spacing_mm,
             self.package_center_spacing_mm,
             self.outer_boundary_reach_mm,
-            self.near_outer_peak_offset_mm,
+            self.peak_position_outer_offset_mm,
             self.mid_boundary_half_width_mm,
             self.outer_boundary_half_width_mm,
         )

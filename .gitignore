@@ -32,6 +32,8 @@ ENV/
 *.swp
 *.swo
 *~
+# Office owner lock files
+~$*
 .codex_test_tmp/
 .codex_pytest_tmp/
 .tmp_pytest_basetemp/

@@ -6,6 +6,10 @@ CONFIG_CHECK_INTERVAL = 100
 SPECTRUM_UPDATE_INTERVAL_MS = 100
 # Trailing sweeps sampled when estimating the sample rate from sweep timestamps.
 SPECTRUM_RATE_ESTIMATE_MAX_SWEEPS = 200
+# Channels the Spectrum tab shows at once: one sensor package's T/B/R/L/C.
+# Capping at one package keeps the redraw cost flat no matter how many packages
+# are selected, and keeps the display readable.
+SPECTRUM_CHANNELS_PER_PACKAGE = 5
 
 # Window and Layout Settings
 WINDOW_WIDTH = 1200

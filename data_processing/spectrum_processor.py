@@ -12,7 +12,10 @@ from typing import Dict, List
 import numpy as np
 from PyQt6.QtCore import QThread, pyqtSignal
 
-from constants.ui import SPECTRUM_RATE_ESTIMATE_MAX_SWEEPS
+from constants.ui import (
+    SPECTRUM_CHANNELS_PER_PACKAGE,
+    SPECTRUM_RATE_ESTIMATE_MAX_SWEEPS,
+)
 from data_processing.circular_buffer import recent_window_slices, take_recent
 
 from data_processing.adc_filter_engine import ADCFilterEngine, SCIPY_FILTERS_AVAILABLE
@@ -370,52 +373,92 @@ class SpectrumProcessorMixin:
 
         return 0.0
 
+    def _get_spectrum_display_specs(self):
+        """Return the PZT display specs the spectrum may plot.
+
+        RS signals are deliberately absent: they come from 555 timing rather than
+        ADC sampling, so they are resistance readings, not sampled waveforms, and
+        a spectrum of them is meaningless. get_display_channel_specs() already
+        returns PZT signals only, so RS specs are simply never requested.
+        """
+        try:
+            return list(self.get_display_channel_specs())
+        except Exception:
+            return []
+
+    def _group_spectrum_specs_by_package(self, specs):
+        """Return {sensor_id: [specs]} in selection order, or {} outside array mode."""
+        try:
+            if not self.is_array_sensor_selection_mode():
+                return {}
+        except Exception:
+            return {}
+
+        packages: Dict[str, List[dict]] = {}
+        for spec in specs:
+            key = spec.get('key')
+            if not (isinstance(key, tuple) and len(key) >= 2 and key[0] == 'sensor'):
+                continue
+            packages.setdefault(str(key[1]), []).append(spec)
+        return packages
+
+    def get_spectrum_available_packages(self) -> List[str]:
+        """Return selectable sensor package ids, in selection order."""
+        return list(self._group_spectrum_specs_by_package(self._get_spectrum_display_specs()))
+
+    def _resolve_spectrum_channel_specs(self):
+        """Return (specs_to_plot, package_id) for the current selection.
+
+        In array sensor-selection mode this is exactly one package's channels;
+        otherwise it is the first few display channels, as before.
+        """
+        specs = self._get_spectrum_display_specs()
+        packages = self._group_spectrum_specs_by_package(specs)
+
+        if packages:
+            selected = getattr(self, 'spectrum_selected_package', None)
+            if selected not in packages:
+                selected = next(iter(packages))
+            return packages[selected], selected
+
+        return specs[:SPECTRUM_CHANNELS_PER_PACKAGE], None
+
+    @staticmethod
+    def _spectrum_channel_label(spec, package_id) -> str:
+        """Package channels keep their PZT1_B label; plain channels read Ch_0."""
+        label = str(spec.get('label', ''))
+        if package_id is not None:
+            return label
+        key = spec.get('key')
+        if isinstance(key, tuple) and len(key) >= 2 and key[0] == 'adc':
+            return f"Ch_{key[1]}"
+        return label.replace(' ', '_')
+
     def _build_spectrum_payload(self, spectrum_settings: dict):
-        channels_sequence = self.config.get('channels', [])
-        if not channels_sequence:
+        channel_specs, package_id = self._resolve_spectrum_channel_specs()
+        if not channel_specs:
             return None, 'Configure channels first.'
-
-        unique_channels = []
-        for channel in channels_sequence:
-            if channel not in unique_channels:
-                unique_channels.append(channel)
-
-        if len(unique_channels) == 0:
-            return None, 'No channels configured for spectrum.'
-
-        # Support 1..5 channels so spectrum remains usable even when configuration
-        # is not exactly five unique channels.
-        if len(unique_channels) > 5:
-            unique_channels = unique_channels[:5]
 
         total_fs = self._get_total_sample_rate_hz()
         if total_fs <= 0:
             return None, 'Sample rate required before spectrum can run.'
 
-        repeat_count = max(1, int(self.config.get('repeat', 1)))
-        sequence_len = max(1, len(channels_sequence))
-        counts = {ch: channels_sequence.count(ch) for ch in unique_channels}
-        sample_interval_sec = 1.0 / total_fs if total_fs > 0 else 0.0
+        # One shared rate: the measured sweep rate also drives the Time Series
+        # readout and ADC filtering, so cutoffs and peaks share a frequency axis.
+        sweep_rate_hz = float(self.get_measured_sweep_rate_hz())
+        if sweep_rate_hz <= 0:
+            return None, 'Sample rate required before spectrum can run.'
 
+        sample_interval_sec = 1.0 / total_fs
         window_ms = max(10, int(spectrum_settings['window_ms']))
+
         max_window_samples = 0
         min_samples_per_sweep = None
-        channel_plan: List[dict] = []
-
-        for channel in unique_channels:
-            occurrences = counts[channel]
-            samples_per_sweep = occurrences * repeat_count
-            channel_fs = total_fs * (occurrences / sequence_len)
-            window_samples = max(16, int(channel_fs * window_ms / 1000.0))
+        for spec in channel_specs:
+            slots = max(1, len(spec.get('sample_indices') or []))
+            window_samples = max(16, int(sweep_rate_hz * slots * window_ms / 1000.0))
             max_window_samples = max(max_window_samples, window_samples)
-            min_samples_per_sweep = samples_per_sweep if min_samples_per_sweep is None else min(min_samples_per_sweep, samples_per_sweep)
-            channel_plan.append({
-                'channel': channel,
-                'occurrences': occurrences,
-                'samples_per_sweep': samples_per_sweep,
-                'fs_hz': channel_fs,
-                'window_samples': window_samples,
-            })
+            min_samples_per_sweep = slots if min_samples_per_sweep is None else min(min_samples_per_sweep, slots)
 
         if not min_samples_per_sweep or min_samples_per_sweep <= 0:
             return None, 'Invalid channel sampling configuration.'
@@ -429,14 +472,8 @@ class SpectrumProcessorMixin:
             return None, 'Waiting for data...'
 
         payload_channels = []
-        for plan in channel_plan:
-            idxs = []
-            for seq_idx, seq_channel in enumerate(channels_sequence):
-                if seq_channel != plan['channel']:
-                    continue
-                base = seq_idx * repeat_count
-                idxs.extend(range(base, base + repeat_count))
-
+        for spec in channel_specs:
+            idxs = [index for index in (spec.get('sample_indices') or []) if 0 <= index < data_array.shape[1]]
             if not idxs:
                 continue
 
@@ -449,20 +486,15 @@ class SpectrumProcessorMixin:
             if channel_samples.size < 16:
                 continue
 
-            diffs = np.diff(channel_timestamps)
-            diffs = diffs[diffs > 0]
-            if diffs.size > 0:
-                channel_fs_effective = 1.0 / float(np.median(diffs))
-            else:
-                channel_fs_effective = float(plan['fs_hz'])
-
-            channel_window_samples = max(16, int(channel_fs_effective * window_ms / 1000.0))
+            # A signal owning N slots per sweep is sampled N times per sweep.
+            channel_fs = sweep_rate_hz * len(idxs)
+            channel_window_samples = max(16, int(channel_fs * window_ms / 1000.0))
 
             payload_channels.append({
-                'label': f"Ch {plan['channel']}",
+                'label': self._spectrum_channel_label(spec, package_id),
                 'samples': channel_samples.astype(np.float64, copy=False),
                 'timestamps': channel_timestamps.astype(np.float64, copy=False),
-                'fs_hz': float(channel_fs_effective),
+                'fs_hz': float(channel_fs),
                 'window_samples': int(channel_window_samples),
             })
 

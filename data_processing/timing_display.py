@@ -189,6 +189,53 @@ class TimingDisplayMixin:
         except Exception as e:
             self.log_status(f"ERROR: Failed to update timing display - {e}")
 
+    def get_measured_sweep_rate_hz(self) -> float:
+        """Return the measured sweep rate in Hz.
+
+        Every PZT display signal is sampled exactly once per sweep, so the sweep
+        rate *is* that signal's ADC sample rate. This is the single authority for
+        the Time Series readout, the Spectrum tab, and ADC filtering, so those
+        three cannot disagree about the frequency axis.
+
+        Falls back to the theoretical rate (conversion rate divided across the PZT
+        display signals) and then the configured rate, for use before enough
+        sweeps have arrived to measure anything.
+        """
+        elapsed_s = self._current_elapsed_since_first_sweep_seconds()
+        measured_sweeps = int(getattr(self, 'sweep_count', 0) or 0)
+        if measured_sweeps > 1 and elapsed_s > 0:
+            sweep_period_s = elapsed_s / (measured_sweeps - 1)
+            if sweep_period_s > 0:
+                return 1.0 / sweep_period_s
+
+        timing = getattr(self, 'timing_state', None)
+        sample_times = getattr(timing, 'arduino_sample_times', None) if timing else None
+        if sample_times:
+            latest_us = float(sample_times[-1])
+            if latest_us > 0:
+                conversion_rate_hz = 1_000_000.0 / latest_us
+                # RS slots are excluded: get_display_channel_specs() returns PZT
+                # signals only, and RS values are 555-derived, not ADC-sampled.
+                try:
+                    signal_count = len(self.get_display_channel_specs())
+                except Exception:
+                    signal_count = 0
+                return conversion_rate_hz / signal_count if signal_count > 0 else conversion_rate_hz
+
+        try:
+            configured_rate = float(self.config.get('sample_rate', 0) or 0.0)
+        except Exception:
+            configured_rate = 0.0
+        return configured_rate if configured_rate > 0 else 0.0
+
+    def get_signal_sample_rate_hz(self, slots_per_sweep: int = 1) -> float:
+        """Return the sample rate of one signal occupying ``slots_per_sweep`` slots.
+
+        A signal sampled once per sweep runs at the sweep rate; ``repeat > 1``
+        multiplies it by the number of slots that signal owns in each sweep.
+        """
+        return self.get_measured_sweep_rate_hz() * max(1, int(slots_per_sweep))
+
     def _current_elapsed_since_first_sweep_seconds(self) -> float:
         """Return elapsed capture time in seconds using latest ADC sweep timestamp."""
         try:

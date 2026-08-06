@@ -1345,6 +1345,8 @@ class ConfigurationMixin:
         self._add_force_channel_checkboxes(start_index=len(display_specs))
         if hasattr(self, "update_pressure_map_timeline_controls"):
             self.update_pressure_map_timeline_controls()
+        if hasattr(self, "refresh_spectrum_package_options"):
+            self.refresh_spectrum_package_options()
         self.update_rosette_channel_list()
 
     def update_rosette_channel_list(self):

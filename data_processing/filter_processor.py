@@ -370,21 +370,28 @@ class FilterProcessorMixin:
         signals. Display specs already map each named signal (e.g. ``PZT3_B``) to its
         exact sweep column positions, which is the correct per-signal stream identity.
         Non-array modes return None so the engine keeps its channel-number grouping.
+
+        PZT (ADC) signals only. RS values come from 555 timing rather than ADC
+        sampling, so they are resistance readings, not sampled waveforms; running
+        them through the filter chain destroys them (a high-pass strips the DC
+        level that is the measurement). Leaving them out of the map keeps their
+        sweep columns untouched by ``filter_block``.
         """
         is_array = False
         try:
-            is_array = bool(self.is_array_pzt1_mode()) or bool(self.is_array_pzt_rs_mode())
+            # Sensor-selection mode is included so any array layout that selects
+            # packages gets per-signal streams, not just the dual/PZT1 profiles.
+            is_array = (
+                bool(self.is_array_pzt1_mode())
+                or bool(self.is_array_pzt_rs_mode())
+                or bool(self.is_array_sensor_selection_mode())
+            )
         except Exception:
             is_array = False
         if not is_array:
             return None
 
         specs = list(self.get_display_channel_specs())
-        if hasattr(self, 'get_rosette_display_channel_specs'):
-            try:
-                specs.extend(self.get_rosette_display_channel_specs())
-            except Exception:
-                pass
 
         stream_map = {}
         for spec in specs:
@@ -399,12 +406,37 @@ class FilterProcessorMixin:
         return stream_map or None
 
     def _estimate_filter_channel_rates(self, total_fs_hz: float, sweep_timestamps_sec=None, index_map=None):
+        """Return {stream: sample rate} using the shared measured sweep rate.
+
+        The same rate drives the Time Series readout and the Spectrum tab, so a
+        filter cutoff and a spectrum peak always sit on one frequency axis. A
+        stream owning N slots per sweep is sampled N times per sweep.
+        """
         channels = list(self.config.get('channels', []))
         repeat_count = max(1, int(self.config.get('repeat', 1)))
         if sweep_timestamps_sec is None:
             sweep_timestamps_sec = self._get_ordered_filter_sweep_timestamps()
         if index_map is None:
             index_map = self._build_filter_stream_map()
+
+        resolved_map = index_map
+        if resolved_map is None:
+            resolved_map = self.adc_filter_engine.build_channel_index_map(channels, repeat_count)
+
+        sweep_rate_hz = 0.0
+        if hasattr(self, 'get_measured_sweep_rate_hz'):
+            try:
+                sweep_rate_hz = float(self.get_measured_sweep_rate_hz())
+            except Exception:
+                sweep_rate_hz = 0.0
+
+        if sweep_rate_hz > 0 and resolved_map:
+            return {
+                key: sweep_rate_hz * max(1, len(np.asarray(indices).reshape(-1)))
+                for key, indices in resolved_map.items()
+            }
+
+        # No measured sweep rate yet: fall back to the engine's own estimate.
         return self.adc_filter_engine.estimate_channel_sample_rates(
             total_fs_hz,
             channels,

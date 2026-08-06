@@ -67,7 +67,7 @@ class AnalysisPanelMixin:
         self.analysis_state = {
             "source_mode": "in_memory",
             "axis_mode": "time_ms",
-            "zoom_mode": "x",
+            "zoom_mode": "xy",
             "filter_enabled": False,
             "marker_enabled": True,
             "overlays": {
@@ -94,6 +94,7 @@ class AnalysisPanelMixin:
         self._analysis_marker_timer = QTimer()
         self._analysis_marker_timer.setSingleShot(True)
         self._analysis_pending_marker_x = None
+        self._analysis_saved_view_ranges: dict[str, list] = {}
 
     def _get_last_analysis_settings_path(self):
         return Path.home() / ".adc_streamer" / "analysis" / "last_used_analysis_settings.json"
@@ -414,10 +415,10 @@ class AnalysisPanelMixin:
         self.analysis_derived_plot.addLegend(offset=(10, 10))
         self.analysis_force_plot = pg.PlotWidget()
         self.analysis_force_plot.setBackground("w")
-        self.analysis_signal_plot.setMinimumHeight(360)
-        self.analysis_integration_plot.setMinimumHeight(260)
-        self.analysis_derived_plot.setMinimumHeight(240)
-        self.analysis_force_plot.setMinimumHeight(300)
+        self.analysis_signal_plot.setMinimumHeight(250)
+        self.analysis_integration_plot.setMinimumHeight(200)
+        self.analysis_derived_plot.setMinimumHeight(200)
+        self.analysis_force_plot.setMinimumHeight(100)
         self.analysis_force_plot.showGrid(x=True, y=True, alpha=0.3)
         self.analysis_force_plot.addLegend(offset=(10, 10))
         self.analysis_integration_plot.setXLink(self.analysis_signal_plot)
@@ -427,9 +428,9 @@ class AnalysisPanelMixin:
         self.analysis_plot_splitter.addWidget(self.analysis_integration_plot)
         self.analysis_plot_splitter.addWidget(self.analysis_derived_plot)
         self.analysis_plot_splitter.addWidget(self.analysis_force_plot)
-        self.analysis_plot_splitter.setStretchFactor(0, 2)
-        self.analysis_plot_splitter.setStretchFactor(1, 2)
-        self.analysis_plot_splitter.setStretchFactor(2, 1)
+        self.analysis_plot_splitter.setStretchFactor(0, 5)
+        self.analysis_plot_splitter.setStretchFactor(1, 4)
+        self.analysis_plot_splitter.setStretchFactor(2, 4)
         self.analysis_plot_splitter.setStretchFactor(3, 2)
         display_root.addWidget(self.analysis_plot_splitter)
         self._update_analysis_plot_visibility(
@@ -651,6 +652,7 @@ class AnalysisPanelMixin:
             else:
                 self.analysis_snapshot = build_in_memory_snapshot(self)
             self._rebuild_analysis_channel_checks()
+            self._analysis_pending_auto_range = True
             self.refresh_analysis_plot()
             self._set_analysis_status_text(
                 f"Analysis loaded: {self.analysis_snapshot.sweep_count} sweeps, "
@@ -831,12 +833,26 @@ class AnalysisPanelMixin:
             pzt_force_settings=self.analysis_state.get("pzt_force", {}),
         )
         self._sync_analysis_force_trace_checks(self.analysis_prepared.force_traces)
-        self._render_analysis_prepared()
+        self._render_analysis_prepared(auto_range=getattr(self, "_analysis_pending_auto_range", False))
+        self._analysis_pending_auto_range = False
 
-    def _render_analysis_prepared(self):
+    def _render_analysis_prepared(self, auto_range: bool = False):
         prepared = self.analysis_prepared
         if prepared is None:
             return
+
+        if not auto_range:
+            x_range, _ = self.analysis_signal_plot.viewRange()
+            for key, plot in (
+                ("signal", self.analysis_signal_plot),
+                ("integration", self.analysis_integration_plot),
+                ("derived", self.analysis_derived_plot),
+                ("force", self.analysis_force_plot),
+            ):
+                if plot.isVisible():
+                    _, y_range = plot.viewRange()
+                    self._analysis_saved_view_ranges[key] = (x_range, y_range)
+
         desired_signal = set()
         desired_integration = set()
         desired_derived = set()
@@ -851,7 +867,7 @@ class AnalysisPanelMixin:
             if curve is None:
                 curve = self.analysis_signal_plot.plot([], [], pen=pg.mkPen(color=color, width=2), name=key)
                 curve.setClipToView(True)
-                curve.setDownsampling(auto=True, method="peak")
+                curve.setDownsampling(auto=True, method="subsample")
                 self.analysis_signal_curves[key] = curve
             curve.setData(trace.x, trace.y)
             curve.setPen(pg.mkPen(color=color, width=2))
@@ -868,7 +884,7 @@ class AnalysisPanelMixin:
             if curve is None:
                 curve = self.analysis_integration_plot.plot([], [], pen=pg.mkPen(color=color, width=2), name=key)
                 curve.setClipToView(True)
-                curve.setDownsampling(auto=True, method="peak")
+                curve.setDownsampling(auto=True, method="subsample")
                 self.analysis_integration_curves[key] = curve
             curve.setData(trace.x, trace.y)
             curve.setPen(pg.mkPen(color=color, width=2))
@@ -883,7 +899,7 @@ class AnalysisPanelMixin:
                     [], [], pen=pg.mkPen(color=PLOT_COLORS[(index + 6) % len(PLOT_COLORS)], width=2), name=key
                 )
                 curve.setClipToView(True)
-                curve.setDownsampling(auto=True, method="peak")
+                curve.setDownsampling(auto=True, method="subsample")
                 self.analysis_derived_curves[key] = curve
             curve.setData(trace.x, trace.y)
             curve.setPen(pg.mkPen(color=PLOT_COLORS[(index + 6) % len(PLOT_COLORS)], width=2))
@@ -899,7 +915,7 @@ class AnalysisPanelMixin:
                     [], [], pen=pg.mkPen(color=color, width=2), name=key
                 )
                 curve.setClipToView(True)
-                curve.setDownsampling(auto=True, method="peak")
+                curve.setDownsampling(auto=True, method="subsample")
                 self.analysis_force_curves[key] = curve
             curve.setData(trace.x, trace.y)
             curve.setPen(pg.mkPen(color=color, width=2))
@@ -939,12 +955,26 @@ class AnalysisPanelMixin:
         self.analysis_derived_plot.setLabel("left", "Shear / Normal", units="V")
         self.analysis_force_plot.setLabel("bottom", prepared.x_label, units=prepared.x_units)
         self.analysis_force_plot.setLabel("left", "Force", units="N")
-        if desired_integration:
-            self.analysis_integration_plot.enableAutoRange()
-        if desired_derived:
-            self.analysis_derived_plot.enableAutoRange()
-        if desired_force:
-            self.analysis_force_plot.enableAutoRange()
+        if auto_range:
+            if desired_signal:
+                self.analysis_signal_plot.enableAutoRange()
+            if desired_integration:
+                self.analysis_integration_plot.enableAutoRange()
+            if desired_derived:
+                self.analysis_derived_plot.enableAutoRange()
+            if desired_force:
+                self.analysis_force_plot.enableAutoRange()
+        else:
+            for key, plot in (
+                ("signal", self.analysis_signal_plot),
+                ("integration", self.analysis_integration_plot),
+                ("derived", self.analysis_derived_plot),
+                ("force", self.analysis_force_plot),
+            ):
+                if key in self._analysis_saved_view_ranges and plot.isVisible():
+                    x_range, y_range = self._analysis_saved_view_ranges[key]
+                    plot.setXRange(*x_range, padding=0)
+                    plot.setYRange(*y_range, padding=0)
         self.analysis_marker_vline.setVisible(bool(self.analysis_marker_check.isChecked()))
         source = self.analysis_snapshot.source_id if self.analysis_snapshot else "-"
         self._set_analysis_status_text(
@@ -962,21 +992,27 @@ class AnalysisPanelMixin:
         show_force: bool,
     ):
         """Show only Analysis plots that have requested, available traces."""
+        saved = getattr(self, "_analysis_saved_view_ranges", {})
         plot_states = (
-            (self.analysis_signal_plot, bool(show_signal), 360),
-            (self.analysis_integration_plot, bool(show_integration), 260),
-            (self.analysis_derived_plot, bool(show_derived), 240),
-            (self.analysis_force_plot, bool(show_force), 300),
+            ("signal", self.analysis_signal_plot, bool(show_signal), 360),
+            ("integration", self.analysis_integration_plot, bool(show_integration), 260),
+            ("derived", self.analysis_derived_plot, bool(show_derived), 240),
+            ("force", self.analysis_force_plot, bool(show_force), 300),
         )
-        for plot, visible, _minimum_height in plot_states:
+        for key, plot, visible, _minimum_height in plot_states:
+            was_visible = plot.isVisible()
             plot.setVisible(visible)
+            if visible and not was_visible and key in saved:
+                x_range, y_range = saved[key]
+                plot.setXRange(*x_range, padding=0)
+                plot.setYRange(*y_range, padding=0)
 
         if hasattr(self, "analysis_plot_splitter"):
             self.analysis_plot_splitter.setMinimumHeight(
-                sum(minimum_height for _plot, visible, minimum_height in plot_states if visible)
+                sum(minimum_height for _key, _plot, visible, minimum_height in plot_states if visible)
             )
             self.analysis_plot_splitter.setSizes(
-                [minimum_height if visible else 0 for _plot, visible, minimum_height in plot_states]
+                [minimum_height if visible else 0 for _key, _plot, visible, minimum_height in plot_states]
             )
 
     def _update_analysis_pzt_mux_timing_status_from_prepared(self, status: str):
@@ -990,6 +1026,15 @@ class AnalysisPanelMixin:
             if text.startswith("PZT force skipped:"):
                 self.analysis_pzt_mux_timing_status.setText(text)
                 return
+
+    def _set_analysis_plot_visible(self, key: str, plot, visible: bool):
+        if visible == plot.isVisible():
+            return
+        plot.setVisible(visible)
+        if visible and key in self._analysis_saved_view_ranges:
+            x_range, y_range = self._analysis_saved_view_ranges[key]
+            plot.setXRange(*x_range, padding=0)
+            plot.setYRange(*y_range, padding=0)
 
     def _analysis_integrated_source_label(self, trace_label: str) -> str:
         prefix = "Integrated "

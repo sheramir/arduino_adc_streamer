@@ -5,10 +5,11 @@ GUI components for serial connection, ADC configuration, acquisition settings, a
 """
 
 from PyQt6.QtWidgets import (
-    QGroupBox, QGridLayout, QLabel, QPushButton, QLineEdit, 
-    QComboBox, QCheckBox, QSpinBox, QDoubleSpinBox
+    QGroupBox, QGridLayout, QLabel, QPushButton, QLineEdit,
+    QComboBox, QCheckBox, QSpinBox, QDoubleSpinBox, QHBoxLayout, QMenu, QWidget,
 )
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QAction
 
 from constants.serial import (
     BUFFER_SIZE_MAX,
@@ -56,25 +57,55 @@ class ControlPanelsMixin:
         self.refresh_ports_btn.clicked.connect(self.update_port_list)
         layout.addWidget(self.refresh_ports_btn, 0, 2)
 
-        # Connect/Disconnect button for ADC
-        self.connect_btn = QPushButton("Connect ADC")
-        self.connect_btn.clicked.connect(self.toggle_connection)
-        layout.addWidget(self.connect_btn, 1, 0, 1, 2)
-        
+        # ADC split-button: [Auto-connect ADC | ▾]
+        adc_btn_row = QWidget()
+        adc_btn_layout = QHBoxLayout(adc_btn_row)
+        adc_btn_layout.setContentsMargins(0, 0, 0, 0)
+        adc_btn_layout.setSpacing(0)
+
+        self.connect_btn = QPushButton("Auto-connect ADC")
+        self.connect_btn.clicked.connect(self._toggle_adc_connection)
+        adc_btn_layout.addWidget(self.connect_btn)
+
+        self._adc_arrow_btn = QPushButton("▾")
+        self._adc_arrow_btn.setFixedWidth(24)
+        self._adc_arrow_btn.clicked.connect(self._show_adc_connect_menu)
+        adc_btn_layout.addWidget(self._adc_arrow_btn)
+
+        self._adc_connect_menu = QMenu(self)
+        self._adc_connect_menu.addAction(QAction("Manual connect…", self, triggered=self.connect_serial))
+
+        layout.addWidget(adc_btn_row, 1, 0, 1, 2)
+
         # MCU label (shows detected MCU type)
         self.mcu_label = QLabel("MCU: -")
         self.mcu_label.setStyleSheet("QLabel { font-weight: bold; color: #2196F3; }")
         layout.addWidget(self.mcu_label, 1, 2)
-        
+
         # Force sensor port selection
         layout.addWidget(QLabel("Force Port:"), 2, 0)
         self.force_port_combo = QComboBox()
         layout.addWidget(self.force_port_combo, 2, 1, 1, 2)
-        
-        # Connect/Disconnect button for force sensors
-        self.force_connect_btn = QPushButton("Connect Force")
-        self.force_connect_btn.clicked.connect(self.toggle_force_connection)
-        layout.addWidget(self.force_connect_btn, 3, 0, 1, 2)
+
+        # Force split-button: [Auto-connect Force | ▾]
+        force_btn_row = QWidget()
+        force_btn_layout = QHBoxLayout(force_btn_row)
+        force_btn_layout.setContentsMargins(0, 0, 0, 0)
+        force_btn_layout.setSpacing(0)
+
+        self.force_connect_btn = QPushButton("Auto-connect Force")
+        self.force_connect_btn.clicked.connect(self._toggle_force_connection)
+        force_btn_layout.addWidget(self.force_connect_btn)
+
+        self._force_arrow_btn = QPushButton("▾")
+        self._force_arrow_btn.setFixedWidth(24)
+        self._force_arrow_btn.clicked.connect(self._show_force_connect_menu)
+        force_btn_layout.addWidget(self._force_arrow_btn)
+
+        self._force_connect_menu = QMenu(self)
+        self._force_connect_menu.addAction(QAction("Manual connect…", self, triggered=self.connect_force_serial))
+
+        layout.addWidget(force_btn_row, 3, 0, 1, 2)
 
         self.force_reset_btn = QPushButton("Reset Load Cell")
         self.force_reset_btn.setEnabled(False)

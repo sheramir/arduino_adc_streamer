@@ -1,0 +1,21 @@
+{
+  "auto_connect": true,
+  "adc_devices": [
+    {
+      "name": "MCU: ARRAY_PZT_PZR_1.7",
+      "vid": "0x16C0",
+      "pid": "0x0483",
+      "serial_number": "20139650",
+      "baudrate": 115200
+    }
+  ],
+  "force_devices": [
+    {
+      "name": "Force Sensor",
+      "vid": "0x2886",
+      "pid": "0x0062",
+      "serial_number": "0B687C0A",
+      "baudrate": 115200
+    }
+  ]
+}

@@ -7,6 +7,13 @@ Plain helpers for ADC runtime defaults and connection view-state snapshots.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from enum import Enum, auto
+
+
+class ADCConnectionState(Enum):
+    DISCONNECTED = auto()
+    CONNECTING = auto()
+    CONNECTED = auto()
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,7 +84,7 @@ def build_default_arduino_status() -> ArduinoStatus:
 
 def build_connected_view_state() -> ADCConnectionViewState:
     return ADCConnectionViewState(
-        connect_button_text="Disconnect",
+        connect_button_text="Disconnect ADC",
         configure_enabled=True,
         configure_style="QPushButton { background-color: #2196F3; color: white; font-weight: bold; }",
         start_enabled=False,
@@ -89,7 +96,7 @@ def build_connected_view_state() -> ADCConnectionViewState:
 
 def build_disconnected_view_state() -> ADCConnectionViewState:
     return ADCConnectionViewState(
-        connect_button_text="Connect",
+        connect_button_text="Auto-connect ADC",
         configure_enabled=False,
         configure_style=None,
         start_enabled=False,

@@ -6,6 +6,9 @@ Owns force-vs-time overlay rendering on the shared ADC plot.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from enum import Enum, auto
+
 import numpy as np
 import pyqtgraph as pg
 
@@ -27,11 +30,28 @@ def apply_force_plot_zero_threshold(force_values_newtons):
     return np.where(np.abs(force_values_newtons) <= threshold_newtons, 0.0, force_values_newtons)
 
 
+class ForcePlotTarget(Enum):
+    MAIN = auto()
+    ROSETTE = auto()
+
+
+@dataclass(frozen=True)
+class ForceOverlayTarget:
+    kind: ForcePlotTarget
+    viewbox: object
+    x_curve_attr: str
+    z_curve_attr: str
+    x_checkbox: object          # QCheckBox or None
+    z_checkbox: object          # QCheckBox or None
+    source_widget: object       # PlotWidget to read current view range from
+    update_viewbox_fn: object   # callable or None
+
+
 class ForceOverlayMixin:
     """Force overlay time-window selection and curve rendering."""
 
-    def _get_force_plot_target(self):
-        """Return widgets and curve attributes for the currently visible force overlay."""
+    def _resolve_force_plot_target(self) -> ForceOverlayTarget:
+        """Return a ForceOverlayTarget for the currently visible force overlay."""
         is_rosette_tab = False
         if hasattr(self, "get_current_visualization_tab_name"):
             try:
@@ -40,23 +60,48 @@ class ForceOverlayMixin:
                 is_rosette_tab = False
 
         if is_rosette_tab and hasattr(self, "rosette_force_viewbox"):
-            return {
-                "viewbox": self.rosette_force_viewbox,
-                "x_curve_attr": "_rosette_force_x_curve",
-                "z_curve_attr": "_rosette_force_z_curve",
-                "x_checkbox": getattr(self, "rosette_force_x_checkbox", None),
-                "z_checkbox": getattr(self, "rosette_force_z_checkbox", None),
-                "update_viewbox": getattr(self, "update_rosette_force_viewbox", None),
-            }
+            return ForceOverlayTarget(
+                kind=ForcePlotTarget.ROSETTE,
+                viewbox=self.rosette_force_viewbox,
+                x_curve_attr="_rosette_force_x_curve",
+                z_curve_attr="_rosette_force_z_curve",
+                x_checkbox=getattr(self, "rosette_force_x_checkbox", None),
+                z_checkbox=getattr(self, "rosette_force_z_checkbox", None),
+                source_widget=getattr(self, "rosette_plot_widget", None),
+                update_viewbox_fn=getattr(self, "update_rosette_force_viewbox", None),
+            )
 
-        return {
-            "viewbox": getattr(self, "force_viewbox", None),
-            "x_curve_attr": "_force_x_curve",
-            "z_curve_attr": "_force_z_curve",
-            "x_checkbox": getattr(self, "force_x_checkbox", None),
-            "z_checkbox": getattr(self, "force_z_checkbox", None),
-            "update_viewbox": getattr(self, "update_force_viewbox", None),
-        }
+        return ForceOverlayTarget(
+            kind=ForcePlotTarget.MAIN,
+            viewbox=getattr(self, "force_viewbox", None),
+            x_curve_attr="_force_x_curve",
+            z_curve_attr="_force_z_curve",
+            x_checkbox=getattr(self, "force_x_checkbox", None),
+            z_checkbox=getattr(self, "force_z_checkbox", None),
+            source_widget=getattr(self, "plot_widget", None),
+            update_viewbox_fn=getattr(self, "update_force_viewbox", None),
+        )
+
+    def _resolve_force_x_range(self, target: ForceOverlayTarget):
+        """Return (min_time, max_time) that the force viewbox should display.
+
+        For MAIN targets: mirrors the user-visible ADC plot X range when ADC
+        channels are selected; falls back to the buffer-derived time window
+        when no channels are selected (so force curves stay visible even with
+        an empty ADC plot).
+        For ROSETTE targets: always uses the buffer-derived time window because
+        the rosette plot already manages its own X range via sigXRangeChanged.
+        """
+        if target.kind == ForcePlotTarget.MAIN:
+            selected = self._get_selected_plot_channels() if hasattr(self, '_get_selected_plot_channels') else set()
+            if selected and target.source_widget is not None:
+                try:
+                    x_min, x_max = target.source_widget.getViewBox().viewRange()[0]
+                    return float(x_min), float(x_max)
+                except Exception:
+                    pass
+
+        return self._get_force_plot_time_window()
 
     def _get_force_plot_time_window(self):
         """Return the active ADC plot time span that the force overlay should match."""
@@ -117,17 +162,17 @@ class ForceOverlayMixin:
                 return
 
         state = get_force_runtime_state(self)
-        target = self._get_force_plot_target()
-        viewbox = target["viewbox"]
+        target = self._resolve_force_plot_target()
+        viewbox = target.viewbox
         if viewbox is None:
             return
 
-        x_checkbox = target["x_checkbox"]
-        z_checkbox = target["z_checkbox"]
+        x_checkbox = target.x_checkbox
+        z_checkbox = target.z_checkbox
         show_x_force = x_checkbox and x_checkbox.isChecked()
         show_z_force = z_checkbox and z_checkbox.isChecked()
-        x_curve_attr = target["x_curve_attr"]
-        z_curve_attr = target["z_curve_attr"]
+        x_curve_attr = target.x_curve_attr
+        z_curve_attr = target.z_curve_attr
         x_curve = getattr(self, x_curve_attr, None)
         z_curve = getattr(self, z_curve_attr, None)
 
@@ -142,14 +187,13 @@ class ForceOverlayMixin:
         if self.sweep_count == 0:
             return
 
-        time_window = self._get_force_plot_time_window()
+        time_window = self._resolve_force_x_range(target)
         if time_window is None:
             return
         min_time, max_time = time_window
 
-        update_viewbox = target["update_viewbox"]
-        if callable(update_viewbox):
-            update_viewbox()
+        if callable(target.update_viewbox_fn):
+            target.update_viewbox_fn()
 
         try:
             force_array = np.array(state.data, dtype=np.float64)
@@ -196,6 +240,7 @@ class ForceOverlayMixin:
                 z_curve.setData(x=times, y=z_forces)
 
             viewbox.enableAutoRange(axis='y')
+            viewbox.setXRange(min_time, max_time, padding=0)
 
         except Exception as e:
             self.log_status(f"ERROR: Failed to update force plot - {e}")

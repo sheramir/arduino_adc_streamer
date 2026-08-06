@@ -194,6 +194,41 @@ class ADCPlottingMixin:
         for curve in getattr(self, '_rosette_curves', {}).values():
             curve.setVisible(False)
 
+    def _clear_all_plot_curves(self):
+        """Zero out and remove every live curve from all plot widgets.
+
+        Call this as the single point of curve teardown — on clear-data,
+        reset, or any other path that needs to discard rendered data.
+        Clears pyqtgraph's internal arrays first (setData) so that any
+        pending viewRangeChanged callbacks see empty data instead of the
+        previously-rendered (potentially millions-of-points) arrays.
+        """
+        for curve in self._adc_curves.values():
+            curve.setData([], [])
+            self.plot_widget.removeItem(curve)
+        self._adc_curves.clear()
+
+        for curve in getattr(self, '_rosette_curves', {}).values():
+            curve.setData([], [])
+            if hasattr(self, 'rosette_plot_widget'):
+                self.rosette_plot_widget.removeItem(curve)
+        if hasattr(self, '_rosette_curves'):
+            self._rosette_curves.clear()
+
+        for attr, viewbox_attr in (
+            ('_force_x_curve', 'force_viewbox'),
+            ('_force_z_curve', 'force_viewbox'),
+            ('_rosette_force_x_curve', 'rosette_force_viewbox'),
+            ('_rosette_force_z_curve', 'rosette_force_viewbox'),
+        ):
+            curve = getattr(self, attr, None)
+            if curve is not None:
+                curve.setData([], [])
+                viewbox = getattr(self, viewbox_attr, None)
+                if viewbox is not None:
+                    viewbox.removeItem(curve)
+                setattr(self, attr, None)
+
     def _get_selected_plot_channels(self):
         """Return the set of currently selected channel keys."""
         return {

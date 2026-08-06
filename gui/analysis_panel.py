@@ -81,6 +81,7 @@ class AnalysisPanelMixin:
             "csv_path": "",
             "metadata_path": "",
         }
+        self._analysis_settings_loading = False
         self.analysis_snapshot: AnalysisSourceSnapshot | None = None
         self.analysis_prepared: AnalysisPreparedData | None = None
         self.analysis_channel_checks: dict[str, QCheckBox] = {}
@@ -90,6 +91,9 @@ class AnalysisPanelMixin:
         self.analysis_integration_curves = {}
         self.analysis_derived_curves = {}
         self.analysis_trace_colors = {}
+        # Last pen color applied per (group, curve key), so an unchanged colour
+        # does not rebuild and reassign a QPen on every render.
+        self._analysis_pen_colors: dict[tuple[str, str], object] = {}
         self.analysis_force_checks: dict[str, QCheckBox] = {}
         self._analysis_marker_timer = QTimer()
         self._analysis_marker_timer.setSingleShot(True)
@@ -102,6 +106,8 @@ class AnalysisPanelMixin:
         return {"version": 1, "analysis_settings": dict(getattr(self, "analysis_state", {}))}
 
     def save_last_analysis_settings(self):
+        if getattr(self, "_analysis_settings_loading", False):
+            return
         try:
             save_settings_payload(self._get_last_analysis_settings_path(), self._serialize_analysis_settings())
         except Exception as exc:
@@ -472,38 +478,45 @@ class AnalysisPanelMixin:
     def _apply_analysis_settings_to_widgets(self):
         if not hasattr(self, "analysis_source_combo"):
             return
-        state = self.analysis_state
-        self.analysis_source_combo.setCurrentIndex(1 if state.get("source_mode") == "csv_json" else 0)
-        self.analysis_axis_combo.setCurrentIndex(1 if state.get("axis_mode") == "samples" else 0)
-        self.analysis_zoom_combo.setCurrentIndex({"x": 0, "y": 1, "xy": 2}.get(state.get("zoom_mode", "x"), 0))
-        self.analysis_filter_check.setChecked(bool(state.get("filter_enabled", False)))
-        self.analysis_marker_check.setChecked(bool(state.get("marker_enabled", True)))
-        overlays = state.get("overlays", {})
-        self.analysis_shear_check.setChecked(bool(overlays.get("shear", False)))
-        self.analysis_normal_check.setChecked(bool(overlays.get("normal", False)))
-        self.analysis_integration_check.setChecked(bool(overlays.get("integration", False)))
-        pzt_force = state.get("pzt_force", {})
-        self.analysis_pzt_force_check.setChecked(bool(pzt_force.get("enabled", False)))
-        self.analysis_pzt_capacitance_spin.setValue(float(pzt_force.get("capacitance_value", PZT_FORCE_DEFAULT_SETTINGS["capacitance_value"])))
-        self.analysis_pzt_capacitance_unit_combo.setCurrentText(str(pzt_force.get("capacitance_unit", PZT_FORCE_DEFAULT_SETTINGS["capacitance_unit"])))
-        self.analysis_pzt_rleak_spin.setValue(float(pzt_force.get("rleak_ohm", PZT_FORCE_DEFAULT_SETTINGS["rleak_ohm"])))
-        self.analysis_pzt_d33_spin.setValue(float(pzt_force.get("d33_pc_per_n", PZT_FORCE_DEFAULT_SETTINGS["d33_pc_per_n"])))
-        self.analysis_pzt_noise_spin.setValue(float(pzt_force.get("noise_threshold_v", PZT_FORCE_DEFAULT_SETTINGS["noise_threshold_v"])))
-        self.analysis_pzt_quiet_duration_spin.setValue(float(pzt_force.get("quiet_duration_s", PZT_FORCE_DEFAULT_SETTINGS["quiet_duration_s"])))
-        self.analysis_pzt_noise_k_spin.setValue(float(pzt_force.get("noise_sigma_multiplier", PZT_FORCE_DEFAULT_SETTINGS["noise_sigma_multiplier"])))
-        self._set_analysis_pzt_mux_timing_mode(str(pzt_force.get("mux_timing_mode", PZT_FORCE_DEFAULT_SETTINGS["mux_timing_mode"])))
-        self.analysis_pzt_mux_connected_ms_spin.setValue(
-            float(pzt_force.get("mux_connected_time_s", PZT_FORCE_DEFAULT_SETTINGS["mux_connected_time_s"])) * 1000.0
-        )
-        self.analysis_pzt_off_mux_leak_check.setChecked(bool(pzt_force.get("off_mux_leak_enabled", False)))
-        off_mux_rleak = pzt_force.get("off_mux_rleak_ohm", PZT_FORCE_DEFAULT_SETTINGS["off_mux_rleak_ohm"])
-        if off_mux_rleak not in (None, ""):
-            self.analysis_pzt_off_mux_rleak_spin.setValue(float(off_mux_rleak))
-        self._update_analysis_pzt_mux_timing_controls()
-        self._update_analysis_pzt_baseline_results()
-        self.analysis_csv_path_edit.setText(str(state.get("csv_path", "")))
-        self.analysis_metadata_path_edit.setText(str(state.get("metadata_path", "")))
-        self.on_analysis_zoom_changed()
+        # Applying settings drives ~15 widgets whose change handlers each
+        # persist the whole file; suppress those writes until every widget
+        # has been updated.
+        self._analysis_settings_loading = True
+        try:
+            state = self.analysis_state
+            self.analysis_source_combo.setCurrentIndex(1 if state.get("source_mode") == "csv_json" else 0)
+            self.analysis_axis_combo.setCurrentIndex(1 if state.get("axis_mode") == "samples" else 0)
+            self.analysis_zoom_combo.setCurrentIndex({"x": 0, "y": 1, "xy": 2}.get(state.get("zoom_mode", "x"), 0))
+            self.analysis_filter_check.setChecked(bool(state.get("filter_enabled", False)))
+            self.analysis_marker_check.setChecked(bool(state.get("marker_enabled", True)))
+            overlays = state.get("overlays", {})
+            self.analysis_shear_check.setChecked(bool(overlays.get("shear", False)))
+            self.analysis_normal_check.setChecked(bool(overlays.get("normal", False)))
+            self.analysis_integration_check.setChecked(bool(overlays.get("integration", False)))
+            pzt_force = state.get("pzt_force", {})
+            self.analysis_pzt_force_check.setChecked(bool(pzt_force.get("enabled", False)))
+            self.analysis_pzt_capacitance_spin.setValue(float(pzt_force.get("capacitance_value", PZT_FORCE_DEFAULT_SETTINGS["capacitance_value"])))
+            self.analysis_pzt_capacitance_unit_combo.setCurrentText(str(pzt_force.get("capacitance_unit", PZT_FORCE_DEFAULT_SETTINGS["capacitance_unit"])))
+            self.analysis_pzt_rleak_spin.setValue(float(pzt_force.get("rleak_ohm", PZT_FORCE_DEFAULT_SETTINGS["rleak_ohm"])))
+            self.analysis_pzt_d33_spin.setValue(float(pzt_force.get("d33_pc_per_n", PZT_FORCE_DEFAULT_SETTINGS["d33_pc_per_n"])))
+            self.analysis_pzt_noise_spin.setValue(float(pzt_force.get("noise_threshold_v", PZT_FORCE_DEFAULT_SETTINGS["noise_threshold_v"])))
+            self.analysis_pzt_quiet_duration_spin.setValue(float(pzt_force.get("quiet_duration_s", PZT_FORCE_DEFAULT_SETTINGS["quiet_duration_s"])))
+            self.analysis_pzt_noise_k_spin.setValue(float(pzt_force.get("noise_sigma_multiplier", PZT_FORCE_DEFAULT_SETTINGS["noise_sigma_multiplier"])))
+            self._set_analysis_pzt_mux_timing_mode(str(pzt_force.get("mux_timing_mode", PZT_FORCE_DEFAULT_SETTINGS["mux_timing_mode"])))
+            self.analysis_pzt_mux_connected_ms_spin.setValue(
+                float(pzt_force.get("mux_connected_time_s", PZT_FORCE_DEFAULT_SETTINGS["mux_connected_time_s"])) * 1000.0
+            )
+            self.analysis_pzt_off_mux_leak_check.setChecked(bool(pzt_force.get("off_mux_leak_enabled", False)))
+            off_mux_rleak = pzt_force.get("off_mux_rleak_ohm", PZT_FORCE_DEFAULT_SETTINGS["off_mux_rleak_ohm"])
+            if off_mux_rleak not in (None, ""):
+                self.analysis_pzt_off_mux_rleak_spin.setValue(float(off_mux_rleak))
+            self._update_analysis_pzt_mux_timing_controls()
+            self._update_analysis_pzt_baseline_results()
+            self.analysis_csv_path_edit.setText(str(state.get("csv_path", "")))
+            self.analysis_metadata_path_edit.setText(str(state.get("metadata_path", "")))
+            self.on_analysis_zoom_changed()
+        finally:
+            self._analysis_settings_loading = False
 
     def on_analysis_source_changed(self):
         if not self._analysis_has_in_memory_capture() and self.analysis_source_combo.currentIndex() == 0:
@@ -841,6 +854,14 @@ class AnalysisPanelMixin:
         self._sync_analysis_force_trace_checks(self.analysis_prepared.force_traces)
         self._render_analysis_prepared()
 
+    def _apply_analysis_curve_pen(self, group, key, curve, color):
+        """Reassign the curve pen only when its colour actually changed."""
+        cache_key = (group, key)
+        if self._analysis_pen_colors.get(cache_key) == color:
+            return
+        curve.setPen(pg.mkPen(color=color, width=2))
+        self._analysis_pen_colors[cache_key] = color
+
     def _render_analysis_prepared(self):
         prepared = self.analysis_prepared
         if prepared is None:
@@ -861,8 +882,9 @@ class AnalysisPanelMixin:
                 curve.setClipToView(True)
                 curve.setDownsampling(auto=True, method="peak")
                 self.analysis_signal_curves[key] = curve
+                self._analysis_pen_colors[("signal", key)] = color
             curve.setData(trace.x, trace.y)
-            curve.setPen(pg.mkPen(color=color, width=2))
+            self._apply_analysis_curve_pen("signal", key, curve, color)
             curve.setVisible(True)
 
         integration_traces = [trace for trace in prepared.overlay_traces if trace.group == "integration"]
@@ -878,23 +900,26 @@ class AnalysisPanelMixin:
                 curve.setClipToView(True)
                 curve.setDownsampling(auto=True, method="peak")
                 self.analysis_integration_curves[key] = curve
+                self._analysis_pen_colors[("integration", key)] = color
             curve.setData(trace.x, trace.y)
-            curve.setPen(pg.mkPen(color=color, width=2))
+            self._apply_analysis_curve_pen("integration", key, curve, color)
             curve.setVisible(True)
 
         for index, trace in enumerate(derived_traces):
             key = trace.label
             desired_derived.add(key)
+            color = PLOT_COLORS[(index + 6) % len(PLOT_COLORS)]
             curve = self.analysis_derived_curves.get(key)
             if curve is None:
                 curve = self.analysis_derived_plot.plot(
-                    [], [], pen=pg.mkPen(color=PLOT_COLORS[(index + 6) % len(PLOT_COLORS)], width=2), name=key
+                    [], [], pen=pg.mkPen(color=color, width=2), name=key
                 )
                 curve.setClipToView(True)
                 curve.setDownsampling(auto=True, method="peak")
                 self.analysis_derived_curves[key] = curve
+                self._analysis_pen_colors[("derived", key)] = color
             curve.setData(trace.x, trace.y)
-            curve.setPen(pg.mkPen(color=PLOT_COLORS[(index + 6) % len(PLOT_COLORS)], width=2))
+            self._apply_analysis_curve_pen("derived", key, curve, color)
             curve.setVisible(True)
 
         for index, trace in enumerate(prepared.force_traces):
@@ -909,10 +934,11 @@ class AnalysisPanelMixin:
                 curve.setClipToView(True)
                 curve.setDownsampling(auto=True, method="peak")
                 self.analysis_force_curves[key] = curve
+                self._analysis_pen_colors[("force", key)] = color
             curve.setData(trace.x, trace.y)
-            curve.setPen(pg.mkPen(color=color, width=2))
-            visible = bool(self.analysis_force_checks.get(key).isChecked()) if key in self.analysis_force_checks else True
-            curve.setVisible(visible)
+            self._apply_analysis_curve_pen("force", key, curve, color)
+            force_check = self.analysis_force_checks.get(key)
+            curve.setVisible(force_check.isChecked() if force_check is not None else True)
 
         for key, curve in self.analysis_signal_curves.items():
             if key not in desired_signal:

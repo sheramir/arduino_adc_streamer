@@ -3228,22 +3228,27 @@ class PressureMapPanelMixin:
             channel_data_2d = channel_data[:num_samples * repeat_count].reshape(-1, repeat_count)
             channel_times_2d = channel_times[:num_samples * repeat_count].reshape(-1, repeat_count)
 
+            # Only two distinct pens are ever used here, and neither depends on
+            # repeat_idx, so build them once instead of once per repeat per frame.
+            # setPen copies the pen, so sharing these prototypes is safe.
+            primary_pen = pg.mkPen(color=color, width=SIGNAL_INTEGRATION_PLOT_LINE_WIDTH)
+            repeat_pen = None
+            if repeat_count > 1:
+                lighter_color = tuple(
+                    int(component * SIGNAL_INTEGRATION_DIMMED_COLOR_FRACTION)
+                    for component in color
+                )
+                repeat_pen = pg.mkPen(
+                    color=lighter_color,
+                    width=SIGNAL_INTEGRATION_REPEAT_LINE_WIDTH,
+                    style=Qt.PenStyle.DashLine,
+                )
+
             for repeat_idx in range(repeat_count):
                 repeat_data = channel_data_2d[:, repeat_idx]
                 repeat_times = channel_times_2d[:, repeat_idx]
 
-                if repeat_idx == 0:
-                    pen = pg.mkPen(color=color, width=SIGNAL_INTEGRATION_PLOT_LINE_WIDTH)
-                else:
-                    lighter_color = tuple(
-                        int(component * SIGNAL_INTEGRATION_DIMMED_COLOR_FRACTION)
-                        for component in color
-                    )
-                    pen = pg.mkPen(
-                        color=lighter_color,
-                        width=SIGNAL_INTEGRATION_REPEAT_LINE_WIDTH,
-                        style=Qt.PenStyle.DashLine,
-                    )
+                pen = primary_pen if repeat_idx == 0 else repeat_pen
 
                 name = f"{spec['label']}.{repeat_idx}"
                 curve_key = ("signal_integration_repeat", spec["key"], repeat_idx)

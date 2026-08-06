@@ -31,6 +31,12 @@ from data_processing.heatmap_point_tracker import resolve_point_tracking_target
 from data_processing.heatmap_signal_processing import resolve_heatmap_blob_sigmas
 
 
+# Unit-circle samples reused by every overlay redraw; constant, so building them
+# once keeps the 30 FPS display path free of per-frame allocations.
+_CIRCLE_COS = np.cos(np.linspace(0.0, 2.0 * np.pi, 240))
+_CIRCLE_SIN = np.sin(np.linspace(0.0, 2.0 * np.pi, 240))
+
+
 class HeatmapPanelMixin:
     HEATMAP_COLOR_MAPS = {
         "Thermal": [
@@ -987,7 +993,8 @@ class HeatmapPanelMixin:
         centers = self._get_display_package_centers(visible_count)
         circle_diameter = self._get_display_circle_diameter_value()
         radius = circle_diameter * 0.5
-        theta = np.linspace(0.0, 2.0 * np.pi, 240)
+        circle_dx = radius * _CIRCLE_COS
+        circle_dy = radius * _CIRCLE_SIN
         show_circle = bool(
             hasattr(self, "show_heatmap_circle_check")
             and self.show_heatmap_circle_check.isChecked()
@@ -1006,7 +1013,7 @@ class HeatmapPanelMixin:
 
             center_x, center_y = centers[index]
             if circle is not None:
-                circle.setData(center_x + radius * np.cos(theta), center_y + radius * np.sin(theta))
+                circle.setData(center_x + circle_dx, center_y + circle_dy)
                 circle.setVisible(show_circle)
             if label is not None:
                 label.setText(self._get_channel_group_title(index), color=(235, 235, 235))
@@ -1079,7 +1086,8 @@ class HeatmapPanelMixin:
             self._set_heatmap_image(item["image"], display_heatmap)
             item["image"].setRect(QRectF(center_x - (heatmap_size * 0.5), center_y - (heatmap_size * 0.5), heatmap_size, heatmap_size))
             item["image"].setVisible(True)
-        self._refresh_display_item_overlays()
+        # Overlays were already refreshed by update_visible_display_cards above;
+        # the image loop touches only image items, so no second pass is needed.
 
     def _clear_heatmap_background_overlay(self):
         for card in getattr(self, "heatmap_cards", []):
@@ -1108,9 +1116,8 @@ class HeatmapPanelMixin:
         center_x = (float(HEATMAP_WIDTH) - 1.0) / 2.0
         center_y = (float(HEATMAP_HEIGHT) - 1.0) / 2.0
         radius = min(float(HEATMAP_WIDTH), float(HEATMAP_HEIGHT)) * (0.48 / float(HEATMAP_COORD_EXTENT))
-        theta = np.linspace(0.0, 2.0 * np.pi, 240)
-        circle_x = center_x + radius * np.cos(theta)
-        circle_y = center_y + radius * np.sin(theta)
+        circle_x = center_x + radius * _CIRCLE_COS
+        circle_y = center_y + radius * _CIRCLE_SIN
 
         for card in getattr(self, "heatmap_cards", []):
             circle = pg.PlotDataItem(

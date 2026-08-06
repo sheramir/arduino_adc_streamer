@@ -50,6 +50,10 @@ from constants.plotting import (
 from file_operations.settings_persistence import load_settings_payload, save_settings_payload
 
 
+# numpy renamed trapz -> trapezoid; resolve once instead of probing per channel.
+_INTEGRATE_TRAPEZOID = getattr(np, "trapezoid", None) or getattr(np, "trapz")
+
+
 class SpectrumPanelMixin:
     """Mixin providing spectrum display tab and interactions."""
 
@@ -872,6 +876,15 @@ class SpectrumPanelMixin:
         band_f1 = min(settings['band_f1'], settings['band_f2'])
         band_f2 = max(settings['band_f1'], settings['band_f2'])
 
+        # These depend only on freqs_show and the band bounds, all fixed for the
+        # whole pass, so build them once rather than once per channel.
+        peak_mask = freqs_show > 0.0
+        has_peak_bins = bool(np.any(peak_mask))
+        peak_freqs = freqs_show[peak_mask]
+        band_mask = (freqs_show >= band_f1) & (freqs_show <= band_f2)
+        has_band_bins = bool(np.any(band_mask))
+        band_freqs = freqs_show[band_mask]
+
         visible_curve_count = 0
         per_channel_info = []
 
@@ -902,24 +915,23 @@ class SpectrumPanelMixin:
             })
 
             # Stats on displayed range, ignoring DC bin for peak
-            peak_mask = freqs_show > 0.0
-            if np.any(peak_mask):
-                peak_idx = np.argmax(y_plot[peak_mask])
-                peak_freq = float(freqs_show[peak_mask][peak_idx])
-                peak_mag = float(y_plot[peak_mask][peak_idx])
+            if has_peak_bins:
+                peak_values = y_plot[peak_mask]
+                peak_idx = np.argmax(peak_values)
+                peak_freq = float(peak_freqs[peak_idx])
+                peak_mag = float(peak_values[peak_idx])
             else:
                 peak_freq = 0.0
                 peak_mag = 0.0
 
-            band_mask = (freqs_show >= band_f1) & (freqs_show <= band_f2)
-            if np.any(band_mask):
+            if has_band_bins:
+                band_linear = display_linear[band_mask]
                 if mode == 'welch':
-                    integrate_trapezoid = np.trapezoid if hasattr(np, 'trapezoid') else np.lib.function_base.trapz
-                    band_power = float(integrate_trapezoid(display_linear[band_mask], freqs_show[band_mask]))
+                    band_power = float(_INTEGRATE_TRAPEZOID(band_linear, band_freqs))
                     band_rms = float(np.sqrt(max(band_power, 0.0)))
                 else:
-                    band_rms = float(np.sqrt(np.mean(display_linear[band_mask] ** 2)))
-                noise_floor_linear = float(np.median(display_linear[band_mask]))
+                    band_rms = float(np.sqrt(np.mean(band_linear ** 2)))
+                noise_floor_linear = float(np.median(band_linear))
                 noise_floor_display = float(np.median(y_plot[band_mask]))
             else:
                 band_rms = 0.0

@@ -265,26 +265,30 @@ class Heatmap555ProcessorMixin:
                 configured_mask = ~np.isnan(configured_baselines)
                 state['baseline_values'][configured_mask] = configured_baselines[configured_mask]
 
+            # These do not change while stepping through the sweep rows below,
+            # so build them once instead of once per row.
+            baseline_values = state['baseline_values']
+            baseline_abs = np.maximum(np.abs(baseline_values), 1e-9)
+            effective_thresholds = global_noise_threshold + per_sensor_thresholds
+            column_targets = [
+                (col_idx, sensor_index[channel_to_sensor.get(channel)])
+                for col_idx, channel in enumerate(package_channels)
+                if channel_to_sensor.get(channel) in sensor_index
+            ]
+
             batch_magnitudes = []
             for row_idx in range(package_matrix.shape[0]):
                 current_values = np.array(state['prev_values'], copy=True)
-                for col_idx, channel in enumerate(package_channels):
-                    label = channel_to_sensor.get(channel)
-                    if label not in sensor_index:
-                        continue
-                    current_values[sensor_index[label]] = float(package_matrix[row_idx, col_idx])
+                for col_idx, target_idx in column_targets:
+                    current_values[target_idx] = float(package_matrix[row_idx, col_idx])
 
-                deltas = current_values - state['baseline_values']
+                deltas = current_values - baseline_values
 
                 # Normalize channel response to relative change (%), so channels
                 # with different absolute ranges contribute comparably.
-                baseline_abs = np.maximum(np.abs(state['baseline_values']), 1e-9)
                 relative_percent = (100.0 * deltas) / baseline_abs
-                state['last_deltas'] = relative_percent
 
-                magnitudes = np.abs(relative_percent)
-                magnitudes = magnitudes * per_sensor_gains
-                effective_thresholds = global_noise_threshold + per_sensor_thresholds
+                magnitudes = np.abs(relative_percent) * per_sensor_gains
                 weights_now = np.where(magnitudes >= effective_thresholds, magnitudes, 0.0)
                 batch_magnitudes.append(weights_now)
 
@@ -293,6 +297,9 @@ class Heatmap555ProcessorMixin:
 
             if not batch_magnitudes:
                 continue
+
+            # Only the final row's value survived the per-row assignment before.
+            state['last_deltas'] = relative_percent
 
             weights = np.mean(np.vstack(batch_magnitudes), axis=0) * calibration
             state['last_weights'] = weights

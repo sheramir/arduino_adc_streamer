@@ -135,6 +135,7 @@ class PztDecayPanelMixin:
 
     def save_last_pzt_decay_settings(self, *_args) -> None:
         if not hasattr(self, "pzt_decay_signal_combo"): return
+        if getattr(self, "_pzt_decay_settings_loading", False): return
         settings = self._pzt_decay_qsettings()
         values = {"signal": self.pzt_decay_signal_combo.currentText(), "excitation": self.pzt_decay_excitation_spin.value(),
                   "resistance": self.pzt_decay_resistance_spin.value(), "capacitance": self.pzt_decay_capacitance_check.isChecked(),
@@ -154,26 +155,33 @@ class PztDecayPanelMixin:
         except (TypeError, ValueError):
             settings_version = 0
         use_new_defaults = settings_version < PZT_DECAY_SETTINGS_VERSION
-        self.pzt_decay_signal_combo.setCurrentText(str(settings.value("signal", self.pzt_decay_signal_combo.currentText())))
-        self.pzt_decay_excitation_spin.setValue(float(settings.value("excitation", 1.0)))
-        self.pzt_decay_resistance_spin.setValue(float(settings.value("resistance", 0.0)))
-        self.pzt_decay_capacitance_check.setChecked(str(settings.value("capacitance", "false")).lower() in ("true", "1"))
-        self.pzt_decay_tolerance_spin.setValue(float(settings.value("tolerance", .020)))
-        self.pzt_decay_fit_upper.setValue(0.85 if use_new_defaults else float(settings.value("fit_upper", 0.85)))
-        self.pzt_decay_fit_lower.setValue(0.15 if use_new_defaults else float(settings.value("fit_lower", 0.15)))
-        self.pzt_decay_min_fit_spin.setValue(max(3, int(settings.value("min_fit", 3))))
-        self.pzt_decay_duration_spin.setValue(float(settings.value("duration_s", 60.0)))
-        self.pzt_decay_repeat_spin.setValue(PZT_DECAY_REPEAT_COUNT if use_new_defaults else max(1, int(settings.value("repeat_count", PZT_DECAY_REPEAT_COUNT))))
-        self.pzt_decay_sampling_method_combo.setCurrentText(
-            PZT_DECAY_SAMPLING_METHOD_BURST if use_new_defaults else str(
-                settings.value("sampling_method", PZT_DECAY_SAMPLING_METHOD_BURST)
+        # Every widget below autosaves on change; suppress those writes while
+        # loading so a load does not rewrite the store 13 times from partial state.
+        self._pzt_decay_settings_loading = True
+        try:
+            self.pzt_decay_signal_combo.setCurrentText(str(settings.value("signal", self.pzt_decay_signal_combo.currentText())))
+            self.pzt_decay_excitation_spin.setValue(float(settings.value("excitation", 1.0)))
+            self.pzt_decay_resistance_spin.setValue(float(settings.value("resistance", 0.0)))
+            self.pzt_decay_capacitance_check.setChecked(str(settings.value("capacitance", "false")).lower() in ("true", "1"))
+            self.pzt_decay_tolerance_spin.setValue(float(settings.value("tolerance", .020)))
+            self.pzt_decay_fit_upper.setValue(0.85 if use_new_defaults else float(settings.value("fit_upper", 0.85)))
+            self.pzt_decay_fit_lower.setValue(0.15 if use_new_defaults else float(settings.value("fit_lower", 0.15)))
+            self.pzt_decay_min_fit_spin.setValue(max(3, int(settings.value("min_fit", 3))))
+            self.pzt_decay_duration_spin.setValue(float(settings.value("duration_s", 60.0)))
+            self.pzt_decay_repeat_spin.setValue(PZT_DECAY_REPEAT_COUNT if use_new_defaults else max(1, int(settings.value("repeat_count", PZT_DECAY_REPEAT_COUNT))))
+            self.pzt_decay_sampling_method_combo.setCurrentText(
+                PZT_DECAY_SAMPLING_METHOD_BURST if use_new_defaults else str(
+                    settings.value("sampling_method", PZT_DECAY_SAMPLING_METHOD_BURST)
+                )
             )
-        )
-        self.pzt_decay_dummy_ground_check.setChecked(
-            str(settings.value("single_dummy_ground", "true")).lower() in ("true", "1")
-        )
-        self.pzt_decay_robust_check.setChecked(str(settings.value("robust", "true")).lower() in ("true", "1"))
-        self._update_pzt_decay_sampling_controls()
+            self.pzt_decay_dummy_ground_check.setChecked(
+                str(settings.value("single_dummy_ground", "true")).lower() in ("true", "1")
+            )
+            self.pzt_decay_robust_check.setChecked(str(settings.value("robust", "true")).lower() in ("true", "1"))
+            self._update_pzt_decay_sampling_controls()
+        finally:
+            self._pzt_decay_settings_loading = False
+        # Migration write must still happen, so it runs outside the guard.
         if use_new_defaults:
             self.save_last_pzt_decay_settings()
 

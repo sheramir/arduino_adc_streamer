@@ -1475,11 +1475,9 @@ def _evaluate_pressure_field_model(model: PressureFieldModel, x_values: np.ndarr
         values[inside] = _evaluate_center_only_model(
             model, x_values[inside], y_values[inside]
         )
-        values[~inside] = 0.0
         return _numeric_cleanup(values)
     if model.package_mode == PRESSURE_PACKAGE_MODE_ISOLATED_OUTER:
         values = _evaluate_isolated_model(model, x_values, y_values, support_bounds, inside)
-        values[~inside] = 0.0
         return _numeric_cleanup(values)
     if (
         model.package_mode == PRESSURE_PACKAGE_MODE_CENTER_PLUS_ONE_OUTER
@@ -1493,7 +1491,6 @@ def _evaluate_pressure_field_model(model: PressureFieldModel, x_values: np.ndarr
             support_bounds,
             inside,
         )
-        values[~inside] = 0.0
         return _numeric_cleanup(values)
     spacing = model.geometry.sensor_spacing_mm
     core_mask = inside & (np.abs(x_values) <= spacing) & (np.abs(y_values) <= spacing)
@@ -1509,7 +1506,6 @@ def _evaluate_pressure_field_model(model: PressureFieldModel, x_values: np.ndarr
                 support_bounds,
                 model.decay_origin,
             )
-            values[~inside] = 0.0
             return _numeric_cleanup(values)
         by_label = {plane.label: plane for plane in model.quadrant_planes}
         quadrant_masks = {
@@ -1540,7 +1536,8 @@ def _evaluate_pressure_field_model(model: PressureFieldModel, x_values: np.ndarr
                     support_bounds,
                     _model_axis_decay_origin(model, sensor),
                 )
-    values[~inside] = 0.0
+    # No explicit ~inside zeroing: `values` starts as zeros and every write
+    # above targets a mask that is a subset of `inside`.
     return _numeric_cleanup(values)
 
 

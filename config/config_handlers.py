@@ -563,6 +563,11 @@ class ConfigurationMixin:
         selection_source = str(self.config.get('channel_selection_source', 'manual')).lower()
         selected_array_sensors = self.config.get('selected_array_sensors', [])
 
+        # Each of these rebuilds a full MCU profile dataclass, and nothing below
+        # changes the MCU or the selected array mode, so resolve them once.
+        is_pzt_rs = self.is_array_pzt_rs_mode()
+        is_pzt1 = self.is_array_pzt1_mode()
+
         if self.is_array_mcu_mode() and selection_source == 'array' and selected_array_sensors:
             sensor_groups = self.get_array_selected_sensor_groups()
             channel_sensor_map = self.get_active_channel_sensor_map() if hasattr(self, 'get_active_channel_sensor_map') else ["T", "R", "C", "L", "B"]
@@ -572,7 +577,7 @@ class ConfigurationMixin:
             pzt_sensor_index = 0
             for group in sensor_groups:
                 sensor_id = group['sensor_id']
-                if self.is_array_pzt_rs_mode() and not str(sensor_id).startswith("PZT"):
+                if is_pzt_rs and not str(sensor_id).startswith("PZT"):
                     continue
                 mux_num = int(group.get('mux', 1))
                 sensor_channels = list(group.get('channels', []))
@@ -581,11 +586,11 @@ class ConfigurationMixin:
                 for local_idx, channel in enumerate(sensor_channels):
                     sample_indices = []
                     if local_idx < len(seq_positions):
-                        if self.is_array_pzt_rs_mode():
+                        if is_pzt_rs:
                             base_idx = pzt_sensor_index * repeat_count * 7
                             for repeat_idx in range(repeat_count):
                                 sample_indices.append(base_idx + (repeat_idx * 7) + local_idx)
-                        elif self.is_array_pzt1_mode():
+                        elif is_pzt1:
                             unique_idx = unique_channel_positions.get(channel)
                             if unique_idx is not None:
                                 mux_index = max(0, min(1, mux_num - 1))
@@ -598,7 +603,7 @@ class ConfigurationMixin:
                             sample_indices.extend(range(base_idx, base_idx + repeat_count))
 
                     placement = str(channel_sensor_map[local_idx]) if local_idx < len(channel_sensor_map) else f"C{local_idx + 1}"
-                    key = ('sensor', sensor_id, placement, channel, mux_num) if self.is_array_pzt1_mode() else ('sensor', sensor_id, placement, channel)
+                    key = ('sensor', sensor_id, placement, channel, mux_num) if is_pzt1 else ('sensor', sensor_id, placement, channel)
                     specs.append({
                         'key': key,
                         'label': f"{sensor_id}_{placement}",
@@ -607,13 +612,13 @@ class ConfigurationMixin:
                     })
                     color_slot += 1
 
-                if self.is_array_pzt_rs_mode():
+                if is_pzt_rs:
                     pzt_sensor_index += 1
 
             if specs:
                 return specs
 
-        if self.is_array_pzt_rs_mode():
+        if is_pzt_rs:
             for display_order, channel in enumerate(channels):
                 base_idx = display_order * repeat_count
                 sample_indices = list(range(base_idx, base_idx + repeat_count))
@@ -625,7 +630,7 @@ class ConfigurationMixin:
                 })
             return specs
 
-        if self.is_array_pzt1_mode():
+        if is_pzt1:
             for mux_index in range(2):
                 mux_number = mux_index + 1
                 for display_order, channel in enumerate(unique_channels):
@@ -681,17 +686,20 @@ class ConfigurationMixin:
         selected_array_sensors = self.config.get('selected_array_sensors', [])
         if self.is_array_mcu_mode() and selection_source == 'array' and selected_array_sensors:
             sensor_groups = self.get_array_selected_sensor_groups()
+            # Loop-invariant: the active sensor configuration cannot change while
+            # iterating the groups, so look it up once.
+            active_config = self.get_active_sensor_configuration() if hasattr(self, 'get_active_sensor_configuration') else {}
+            mux_mapping = active_config.get('mux_mapping', {}) if isinstance(active_config, dict) else {}
+            if not isinstance(mux_mapping, dict):
+                mux_mapping = {}
+
             color_slot = 0
             pzt_sensor_index = 0
             for group in sensor_groups:
                 sensor_id = str(group.get('sensor_id', ''))
                 if not sensor_id.startswith("PZT"):
                     continue
-                mapping = {}
-                active_config = self.get_active_sensor_configuration() if hasattr(self, 'get_active_sensor_configuration') else {}
-                mux_mapping = active_config.get('mux_mapping', {}) if isinstance(active_config, dict) else {}
-                if isinstance(mux_mapping, dict):
-                    mapping = mux_mapping.get(sensor_id, {})
+                mapping = mux_mapping.get(sensor_id, {})
                 rs_channels = list(mapping.get('rs_channels', [])) if isinstance(mapping, dict) else []
 
                 # Generate one spec per RS wire (always 2 per PZT sensor).

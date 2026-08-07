@@ -134,6 +134,10 @@ class CaptureLifecycleMixin:
 
         self._reset_capture_buffer_state()
         self._reset_signal_processing_state(reset_shear=False)
+        if hasattr(self, 'begin_pzt_ghost_capture'):
+            self.begin_pzt_ghost_capture()
+        if hasattr(self, 'set_pzt_ghost_controls_enabled'):
+            self.set_pzt_ghost_controls_enabled(False)
         self._reset_force_capture_state()
         self._reset_timing_measurements(reset_labels=True)
         # Recalculate immediately before the run so metadata reflects the exact
@@ -174,6 +178,8 @@ class CaptureLifecycleMixin:
                 'notes': self.notes_input.toPlainText() if hasattr(self, 'notes_input') else None,
                 'start_time': datetime.now().isoformat()
             }
+            if hasattr(self, 'build_pzt_ghost_metadata'):
+                capture_metadata['pzt_ghost_removal'] = self.build_pzt_ghost_metadata()
             timing_metadata = adc_mux_timing_log(self.adc_mux_timing)
             if timing_metadata is not None:
                 capture_metadata['adc_mux_timing'] = timing_metadata
@@ -273,6 +279,15 @@ class CaptureLifecycleMixin:
         if self.serial_thread:
             self.serial_thread.set_capturing(False)
 
+        # A short capture can end before the normal delayed baseline window.
+        # Use the same baseline capture method, then flush its temporary archive
+        # backlog as cleaned data before the writer is finalized.
+        if hasattr(self, 'finalize_pzt_ghost_calibration_at_capture_end'):
+            self.finalize_pzt_ghost_calibration_at_capture_end()
+        if getattr(self, '_archive_writer', None) and hasattr(self, 'pop_clean_pzt_ghost_archive_blocks'):
+            for pending_timestamps, pending_block in self.pop_clean_pzt_ghost_archive_blocks():
+                self._archive_writer.enqueue(pending_timestamps, pending_block)
+
         if timing.arduino_sample_times:
             avg_sample_time = sum(timing.arduino_sample_times) / len(timing.arduino_sample_times)
             total_rate = 1000000.0 / avg_sample_time if avg_sample_time > 0 else 0
@@ -287,6 +302,8 @@ class CaptureLifecycleMixin:
         self.stop_btn.setStyleSheet("QPushButton { background-color: #CCCCCC; color: #666666; font-weight: bold; }")
         self.update_start_button_state()
         self.set_controls_enabled(True)
+        if hasattr(self, 'set_pzt_ghost_controls_enabled'):
+            self.set_pzt_ghost_controls_enabled(True)
 
         self.drain_serial_input(0.02)
 

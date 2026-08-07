@@ -40,6 +40,13 @@ from constants.plotting import (
     ROSETTE_MOVING_AVERAGE_MAX_SAMPLES,
     ROSETTE_MOVING_AVERAGE_MIN_SAMPLES,
 )
+from constants.pzt_ghost import (
+    PZT_GHOST_ATTENUATION_DECIMALS,
+    PZT_GHOST_ATTENUATION_MAX,
+    PZT_GHOST_ATTENUATION_MIN,
+    PZT_GHOST_ATTENUATION_STEP,
+    PZT_GHOST_DEFAULT_ATTENUATION,
+)
 from gui.custom_widgets import NonScrollableDoubleSpinBox as QDoubleSpinBox
 
 
@@ -525,12 +532,47 @@ class DisplayPanelsMixin:
         self.zero_signals_btn.clicked.connect(self.zero_plot_baselines)
         repeats_layout.addWidget(self.zero_signals_btn)
 
+        self.remove_ghost_check = QCheckBox("Remove Ghost")
+        self.remove_ghost_check.setChecked(False)
+        self.remove_ghost_check.setToolTip(
+            "Remove previous-channel MUX ghosting from Array PZT data using the existing baseline calibration"
+        )
+        self.remove_ghost_check.toggled.connect(self._on_pzt_ghost_controls_changed)
+        repeats_layout.addWidget(self.remove_ghost_check)
+
+        self.remove_ghost_attenuation_spin = QDoubleSpinBox()
+        self.remove_ghost_attenuation_spin.setRange(PZT_GHOST_ATTENUATION_MIN, PZT_GHOST_ATTENUATION_MAX)
+        self.remove_ghost_attenuation_spin.setDecimals(PZT_GHOST_ATTENUATION_DECIMALS)
+        self.remove_ghost_attenuation_spin.setSingleStep(PZT_GHOST_ATTENUATION_STEP)
+        self.remove_ghost_attenuation_spin.setValue(PZT_GHOST_DEFAULT_ATTENUATION)
+        self.remove_ghost_attenuation_spin.setPrefix("Ghost: ")
+        self.remove_ghost_attenuation_spin.setToolTip(
+            "Fraction of the previous PZT channel's net signal removed from the next channel"
+        )
+        self.remove_ghost_attenuation_spin.valueChanged.connect(self._on_pzt_ghost_controls_changed)
+        repeats_layout.addWidget(self.remove_ghost_attenuation_spin)
+
         repeats_layout.addStretch()
         repeats_group.setLayout(repeats_layout)
         main_layout.addWidget(repeats_group)
 
         group.setLayout(main_layout)
         return group
+
+    def _on_pzt_ghost_controls_changed(self, _value=None):
+        if not hasattr(self, 'set_pzt_ghost_removal_settings'):
+            return
+        self.set_pzt_ghost_removal_settings(
+            self.remove_ghost_check.isChecked(),
+            self.remove_ghost_attenuation_spin.value(),
+        )
+
+    def set_pzt_ghost_controls_enabled(self, enabled: bool):
+        """Keep canonical-data controls fixed for the duration of a capture."""
+        for widget_name in ('remove_ghost_check', 'remove_ghost_attenuation_spin'):
+            widget = getattr(self, widget_name, None)
+            if widget is not None:
+                widget.setEnabled(bool(enabled))
 
     def create_timing_section(self) -> QGroupBox:
         """Create timing measurement display section."""

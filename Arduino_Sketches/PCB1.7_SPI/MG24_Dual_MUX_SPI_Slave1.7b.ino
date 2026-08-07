@@ -21,9 +21,9 @@
  *   D5        → MUX A2
  *   D6        → MUX A3
  *   D7        → DRDY (Signal Teensy Signal-Ready. New in PCB_Ver1.5. Not implemented yet)
- *   D8  (PA3) ← SCK
- *   D9  (PA4) → MISO
- *   D10 (PA5) ← MOSI
+ *   D8  (PA3) ← SCK   
+ *   D9  (PA4) → MISO  
+ *   D10 (PA5) ← MOSI 
  *
  * ── SPI settings (identical to SPI_Slave_test3_Claude) ───────────────
  *   Peripheral : EUSART1
@@ -68,6 +68,7 @@
  *
  * ── version changes ──────────────────────────────────────────────────
  *   2026-07-23  Changes vs. MG24_Dual_MUX_SPI_Slave1_7_DRDY.ino:
+ *     - MUX_SETTLE_US use 3us (post-switch settle time).
  *     - IADC_SRC_CLK_HZ, IADC_ADC_CLK_HZ doubled the CLK rate.
  *     - initIADC(): warmup mode changed iadcWarmupNormal -> iadcWarmupKeepWarm
  *       for faster continuous conversion.
@@ -82,6 +83,9 @@
  *       `g_configDirty || !g_iadcReady`, so the IADC is re-initialized on
  *       RUN if it ended up not-ready even when config wasn't dirty.
  *
+ *   2026-08-07  Changes:
+ *     - Fixed groundMuxCh default to 15 (was 10) to match PCB1.7 schematic.
+ *     - Set GROUND_DWELL_US to 50 (was using GROUND_READ_ADC=true) to reduce ghosting.
  */
 
 #include <Arduino.h>
@@ -134,8 +138,8 @@ static const uint32_t MUX_SETTLE_US      = 3; // <<========= Optimal for ghostin
 // FAST default: switch both MUXes to ground/Vmid and dwell, but do not spend
 // a full ADC conversion on data that is discarded. Set GROUND_READ_ADC=true
 // if you want the older dummy-conversion behavior for extra ADC front-end settling.
-static const bool     GROUND_READ_ADC    = true;
-static const uint32_t GROUND_DWELL_US    = 10;
+static const bool     GROUND_READ_ADC    = false; // Use controllable GROUND_DWELL_US instead of ADC reading
+static const uint32_t GROUND_DWELL_US    = 50;   // Reduce ghosting by increasing gnd dwell time
 
 // Because the MUX EN pins are tied enabled, the MUX outputs are always
 // connected to the selected address. After each block and while SPI is
@@ -282,7 +286,7 @@ static void onCSRising() {
 // ── ADC / MUX configuration ───────────────────────────────────────────
 static uint8_t  channelSeq[MAX_SEQ_LEN];
 static uint8_t  channelCount     = 0;
-static int      groundMuxCh      = 10;     // also used as idle/after-block park channel
+static int      groundMuxCh      = 15;     // also used as idle/after-block park channel
 static bool     useGround        = false; // insert ground steps during sampling when true
 static uint16_t repeatCount      = 1;
 static uint16_t sweepsPerBlock   = 1;

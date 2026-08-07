@@ -135,9 +135,12 @@ class BinaryProcessorMixin:
                         f"avg_dt_us={avg_sample_time_us}"
                     )
 
-                # Keep uint16 view for archive (preserves integer format); cast to float32 for processing.
+                # Keep a float archive candidate separate from the display block.  In
+                # PZT_RS mode the display block scales only RS slots to ohms, while
+                # archives retain the established wire-unit representation.
                 block_u16 = samples[:total_samples].reshape(sweeps_in_block, samples_per_sweep)
                 block_samples_array = block_u16.astype(np.float32)
+                archive_samples_array = block_samples_array.copy()
                 if hasattr(self, 'scale_pzt_rs_rosette_samples_inplace'):
                     self.scale_pzt_rs_rosette_samples_inplace(
                         block_samples_array,
@@ -200,11 +203,13 @@ class BinaryProcessorMixin:
                 delta_us = (sweep_timestamps_us - self.first_sweep_timestamp_us) & 0xFFFFFFFF
                 sweep_timestamps_sec = delta_us / 1_000_000.0
 
-                # PZT_Decay_Calc receives the same decoded sweeps as the normal
-                # pipeline.  It retains only its mapped physical CH1/CH2 signal;
-                # no parallel serial parser or duplicate channel map is used.
-                if hasattr(self, 'process_pzt_decay_block'):
-                    self.process_pzt_decay_block(block_samples_array, sweep_timestamps_sec)
+                ghost_calibration_was_pending = bool(
+                    hasattr(self, 'is_pzt_ghost_calibration_pending')
+                    and self.is_pzt_ghost_calibration_pending()
+                )
+                if hasattr(self, 'prepare_pzt_ghost_block'):
+                    block_samples_array = self.prepare_pzt_ghost_block(block_samples_array)
+                    archive_samples_array = self.prepare_pzt_ghost_block(archive_samples_array)
 
                 # --- Vectorized circular buffer write (single lock per block) ---
                 with self.buffer_lock:
@@ -218,15 +223,36 @@ class BinaryProcessorMixin:
                     self.buffer_write_index += sweeps_in_block
                     self.sweep_count += sweeps_in_block
 
-                # Cache avg sample time so update_plot avoids O(n) list sum on every frame.
+                # Make the current block's timing available to bounded baseline
+                # capture before it decides how much of the ring buffer to copy.
                 self._cached_avg_sample_time_sec = (
                     avg_sample_time_us / 1_000_000.0 if avg_sample_time_us > 0 else 0.0
                 )
 
+                ghost_calibration_completed = bool(
+                    hasattr(self, 'maybe_finalize_pzt_ghost_calibration')
+                    and self.maybe_finalize_pzt_ghost_calibration()
+                )
+
+                # PZT_Decay_Calc receives the same canonical values as the other
+                # views once the startup ghost baseline is available.
+                if hasattr(self, 'process_pzt_decay_block') and not ghost_calibration_was_pending:
+                    self.process_pzt_decay_block(block_samples_array, sweep_timestamps_sec)
+
                 # --- Enqueue archive write (handled by background ArchiveWriterThread) ---
                 if store_capture_data and getattr(self, '_archive_writer', None):
-                    # Pass uint16 block so row.tolist() produces integers matching original format.
-                    self._archive_writer.enqueue(sweep_timestamps_sec, block_u16)
+                    if ghost_calibration_was_pending:
+                        self.queue_pzt_ghost_archive_block(sweep_timestamps_sec, archive_samples_array)
+                        if ghost_calibration_completed:
+                            for pending_timestamps, pending_block in self.pop_clean_pzt_ghost_archive_blocks():
+                                self._archive_writer.enqueue(pending_timestamps, pending_block)
+                    else:
+                        archive_block = (
+                            archive_samples_array
+                            if hasattr(self, 'should_remove_pzt_ghost') and self.should_remove_pzt_ghost()
+                            else block_u16
+                        )
+                        self._archive_writer.enqueue(sweep_timestamps_sec, archive_block)
 
                 # Rate-limit plot updates using wall-clock time.
                 # The old sweep_count % N check broke when sweep_count jumps by

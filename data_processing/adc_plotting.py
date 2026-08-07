@@ -50,7 +50,7 @@ class ADCPlottingMixin:
             return spec_key
         return None
 
-    def _get_ordered_active_buffer_snapshot(self):
+    def _get_ordered_active_buffer_snapshot(self, recent_window_sec=None):
         active_data_buffer = self.get_active_data_buffer()
         if active_data_buffer is None or self.samples_per_sweep <= 0:
             return None
@@ -63,7 +63,21 @@ class ADCPlottingMixin:
         if actual_sweeps <= 0:
             return None
 
-        if actual_sweeps < self.MAX_SWEEPS_BUFFER:
+        avg_sample_time_sec = getattr(self, '_cached_avg_sample_time_sec', 0.0)
+        if recent_window_sec is not None and avg_sample_time_sec > 0:
+            sweep_duration_sec = avg_sample_time_sec * max(1, self.samples_per_sweep)
+            requested_sweeps = max(1, int(np.ceil(float(recent_window_sec) / sweep_duration_sec)) + 1)
+            actual_sweeps = min(actual_sweeps, requested_sweeps)
+            snapshot = self._extract_recent_buffer_window(
+                active_data_buffer,
+                min(current_sweep_count, self.MAX_SWEEPS_BUFFER),
+                current_write_index,
+                actual_sweeps,
+            )
+            if snapshot is None:
+                return None
+            data_array, timestamps_array = snapshot
+        elif actual_sweeps < self.MAX_SWEEPS_BUFFER:
             data_array = active_data_buffer[:actual_sweeps, :].copy()
             timestamps_array = self.sweep_timestamps_buffer[:actual_sweeps].copy()
         else:
@@ -77,17 +91,19 @@ class ADCPlottingMixin:
                 self.sweep_timestamps_buffer[:write_pos],
             ])
 
-        avg_sample_time_sec = getattr(self, '_cached_avg_sample_time_sec', 0.0)
         return data_array, timestamps_array, avg_sample_time_sec
 
     def capture_current_plot_baselines(self, window_sec=None, log_message=True, min_elapsed_sec=0.0):
-        snapshot = self._get_ordered_active_buffer_snapshot()
+        baseline_window_sec = max(0.05, float(window_sec or self.PZR_ZERO_BASELINE_WINDOW_SEC))
+        snapshot = self._get_ordered_active_buffer_snapshot(recent_window_sec=baseline_window_sec)
         if snapshot is None:
             if log_message:
                 self.log_status("No data available to zero signals")
             return False
 
         data_array, timestamps_array, avg_sample_time_sec = snapshot
+        if hasattr(self, 'reconstruct_pzt_signal_for_baseline_capture'):
+            data_array = self.reconstruct_pzt_signal_for_baseline_capture(data_array)
         display_specs = self.get_display_channel_specs()
         if not display_specs or len(timestamps_array) == 0:
             if log_message:
@@ -99,7 +115,6 @@ class ADCPlottingMixin:
         if latest_time < required_elapsed:
             return False
 
-        baseline_window_sec = max(0.05, float(window_sec or self.PZR_ZERO_BASELINE_WINDOW_SEC))
         self.plot_baselines = {}
         self.channel_plot_baselines = {}
 
@@ -125,6 +140,9 @@ class ADCPlottingMixin:
             channel = self._extract_channel_from_spec_key(spec.get('key'))
             if channel is not None:
                 self.channel_plot_baselines[channel] = baseline_value
+
+        if hasattr(self, 'on_plot_baselines_captured'):
+            self.on_plot_baselines_captured(data_array)
 
         if getattr(self, 'subtract_baseline_check', None) is not None and not self.subtract_baseline_check.isChecked():
             self.subtract_baseline_check.setChecked(True)
@@ -366,6 +384,10 @@ class ADCPlottingMixin:
             not is_rs_stream
             and getattr(self, 'subtract_baseline_check', None)
             and self.subtract_baseline_check.isChecked()
+            and not (
+                hasattr(self, 'should_remove_pzt_ghost')
+                and self.should_remove_pzt_ghost()
+            )
         ):
             if spec['key'] not in self.plot_baselines:
                 self.capture_current_plot_baselines(

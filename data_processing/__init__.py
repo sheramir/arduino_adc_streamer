@@ -17,6 +17,7 @@ from data_processing.adc_plotting import ADCPlottingMixin
 from data_processing.capture_cache import CaptureCacheMixin
 from data_processing.capture_lifecycle import CaptureLifecycleMixin
 from data_processing.filter_processor import FilterProcessorMixin
+from data_processing.pzt_ghost_removal import PztGhostRemovalMixin
 from data_processing.force_overlay import ForceOverlayMixin
 from data_processing.force_processor import ForceProcessorMixin
 from data_processing.heatmap_processor import HeatmapProcessorMixin
@@ -63,6 +64,7 @@ __all__ = [
     'CaptureLifecycleMixin',
     'BinaryProcessorMixin',
     'FilterProcessorMixin',
+    'PztGhostRemovalMixin',
     'ForceOverlayMixin',
     'ForceProcessorMixin',
     'HeatmapProcessorMixin',

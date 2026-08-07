@@ -121,6 +121,20 @@ class ADCPlottingTests(unittest.TestCase):
         )
         np.testing.assert_array_equal(window_timestamps, np.array([12.0, 13.0, 14.0], dtype=np.float64))
 
+    def test_ordered_snapshot_limits_baseline_capture_to_recent_window(self):
+        harness = ADCPlottingHarness()
+        harness.sweep_count = 5
+        harness.buffer_write_index = 5
+        harness._cached_avg_sample_time_sec = 0.1
+        harness._active_data_buffer = np.array(
+            [[10], [20], [30], [40], [50]], dtype=np.float32
+        )
+
+        data, timestamps, _ = harness._get_ordered_active_buffer_snapshot(recent_window_sec=0.15)
+
+        np.testing.assert_array_equal(data, np.array([[30], [40], [50]], dtype=np.float32))
+        np.testing.assert_array_equal(timestamps, np.array([12.0, 13.0, 14.0], dtype=np.float64))
+
     def test_get_live_plot_filter_snapshot_includes_history_for_warmup(self):
         harness = ADCPlottingHarness()
         harness.window_size_spin = DummySpinBox(2)

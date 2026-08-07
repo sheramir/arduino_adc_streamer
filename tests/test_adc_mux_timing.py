@@ -6,6 +6,8 @@ import pytest
 
 from config.config_handlers import ConfigurationMixin
 from data_processing.adc_mux_timing import (
+    MG24_GROUND_DWELL_US,
+    MG24_GROUND_READ_ADC,
     MG24_TIMING_PROFILE,
     Mg24DualMuxTimingCalculator,
     adc_mux_timing_log,
@@ -73,12 +75,14 @@ def test_calibrated_uniform_pair_loop_sequence_equations(
     assert timing.sensor_connected_us == pytest.approx(sensor_connected_us)
 
 
-def test_mg24_dummy_ground_and_effective_sample_timing_match_measurements():
+def test_mg24_ground_timing_mirrors_the_firmware_constants():
     timing = calculate(osr=4, use_ground_between_channels=True)
 
-    assert timing.t_ground_dummy_software_overhead_us == pytest.approx(12.325)
-    assert timing.ground_phase_us == pytest.approx(19.375)
-    assert timing.complete_sequence_us == pytest.approx(41.358)
+    expected_mode = "dummy_adc_pair" if MG24_GROUND_READ_ADC else "dwell_only"
+    assert timing.ground_mode == expected_mode
+    assert timing.ground_dwell_us == pytest.approx(MG24_GROUND_DWELL_US)
+    assert timing.ground_phase_us == pytest.approx(59.890)
+    assert timing.complete_sequence_us == pytest.approx(81.873)
     assert timing.t_decay_before_effective_sample_ch1_us == pytest.approx(3.80)
     assert timing.t_decay_before_effective_sample_ch2_us == pytest.approx(5.80)
     assert timing.t_connected_after_effective_sample_ch1_us == pytest.approx(17.783)
@@ -120,7 +124,7 @@ def test_sequence_model_does_not_force_complete_block_timestamp_measurements():
         with_ground.t_block_fixed_overhead_us + 15 * with_ground.complete_sequence_us
     )
     assert predicted_no_ground_block_us == pytest.approx(338.975, abs=0.001)
-    assert predicted_ground_block_us == pytest.approx(629.60, abs=0.001)
+    assert predicted_ground_block_us == pytest.approx(1237.325, abs=0.001)
     assert predicted_ground_block_us / 30 != pytest.approx(22.858, abs=0.01)
 
 
@@ -138,9 +142,9 @@ def test_ground_repeat_and_sensor_connection_duration():
     with_ground = calculate(repeat_count=2, use_ground_between_channels=True)
 
     assert without_ground.ground_phase_us == 0.0
-    assert with_ground.ground_phase_us == pytest.approx(17.775)
+    assert with_ground.ground_phase_us == pytest.approx(59.890)
     assert with_ground.signal_sequence_us == pytest.approx(30.876)
-    assert with_ground.complete_sequence_us == pytest.approx(48.651)
+    assert with_ground.complete_sequence_us == pytest.approx(90.766)
     assert with_ground.sensor_connected_us == pytest.approx(30.476)
     assert with_ground.sensor_connected_s == pytest.approx(30.476e-6)
 
@@ -150,7 +154,7 @@ def test_repeat_count_ten_scales_only_pair_work_in_connection_time():
 
     assert timing.signal_sequence_us == pytest.approx(0.25 + 3.0 + 6.64 + 10 * 12.093)
     assert timing.sensor_connected_us == pytest.approx(3.0 - 0.15 + 6.64 + 10 * 12.093)
-    assert timing.ground_phase_us == pytest.approx(19.375)
+    assert timing.ground_phase_us == pytest.approx(59.890)
 
 
 def test_custom_profile_uses_one_uniform_pair_loop_interval():
@@ -236,10 +240,11 @@ def test_timing_log_timeline_is_chronological_and_uses_ground_sequence():
     timeline = payload["timeline"]
 
     assert timeline[0]["event"] == "ground_mux_switch_start"
-    assert timeline[-1] == {"t_us": 41.36, "event": "next_mux_switch_start"}
+    assert timeline[-1] == {"t_us": 81.87, "event": "next_mux_switch_start"}
     assert [item["t_us"] for item in timeline] == sorted(item["t_us"] for item in timeline)
-    assert next(item["t_us"] for item in timeline if item["event"] == "ground_dummy_processing_complete") == pytest.approx(19.38)
-    assert not any(item["event"] == "ground_mux_selection_processing_complete" for item in timeline)
+    assert next(item["t_us"] for item in timeline if item["event"] == "ground_dwell_complete") == pytest.approx(53.25)
+    assert next(item["t_us"] for item in timeline if item["event"] == "ground_mux_selection_processing_complete") == pytest.approx(59.89)
+    assert not any(item["event"] == "ground_dummy_processing_complete" for item in timeline)
     assert timeline[-1]["t_us"] == pytest.approx(round(timing.complete_sequence_us, 2))
     assert timing.complete_sequence_us - (
         timing.ground_phase_us + timing.mux_address_overhead_us + timing.mux_turn_on_us
@@ -288,13 +293,13 @@ def test_timing_log_rounds_every_float_only_at_json_boundary():
     assert "3.8000000000000003" not in json.dumps(payload)
 
 
-def test_ground_dwell_only_profile_is_ready_for_future_firmware_mode():
+def test_ground_dwell_only_profile_uses_configured_dwell_constant():
     profile = {**MG24_TIMING_PROFILE, "ground_mode": "dwell_only"}
     timing = Mg24DualMuxTimingCalculator(profile=profile).calculate(
         osr=2, gain=1, repeat_count=1, use_ground_between_channels=True
     )
 
-    assert timing.ground_phase_us == pytest.approx(19.89)
+    assert timing.ground_phase_us == pytest.approx(59.89)
 
 
 def test_custom_profile_controls_calculation_timeline_and_json_consistently():
@@ -315,10 +320,10 @@ def test_custom_profile_controls_calculation_timeline_and_json_consistently():
     payload = adc_mux_timing_log(timing)
 
     assert timing.signal_sequence_us == pytest.approx(26.3)
-    assert timing.complete_sequence_us == pytest.approx(52.6)
+    assert timing.complete_sequence_us == pytest.approx(90.8)
     assert payload["constants"]["mux_settle_us"] == 10.0
     assert payload["constants"]["pair_loop_software_overhead_us"] == 8.0
-    assert payload["timeline"][-1]["t_us"] == pytest.approx(52.6)
+    assert payload["timeline"][-1]["t_us"] == pytest.approx(90.8)
 
 
 def test_configuration_refresh_recalculates_after_timing_input_changes():

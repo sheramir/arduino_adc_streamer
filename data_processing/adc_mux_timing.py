@@ -2,9 +2,8 @@
 
 MG24 IADC durations are calculated from ADC clock, OSR, gain, and digital
 averaging. Signal-pair timing constants are calibrated from repeat-count and
-multi-channel measurements. The discarded dummy-ground pair has a separate
-empirical software overhead because it does not perform the retained-data
-formatting and storage used for a signal pair.
+multi-channel measurements. The ground phase supports either a discarded ADC
+pair or a configured dwell, mirroring the corresponding firmware constants.
 
 The total sensor-connected interval models PZT charge leakage while a selected
 PZT sensor is connected through the external MUX; fixed block overhead is
@@ -27,6 +26,13 @@ import numpy as np
 # AVG1, and 3 us MUX settling. The pair-loop software overhead includes the ADC
 # start command, FIFO polling/retrieval, result handling/storage, and repeat
 # loop work. Per-selection and fixed-block costs are intentionally separate.
+# Keep these in lockstep with MG24_Dual_MUX_SPI_Slave1.7b.ino.  They are
+# deliberately separate from the calibrated timing profile so changing the
+# firmware's ground behavior only requires changing these two app constants.
+MG24_GROUND_READ_ADC = False
+MG24_GROUND_DWELL_US = 50.0
+
+
 MG24_TIMING_PROFILE = {
     "adc_mode": "normal",
     "adc_clk_hz_by_gain": {
@@ -52,12 +58,12 @@ MG24_TIMING_PROFILE = {
     "block_fixed_overhead_us": 9.23,
     "ground_dummy_software_overhead_us": 12.325,
     "iadc_input_switch_cycles": 2,
-    "ground_mode": "dummy_adc_pair",
-    "ground_dwell_us": 10.0,
+    "ground_mode": "dummy_adc_pair" if MG24_GROUND_READ_ADC else "dwell_only",
+    "ground_dwell_us": MG24_GROUND_DWELL_US,
     "warmup_us": 0.0,
     "calibration": {
-        "version": "2026-07-29",
-        "date": "2026-07-29",
+        "version": "2026-08-07",
+        "date": "2026-08-07",
         "firmware_timing_version": "MG24_Dual_MUX_SPI_Slave1.7b",
         "compiler_core_version": "not recorded",
         "method": (
@@ -71,13 +77,16 @@ MG24_TIMING_PROFILE = {
         "calibrated_mux_settle_us": 3.0,
         "pair_loop_total_us": 12.093,
         "pair_loop_software_overhead_us": 8.293,
-        "ground_phase_us": 19.375,
+        "ground_phase_us": (
+            0.25 + 3.0 + MG24_GROUND_DWELL_US + 6.64
+            if not MG24_GROUND_READ_ADC else 19.375
+        ),
         "ground_dummy_software_overhead_us": 12.325,
         "note": (
             "Pair-loop and ground-phase values are inferred from complete MCU "
-            "block timestamps. They are stable across repeated runs but have not "
-            "yet been verified by direct GPIO or logic-analyzer timing between "
-            "individual iadcReadPairFast calls."
+            "block timestamps. The dwell-only ground phase uses the configured "
+            "delayMicroseconds duration plus the calibrated selection overhead; "
+            "recalibrate it if the firmware or toolchain changes."
         ),
     },
 }

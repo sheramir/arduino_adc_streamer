@@ -41,6 +41,7 @@ class PztGhostRemovalTests(unittest.TestCase):
     def test_paired_mux_paths_are_cleaned_independently(self):
         harness = PztGhostHarness(channels=[0, 1, 2])
         harness._pzt_ghost_baselines = np.full(6, 100.0, dtype=np.float32)
+        harness._pzt_ghost_noise = np.zeros(6, dtype=np.float32)
 
         cleaned = harness.prepare_pzt_ghost_block(np.array([[110, 105, 120, 107, 130, 109]], dtype=np.float32))
 
@@ -51,6 +52,7 @@ class PztGhostRemovalTests(unittest.TestCase):
     def test_first_signal_of_each_mux_sequence_has_no_ghost_subtraction(self):
         harness = PztGhostHarness(channels=[0, 1])
         harness._pzt_ghost_baselines = np.full(4, 50.0, dtype=np.float32)
+        harness._pzt_ghost_noise = np.zeros(4, dtype=np.float32)
 
         cleaned = harness.prepare_pzt_ghost_block(np.array([[53, 58, 55, 60]], dtype=np.float32))
 
@@ -59,6 +61,7 @@ class PztGhostRemovalTests(unittest.TestCase):
     def test_pzt_rs_corrects_only_five_pzt_slots_and_preserves_rs_slots(self):
         harness = PztGhostHarness(pzt_rs=True, channels=[0, 1, 2, 3, 4])
         harness._pzt_ghost_baselines = np.array([100, 100, 100, 100, 100, 0, 0], dtype=np.float32)
+        harness._pzt_ghost_noise = np.zeros(7, dtype=np.float32)
 
         cleaned = harness.prepare_pzt_ghost_block(
             np.array([[110, 120, 130, 140, 150, 12345, 23456]], dtype=np.float32)
@@ -69,12 +72,49 @@ class PztGhostRemovalTests(unittest.TestCase):
     def test_zero_signals_reconstruction_recovers_raw_equivalent_values(self):
         harness = PztGhostHarness(channels=[0, 1, 2])
         harness._pzt_ghost_baselines = np.full(6, 100.0, dtype=np.float32)
+        harness._pzt_ghost_noise = np.zeros(6, dtype=np.float32)
         raw = np.array([[110, 105, 120, 107, 130, 109]], dtype=np.float32)
         cleaned = harness.prepare_pzt_ghost_block(raw)
 
         recovered = harness.reconstruct_pzt_signal_for_baseline_capture(cleaned)
 
         np.testing.assert_allclose(recovered, raw)
+
+    def test_sub_noise_predecessor_does_not_create_a_ghost_correction(self):
+        harness = PztGhostHarness(channels=[0, 1])
+        harness._pzt_ghost_baselines = np.full(4, 100.0, dtype=np.float32)
+        harness._pzt_ghost_noise = np.array([5.0, 0.0, 0.0, 0.0], dtype=np.float32)
+
+        cleaned = harness.prepare_pzt_ghost_block(np.array([[104, 100, 120, 100]], dtype=np.float32))
+
+        # MUX 1 predecessor is +4 counts, below its calibrated 5-count noise.
+        self.assertEqual(cleaned[0, 2], 20.0)
+
+    def test_correction_that_crosses_vmid_is_rejected(self):
+        harness = PztGhostHarness(channels=[0, 1])
+        harness._pzt_ghost_baselines = np.full(4, 100.0, dtype=np.float32)
+        harness._pzt_ghost_noise = np.zeros(4, dtype=np.float32)
+
+        cleaned = harness.prepare_pzt_ghost_block(np.array([[120, 100, 105, 100]], dtype=np.float32))
+
+        # Correcting +5 by 0.5 * +20 would yield -5, across Vmid. Keep +5.
+        self.assertEqual(cleaned[0, 2], 5.0)
+
+    def test_calibration_uses_robust_mad_noise_estimator(self):
+        harness = PztGhostHarness(channels=[0, 1])
+        harness.samples_per_sweep = 4
+        calibration = np.array([
+            [98, 98, 98, 98],
+            [99, 99, 99, 99],
+            [100, 100, 100, 100],
+            [101, 101, 101, 101],
+            [102, 102, 102, 102],
+        ], dtype=np.float32)
+
+        harness.on_plot_baselines_captured(calibration)
+
+        np.testing.assert_allclose(harness._pzt_ghost_baselines, [100, 100, 100, 100])
+        np.testing.assert_allclose(harness._pzt_ghost_noise, [1.4826] * 4)
 
     def test_plot_baselines_populate_each_physical_pzt_column(self):
         harness = PztGhostHarness(channels=[0, 1])

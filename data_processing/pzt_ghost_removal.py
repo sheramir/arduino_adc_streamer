@@ -8,6 +8,7 @@ from constants.pzt_ghost import (
     PZT_GHOST_ATTENUATION_MAX,
     PZT_GHOST_DEFAULT_ATTENUATION,
     PZT_GHOST_DEFAULT_ENABLED,
+    PZT_GHOST_NOISE_MAD_SCALE,
 )
 from constants.plotting import PZR_AUTO_BASELINE_DELAY_SEC
 from constants.pzt_rs import PZT_RS_OUTPUTS_PER_SENSOR
@@ -25,6 +26,7 @@ class PztGhostRemovalMixin:
         self.pzt_ghost_removal_enabled = PZT_GHOST_DEFAULT_ENABLED
         self.pzt_ghost_attenuation = PZT_GHOST_DEFAULT_ATTENUATION
         self._pzt_ghost_baselines: np.ndarray | None = None
+        self._pzt_ghost_noise: np.ndarray | None = None
         self._pzt_ghost_calibration_pending = False
         self._pzt_ghost_pending_archive_blocks: list[tuple[np.ndarray, np.ndarray]] = []
         self._pzt_ghost_next_calibration_attempt_sec = 0.0
@@ -46,12 +48,14 @@ class PztGhostRemovalMixin:
         )
         if not self.pzt_ghost_removal_enabled:
             self._pzt_ghost_baselines = None
+            self._pzt_ghost_noise = None
             self._pzt_ghost_calibration_pending = False
             self._pzt_ghost_pending_archive_blocks = []
 
     def begin_pzt_ghost_capture(self) -> None:
         """Start a capture-scoped ghost baseline calibration when enabled."""
         self._pzt_ghost_baselines = None
+        self._pzt_ghost_noise = None
         self._pzt_ghost_pending_archive_blocks = []
         self._pzt_ghost_calibration_pending = self.should_remove_pzt_ghost()
         self._pzt_ghost_next_calibration_attempt_sec = PZR_AUTO_BASELINE_DELAY_SEC
@@ -132,6 +136,7 @@ class PztGhostRemovalMixin:
         if not self.should_remove_pzt_ghost() or self.samples_per_sweep <= 0:
             return
         baselines = None
+        noise = None
         candidate_data = None if data_array is None else np.asarray(data_array, dtype=np.float32)
         required_columns = sorted({
             column
@@ -150,9 +155,16 @@ class PztGhostRemovalMixin:
             baselines[baseline_columns] = np.median(
                 candidate_data[:, baseline_columns], axis=0,
             ).astype(np.float32, copy=False)
+            deviations = np.abs(candidate_data[:, baseline_columns] - baselines[baseline_columns])
+            noise = np.zeros(self.samples_per_sweep, dtype=np.float32)
+            noise[baseline_columns] = (
+                PZT_GHOST_NOISE_MAD_SCALE * np.median(deviations, axis=0)
+            ).astype(np.float32, copy=False)
 
         if baselines is None:
             baselines = self._pzt_ghost_baseline_array_from_plot(self.samples_per_sweep)
+            if baselines is not None:
+                noise = np.zeros(self.samples_per_sweep, dtype=np.float32)
         if baselines is None:
             if hasattr(self, 'log_status'):
                 self.log_status('WARNING: PZT ghost removal is waiting for complete channel baselines')
@@ -160,6 +172,7 @@ class PztGhostRemovalMixin:
 
         was_pending = self._pzt_ghost_calibration_pending
         self._pzt_ghost_baselines = baselines
+        self._pzt_ghost_noise = noise
         self._pzt_ghost_calibration_pending = False
         if was_pending:
             self._replace_retained_pzt_data_with_clean_signal()
@@ -199,13 +212,24 @@ class PztGhostRemovalMixin:
         baselines = self._pzt_ghost_baselines
         if baselines is None or data.ndim != 2 or data.shape[1] != len(baselines):
             return data
+        noise = self._pzt_ghost_noise
+        if noise is None or len(noise) != len(baselines):
+            noise = np.zeros_like(baselines)
 
         attenuation = float(self.pzt_ghost_attenuation)
         for columns in self._get_pzt_ghost_groups(data.shape[1]):
-            net = data[:, columns] - baselines[np.asarray(columns, dtype=np.int32)]
+            column_indices = np.asarray(columns, dtype=np.int32)
+            net = data[:, columns] - baselines[column_indices]
             cleaned = net.copy()
             if len(columns) > 1:
-                cleaned[:, 1:] = net[:, 1:] - attenuation * net[:, :-1]
+                candidate = net[:, 1:] - attenuation * net[:, :-1]
+                predecessor_above_noise = np.abs(net[:, :-1]) >= noise[column_indices[:-1]]
+                crosses_vmid = (
+                    ((net[:, 1:] > 0.0) & (candidate < 0.0))
+                    | ((net[:, 1:] < 0.0) & (candidate > 0.0))
+                )
+                apply_ghost = predecessor_above_noise & ~crosses_vmid
+                cleaned[:, 1:] = np.where(apply_ghost, candidate, net[:, 1:])
             data[:, columns] = cleaned
         return data
 
@@ -226,11 +250,29 @@ class PztGhostRemovalMixin:
             return data
 
         attenuation = float(self.pzt_ghost_attenuation)
+        noise = self._pzt_ghost_noise
+        if noise is None or len(noise) != len(baselines):
+            noise = np.zeros_like(baselines)
         for columns in self._get_pzt_ghost_groups(data.shape[1]):
+            column_indices = np.asarray(columns, dtype=np.int32)
             recovered_net = data[:, columns].copy()
             for column_index in range(1, len(columns)):
-                recovered_net[:, column_index] += attenuation * recovered_net[:, column_index - 1]
-            data[:, columns] = recovered_net + baselines[np.asarray(columns, dtype=np.int32)]
+                previous_net = recovered_net[:, column_index - 1]
+                observed_clean = data[:, columns[column_index]]
+                proposed_net = observed_clean + attenuation * previous_net
+                predecessor_above_noise = (
+                    np.abs(previous_net) >= noise[column_indices[column_index - 1]]
+                )
+                crosses_vmid = (
+                    ((proposed_net > 0.0) & (observed_clean < 0.0))
+                    | ((proposed_net < 0.0) & (observed_clean > 0.0))
+                )
+                recovered_net[:, column_index] = np.where(
+                    predecessor_above_noise & ~crosses_vmid,
+                    proposed_net,
+                    observed_clean,
+                )
+            data[:, columns] = recovered_net + baselines[column_indices]
         return data
 
     def _replace_retained_pzt_data_with_clean_signal(self) -> None:
@@ -274,5 +316,6 @@ class PztGhostRemovalMixin:
             'enabled': bool(self.should_remove_pzt_ghost()),
             'attenuation': float(self.pzt_ghost_attenuation),
             'baseline_source': 'existing automatic calibration and Zero Signals median',
+            'noise_estimator': f'{PZT_GHOST_NOISE_MAD_SCALE} * MAD',
             'algorithm_version': 1,
         }

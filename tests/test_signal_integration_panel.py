@@ -30,6 +30,8 @@ from config.pressure_map_mask_config import MaskConfigStore
 from data_processing.adc_filter_engine import ADCFilterEngine
 from data_processing.normal_force_calculator import NormalForceCalculator
 from data_processing.pressure_map_array_generator import PressureMapArrayGenerator
+from data_processing.pressure_force_display import PressureForceDisplayEngine
+from data_processing.pressure_map_geometry import PressureMapGeometry
 from data_processing.pressure_map_generator import PressureMapGenerator
 from data_processing.shear_detector import ShearDetector
 from gui.pressure_map_widget import PressureMapWidget
@@ -60,6 +62,19 @@ class DummyCheckBox:
 
     def setChecked(self, checked):
         self._checked = bool(checked)
+
+
+class DummyLabel:
+    """Small text-only stand-in for Qt labels."""
+
+    def __init__(self, text=""):
+        self._text = str(text)
+
+    def text(self):
+        return self._text
+
+    def setText(self, text):
+        self._text = str(text)
 
 
 class DummyComboBox:
@@ -193,6 +208,28 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         expected = np.asarray([0.0, harness.VREF_VOLTS / 2.0, harness.VREF_VOLTS], dtype=np.float64)
 
         np.testing.assert_allclose(voltage_data, expected, rtol=1e-6, atol=1e-6)
+
+    def test_force_color_max_is_presentation_only_and_keeps_force_engine_state(self):
+        harness = SignalIntegrationPanelHarness()
+        widget = PressureMapWidget()
+        self.addCleanup(widget.close)
+        harness.pressure_map_widget = widget
+        harness.force_pressure_map_widget = widget
+        harness.force_package_widgets = {}
+        harness.force_display_max_n_spin = DummySpinBox(0.1)
+        harness.save_last_shear_settings = lambda: None
+        engine = PressureForceDisplayEngine(geometry=PressureMapGeometry())
+        engine.configure_layout({"PZT1": (0, 0)})
+        engine._last_sample_id = (9, 0)
+        before_state = engine.package_results()[0].force_grid_n.copy()
+        harness.pressure_force_engine = engine
+
+        harness.on_force_display_settings_changed()
+
+        self.assertIs(harness.pressure_force_engine, engine)
+        self.assertEqual(engine._last_sample_id, (9, 0))
+        np.testing.assert_array_equal(engine.package_results()[0].force_grid_n, before_state)
+        self.assertAlmostEqual(widget.force_max_intensity_n, 0.1)
 
     def test_hpf_removes_constant_dc_bias_without_integration(self):
         harness = SignalIntegrationPanelHarness()
@@ -439,6 +476,40 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         self.assertNotEqual(packages[0].color, packages[1].color)
         self.assertTrue(packages[0].shear_result.has_shear)
 
+    def test_pressure_map_receives_post_shear_residual_not_baseline_shifted_values(self):
+        harness = SignalIntegrationPanelHarness()
+        harness.pressure_map_widget = PressureMapWidget()
+        self.addCleanup(harness.pressure_map_widget.close)
+        harness.shear_detector = ShearDetector()
+        harness.normal_force_calculator = NormalForceCalculator()
+        harness.shear_noise_threshold_spin = DummySpinBox(0.0)
+        # A strong left press with a small opposite-sign centre ghost: the
+        # baseline-shifted values would blank L and lift R/T/B to 1.0.
+        harness._latest_signal_integration_values_by_package = {
+            "PZT6": {"C": -0.05, "L": 1.0, "R": 0.0, "T": 0.0, "B": 0.0},
+        }
+        harness._latest_signal_integration_package_layout = [
+            {"sensor_id": "PZT6", "grid_position": (0, 0), "color_slot": 0},
+        ]
+        generated: list[dict] = []
+
+        class RecordingPressureMapGenerator(PressureMapGenerator):
+            def generate(self, signals):
+                generated.append(dict(signals))
+                return super().generate(signals)
+
+        harness.pressure_map_generator = RecordingPressureMapGenerator()
+
+        packages = harness._build_pressure_map_package_displays()
+
+        self.assertEqual(len(generated), 1)
+        self.assertAlmostEqual(generated[0]["L"], 1.0)
+        self.assertAlmostEqual(generated[0]["C"], -0.05)
+        for quiet in ("R", "T", "B"):
+            self.assertAlmostEqual(generated[0][quiet], 0.0)
+        # The numerical normal-force result must still be produced.
+        self.assertAlmostEqual(packages[0].normal_force_result.total_force, 0.95)
+
     def test_array_display_selection_uses_structural_pairs_when_overlap_is_inactive(self):
         harness = SignalIntegrationPanelHarness()
         harness.pressure_map_widget = PressureMapWidget()
@@ -578,6 +649,119 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         self.assertIs(harness._latest_normal_force_result, normal)
         self.assertIs(harness._latest_pressure_map_result, pressure)
         self.assertIs(harness._latest_shear_result, shear)
+
+    def test_force_tab_reuses_shared_jerk_shapes_without_rendering_jerk(self):
+        harness = SignalIntegrationPanelHarness()
+        harness.pressure_map_widget = PressureMapWidget()
+        self.addCleanup(harness.pressure_map_widget.close)
+        harness.shear_noise_threshold_spin = DummySpinBox(0.0)
+        harness.shear_detector = ShearDetector()
+        harness.normal_force_calculator = NormalForceCalculator()
+        harness.pressure_map_generator = PressureMapGenerator()
+        harness._latest_signal_integration_values_by_package = {
+            "PZT1": {"C": 2.0, "R": 1.0, "T": 0.0, "L": 0.0, "B": 0.0},
+        }
+        harness._latest_signal_integration_package_layout = [
+            {"sensor_id": "PZT1", "grid_position": (0, 0), "color_slot": 0},
+        ]
+        engine = PressureForceDisplayEngine(geometry=PressureMapGeometry())
+        engine.configure_layout({"PZT1": (0, 0)})
+        engine._packages["PZT1"].normal_force_n = 0.25
+        harness.pressure_force_engine = engine
+        harness._is_pressure_map_force_display_tab_active = lambda: True
+        force_render_calls = []
+        harness._render_pressure_force_display = lambda: force_render_calls.append(True)
+
+        harness._update_pressure_map_from_latest()
+
+        self.assertEqual(force_render_calls, [True])
+        self.assertEqual(engine._packages["PZT1"].applied_load_n, 0.25)
+        self.assertTrue(np.any(engine._packages["PZT1"].accumulated_force_grid_n))
+        self.assertIsNone(harness.pressure_map_widget.last_pressure_result)
+
+    def test_baseline_change_reset_rebuilds_engine_and_renders_immediately(self):
+        harness = SignalIntegrationPanelHarness()
+        harness.pressure_map_geometry = PressureMapGeometry()
+        harness.normal_force_calculator = NormalForceCalculator()
+        harness.shear_detector = ShearDetector()
+        harness.pressure_map_array_generator = PressureMapArrayGenerator(
+            geometry=harness.pressure_map_geometry
+        )
+        engine = PressureForceDisplayEngine(geometry=harness.pressure_map_geometry)
+        engine.configure_layout({"PZT1": (0, 0)})
+        engine._packages["PZT1"].normal_force_n = 0.5
+        engine._packages["PZT1"].accumulated_force_grid_n.fill(0.3)
+        harness.pressure_force_engine = engine
+        render_calls = []
+        harness._render_pressure_force_display = lambda: render_calls.append(True)
+        harness.force_display_status_label = DummyLabel()
+
+        harness.reset_pressure_force_display_for_baseline_change()
+
+        # An integrated Force history is meaningless against a replaced
+        # baseline: the engine must be rebuilt and the zero state rendered
+        # without waiting for another ADC block.
+        self.assertIsNot(harness.pressure_force_engine, engine)
+        self.assertEqual(render_calls, [True])
+        self.assertIn("baseline changed", harness.force_display_status_label.text())
+
+    def test_baseline_change_reset_is_noop_before_engine_exists(self):
+        harness = SignalIntegrationPanelHarness()
+        harness.force_display_status_label = DummyLabel()
+
+        harness.reset_pressure_force_display_for_baseline_change()
+
+        self.assertEqual(harness.force_display_status_label.text(), "")
+
+    def _force_block_harness(self):
+        harness = SignalIntegrationPanelHarness()
+        harness.pressure_map_geometry = PressureMapGeometry()
+        engine = PressureForceDisplayEngine(geometry=harness.pressure_map_geometry)
+        engine.configure_layout({"PZT1": (0, 0)})
+        harness.pressure_force_engine = engine
+        harness.get_display_channel_specs = lambda: [
+            {
+                "key": ("sensor", "PZT1", position),
+                "label": f"PZT1_{position}",
+                "sample_indices": [index],
+            }
+            for index, position in enumerate(SHEAR_SENSOR_POSITIONS)
+        ]
+        harness._is_pressure_map_force_display_tab_active = lambda: False
+        return harness, engine
+
+    def test_missing_baseline_resets_force_state_once_per_transition(self):
+        harness, _engine = self._force_block_harness()
+        reset_calls = []
+        harness.reset_pressure_force_display_for_baseline_change = (
+            lambda: reset_calls.append(True)
+        )
+        block = np.zeros((1, len(SHEAR_SENSOR_POSITIONS)), dtype=np.float64)
+        times = np.asarray([0.0], dtype=np.float64)
+
+        harness.process_pressure_force_block(
+            block, times, first_sweep_id=0, avg_sample_time_us=100.0
+        )
+        harness.process_pressure_force_block(
+            block, times, first_sweep_id=1, avg_sample_time_us=100.0
+        )
+        # Stale force state is cleared once when the baseline goes missing,
+        # not on every subsequent block.
+        self.assertEqual(reset_calls, [True])
+
+        harness.plot_baselines = {
+            ("sensor", "PZT1", position): 0.0 for position in SHEAR_SENSOR_POSITIONS
+        }
+        harness.process_pressure_force_block(
+            block, times, first_sweep_id=2, avg_sample_time_us=100.0
+        )
+        self.assertFalse(harness._pressure_force_waiting_for_baseline)
+
+        harness.plot_baselines = {}
+        harness.process_pressure_force_block(
+            block, times, first_sweep_id=3, avg_sample_time_us=100.0
+        )
+        self.assertEqual(reset_calls, [True, True])
 
     def test_no_package_display_uses_the_single_result_compatibility_path(self):
         harness = SignalIntegrationPanelHarness()

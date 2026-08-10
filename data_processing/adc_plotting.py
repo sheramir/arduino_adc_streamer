@@ -150,6 +150,9 @@ class ADCPlottingMixin:
         if hasattr(self, "reset_555_heatmap_state"):
             self.reset_555_heatmap_state()
 
+        if hasattr(self, "reset_pressure_force_display_for_baseline_change"):
+            self.reset_pressure_force_display_for_baseline_change()
+
         if log_message:
             self.log_status(f"Zeroed signals using last {baseline_window_sec:.2f}s median baseline window")
         return True

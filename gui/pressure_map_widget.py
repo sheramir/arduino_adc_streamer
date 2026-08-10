@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
     QGraphicsPolygonItem,
     QGraphicsRectItem,
     QLabel,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -211,6 +212,9 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
         self.last_shear_result: ShearResult | None = None
         self.last_package_displays: list[PressureMapPackageDisplay] = []
         self.last_array_result: PressureMapArrayResult | None = None
+        self.last_force_result = None
+        self.last_force_array_result = None
+        self.last_force_package_results: list[object] = []
 
         self.circle_radius_mm = SHEAR_ZERO_VALUE
         self.arrow_gain = DEFAULT_ARROW_GAIN
@@ -224,6 +228,8 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
         self.show_outer_boundary = DEFAULT_PRESSURE_SHOW_OUTER_BOUNDARY
         self.show_mid_boundary = DEFAULT_PRESSURE_SHOW_MID_BOUNDARY
         self.max_intensity = float(DEFAULT_PRESSURE_MAP_MAX_INTENSITY)
+        self.force_max_intensity_n = 0.25
+        self.force_alpha_floor_n = 0.0025
         # Display-only alpha fade.  The backend, levels, and sensor activity
         # threshold are deliberately not changed by these values.
         self.noise_floor = PRESSURE_MAP_ZERO_LEVEL_MIN
@@ -247,7 +253,9 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
         self.last_arrow_geometry = self._hidden_arrow_geometry()
 
         layout = QVBoxLayout(self)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
         self.plot_widget = pg.PlotWidget()
+        self.plot_widget.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
         self.plot_widget.setMinimumHeight(PRESSURE_MAP_PLOT_MIN_HEIGHT_PX)
         self.plot_widget.setBackground(PRESSURE_MAP_BACKGROUND_COLOR)
         self.plot_widget.setAspectLocked(SHEAR_AXIS_EQUAL_ASPECT_LOCKED)
@@ -260,6 +268,8 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
         layout.addWidget(self.plot_widget)
 
         self.readout_label = QLabel("No Data")
+        self.readout_label.setWordWrap(True)
+        self.readout_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         layout.addWidget(self.readout_label)
 
         self.image_item = pg.ImageItem()
@@ -296,6 +306,7 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
         self.package_peak_marker_items: list[pg.ScatterPlotItem] = []
         self.package_arrow_items: list[tuple[QGraphicsLineItem, QGraphicsPolygonItem]] = []
         self.package_label_items: list[pg.TextItem] = []
+        self.force_callout_items: list[pg.TextItem] = []
         self._image_cache: _PressureMapImageCache | None = None
         self._package_image_caches: list[_PressureMapImageCache | None] = []
         self._view_mode: str | None = None
@@ -366,6 +377,24 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
             if self.max_intensity == updated_max_intensity:
                 return
             self.max_intensity = updated_max_intensity
+            self._refresh_cached_display()
+
+    def configure_force_intensity(self, *, max_force_n: float | None = None) -> None:
+        """Set the stable physical N colour range used only by Force Display."""
+        if max_force_n is None:
+            return
+        updated = max(float(max_force_n), PRESSURE_MAP_LEVEL_EPSILON)
+        if updated != self.force_max_intensity_n:
+            self.force_max_intensity_n = updated
+            self._refresh_cached_display()
+
+    def configure_force_display_floor(self, *, noise_equivalent_n: float | None = None) -> None:
+        """Set the display-only alpha floor for valid small force fields."""
+        if noise_equivalent_n is None:
+            return
+        updated = max(float(noise_equivalent_n), PRESSURE_MAP_LEVEL_EPSILON)
+        if updated != self.force_alpha_floor_n:
+            self.force_alpha_floor_n = updated
             self._refresh_cached_display()
 
     def configure_noise_floor(self, *, noise_floor: float | None = None) -> None:
@@ -470,6 +499,11 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
     def _display_grid(self, grid: np.ndarray) -> np.ndarray:
         return np.abs(grid) if self.display_mode == PRESSURE_DISPLAY_MODE_MAGNITUDE else grid
 
+    @staticmethod
+    def _force_display_grid(grid: np.ndarray) -> np.ndarray:
+        """Force Display is always magnitude-only, independent of Jerk mode."""
+        return np.abs(np.asarray(grid, dtype=np.float64))
+
     def _array_display_grid(self, array_result: PressureMapArrayResult) -> np.ndarray:
         """Select the separately blended magnitude field when rendering arrays."""
 
@@ -478,6 +512,12 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
         return array_result.pressure_grid
 
     def _refresh_cached_display(self) -> None:
+        if self._view_mode == "force-array" and self.last_force_array_result is not None:
+            self.update_force_array_display(self.last_force_array_result, self.last_force_package_results)
+            return
+        if self._view_mode == "force" and self.last_force_result is not None:
+            self.update_force_display(self.last_force_result)
+            return
         if self.last_array_result is not None and self.last_package_displays:
             self.update_array_display(self.last_array_result, self.last_package_displays)
             return
@@ -510,6 +550,8 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
         Raises:
             None.
         """
+        self.readout_label.setVisible(True)
+        self._hide_force_callouts()
         self._set_view_mode(
             "single" if normal_force_result is not None and pressure_result is not None else "empty"
         )
@@ -535,8 +577,333 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
         self._update_readout(normal_force_result, pressure_result, shear_result)
         self.plot_widget.getPlotItem().getViewBox().update()
 
+    def update_force_display(self, force_result) -> None:
+        """Render an accumulated force raster without fabricating a pressure result.
+
+        ``ForceMapPackageResult`` intentionally does not contain a historical
+        peak/quadrant model, so this path draws the shared geometry and sensor
+        positions but always clears peak markers.
+        """
+        if force_result is None:
+            self.update_display(None, None, None)
+            return
+        self.readout_label.setVisible(True)
+        self._hide_force_callouts()
+        self._set_view_mode("force")
+        self._clear_package_items()
+        self._clear_dynamic_items(clear_image=False)
+        self._hide_mask_outline()
+        self.image_item.show()
+        self.last_normal_force_result = None
+        self.last_pressure_result = None
+        self.last_shear_result = None
+        self.last_package_displays = []
+        self.last_array_result = None
+        self.last_force_result = force_result
+        self.last_force_array_result = None
+        self.last_force_package_results = []
+
+        grid = self._force_display_grid(force_result.force_grid_n)
+        if self.mirror:
+            grid = np.fliplr(grid)
+        levels, fade_levels = self._force_render_levels(grid)
+        image_rect = image_rect_from_centers(
+            force_result.x_coordinates_mm,
+            force_result.y_coordinates_mm,
+            mirror_x=self.mirror,
+        )
+        self._image_cache = self._update_cached_image_item(
+            self.image_item,
+            self._image_cache,
+            grid,
+            levels,
+            _rect_tuple(image_rect),
+            cache_key=("force", force_result.frame_id, *self._force_image_cache_key(force_result.frame_id)),
+            fade_levels=fade_levels,
+            force_mode=True,
+        )
+        self.saturated_pixel_percentage = self._saturated_pixel_percentage(
+            grid, self.force_max_intensity_n
+        )
+        self.debug_backend_maximum = float(np.max(np.abs(grid)))
+        self.debug_saturation_mask = np.abs(grid) >= self.force_max_intensity_n
+        self._update_force_geometry(force_result)
+        self.peak_marker_item.setData([])  # Force Display never has peak markers.
+        self._hide_arrow()
+        self.readout_label.setText(
+            f"{force_result.sensor_id} | Normal Force: {force_result.normal_force_n:.3f} N | "
+            f"Shear Force: {force_result.shear_force_n:.3f} N"
+            f"{self._saturation_indicator()}"
+        )
+        signature = ("force", force_result.geometry, _rect_tuple(image_rect), self.mirror)
+        if signature != self._view_range_signature:
+            self._set_single_ranges(image_rect, signature)
+        self.plot_widget.getPlotItem().getViewBox().update()
+
+    def _update_force_geometry(self, force_result) -> None:
+        """Draw shared pressure-map boundaries and physical sensor positions."""
+        geometry = force_result.geometry
+        self._update_boundary_geometry(
+            visual_radius_mm=float(geometry.near_outer_circle_radius_mm),
+            outer_half_width_mm=float(geometry.outer_boundary_half_width_mm),
+            mid_half_width_mm=float(geometry.mid_boundary_half_width_mm),
+        )
+        self.sensor_marker_item.setData([
+            {
+                "pos": (self._mirror_x(x_coord), y_coord),
+                "symbol": PRESSURE_MAP_SENSOR_MARKER_SYMBOL,
+                "size": PRESSURE_MAP_SENSOR_MARKER_SIZE_PX,
+                "pen": pg.mkPen(PRESSURE_MAP_SENSOR_MARKER_PEN_COLOR, width=PRESSURE_MAP_SENSOR_MARKER_PEN_WIDTH_PX),
+                "brush": pg.mkBrush(PRESSURE_MAP_SENSOR_MARKER_BRUSH_COLOR),
+            }
+            for x_coord, y_coord in force_result.sensor_positions.values()
+        ])
+
+    def update_force_array_display(self, force_array, packages) -> None:
+        """Render an accumulated world-space force field with no peak model."""
+        if force_array is None:
+            self.update_force_display(None)
+            return
+        self.readout_label.setVisible(False)
+        self._set_view_mode("force-array")
+        self._clear_package_items()
+        self._clear_dynamic_items(clear_image=False)
+        self.image_item.show()
+        self.last_normal_force_result = None
+        self.last_pressure_result = None
+        self.last_shear_result = None
+        self.last_package_displays = []
+        self.last_array_result = None
+        self.last_force_result = None
+        self.last_force_array_result = force_array
+        self.last_force_package_results = list(packages)
+        # This is separately composited from absolute local package fields;
+        # never use abs(signed_array_grid), since overlaps can cancel there.
+        grid = self._force_display_grid(force_array.magnitude_force_grid_n)
+        visibility_mask = None
+        if self.mask_enabled and self.mask_points_mm:
+            x_grid, y_grid = np.meshgrid(force_array.x_coordinates_mm, force_array.y_coordinates_mm)
+            visibility_mask = mask_inside_grid(self.mask_points_mm, x_grid, y_grid)
+        if self.mirror:
+            grid = np.fliplr(grid)
+            if visibility_mask is not None:
+                visibility_mask = np.fliplr(visibility_mask)
+        levels, fade_levels = self._force_render_levels(grid)
+        image_rect = image_rect_from_centers(
+            force_array.x_coordinates_mm, force_array.y_coordinates_mm, mirror_x=self.mirror
+        )
+        self._image_cache = self._update_cached_image_item(
+            self.image_item, self._image_cache, grid, levels, _rect_tuple(image_rect),
+            cache_key=("force-array", force_array.frame_id, *self._force_image_cache_key(force_array.frame_id)),
+            visibility_mask=visibility_mask,
+            fade_levels=fade_levels,
+            force_mode=True,
+        )
+        self._update_force_array_package_overlays(packages, force_array.package_centers)
+        # Array package marker items are the same reusable items Jerk uses.
+        # Do not draw a second marker layer over them.
+        self.sensor_marker_item.setData([])
+        self.peak_marker_item.setData([])
+        self._hide_arrow()
+        self._update_mask_outline(force_array)
+        self.saturated_pixel_percentage = self._saturated_pixel_percentage(
+            grid, self.force_max_intensity_n
+        )
+        self.debug_backend_maximum = float(np.max(np.abs(grid)))
+        self.debug_saturation_mask = np.abs(grid) >= self.force_max_intensity_n
+        # Force callouts deliberately live beyond each package's outer support.
+        # Reserve that space in the static Force viewport once, rather than
+        # allowing the changing force values or callout text to move the view.
+        callout_bounds = self._force_array_display_bounds(force_array.package_centers, packages)
+        view_rect = image_rect.united(self._rect_from_bounds(callout_bounds))
+        signature = ("force-array", _rect_tuple(view_rect), self.mirror)
+        if signature != self._view_range_signature:
+            self._set_single_ranges(view_rect, signature)
+        self.plot_widget.getPlotItem().getViewBox().update()
+
+    def _update_force_array_package_overlays(self, packages, centers) -> None:
+        """Reuse the Jerk package background for the Force content layer."""
+        self._ensure_package_item_count(len(packages))
+        self._ensure_force_callout_count(len(packages))
+        raw_array_center = self._force_array_center(centers)
+        array_center = (self._mirror_x(raw_array_center[0]), raw_array_center[1])
+        array_bounds = self._force_array_display_bounds(centers, packages)
+        occupied_callouts: list[tuple[float, float]] = []
+        for index, package in enumerate(packages):
+            center_x, center_y = centers.get(package.sensor_id, (0.0, 0.0))
+            center_x = self._mirror_x(float(center_x))
+            center_y = float(center_y)
+            color = self.package_color_for_index(index)
+            self._update_package_boundary_geometry(
+                index,
+                geometry=package.geometry,
+                color=color,
+                center_x=center_x,
+                center_y=center_y,
+                mid_half_extent_mm=float(package.geometry.mid_boundary_half_width_mm),
+            )
+            self._update_package_sensor_markers_geometry(
+                index,
+                sensor_id=package.sensor_id,
+                sensor_positions=package.sensor_positions,
+                color=color,
+                center_x=center_x,
+                center_y=center_y,
+            )
+            self.package_peak_marker_items[index].setData([])
+            self._hide_package_arrow(index)
+            # Force callouts replace Jerk's package-ID labels in this mode.
+            self.package_label_items[index].setVisible(False)
+            callout_x, callout_y = self._force_callout_position(
+                center_x, center_y, array_center, array_bounds,
+                float(package.geometry.outer_boundary_half_width_mm), occupied_callouts,
+            )
+            occupied_callouts.append((callout_x, callout_y))
+            callout = self.force_callout_items[index]
+            callout.setText(
+                f"N: {package.normal_force_n:.3f} N\nS: {package.shear_force_n:.3f} N"
+            )
+            callout.setColor(color)
+            callout.setPos(callout_x, callout_y)
+            callout.setVisible(True)
+        self._hide_unused_package_items(len(packages))
+        self._hide_unused_force_callouts(len(packages))
+
+    def _ensure_force_callout_count(self, count: int) -> None:
+        while len(self.force_callout_items) < count:
+            item = pg.TextItem(
+                color=PRESSURE_MAP_OVERLAY_COLOR,
+                anchor=(0.5, 0.5),
+                border=QColor(PRESSURE_MAP_OVERLAY_COLOR),
+                fill=QColor(0, 0, 0, 210),
+                ensureInBounds=False,
+            )
+            item.setZValue(PRESSURE_MAP_SENSOR_Z + 4)
+            self.plot_widget.addItem(item)
+            self.force_callout_items.append(item)
+
+    def _hide_force_callouts(self) -> None:
+        for item in self.force_callout_items:
+            item.setVisible(False)
+
+    def _hide_unused_force_callouts(self, used_count: int) -> None:
+        for item in self.force_callout_items[used_count:]:
+            item.setVisible(False)
+
+    @staticmethod
+    def _force_array_center(centers) -> tuple[float, float]:
+        values = tuple(centers.values())
+        if not values:
+            return (0.0, 0.0)
+        return (
+            float(sum(value[0] for value in values) / len(values)),
+            float(sum(value[1] for value in values) / len(values)),
+        )
+
+    @staticmethod
+    def _force_array_bounds(centers, packages) -> tuple[float, float, float, float]:
+        """Return static raw-coordinate limits that include external callouts."""
+        extent = max(
+            (float(package.geometry.outer_boundary_half_width_mm) for package in packages),
+            default=1.0,
+        )
+        # Include a compact text footprint as well as the callout centre.  The
+        # footprint is intentionally geometry-only so Force values never cause
+        # the viewport to resize or pan.
+        callout_extent = PressureMapWidget._force_callout_offset(extent) + 1.5
+        values = tuple(centers.values()) or ((0.0, 0.0),)
+        return (
+            min(float(value[0]) for value in values) - callout_extent,
+            max(float(value[0]) for value in values) + callout_extent,
+            min(float(value[1]) for value in values) - callout_extent,
+            max(float(value[1]) for value in values) + callout_extent,
+        )
+
+    def _force_array_display_bounds(self, centers, packages) -> tuple[float, float, float, float]:
+        """Return Force callout bounds in the same coordinates as the display."""
+        min_x, max_x, min_y, max_y = self._force_array_bounds(centers, packages)
+        if self.mirror:
+            return (-max_x, -min_x, min_y, max_y)
+        return (min_x, max_x, min_y, max_y)
+
+    @staticmethod
+    def _rect_from_bounds(bounds: tuple[float, float, float, float]) -> QRectF:
+        min_x, max_x, min_y, max_y = bounds
+        return QRectF(min_x, min_y, max_x - min_x, max_y - min_y)
+
+    @staticmethod
+    def _force_callout_offset(package_extent: float) -> float:
+        """Place the full callout clear of the package's outer boundary."""
+        outer_extent = max(0.0, float(package_extent))
+        # Keep the label immediately outside the outer square.  The small
+        # allowance covers its border without creating a large empty margin.
+        return outer_extent + max(1.5, outer_extent * 0.20)
+
+    def _force_callout_position(
+        self,
+        center_x: float,
+        center_y: float,
+        array_center: tuple[float, float],
+        bounds: tuple[float, float, float, float],
+        package_extent: float,
+        occupied: list[tuple[float, float]],
+    ) -> tuple[float, float]:
+        """Pick a static outward callout location without affecting view bounds."""
+        dx, dy = center_x - array_center[0], center_y - array_center[1]
+        if abs(dx) >= abs(dy) and abs(dx) > PRESSURE_MAP_LEVEL_EPSILON:
+            preferred = (1.0 if dx > 0.0 else -1.0, 0.0)
+        elif abs(dy) > PRESSURE_MAP_LEVEL_EPSILON:
+            preferred = (0.0, 1.0 if dy > 0.0 else -1.0)
+        else:
+            preferred = (1.0, 1.0)
+        directions = (preferred, (1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0))
+        min_x, max_x, min_y, max_y = bounds
+        # The N/S callout belongs outside the outer package boundary, never in
+        # the mid-boundary area.  The Force viewport reserves this fixed margin
+        # from geometry, so this does not alter the view while streaming.
+        offset = self._force_callout_offset(package_extent)
+        mask_polygon = QPolygonF([
+            QPointF(self._mirror_x(x_coord), y_coord) for x_coord, y_coord in self.mask_points_mm
+        ]) if self.mask_enabled and self.mask_points_mm else None
+        candidates: list[tuple[bool, float, float]] = []
+        for direction_x, direction_y in directions:
+            candidate_x = center_x + direction_x * offset
+            candidate_y = center_y + direction_y * offset
+            if not (min_x <= candidate_x <= max_x and min_y <= candidate_y <= max_y):
+                continue
+            inside_mask = bool(mask_polygon and mask_polygon.containsPoint(
+                QPointF(candidate_x, candidate_y), Qt.FillRule.OddEvenFill
+            ))
+            collision = any(
+                abs(candidate_x - used_x) < 4.8 and abs(candidate_y - used_y) < 2.6
+                for used_x, used_y in occupied
+            )
+            candidates.append((inside_mask or collision, candidate_x, candidate_y))
+        if candidates:
+            _penalized, candidate_x, candidate_y = next(
+                (item for item in candidates if not item[0]), candidates[0]
+            )
+            return candidate_x, candidate_y
+        return (center_x, center_y - offset)
+
+    def _force_render_levels(self, force_grid: np.ndarray) -> tuple[tuple[float, float], tuple[float, float]]:
+        """Use a physical-N raster scale; Jerk's fixed voltage scale is inapplicable."""
+        # Unlike Jerk's voltage display, force colour is physically stable:
+        # 0.1 N maps to the same colour on every frame.
+        peak = max(float(self.force_max_intensity_n), PRESSURE_MAP_LEVEL_EPSILON)
+        levels = (0.0, peak)
+        # Preserve the selected colour map while making the smallest visible
+        # physical force opaque enough to see.  Jerk's voltage fade settings
+        # would otherwise erase sub-newton values.
+        floor = max(PRESSURE_MAP_LEVEL_EPSILON, float(self.force_alpha_floor_n))
+        # Force LUT colours are made opaque below; this is the only intentional
+        # small-signal transparency transition for the Force raster.
+        return levels, (0.0, floor)
+
     def update_package_displays(self, packages: list[PressureMapPackageDisplay]) -> None:
         """Render multiple array sensor packages in their configured grid cells."""
+        self.readout_label.setVisible(True)
+        self._hide_force_callouts()
         self._set_view_mode("packages" if packages else "empty")
         self._clear_dynamic_items(clear_image=False)
         self._hide_mask_outline()
@@ -598,6 +965,8 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
         packages: list[PressureMapPackageDisplay],
     ) -> None:
         """Render one array-level pressure image with per-package overlays."""
+        self.readout_label.setVisible(True)
+        self._hide_force_callouts()
         self._set_view_mode("array" if packages else "empty")
         self._clear_dynamic_items(clear_image=False)
         self.image_item.show()
@@ -745,9 +1114,17 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
         *,
         cache_key: tuple[object, ...],
         visibility_mask: np.ndarray | None = None,
+        fade_levels: tuple[float, float] | None = None,
+        force_mode: bool = False,
     ) -> _PressureMapImageCache:
         if cache is None or cache.cache_key != cache_key or cache.levels != levels:
-            rgba = self._rgba_image(pressure_grid, levels, visibility_mask=visibility_mask)
+            rgba = self._rgba_image(
+                pressure_grid,
+                levels,
+                visibility_mask=visibility_mask,
+                fade_levels=fade_levels,
+                force_mode=force_mode,
+            )
             image_item.setImage(
                 np.transpose(rgba, (1, 0, 2)),
                 autoLevels=False,
@@ -773,14 +1150,19 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
         levels: tuple[float, float],
         *,
         visibility_mask: np.ndarray | None = None,
+        fade_levels: tuple[float, float] | None = None,
+        force_mode: bool = False,
     ) -> np.ndarray:
         """Map the display grid to RGBA with a magnitude-based smooth alpha."""
 
         lower, upper = levels
         span = max(PRESSURE_MAP_LEVEL_EPSILON, upper - lower)
-        normalized = np.clip((np.asarray(pressure_grid, dtype=np.float64) - lower) / span, 0.0, 1.0)
+        display_grid = np.asarray(pressure_grid, dtype=np.float64)
+        if force_mode:
+            display_grid = np.abs(display_grid)
+        normalized = np.clip((display_grid - lower) / span, 0.0, 1.0)
         indices = np.rint(normalized * (PRESSURE_MAP_COLORMAP_POINTS - 1)).astype(np.intp)
-        lookup_table = np.asarray(self._color_lookup_table(), dtype=np.uint8)
+        lookup_table = np.asarray(self._color_lookup_table(force_mode=force_mode), dtype=np.uint8)
         colors = lookup_table[indices]
         if colors.shape[-1] == 3:
             rgba = np.empty((*colors.shape[:2], 4), dtype=np.uint8)
@@ -788,9 +1170,10 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
             rgba[..., 3] = 255
         else:
             rgba = colors.copy()
-        magnitude = np.abs(np.asarray(pressure_grid, dtype=np.float64))
-        fade_low = max(0.0, self.display_floor_low)
-        fade_high = self.display_floor_high
+        magnitude = np.abs(display_grid)
+        fade_low, fade_high = fade_levels or (self.display_floor_low, self.display_floor_high)
+        fade_low = max(0.0, float(fade_low))
+        fade_high = float(fade_high)
         if fade_high <= fade_low + PRESSURE_MAP_LEVEL_EPSILON:
             fade_high = fade_low + max(PRESSURE_MAP_LEVEL_EPSILON, abs(upper) * 0.02)
         alpha_t = np.clip((magnitude - fade_low) / (fade_high - fade_low), 0.0, 1.0)
@@ -850,7 +1233,7 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
         """Update the one reusable polygon overlay for the active array view."""
 
         _ = array_result  # The mask is already expressed in array world coordinates.
-        if not self.mask_enabled or not self.mask_points_mm or self._view_mode != "array":
+        if not self.mask_enabled or not self.mask_points_mm or self._view_mode not in ("array", "force-array"):
             self._hide_mask_outline()
             return
         self._style_mask_outline()
@@ -863,14 +1246,17 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
     def _hide_mask_outline(self) -> None:
         self.mask_outline_item.setVisible(False)
 
-    def _saturated_pixel_percentage(self, pressure_grid: np.ndarray) -> float:
-        if self.max_intensity <= PRESSURE_MAP_LEVEL_EPSILON:
+    def _saturated_pixel_percentage(
+        self, pressure_grid: np.ndarray, max_intensity: float | None = None,
+    ) -> float:
+        threshold = self.max_intensity if max_intensity is None else float(max_intensity)
+        if threshold <= PRESSURE_MAP_LEVEL_EPSILON:
             return 0.0
         values = np.asarray(pressure_grid, dtype=np.float64)
         finite = np.isfinite(values)
         if not np.any(finite):
             return 0.0
-        return 100.0 * float(np.mean(np.abs(values[finite]) >= self.max_intensity))
+        return 100.0 * float(np.mean(np.abs(values[finite]) >= threshold))
 
     def _pressure_levels(
         self,
@@ -904,14 +1290,15 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
         """Apply horizontal mirror transformation if enabled."""
         return -x if self.mirror else x
 
-    def _color_lookup_table(self) -> np.ndarray:
-        if self.display_mode == PRESSURE_DISPLAY_MODE_SIGNED:
-            return pg.ColorMap(
+    def _color_lookup_table(self, *, force_mode: bool = False) -> np.ndarray:
+        if self.display_mode == PRESSURE_DISPLAY_MODE_SIGNED and not force_mode:
+            lookup = pg.ColorMap(
                 # Keep zero transparent/black against the pressure-map canvas.
                 # The old white midpoint made an empty Signed map look like its
                 # background had changed even though the PlotWidget was black.
                 [0.0, 0.5, 1.0], ["#2166AC", "#000000", "#B2182B"]
             ).getLookupTable(nPts=PRESSURE_MAP_COLORMAP_POINTS)
+            return self._force_opaque_lookup(lookup) if force_mode else lookup
         color_map = self._color_maps.get(self.color_scale)
         if color_map is None:
             color_map = pg.ColorMap(
@@ -919,7 +1306,16 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
                 self.COLOR_MAPS[self.color_scale],
             )
             self._color_maps[self.color_scale] = color_map
-        return color_map.getLookupTable(nPts=PRESSURE_MAP_COLORMAP_POINTS)
+        lookup = color_map.getLookupTable(nPts=PRESSURE_MAP_COLORMAP_POINTS)
+        return self._force_opaque_lookup(lookup) if force_mode else lookup
+
+    @staticmethod
+    def _force_opaque_lookup(lookup_table: np.ndarray) -> np.ndarray:
+        """Ensure the Force raster has one, deliberate alpha mechanism only."""
+        result = np.asarray(lookup_table, dtype=np.uint8).copy()
+        if result.shape[1] == 4:
+            result[:, 3] = 255
+        return result
 
     def _grayscale_lookup_table(self) -> np.ndarray:
         """Return the legacy grayscale LUT for compatibility with callers/tests."""
@@ -947,8 +1343,28 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
         )
 
     def _update_boundary(self, pressure_result: PressureMapResult) -> None:
-        radius = float(pressure_result.visual_boundary_radius_mm)
-        self.circle_radius_mm = float(pressure_result.outer_boundary_half_width_mm)
+        self._update_boundary_geometry(
+            visual_radius_mm=float(pressure_result.visual_boundary_radius_mm),
+            outer_half_width_mm=float(pressure_result.outer_boundary_half_width_mm),
+            mid_half_width_mm=float(pressure_result.mid_boundary_half_width_mm),
+        )
+
+    def _force_image_cache_key(self, frame_id: int) -> tuple[object, ...]:
+        return (
+            frame_id, self.display_mode, self.mirror, self.color_scale,
+            self.force_max_intensity_n, self.force_alpha_floor_n,
+        )
+
+    def _update_boundary_geometry(
+        self,
+        *,
+        visual_radius_mm: float,
+        outer_half_width_mm: float,
+        mid_half_width_mm: float,
+    ) -> None:
+        """Draw shared package boundaries from either result representation."""
+        radius = float(visual_radius_mm)
+        self.circle_radius_mm = float(outer_half_width_mm)
         if self.circle_item is None:
             self.circle_item = self._new_near_boundary_item()
             self.plot_widget.addItem(self.circle_item)
@@ -963,14 +1379,14 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
         self._ensure_single_square_items()
         self._style_boundary_item(
             self.outer_boundary_item,
-            float(pressure_result.outer_boundary_half_width_mm),
+            float(outer_half_width_mm),
             color=PRESSURE_MAP_OVERLAY_COLOR,
             dash_pattern=(8.0, 4.0),
         )
         self.outer_boundary_item.setVisible(bool(self.show_outer_boundary))
         self._style_boundary_item(
             self.mid_boundary_item,
-            float(pressure_result.mid_boundary_half_width_mm),
+            float(mid_half_width_mm),
             color=PRESSURE_MAP_OVERLAY_COLOR,
             dash_pattern=(3.0, 3.0),
         )
@@ -1213,7 +1629,31 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
         support_bounds_mm: tuple[float, float, float, float] | None = None,
         mid_half_extent_mm: float | None = None,
     ) -> None:
-        radius = float(package.pressure_result.visual_boundary_radius_mm)
+        _ = support_bounds_mm
+        self._update_package_boundary_geometry(
+            index,
+            geometry=package.pressure_result,
+            color=package.color,
+            center_x=center_x,
+            center_y=center_y,
+            mid_half_extent_mm=mid_half_extent_mm,
+        )
+
+    def _update_package_boundary_geometry(
+        self,
+        index: int,
+        *,
+        geometry,
+        color: str,
+        center_x: float,
+        center_y: float,
+        mid_half_extent_mm: float | None,
+    ) -> None:
+        """Draw the shared Jerk/Force package boundary primitives."""
+        radius_value = getattr(geometry, "visual_boundary_radius_mm", None)
+        if radius_value is None:
+            radius_value = geometry.near_outer_circle_radius_mm
+        radius = float(radius_value)
         near_item = self.package_circle_items[index]
         if not isinstance(near_item, QGraphicsEllipseItem):
             self.plot_widget.removeItem(near_item)
@@ -1224,18 +1664,18 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
         self._style_boundary_item(
             near_item,
             radius,
-            color=package.color,
+            color=color,
             dash_pattern=None,
         )
         near_item.setRect(center_x - radius, center_y - radius, radius * 2.0, radius * 2.0)
         near_item.setVisible(bool(self.show_near_outer_boundary))
 
         outer_item = self.package_outer_boundary_items[index]
-        outer_radius = float(package.pressure_result.outer_boundary_half_width_mm)
+        outer_radius = float(geometry.outer_boundary_half_width_mm)
         self._style_boundary_item(
             outer_item,
             outer_radius,
-            color=package.color,
+            color=color,
             dash_pattern=(8.0, 4.0),
         )
         outer_item.setRect(
@@ -1253,7 +1693,7 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
             self._style_boundary_item(
                 mid_item,
                 float(mid_half_extent_mm),
-                color=package.color,
+                color=color,
                 dash_pattern=(3.0, 3.0),
             )
             mid_item.setRect(
@@ -1271,19 +1711,39 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
         center_x: float,
         center_y: float,
     ) -> None:
+        self._update_package_sensor_markers_geometry(
+            index,
+            sensor_id=package.sensor_id,
+            sensor_positions=self._sensor_positions_from_result(package.pressure_result),
+            color=package.color,
+            center_x=center_x,
+            center_y=center_y,
+        )
+
+    def _update_package_sensor_markers_geometry(
+        self,
+        index: int,
+        *,
+        sensor_id: str,
+        sensor_positions: dict[str, tuple[float, float]],
+        color: str,
+        center_x: float,
+        center_y: float,
+    ) -> None:
+        """Draw the shared Jerk/Force package sensor-marker primitive."""
         spots = [
             {
                 "pos": (center_x + self._mirror_x(x_coord), center_y + y_coord),
-                "data": (package.sensor_id, position),
+                "data": (sensor_id, position),
                 "symbol": PRESSURE_MAP_SENSOR_MARKER_SYMBOL,
                 "size": PRESSURE_MAP_SENSOR_MARKER_SIZE_PX,
                 "pen": pg.mkPen(
-                    package.color,
+                    color,
                     width=PRESSURE_MAP_SENSOR_MARKER_PEN_WIDTH_PX,
                 ),
-                "brush": pg.mkBrush(package.color),
+                "brush": pg.mkBrush(color),
             }
-            for position, (x_coord, y_coord) in self._sensor_positions_from_result(package.pressure_result).items()
+            for position, (x_coord, y_coord) in sensor_positions.items()
         ]
         self.package_sensor_marker_items[index].setData(spots)
 
@@ -1337,12 +1797,31 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
         center_x: float,
         center_y: float,
     ) -> None:
+        self._update_package_label_geometry(
+            index,
+            sensor_id=package.sensor_id,
+            visual_radius_mm=float(package.pressure_result.visual_boundary_radius_mm),
+            color=package.color,
+            center_x=center_x,
+            center_y=center_y,
+        )
+
+    def _update_package_label_geometry(
+        self,
+        index: int,
+        *,
+        sensor_id: str,
+        visual_radius_mm: float,
+        color: str,
+        center_x: float,
+        center_y: float,
+    ) -> None:
+        """Draw the shared Jerk/Force package label primitive."""
         if index >= len(self.package_label_items):
             return
-        radius = float(package.pressure_result.visual_boundary_radius_mm)
         label_item = self.package_label_items[index]
-        label_item.setText(str(package.sensor_id), color=package.color)
-        label_item.setPos(center_x, center_y + (radius * 0.82))
+        label_item.setText(str(sensor_id), color=color)
+        label_item.setPos(center_x, center_y + (float(visual_radius_mm) * 0.82))
         label_item.setVisible(True)
 
     def _apply_arrow_to_items(

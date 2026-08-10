@@ -1,4 +1,4 @@
-"""Tests for candidate-first Pressure Map array overlap blending."""
+"""Tests for candidate-first Pressure Map array superposition."""
 
 import unittest
 import numpy as np
@@ -13,7 +13,7 @@ from data_processing.pressure_map_generator import PressureMapGenerator, evaluat
 
 
 class PressureMapArrayGeneratorTests(unittest.TestCase):
-    """Verify direct, diagonal, and multi-package blends are geometric and signed."""
+    """Verify direct, diagonal, and multi-package fields superpose without cropping."""
 
     def setUp(self):
         self.normal_calculator = NormalForceCalculator(sensor_spacing_mm=1.0)
@@ -72,69 +72,63 @@ class PressureMapArrayGeneratorTests(unittest.TestCase):
         self.assertEqual(result.active_overlap_pairs, ())
         self.assertEqual(result.overlap_pairs, result.active_overlap_pairs)
 
-    def test_horizontal_overlap_uses_0_50_100_linear_weights(self):
+    def _contribution(self, result, package, x_mm, y_mm, *, generator=None):
+        """Return one package's faded contribution at a world coordinate."""
+        center_x, center_y = result.package_centers[package.sensor_id]
+        confidence = float((generator or self._generator())._support_confidence(
+            np.asarray(x_mm - center_x), np.asarray(y_mm - center_y)
+        ))
+        return confidence * self._candidate_value(result, package, x_mm, y_mm)
+
+    def _assert_superposes(self, result, packages, x_mm, y_mm):
+        generator = self._generator()
+        values = [
+            self._contribution(result, package, x_mm, y_mm, generator=generator)
+            for package in packages
+        ]
+        self.assertAlmostEqual(self._grid_value(result, x_mm, y_mm), sum(values), places=8)
+        self.assertAlmostEqual(
+            self._magnitude_grid_value(result, x_mm, y_mm), abs(sum(values)), places=8
+        )
+
+    def test_horizontal_overlap_superposes_both_package_fields(self):
         first = self._package("A", (0, 0), {"C": 0.0, "L": 0.0, "R": 5.0, "T": 0.0, "B": 0.0})
         second = self._package("B", (0, 1), {"C": 0.0, "L": 2.0, "R": 0.0, "T": 0.0, "B": 0.0})
         result = self._generator().generate([first, second])
 
-        for x_mm, first_weight in ((-2.0, 1.0), (0.0, 0.5), (2.0, 0.0)):
-            first_value = self._candidate_value(result, first, x_mm, 0.0)
-            second_value = self._candidate_value(result, second, x_mm, 0.0)
-            expected = first_weight * first_value + (1.0 - first_weight) * second_value
-            self.assertAlmostEqual(self._grid_value(result, x_mm, 0.0), expected, places=8)
+        for x_mm in (-2.0, -1.0, 0.0, 1.0, 2.0):
+            self._assert_superposes(result, (first, second), x_mm, 0.0)
         self.assertEqual(result.structural_pairs, (("A", "B"),))
         self.assertEqual(result.active_overlap_pairs, (("A", "B"),))
         self.assertEqual(result.overlap_pairs, (("A", "B"),))
 
-    def test_vertical_overlap_uses_0_50_100_linear_weights(self):
+    def test_vertical_overlap_superposes_both_package_fields(self):
         top = self._package("TOP", (0, 0), {"C": 0.0, "L": 0.0, "R": 0.0, "T": 0.0, "B": 4.0})
         bottom = self._package("BOTTOM", (1, 0), {"C": 0.0, "L": 0.0, "R": 0.0, "T": 2.0, "B": 0.0})
         result = self._generator().generate([top, bottom])
 
         # y grows from the physical bottom package side to the top package side.
-        for y_mm, top_weight in ((-2.0, 0.0), (0.0, 0.5), (2.0, 1.0)):
-            top_value = self._candidate_value(result, top, 0.0, y_mm)
-            bottom_value = self._candidate_value(result, bottom, 0.0, y_mm)
-            expected = top_weight * top_value + (1.0 - top_weight) * bottom_value
-            self.assertAlmostEqual(self._grid_value(result, 0.0, y_mm), expected, places=8)
+        for y_mm in (-2.0, -1.0, 0.0, 1.0, 2.0):
+            self._assert_superposes(result, (top, bottom), 0.0, y_mm)
 
-    def test_bottom_left_top_right_diagonal_uses_area_ratio_weights(self):
+    def test_bottom_left_top_right_diagonal_superposes(self):
         bottom_left = self._package("BL", (1, 0), {"C": 0.0, "L": 0.0, "R": 4.0, "T": 4.0, "B": 0.0})
         top_right = self._package("TR", (0, 1), {"C": 0.0, "L": 3.0, "R": 0.0, "T": 0.0, "B": 3.0})
         result = self._generator().generate([bottom_left, top_right])
-        x_mm, y_mm = -1.0, -1.0
-        u = v = 0.25
-        raw_bl, raw_tr = (1.0 - u) * (1.0 - v), u * v
-        first_value = self._candidate_value(result, bottom_left, x_mm, y_mm)
-        second_value = self._candidate_value(result, top_right, x_mm, y_mm)
-        expected = (raw_bl * first_value + raw_tr * second_value) / (raw_bl + raw_tr)
-        self.assertAlmostEqual(self._grid_value(result, x_mm, y_mm), expected, places=8)
+        self._assert_superposes(result, (bottom_left, top_right), -1.0, -1.0)
 
-    def test_top_left_bottom_right_diagonal_uses_area_ratio_weights(self):
+    def test_top_left_bottom_right_diagonal_superposes(self):
         top_left = self._package("TL", (0, 0), {"C": 0.0, "L": 0.0, "R": 4.0, "T": 0.0, "B": 4.0})
         bottom_right = self._package("BR", (1, 1), {"C": 0.0, "L": 3.0, "R": 0.0, "T": 3.0, "B": 0.0})
         result = self._generator().generate([top_left, bottom_right])
-        x_mm, y_mm = -1.0, 1.0
-        u, v = 0.25, 0.75
-        raw_tl, raw_br = (1.0 - u) * v, u * (1.0 - v)
-        first_value = self._candidate_value(result, top_left, x_mm, y_mm)
-        second_value = self._candidate_value(result, bottom_right, x_mm, y_mm)
-        expected = (raw_tl * first_value + raw_br * second_value) / (raw_tl + raw_br)
-        self.assertAlmostEqual(self._grid_value(result, x_mm, y_mm), expected, places=8)
+        self._assert_superposes(result, (top_left, bottom_right), -1.0, 1.0)
 
-    def test_three_package_overlap_averages_original_pair_blends(self):
+    def test_three_package_overlap_superposes_every_contribution(self):
         top_left = self._package("A", (0, 0), {"C": 0.0, "L": 0.0, "R": 5.0, "T": 0.0, "B": 4.0})
         top_right = self._package("B", (0, 1), {"C": 0.0, "L": 3.0, "R": 0.0, "T": 0.0, "B": 4.0})
         bottom_left = self._package("C", (1, 0), {"C": 0.0, "L": 0.0, "R": 5.0, "T": 3.0, "B": 0.0})
         result = self._generator().generate([top_left, top_right, bottom_left])
-        x_mm, y_mm = 0.0, 0.0
-        a = self._candidate_value(result, top_left, x_mm, y_mm)
-        b = self._candidate_value(result, top_right, x_mm, y_mm)
-        c = self._candidate_value(result, bottom_left, x_mm, y_mm)
-        # At the common overlap midpoint every direct pair is 50/50 and the
-        # diagonal raw areas are equal, so each pair blend is the mean.
-        expected = (((a + b) / 2.0) + ((a + c) / 2.0) + ((b + c) / 2.0)) / 3.0
-        self.assertAlmostEqual(self._grid_value(result, x_mm, y_mm), expected, places=8)
+        self._assert_superposes(result, (top_left, top_right, bottom_left), 0.0, 0.0)
 
     def test_signed_candidates_cross_zero_without_overshoot(self):
         signed_generator = PressureMapGenerator(
@@ -156,13 +150,33 @@ class PressureMapArrayGeneratorTests(unittest.TestCase):
             self.assertLessEqual(value, max(candidates) + 1e-12)
 
         first_value = self._candidate_value(result, first, 0.0, 0.0)
-        second_value = self._candidate_value(result, second, 0.0, 0.0)
+        self.assertGreater(abs(first_value), 0.0)
+        # Superposition yields one field, and magnitude is that field's
+        # magnitude.  Equal and opposite package fields therefore cancel here
+        # rather than reading as the sum of their separate magnitudes.
         self.assertAlmostEqual(self._grid_value(result, 0.0, 0.0), 0.0, places=8)
-        self.assertAlmostEqual(
-            self._magnitude_grid_value(result, 0.0, 0.0),
-            (abs(first_value) + abs(second_value)) / 2.0,
-            places=8,
+        self.assertAlmostEqual(self._magnitude_grid_value(result, 0.0, 0.0), 0.0, places=8)
+        np.testing.assert_allclose(
+            result.magnitude_pressure_grid, np.abs(result.pressure_grid)
         )
+
+    def test_magnitude_does_not_double_count_overlapping_packages(self):
+        # Regression: accumulating sum |v| made every support overlap read
+        # roughly twice as bright as either package measured.
+        first = self._package("A", (0, 0), {"C": 0.0, "L": 0.0, "R": 5.0, "T": 0.0, "B": 0.0})
+        second = self._package("B", (0, 1), {"C": 0.0, "L": 5.0, "R": 0.0, "T": 0.0, "B": 0.0})
+        result = self._generator().generate([first, second])
+
+        np.testing.assert_allclose(
+            result.magnitude_pressure_grid, np.abs(result.pressure_grid)
+        )
+        for x_mm in (-2.0, -1.0, 0.0, 1.0, 2.0):
+            contributions = [
+                self._contribution(result, package, x_mm, 0.0) for package in (first, second)
+            ]
+            self.assertAlmostEqual(
+                self._magnitude_grid_value(result, x_mm, 0.0), abs(sum(contributions)), places=8
+            )
 
     def test_locally_absent_active_candidate_passes_through_present_neighbour(self):
         center_only = self._package(
@@ -254,9 +268,7 @@ class PressureMapArrayGeneratorTests(unittest.TestCase):
         result = self._generator(debug=True).generate([package])
         self.assertIsNotNone(result.diagnostics)
         self.assertIn("support_confidence", result.diagnostics)
-        self.assertIn("pair_confidence_denominator", result.diagnostics)
-        self.assertIn("candidate_fallback_denominator", result.diagnostics)
-        self.assertIn("effective_pair_weights", result.diagnostics)
+        self.assertIn("candidate_fields", result.diagnostics)
         self.assertIn("array_support_mask", result.diagnostics)
         self.assertIn("local_presence", result.diagnostics)
         self.assertIn("eligible_neighbor_pairs", result.diagnostics)
@@ -367,7 +379,7 @@ class PressureMapArrayGeneratorTests(unittest.TestCase):
             self.assertLessEqual(row_delta, 1)
             self.assertLessEqual(col_delta, 1)
 
-    def test_overlap_slice_pair_result_matches_full_pair_evaluation(self):
+    def test_active_overlap_pairs_use_the_shared_support_slice(self):
         first = self._package("A", (0, 0), {"C": 0.0, "L": 0.0, "R": 4.0, "T": 0.0, "B": 0.0})
         second = self._package("B", (0, 1), {"C": 0.0, "L": 4.0, "R": 0.0, "T": 0.0, "B": 0.0})
         array_generator = self._generator()
@@ -379,13 +391,56 @@ class PressureMapArrayGeneratorTests(unittest.TestCase):
         second_candidate = array_generator._evaluate_candidate(second, centers["B"], bounds["B"], x_grid, y_grid)
         overlap = array_generator._support_overlap(first_candidate, second_candidate)
         y_slice, x_slice = overlap_bounds_to_slice(overlap, *coordinates)
-        region = np.s_[y_slice, x_slice]
-        sliced = array_generator._pair_blend(first_candidate, second_candidate, overlap, x_grid[region], y_grid[region], region, include_effective_weights=False)
-        full = array_generator._pair_blend(first_candidate, second_candidate, overlap, x_grid, y_grid, np.s_[:, :], include_effective_weights=False)
 
-        np.testing.assert_allclose(sliced[0], full[0][region])
-        np.testing.assert_allclose(sliced[1], full[1][region])
-        np.testing.assert_array_equal(sliced[2], full[2][region])
+        self.assertGreater(x_grid[y_slice, x_slice].size, 0)
+        self.assertEqual(
+            array_generator._active_overlap_pairs(
+                ((first_candidate, second_candidate),), *coordinates
+            ),
+            (("A", "B"),),
+        )
+
+    def test_facing_lobes_add_instead_of_cropping_each_other(self):
+        # Regression for a large lobe being cut flat where a small facing lobe
+        # on the neighbouring package began.
+        large = self._package("BOTTOM", (1, 0), {"C": 0.0, "L": 0.0, "R": 0.0, "T": 5.0, "B": 0.0})
+        small = self._package("TOP", (0, 0), {"C": 0.0, "L": 0.0, "R": 0.0, "T": 0.0, "B": 0.5})
+        quiet = self._package("TOP", (0, 0), {"C": 0.0, "L": 0.0, "R": 0.0, "T": 0.0, "B": 0.0})
+        # The quiet neighbour keeps both runs on the same world raster.
+        alone = self._generator().generate([large, quiet])
+        combined = self._generator().generate([large, small])
+        np.testing.assert_allclose(alone.y_coordinates_mm, combined.y_coordinates_mm)
+
+        rose_above_alone = False
+        for y_mm in np.arange(-3.0, 3.01, 0.1):
+            alone_value = self._grid_value(alone, 0.0, float(y_mm))
+            combined_value = self._grid_value(combined, 0.0, float(y_mm))
+            # Same-sign neighbours may only add.
+            self.assertGreaterEqual(combined_value, alone_value - 1e-12)
+            rose_above_alone = rose_above_alone or combined_value > alone_value + 1e-9
+        self.assertTrue(rose_above_alone)
+
+    def test_composition_stays_continuous_across_a_neighbour_support_edge(self):
+        # The removed presence test made a pixel jump as soon as a neighbour
+        # field became nonzero.  A sum of continuous candidates cannot.
+        first = self._package("BOTTOM", (1, 0), {"C": 0.0, "L": 0.0, "R": 0.0, "T": 5.0, "B": 0.0})
+        second = self._package("TOP", (0, 0), {"C": 0.0, "L": 0.0, "R": 0.0, "T": 0.0, "B": 0.5})
+        result = self._generator().generate([first, second])
+        column = int(np.argmin(np.abs(result.x_coordinates_mm)))
+        profile = result.pressure_grid[:, column]
+        candidate_steps = max(
+            float(np.max(np.abs(np.diff(
+                np.asarray([
+                    self._candidate_value(result, package, 0.0, float(y_mm))
+                    for y_mm in result.y_coordinates_mm
+                ])
+            ))))
+            for package in (first, second)
+        )
+        self.assertLessEqual(
+            float(np.max(np.abs(np.diff(profile)))),
+            2.0 * candidate_steps + 1e-12,
+        )
 
     def test_activity_confidence_is_smooth_between_threshold_and_full_participation(self):
         generator = PressureMapGenerator(

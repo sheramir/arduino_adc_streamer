@@ -19,7 +19,9 @@ from constants.pressure_map import (
     PRESSURE_MAP_OVERLAY_COLOR,
 )
 from data_processing.normal_force_calculator import NormalForceCalculator
+from data_processing.pressure_force_display import ForceMapArrayResult, ForceMapPackageResult
 from data_processing.pressure_map_array_generator import PressureMapArrayGenerator, PressureMapArrayPackage
+from data_processing.pressure_map_geometry import PressureMapGeometry
 from data_processing.pressure_map_mask import mask_inside_grid
 from data_processing.pressure_map_generator import PressureMapGenerator
 from data_processing.shear_detector import ShearDetector
@@ -63,6 +65,141 @@ class PressureMapWidgetTests(unittest.TestCase):
         self.assertEqual(self.widget.last_pressure_result, pressure_result)
         self.assertEqual(len(self.widget.sensor_marker_item.points()), len(pressure_result.sensor_positions))
         self.assertTrue(self.widget.circle_item.isVisible())
+
+    def test_force_render_uses_a_stable_newton_scale_instead_of_jerk_intensity(self):
+        self.widget.configure_intensity(max_intensity=2.0)
+        self.widget.configure_force_intensity(max_force_n=0.2)
+        levels, fade_levels = self.widget._force_render_levels(
+            np.asarray([[0.0, 0.04], [0.08, -0.12]], dtype=float)
+        )
+
+        self.assertEqual(levels[0], 0.0)
+        self.assertAlmostEqual(levels[1], 0.2)
+        self.assertAlmostEqual(fade_levels[0], 0.0)
+        self.assertAlmostEqual(fade_levels[1], 0.0025)
+
+    def test_force_alpha_uses_physical_floor_and_opaque_force_lookup_table(self):
+        self.widget.configure_force_display_floor(noise_equivalent_n=0.0025)
+        lookup = self.widget._color_lookup_table(force_mode=True)
+        if lookup.shape[1] == 4:
+            self.assertTrue(np.all(lookup[:, 3] == 255))
+        rgba = self.widget._rgba_image(
+            np.asarray([[0.0, 0.0025, 0.005]], dtype=float),
+            (0.0, 0.25),
+            fade_levels=(0.0, 0.0025),
+            force_mode=True,
+        )
+        self.assertEqual(rgba[0, 0, 3], 0)
+        self.assertGreater(rgba[0, 1, 3], 0)
+        self.assertEqual(rgba[0, 2, 3], 255)
+
+    def test_force_visibility_is_identical_for_opposite_signed_values(self):
+        self.widget.configure_display_mode(display_mode=PRESSURE_DISPLAY_MODE_SIGNED)
+        levels, fade_levels = self.widget._force_render_levels(np.asarray([[1.0]], dtype=float))
+        positive = self.widget._rgba_image(
+            np.asarray([[1.0, 0.1]], dtype=float), levels,
+            fade_levels=fade_levels, force_mode=True,
+        )
+        negative = self.widget._rgba_image(
+            np.asarray([[-1.0, -0.1]], dtype=float), levels,
+            fade_levels=fade_levels, force_mode=True,
+        )
+
+        np.testing.assert_array_equal(positive, negative)
+        self.assertEqual(levels, (0.0, self.widget.force_max_intensity_n))
+
+    def test_force_readout_retains_signed_normal_force(self):
+        geometry = PressureMapGeometry()
+        template = self.generator.generate({"C": 0.0, "L": 0.0, "R": 0.0, "T": 0.0, "B": 0.0})
+        result = ForceMapPackageResult(
+            sensor_id="PZT1",
+            force_grid_n=-np.ones_like(template.pressure_grid),
+            normal_force_n=-0.125,
+            shear_x_n=-0.02,
+            shear_y_n=0.01,
+            geometry=geometry,
+            x_coordinates_mm=template.x_coordinates_mm,
+            y_coordinates_mm=template.y_coordinates_mm,
+            sensor_positions=template.sensor_positions,
+            grid_position=(0, 0),
+            frame_id=1,
+        )
+        self.widget.configure_display_mode(display_mode=PRESSURE_DISPLAY_MODE_SIGNED)
+        self.widget.update_force_display(result)
+
+        self.assertEqual(result.normal_force_n, -0.125)
+        self.assertIn("Normal Force: -0.125 N", self.widget.readout_label.text())
+
+    def test_force_array_reuses_jerk_package_background_primitives(self):
+        geometry = PressureMapGeometry()
+        template = self.generator.generate({"C": 0.0, "L": 0.0, "R": 0.0, "T": 0.0, "B": 0.0})
+        package_grid = np.zeros_like(template.pressure_grid)
+        packages = [
+            ForceMapPackageResult(
+                sensor_id=sensor_id,
+                force_grid_n=package_grid.copy(),
+                normal_force_n=0.0,
+                shear_x_n=0.0,
+                shear_y_n=0.0,
+                geometry=geometry,
+                x_coordinates_mm=template.x_coordinates_mm,
+                y_coordinates_mm=template.y_coordinates_mm,
+                sensor_positions=template.sensor_positions,
+                grid_position=(0, index),
+                frame_id=index + 1,
+            )
+            for index, sensor_id in enumerate(("PZT1", "PZT2"))
+        ]
+        array = ForceMapArrayResult(
+            force_grid_n=np.zeros((template.y_coordinates_mm.size, template.x_coordinates_mm.size)),
+            magnitude_force_grid_n=np.zeros((template.y_coordinates_mm.size, template.x_coordinates_mm.size)),
+            x_coordinates_mm=template.x_coordinates_mm,
+            y_coordinates_mm=template.y_coordinates_mm,
+            package_centers={"PZT1": (-5.0, 0.0), "PZT2": (5.0, 0.0)},
+            frame_id=1,
+        )
+        self.widget.configure_mask(
+            mask_enabled=True,
+            mask_points_mm=((-8.0, -8.0), (8.0, -8.0), (8.0, 8.0), (-8.0, 8.0)),
+        )
+        self.widget.configure_boundary_visibility(show_outer_boundary=True)
+        self.widget.update_force_array_display(array, packages)
+
+        self.assertTrue(self.widget.package_circle_items[0].isVisible())
+        self.assertTrue(self.widget.package_outer_boundary_items[1].isVisible())
+        self.assertEqual(len(self.widget.package_sensor_marker_items[0].points()), 5)
+        self.assertFalse(self.widget.package_label_items[1].isVisible())
+        self.assertTrue(self.widget.force_callout_items[1].isVisible())
+        self.assertIn("N:", self.widget.force_callout_items[1].toPlainText())
+        self.assertIn("S:", self.widget.force_callout_items[1].toPlainText())
+        self.assertEqual(len(self.widget.package_peak_marker_items[0].points()), 0)
+        self.assertTrue(self.widget.mask_outline_item.isVisible())
+
+        initial_size_hint = self.widget.sizeHint().width()
+        initial_range = self.widget.plot_widget.getViewBox().viewRange()
+        updated_packages = [
+            replace(item, normal_force_n=(-1.0 if index else 1.0), shear_x_n=0.123)
+            for index, item in enumerate(packages)
+        ]
+        updated_array = replace(array, force_grid_n=np.full_like(array.force_grid_n, 0.1), frame_id=2)
+        self.widget.update_force_array_display(updated_array, updated_packages)
+
+        self.assertEqual(self.widget.sizeHint().width(), initial_size_hint)
+        self.assertEqual(self.widget.plot_widget.getViewBox().viewRange(), initial_range)
+        self.assertFalse(self.widget.readout_label.isVisible())
+
+    def test_force_callouts_choose_outward_top_and_center_positions_without_collision(self):
+        bounds = (-20.0, 20.0, -20.0, 20.0)
+        array_center = (0.0, 0.0)
+        top = self.widget._force_callout_position(
+            0.0, 8.0, array_center, bounds, 6.0, []
+        )
+        center = self.widget._force_callout_position(
+            0.0, 0.0, array_center, bounds, 6.0, [top]
+        )
+
+        self.assertGreaterEqual(top[1], 8.0 + 6.0 + 1.5)
+        self.assertFalse(abs(top[0] - center[0]) < 4.8 and abs(top[1] - center[1]) < 2.6)
 
     def test_update_display_skips_unchanged_image_upload(self):
         normal_result = self.calculator.compute({"C": 0.0, "R": 5.0, "T": 0.0, "L": 0.0, "B": 0.0})

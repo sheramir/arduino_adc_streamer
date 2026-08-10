@@ -44,6 +44,8 @@ class CaptureLifecycleMixin:
         self.plot_baselines = {}
         self.channel_plot_baselines = {}
         self.rosette_plot_baselines = {}
+        if hasattr(self, "reset_pressure_force_display_for_baseline_change"):
+            self.reset_pressure_force_display_for_baseline_change()
 
     def _reset_force_capture_state(self):
         """Reset force samples for a new capture lifecycle."""
@@ -123,6 +125,8 @@ class CaptureLifecycleMixin:
         self.plot_baselines = {}
         self.channel_plot_baselines = {}
         self.rosette_plot_baselines = {}
+        if hasattr(self, "reset_pressure_force_display_for_baseline_change"):
+            self.reset_pressure_force_display_for_baseline_change()
 
         self.set_controls_enabled(False)
 

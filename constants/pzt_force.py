@@ -15,6 +15,10 @@ PZT_FORCE_DEFAULT_SETTINGS = {
     "off_mux_leak_enabled": False,
     "off_mux_rleak_ohm": None,
     "channel_calibration": {},
+    # Visualization-only default for new settings. Persisted user values keep
+    # their existing value when loaded.
+    "display_max_force_n": 0.25,
+    "reset_after_quiet_samples": 10,
 }
 
 PZT_FORCE_CAPACITANCE_UNITS = ("pF", "nF", "F")

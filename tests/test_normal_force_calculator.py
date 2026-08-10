@@ -60,6 +60,31 @@ class NormalForceCalculatorTests(unittest.TestCase):
 
         self.assertEqual(result.force_type, SHEAR_FORCE_TYPE_COMPRESSION)
 
+    def test_negative_outer_under_compression_does_not_lift_quiet_sensors(self):
+        # A bipolar jerk sample can put the pressed sensor below zero while the
+        # centre stays positive.  An unclamped baseline would blank the pressed
+        # sensor and raise every quiet sensor to its magnitude.
+        result = self.calculator.compute({"C": 0.5, "L": -10.0, "R": 0.0, "T": 0.0, "B": 0.0})
+
+        self.assertEqual(result.force_type, SHEAR_FORCE_TYPE_COMPRESSION)
+        self.assertEqual(result.baseline_offset, 0.0)
+        self.assertEqual(result.normalized, result.residual)
+        self.assertLess(result.x_mm, 0.0)
+
+    def test_positive_outer_under_tension_does_not_pull_quiet_sensors(self):
+        result = self.calculator.compute({"C": -0.5, "L": 0.0, "R": 10.0, "T": 0.0, "B": 0.0})
+
+        self.assertEqual(result.force_type, SHEAR_FORCE_TYPE_TENSION)
+        self.assertEqual(result.baseline_offset, 0.0)
+        self.assertEqual(result.normalized, result.residual)
+
+    def test_common_outer_lift_is_still_removed(self):
+        result = self.calculator.compute({"C": 10.0, "L": 6.0, "R": 4.0, "T": 5.0, "B": 7.0})
+
+        self.assertEqual(result.baseline_offset, 4.0)
+        self.assertAlmostEqual(result.normalized["R"], 0.0)
+        self.assertAlmostEqual(result.total_force, 32.0)
+
 
 if __name__ == "__main__":
     unittest.main()

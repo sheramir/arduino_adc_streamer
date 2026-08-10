@@ -25,7 +25,7 @@ from typing import Hashable
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -53,6 +53,11 @@ from constants.plotting import (
 from constants.sensor_config import (
     SENSOR_POLARITY_NORMAL_MULTIPLIER,
     SENSOR_POLARITY_REVERSED_MULTIPLIER,
+)
+from constants.pzt_force import (
+    PZT_FORCE_CAPACITANCE_UNITS,
+    PZT_FORCE_DEFAULT_SETTINGS,
+    PZT_FORCE_PIC_COULOMB_TO_COULOMB,
 )
 from config.pressure_map_mask_config import MaskConfigStore
 from config.sensor_config import normalize_array_cell
@@ -203,6 +208,8 @@ from data_processing.pressure_map_array_generator import (
     PressureMapArrayPackage,
 )
 from data_processing.pressure_map_geometry import PressureMapGeometry
+from data_processing.pressure_force_display import PressureForceDisplayEngine
+from data_processing.pzt_decay import PztDecayTimingContext
 from data_processing.shear_detector import ShearDetector, ShearResult
 from file_operations.settings_persistence import load_settings_payload, save_settings_payload
 from gui.pressure_map_widget import PressureMapPackageDisplay, PressureMapWidget
@@ -258,8 +265,19 @@ class PressureMapPanelMixin:
         display_content.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         display_layout = QVBoxLayout(display_content)
         display_tab.setWidget(display_content)
-        self.pressure_map_inner_tabs.addTab(display_tab, "Display")
+        self.pressure_map_inner_tabs.addTab(display_tab, "Jerk Display")
         self.pressure_map_display_tab_index = 0
+
+        force_display_tab = QScrollArea()
+        force_display_tab.setWidgetResizable(True)
+        force_display_tab.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        force_display_tab.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        force_display_content = QWidget()
+        force_display_content.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.force_display_layout = QVBoxLayout(force_display_content)
+        force_display_tab.setWidget(force_display_content)
+        self.pressure_map_inner_tabs.addTab(force_display_tab, "Force Display")
+        self.pressure_map_force_display_tab_index = 1
 
         settings_tab = QScrollArea()
         settings_tab.setWidgetResizable(True)
@@ -270,7 +288,7 @@ class PressureMapPanelMixin:
         settings_layout = QVBoxLayout(settings_content)
         settings_tab.setWidget(settings_content)
         self.pressure_map_inner_tabs.addTab(settings_tab, "Settings")
-        self.pressure_map_settings_tab_index = 1
+        self.pressure_map_settings_tab_index = 2
         self.pressure_map_inner_tabs.currentChanged.connect(self.on_pressure_map_inner_tab_changed)
 
         controls_group = QGroupBox("Signal Integration Controls")
@@ -485,7 +503,22 @@ class PressureMapPanelMixin:
         self.pressure_map_array_generator = PressureMapArrayGenerator(geometry=self.pressure_map_geometry)
         self.pressure_map_widget = PressureMapWidget()
         display_layout.addWidget(self.pressure_map_widget, stretch=PRESSURE_MAP_STRETCH)
+        self.force_pressure_map_widget = PressureMapWidget()
+        self.force_display_layout.addWidget(self.force_pressure_map_widget, stretch=PRESSURE_MAP_STRETCH)
+        self.force_package_widgets: dict[str, PressureMapWidget] = {}
+        self.force_display_status_label = QLabel("Waiting for baseline-centred PZT samples")
+        self.force_display_layout.addWidget(self.force_display_status_label)
+        # Acquisition can deliver blocks much faster than Qt can rasterize a
+        # pressure field.  Keep physical integration synchronous/exact, but
+        # coalesce the expensive array paint to a responsive 10 Hz.
+        self.force_display_update_timer = QTimer()
+        self.force_display_update_timer.setSingleShot(True)
+        self.force_display_update_timer.timeout.connect(self._render_pressure_force_display)
+        self.pressure_force_engine: PressureForceDisplayEngine | None = None
+        self._pressure_force_last_processed_sweep_count = 0
+        self._pressure_force_last_error = ""
         settings_layout.addWidget(self._create_shear_visualization_settings_group())
+        settings_layout.addWidget(self._create_pzt_force_settings_group())
         settings_layout.addWidget(self._create_pressure_map_settings_group())
         settings_layout.addWidget(self._create_pressure_map_mask_settings_group())
         settings_layout.addWidget(self._create_pressure_map_color_scale_settings_group())
@@ -503,6 +536,7 @@ class PressureMapPanelMixin:
         self._signal_integration_filter_engine = ADCFilterEngine()
         self._signal_integration_filter_warning = ""
         self._signal_integration_updating_plot = False
+        self._rebuild_pressure_force_engine()
         self.update_pressure_map_timeline_controls()
 
         return tab
@@ -517,6 +551,14 @@ class PressureMapPanelMixin:
             )
             return
 
+        if index == getattr(self, "pressure_map_force_display_tab_index", 1):
+            # Force consumes the shared Jerk shapes even while Jerk itself is
+            # hidden.  Build them, then render only the Force raster.
+            if self._should_refresh_signal_integration_plot():
+                self.update_signal_integration_plot()
+            else:
+                self._render_pressure_force_display()
+            return
         if index != getattr(self, "pressure_map_display_tab_index", 0):
             return
         if not self._should_refresh_signal_integration_plot():
@@ -652,6 +694,403 @@ class PressureMapPanelMixin:
             label.setMaximumWidth(maximum_width)
         label.setToolTip(tooltip)
         return label
+
+    def _create_pzt_force_settings_group(self) -> QGroupBox:
+        """Controls required only for physical PZT voltage-to-force recovery."""
+        group = QGroupBox("PZT Force Calculation")
+        layout = QGridLayout(group)
+        defaults = PZT_FORCE_DEFAULT_SETTINGS
+        layout.addWidget(QLabel("Cpzt:"), 0, 0)
+        self.force_pzt_capacitance_spin = QDoubleSpinBox()
+        self.force_pzt_capacitance_spin.setRange(1e-6, 1e9)
+        self.force_pzt_capacitance_spin.setDecimals(6)
+        self.force_pzt_capacitance_spin.setValue(float(defaults["capacitance_value"]))
+        layout.addWidget(self.force_pzt_capacitance_spin, 0, 1)
+        self.force_pzt_capacitance_unit_combo = QComboBox()
+        self.force_pzt_capacitance_unit_combo.addItems(list(PZT_FORCE_CAPACITANCE_UNITS))
+        self.force_pzt_capacitance_unit_combo.setCurrentText(str(defaults["capacitance_unit"]))
+        layout.addWidget(self.force_pzt_capacitance_unit_combo, 0, 2)
+        layout.addWidget(QLabel("Rleak:"), 0, 3)
+        self.force_pzt_rleak_spin = QDoubleSpinBox()
+        self.force_pzt_rleak_spin.setRange(1e-6, 1e15)
+        self.force_pzt_rleak_spin.setDecimals(3)
+        self.force_pzt_rleak_spin.setValue(float(defaults["rleak_ohm"]))
+        self.force_pzt_rleak_spin.setSuffix(" ohm")
+        layout.addWidget(self.force_pzt_rleak_spin, 0, 4)
+        layout.addWidget(QLabel("d33:"), 1, 0)
+        self.force_pzt_d33_spin = QDoubleSpinBox()
+        self.force_pzt_d33_spin.setRange(1e-9, 1e12)
+        self.force_pzt_d33_spin.setDecimals(6)
+        self.force_pzt_d33_spin.setValue(float(defaults["d33_pc_per_n"]))
+        self.force_pzt_d33_spin.setSuffix(" pC/N")
+        layout.addWidget(self.force_pzt_d33_spin, 1, 1)
+        layout.addWidget(QLabel("Noise:"), 1, 2)
+        self.force_pzt_noise_spin = QDoubleSpinBox()
+        self.force_pzt_noise_spin.setRange(0.0, 1000.0)
+        self.force_pzt_noise_spin.setDecimals(6)
+        self.force_pzt_noise_spin.setValue(float(defaults["noise_threshold_v"]))
+        self.force_pzt_noise_spin.setSuffix(" V")
+        layout.addWidget(self.force_pzt_noise_spin, 1, 3)
+        self.force_pzt_off_mux_check = QCheckBox("Off-MUX leakage")
+        self.force_pzt_off_mux_check.setChecked(bool(defaults["off_mux_leak_enabled"]))
+        layout.addWidget(self.force_pzt_off_mux_check, 2, 0, 1, 2)
+        self.force_pzt_off_mux_rleak_spin = QDoubleSpinBox()
+        self.force_pzt_off_mux_rleak_spin.setRange(1e-6, 1e15)
+        self.force_pzt_off_mux_rleak_spin.setDecimals(3)
+        self.force_pzt_off_mux_rleak_spin.setValue(float(defaults["rleak_ohm"]))
+        self.force_pzt_off_mux_rleak_spin.setSuffix(" ohm")
+        layout.addWidget(self.force_pzt_off_mux_rleak_spin, 2, 2)
+        layout.addWidget(QLabel("Reset after quiet:"), 3, 0)
+        self.force_pzt_quiet_reset_spin = QSpinBox()
+        self.force_pzt_quiet_reset_spin.setRange(1, 1000)
+        self.force_pzt_quiet_reset_spin.setValue(int(defaults["reset_after_quiet_samples"]))
+        self.force_pzt_quiet_reset_spin.setSuffix(" samples")
+        self.force_pzt_quiet_reset_spin.setToolTip(
+            "Reset the reconstructed package force to zero after all five PZT channels "
+            "remain below the Force noise threshold for this many consecutive package samples. "
+            "This helps remove residual integrated force after a completed event."
+        )
+        layout.addWidget(self.force_pzt_quiet_reset_spin, 3, 1)
+        force_color_max_label = QLabel("Force color max:")
+        force_color_max_label.setToolTip(
+            "Force-map value that maps to the top of the color scale. Lower values make "
+            "small forces more visible; values above this level saturate. This changes "
+            "visualization only and does not change calculated force."
+        )
+        layout.addWidget(force_color_max_label, 4, 0)
+        self.force_display_max_n_spin = QDoubleSpinBox()
+        self.force_display_max_n_spin.setRange(1e-9, 1e9)
+        self.force_display_max_n_spin.setDecimals(6)
+        self.force_display_max_n_spin.setValue(float(defaults["display_max_force_n"]))
+        self.force_display_max_n_spin.setSuffix(" N")
+        self.force_display_max_n_spin.setToolTip(force_color_max_label.toolTip())
+        layout.addWidget(self.force_display_max_n_spin, 4, 1)
+        self.force_display_reset_btn = QPushButton("Reset Force Display")
+        self.force_display_reset_btn.clicked.connect(self.reset_pressure_force_display)
+        layout.addWidget(self.force_display_reset_btn, 2, 3, 1, 2)
+        for widget in (
+            self.force_pzt_capacitance_spin, self.force_pzt_capacitance_unit_combo,
+            self.force_pzt_rleak_spin, self.force_pzt_d33_spin, self.force_pzt_noise_spin,
+            self.force_pzt_off_mux_check, self.force_pzt_off_mux_rleak_spin,
+            self.force_pzt_quiet_reset_spin,
+        ):
+            signal = getattr(widget, "valueChanged", None) or getattr(widget, "currentTextChanged", None) or getattr(widget, "toggled", None)
+            if signal is not None:
+                signal.connect(self.on_pzt_force_settings_changed)
+        self.force_display_max_n_spin.valueChanged.connect(self.on_force_display_settings_changed)
+        return group
+
+    def _pzt_force_settings(self) -> dict[str, object]:
+        return {
+            "capacitance_value": self._spin_float("force_pzt_capacitance_spin", float(PZT_FORCE_DEFAULT_SETTINGS["capacitance_value"])),
+            "capacitance_unit": self._combo_text("force_pzt_capacitance_unit_combo", str(PZT_FORCE_DEFAULT_SETTINGS["capacitance_unit"])),
+            "rleak_ohm": self._spin_float("force_pzt_rleak_spin", float(PZT_FORCE_DEFAULT_SETTINGS["rleak_ohm"])),
+            "d33_pc_per_n": self._spin_float("force_pzt_d33_spin", float(PZT_FORCE_DEFAULT_SETTINGS["d33_pc_per_n"])),
+            "noise_threshold_v": self._spin_float("force_pzt_noise_spin", float(PZT_FORCE_DEFAULT_SETTINGS["noise_threshold_v"])),
+            "off_mux_leak_enabled": self._check_bool("force_pzt_off_mux_check", False),
+            "off_mux_rleak_ohm": self._spin_float("force_pzt_off_mux_rleak_spin", float(PZT_FORCE_DEFAULT_SETTINGS["rleak_ohm"])),
+            "display_max_force_n": self._spin_float("force_display_max_n_spin", float(PZT_FORCE_DEFAULT_SETTINGS["display_max_force_n"])),
+            "reset_after_quiet_samples": int(self._spin_float("force_pzt_quiet_reset_spin", float(PZT_FORCE_DEFAULT_SETTINGS["reset_after_quiet_samples"]))),
+        }
+
+    def on_pzt_force_settings_changed(self, _value: object | None = None) -> None:
+        try:
+            for widget in self._pressure_map_display_widgets():
+                widget.configure_force_display_floor(
+                    noise_equivalent_n=self._force_display_noise_floor_n()
+                )
+            self._rebuild_pressure_force_engine()
+            self.save_last_shear_settings()
+        except Exception as exc:
+            if hasattr(self, "log_status"):
+                self.log_status(f"ERROR updating PZT Force settings: {exc}")
+
+    def on_force_display_settings_changed(self, _value: object | None = None) -> None:
+        """Refresh Newton colour presentation without resetting physical state."""
+        try:
+            max_force_n = self._spin_float(
+                "force_display_max_n_spin",
+                float(PZT_FORCE_DEFAULT_SETTINGS["display_max_force_n"]),
+            )
+            for widget in self._pressure_map_display_widgets():
+                widget.configure_force_intensity(max_force_n=max_force_n)
+            self.save_last_shear_settings()
+        except Exception as exc:
+            if hasattr(self, "log_status"):
+                self.log_status(f"ERROR updating Force Display scale: {exc}")
+
+    def _force_display_noise_floor_n(self) -> float:
+        """Return the physical PZT threshold expressed only as a display floor."""
+        settings = self._pzt_force_settings()
+        unit_scale = {"pf": 1e-12, "nf": 1e-9, "f": 1.0}
+        capacitance_f = float(settings["capacitance_value"]) * unit_scale.get(
+            str(settings["capacitance_unit"]).lower(), 1e-12
+        )
+        d33_c_per_n = float(settings["d33_pc_per_n"]) * PZT_FORCE_PIC_COULOMB_TO_COULOMB
+        if capacitance_f <= 0.0 or d33_c_per_n <= 0.0:
+            return 0.0025
+        return max(1e-12, float(settings["noise_threshold_v"]) * capacitance_f / d33_c_per_n)
+
+    def _rebuild_pressure_force_engine(self) -> None:
+        if not hasattr(self, "pressure_map_geometry"):
+            return
+        self.pressure_force_engine = PressureForceDisplayEngine(
+            geometry=self.pressure_map_geometry,
+            settings=self._pzt_force_settings(),
+            normal_force_calculator=self.normal_force_calculator,
+            shear_detector=self.shear_detector,
+            pressure_map_array_generator=self.pressure_map_array_generator,
+        )
+        self._pressure_force_last_processed_sweep_count = int(getattr(self, "sweep_count", 0))
+
+    def reset_pressure_force_display(self) -> None:
+        self._rebuild_pressure_force_engine()
+        self._render_pressure_force_display()
+        if hasattr(self, "force_display_status_label"):
+            self.force_display_status_label.setText("Force Display reset")
+
+    def reset_pressure_force_display_for_baseline_change(self) -> None:
+        """A Force integral is only meaningful against the baseline it started on."""
+        if getattr(self, "pressure_force_engine", None) is None:
+            return
+        self._rebuild_pressure_force_engine()
+        self._render_pressure_force_display()
+        if hasattr(self, "force_display_status_label"):
+            self.force_display_status_label.setText(
+                "Force Display reset: Time Series baseline changed"
+            )
+
+    def process_pressure_force_block(
+        self,
+        block_samples_array: np.ndarray,
+        sweep_timestamps_sec: np.ndarray,
+        *,
+        first_sweep_id: int,
+        avg_sample_time_us: float,
+    ) -> None:
+        """Consume an acquisition block once, before any Jerk-only filters.
+
+        The raw values are centred with the same ``plot_baselines`` values used
+        by Time Series.  No HPF, DC removal, or moving sum is applied here.
+        """
+        engine = getattr(self, "pressure_force_engine", None)
+        if engine is None or not hasattr(self, "get_display_channel_specs"):
+            return
+        block = np.asarray(block_samples_array, dtype=np.float64)
+        times = np.asarray(sweep_timestamps_sec, dtype=np.float64).reshape(-1)
+        if block.ndim != 2 or block.shape[0] != times.size:
+            return
+        specs_by_package: dict[str, dict[str, dict]] = {}
+        for spec_index, spec in enumerate(self.get_display_channel_specs()):
+            position = self._get_shear_position_for_display_spec(spec, spec_index)
+            sample_indices = [int(index) for index in spec.get("sample_indices", []) if 0 <= int(index) < block.shape[1]]
+            if position not in SHEAR_SENSOR_POSITIONS or not sample_indices:
+                continue
+            package_id = self._get_signal_integration_package_id_for_display_spec(spec, spec_index)
+            specs_by_package.setdefault(package_id, {})[position] = spec
+        complete_packages = {
+            package_id: positions for package_id, positions in specs_by_package.items()
+            if all(position in positions for position in SHEAR_SENSOR_POSITIONS)
+        }
+        if not complete_packages:
+            return
+        # Force Display is a consumer of the Time Series baseline, never a
+        # baseline producer.  This prevents a live force event from silently
+        # re-zeroing itself.  The shared baseline is captured once by Time
+        # Series startup or explicitly through its Zero Signals button.
+        baselines = getattr(self, "plot_baselines", {})
+        required_specs = [
+            spec for positions in complete_packages.values() for spec in positions.values()
+        ]
+        if any(spec.get("key") not in baselines for spec in required_specs):
+            # An accumulated Force history is invalid without the baseline it
+            # was integrated against.  Reset once per transition so stale
+            # values never persist behind the waiting status.
+            if not getattr(self, "_pressure_force_waiting_for_baseline", False):
+                self._pressure_force_waiting_for_baseline = True
+                self.reset_pressure_force_display_for_baseline_change()
+            if self._is_pressure_map_force_display_tab_active() and hasattr(self, "force_display_status_label"):
+                self.force_display_status_label.setText(
+                    "Waiting for Time Series baseline — open Time Series or press Zero Signals"
+                )
+            return
+        self._pressure_force_waiting_for_baseline = False
+        dt_s = max(0.0, float(avg_sample_time_us) / 1_000_000.0)
+        mux_timing = getattr(self, "adc_mux_timing", None)
+        voltage_scale = float(self.get_vref_voltage()) / float((2 ** IADC_RESOLUTION_BITS) - 1)
+        grid_positions = self._get_force_display_grid_positions()
+        repeat_slots = min(
+            len(spec["sample_indices"])
+            for positions in complete_packages.values()
+            for spec in positions.values()
+        )
+        for row_index, sweep in enumerate(block):
+            for repeat_index in range(repeat_slots):
+                package_voltages: dict[str, dict[str, float]] = {}
+                package_times: dict[str, dict[str, float]] = {}
+                package_leak_times: dict[str, dict[str, float]] = {}
+                package_pre_sample_times: dict[str, dict[str, float]] = {}
+                for package_id, positions in complete_packages.items():
+                    values: dict[str, float] = {}
+                    channel_times: dict[str, float] = {}
+                    channel_leak_times: dict[str, float] = {}
+                    pre_sample_times: dict[str, float] = {}
+                    for position, spec in positions.items():
+                        sample_index = int(spec["sample_indices"][repeat_index])
+                        baseline = float(getattr(self, "plot_baselines", {}).get(spec.get("key"), 0.0))
+                        # This is the shared baseline-centred ADC stream.  The
+                        # force engine receives volts before every Jerk transform.
+                        centered_counts = float(sweep[sample_index]) - baseline
+                        value = centered_counts * voltage_scale
+                        # Force uses the same configured physical polarity as
+                        # Jerk before PZT charge/force reconstruction.
+                        values[position] = float(self._apply_signal_integration_sensor_polarity(
+                            np.asarray([value], dtype=np.float64)
+                        )[0])
+                        channel_times[position] = float(times[row_index]) + float(sample_index) * dt_s
+                        if mux_timing is not None:
+                            key = spec.get("key")
+                            adc_input = key[4] if isinstance(key, tuple) and len(key) >= 5 else None
+                            try:
+                                adc_input = int(adc_input)
+                                if adc_input in (1, 2):
+                                    timing_context = PztDecayTimingContext.from_adc_mux_timing(
+                                        mux_timing, adc_input
+                                    )
+                                    # The measured sweep timestamp anchors the
+                                    # burst.  The shared MUX model supplies the
+                                    # precise effective offset within it.
+                                    first_index = int(spec["sample_indices"][0])
+                                    channel_times[position] = (
+                                        float(times[row_index]) + float(first_index) * dt_s
+                                        + timing_context.observation_offset_s(repeat_index)
+                                        - timing_context.observation_offset_s(0)
+                                    )
+                                    previous_repeat = (
+                                        repeat_slots - 1 if repeat_index == 0 else repeat_index - 1
+                                    )
+                                    channel_leak_times[position] = (
+                                        timing_context.connected_exposure_between(
+                                            previous_repeat, repeat_index
+                                        )
+                                    )
+                                    pre_sample_times[position] = float(
+                                        mux_timing.decay_before_effective_sample_s(
+                                            adc_input=adc_input, repeat_index=repeat_index
+                                        )
+                                    )
+                            except (TypeError, ValueError, AttributeError):
+                                pass
+                    package_voltages[package_id] = values
+                    package_times[package_id] = channel_times
+                    package_leak_times[package_id] = channel_leak_times
+                    package_pre_sample_times[package_id] = pre_sample_times
+                try:
+                    engine.process_sample(
+                        (int(first_sweep_id) + row_index, repeat_index),
+                        package_voltages,
+                        package_times,
+                        grid_positions=grid_positions,
+                        observations_per_sweep=repeat_slots,
+                        # The shared timing model provides connected exposure
+                        # between consecutive effective samples.  The low-level
+                        # integrator derives remaining wall time as off-MUX
+                        # exposure when that physical model is enabled.
+                        leak_dt_s=package_leak_times,
+                        pre_sample_decay_dt_s=package_pre_sample_times,
+                        # ``_pressure_package_sensor_gains`` belongs to the
+                        # Jerk/shear visualization path after its filtering;
+                        # it is not a Newton calibration and is deliberately
+                        # never applied here.  Cpzt and d33 are the current
+                        # Force Display physical calibration contract.
+                        channel_calibration={},
+                    )
+                except ValueError as exc:
+                    # A capture restart/buffer discontinuity must not bridge an
+                    # unknown interval.  Reset and continue from the next block.
+                    self._rebuild_pressure_force_engine()
+                    message = f"Force Display reset: {exc}"
+                    if message != getattr(self, "_pressure_force_last_error", "") and hasattr(self, "log_status"):
+                        self.log_status(message)
+                        self._pressure_force_last_error = message
+                    return
+        self._pressure_force_last_processed_sweep_count = int(first_sweep_id) + block.shape[0]
+        self._queue_pressure_force_display_render()
+
+    def _queue_pressure_force_display_render(self) -> None:
+        """Coalesce force-map paints without delaying sample integration."""
+        if not self._is_pressure_map_force_display_tab_active():
+            return
+        timer = getattr(self, "force_display_update_timer", None)
+        if timer is None:
+            self._render_pressure_force_display()
+            return
+        if not timer.isActive():
+            timer.start(100)
+
+    def _render_pressure_force_display(self) -> None:
+        engine = getattr(self, "pressure_force_engine", None)
+        if engine is None or not hasattr(self, "force_pressure_map_widget"):
+            return
+        grid_positions = self._get_force_display_grid_positions()
+        engine.configure_layout(grid_positions)
+        results = engine.package_results()
+        if not results:
+            self.force_pressure_map_widget.update_force_display(None)
+            return
+        status = getattr(self, "force_display_status_label", None)
+        if status is not None and status.text() in {
+            "Waiting for baseline-centred PZT samples",
+            "Force Display reset",
+        }:
+            status.setText("")
+        array_result = engine.array_result()
+        # A positioned package layout is always a complete, static Force
+        # array.  Zero packages remain visible as zero fields rather than
+        # being dropped when they have no current force increment.
+        if array_result is not None:
+            self.force_pressure_map_widget.update_force_array_display(array_result, results)
+            for widget in self.force_package_widgets.values():
+                widget.setVisible(False)
+        else:
+            # Each package preserves an independent accumulated state and gets
+            # its own readout.  All widgets use the Jerk visual configuration.
+            self.force_pressure_map_widget.update_force_display(results[0])
+            active_ids = {item.sensor_id for item in results[1:]}
+            for item in results[1:]:
+                widget = self.force_package_widgets.get(item.sensor_id)
+                if widget is None:
+                    widget = PressureMapWidget()
+                    self._configure_force_package_widget(widget)
+                    self.force_package_widgets[item.sensor_id] = widget
+                    # Insert above the shared status label.
+                    self.force_display_layout.insertWidget(max(0, self.force_display_layout.count() - 1), widget, PRESSURE_MAP_STRETCH)
+                widget.update_force_display(item)
+            for sensor_id, widget in self.force_package_widgets.items():
+                widget.setVisible(sensor_id in active_ids)
+
+    def _configure_force_package_widget(self, widget: PressureMapWidget) -> None:
+        """Clone the current shared Pressure Map presentation for lazy widgets."""
+        source = getattr(self, "force_pressure_map_widget", None)
+        if source is None:
+            return
+        widget.configure_markers(show_marker=source.show_marker)
+        widget.configure_intensity(max_intensity=source.max_intensity)
+        widget.configure_force_intensity(max_force_n=source.force_max_intensity_n)
+        widget.configure_noise_floor(noise_floor=source.noise_floor)
+        widget.configure_color_scale(color_scale=source.color_scale)
+        widget.configure_mirror(mirror=source.mirror)
+        widget.configure_display_mode(display_mode=source.display_mode)
+        widget.configure_boundary_visibility(
+            show_near_outer_boundary=source.show_near_outer_boundary,
+            show_outer_boundary=source.show_outer_boundary,
+            show_mid_boundary=source.show_mid_boundary,
+        )
+        widget.configure_mask(
+            mask_enabled=source.mask_enabled,
+            mask_points_mm=source.mask_points_mm,
+            mask_color=source.mask_color,
+        )
 
     def _create_shear_visualization_settings_group(self) -> QGroupBox:
         group = QGroupBox("Shear Visualization Settings")
@@ -841,8 +1280,7 @@ class PressureMapPanelMixin:
         enabled = self._check_bool("pressure_map_mask_enabled_check", DEFAULT_PRESSURE_MASK_ENABLED)
         self.pressure_map_mask_enabled = enabled
         self.pressure_map_mask_name = selected_name
-        widget = getattr(self, "pressure_map_widget", None)
-        if widget is not None and hasattr(widget, "configure_mask"):
+        for widget in self._pressure_map_display_widgets():
             widget.configure_mask(
                 mask_enabled=bool(enabled and geometry is not None),
                 mask_points_mm=geometry.points_mm if geometry is not None else (),
@@ -1406,6 +1844,7 @@ class PressureMapPanelMixin:
                     if str(package_id).strip()
                 },
             },
+            "pzt_force": self._pzt_force_settings(),
             "visualization": {
                 "arrow_gain": self._spin_float("shear_arrow_gain_spin", DEFAULT_ARROW_GAIN),
                 "arrow_min_threshold": self._spin_float(
@@ -1658,6 +2097,7 @@ class PressureMapPanelMixin:
         processing = self._settings_section(settings, "processing")
         visualization = self._settings_section(settings, "visualization")
         pressure_map = self._settings_section(settings, "pressure_map")
+        pzt_force = self._settings_section(settings, "pzt_force")
         changed = False
 
         changed |= self._set_spin_value("signal_integration_hpf_spin", signal_integration, "hpf_cutoff_hz", float)
@@ -1723,6 +2163,15 @@ class PressureMapPanelMixin:
                 "show_rs2",
             )
         changed |= self._set_spin_value("shear_noise_threshold_spin", processing, "noise_threshold", float)
+        changed |= self._set_spin_value("force_pzt_capacitance_spin", pzt_force, "capacitance_value", float)
+        changed |= self._set_combo_value("force_pzt_capacitance_unit_combo", pzt_force, "capacitance_unit")
+        changed |= self._set_spin_value("force_pzt_rleak_spin", pzt_force, "rleak_ohm", float)
+        changed |= self._set_spin_value("force_pzt_d33_spin", pzt_force, "d33_pc_per_n", float)
+        changed |= self._set_spin_value("force_pzt_noise_spin", pzt_force, "noise_threshold_v", float)
+        changed |= self._set_check_value("force_pzt_off_mux_check", pzt_force, "off_mux_leak_enabled")
+        changed |= self._set_spin_value("force_pzt_off_mux_rleak_spin", pzt_force, "off_mux_rleak_ohm", float)
+        changed |= self._set_spin_value("force_pzt_quiet_reset_spin", pzt_force, "reset_after_quiet_samples", int)
+        changed |= self._set_spin_value("force_display_max_n_spin", pzt_force, "display_max_force_n", float)
 
         raw_package_gains = processing.get("package_sensor_gains", settings.get("package_sensor_gains", {}))
         if not raw_package_gains:
@@ -2194,22 +2643,24 @@ class PressureMapPanelMixin:
                 "pressure_show_mid_boundary_check",
                 DEFAULT_PRESSURE_SHOW_MID_BOUNDARY,
             )
-            if hasattr(self, "pressure_map_widget"):
-                self.pressure_map_widget.configure_markers(show_marker=show_marker)
-                self.pressure_map_widget.configure_intensity(max_intensity=max_intensity)
-                self.pressure_map_widget.configure_noise_floor(
+            for widget in self._pressure_map_display_widgets():
+                # Force Display's dedicated render path always clears peak
+                # markers, while every other presentation setting is shared.
+                widget.configure_markers(show_marker=show_marker)
+                widget.configure_intensity(max_intensity=max_intensity)
+                widget.configure_noise_floor(
                     noise_floor=min_intensity
                 )
-                self.pressure_map_widget.configure_color_scale(color_scale=color_scale)
-                self.pressure_map_widget.configure_mirror(mirror=mirror)
-                self.pressure_map_widget.configure_display_mode(
+                widget.configure_color_scale(color_scale=color_scale)
+                widget.configure_mirror(mirror=mirror)
+                widget.configure_display_mode(
                     display_mode=(
                         PRESSURE_DISPLAY_MODE_SIGNED
                         if self._combo_text("pressure_display_mode_combo", "Magnitude").lower() == "signed"
                         else PRESSURE_DISPLAY_MODE_MAGNITUDE
                     )
                 )
-                self.pressure_map_widget.configure_boundary_visibility(
+                widget.configure_boundary_visibility(
                     show_near_outer_boundary=show_near_outer_boundary,
                     show_outer_boundary=show_outer_boundary,
                     show_mid_boundary=show_mid_boundary,
@@ -2255,11 +2706,21 @@ class PressureMapPanelMixin:
             self.pressure_map_array_generator = PressureMapArrayGenerator(
                 geometry=self.pressure_map_geometry,
             )
+            self._rebuild_pressure_force_engine()
             self._update_pressure_map_from_latest()
             self.save_last_shear_settings()
         except Exception as exc:
             if hasattr(self, "log_status"):
                 self.log_status(f"ERROR updating Pressure Map settings: {exc}")
+
+    def _pressure_map_display_widgets(self) -> list[PressureMapWidget]:
+        return [
+            widget for widget in (
+                getattr(self, "pressure_map_widget", None),
+                getattr(self, "force_pressure_map_widget", None),
+                *getattr(self, "force_package_widgets", {}).values(),
+            ) if widget is not None
+        ]
 
     def on_signal_integration_reset_clicked(self) -> None:
         """Reset the integrated voltage preview to the latest display window.
@@ -2465,13 +2926,22 @@ class PressureMapPanelMixin:
             outer_tab_visible = bool(self.should_update_signal_integration_display())
         elif hasattr(self, "get_current_visualization_tab_name"):
             outer_tab_visible = self.get_current_visualization_tab_name() == PRESSURE_MAP_TAB_NAME
-        return outer_tab_visible and self._is_pressure_map_display_tab_active()
+        return outer_tab_visible and (
+            self._is_pressure_map_display_tab_active()
+            or self._is_pressure_map_force_display_tab_active()
+        )
 
     def _is_pressure_map_display_tab_active(self) -> bool:
         inner_tabs = getattr(self, "pressure_map_inner_tabs", None)
         if inner_tabs is None:
             return True
         return inner_tabs.currentIndex() == getattr(self, "pressure_map_display_tab_index", 0)
+
+    def _is_pressure_map_force_display_tab_active(self) -> bool:
+        inner_tabs = getattr(self, "pressure_map_inner_tabs", None)
+        if inner_tabs is None:
+            return False
+        return inner_tabs.currentIndex() == getattr(self, "pressure_map_force_display_tab_index", 1)
 
     def _is_pressure_map_settings_tab_active(self) -> bool:
         inner_tabs = getattr(self, "pressure_map_inner_tabs", None)
@@ -2606,6 +3076,20 @@ class PressureMapPanelMixin:
                 "mux": 1,
             })
         return layout
+
+    def _get_force_display_grid_positions(self) -> dict[str, tuple[int, int] | None]:
+        """Return the configured physical array, independent of active inputs.
+
+        Acquisition selection decides which packages contribute samples; the
+        Force Display layout must instead remain the complete configured PZT
+        array so inactive packages render as zero-valued package fields.
+        """
+        if hasattr(self, "is_array_sensor_selection_mode") and self.is_array_sensor_selection_mode():
+            return dict(self._get_array_sensor_grid_positions())
+        return {
+            str(item["sensor_id"]): item.get("grid_position")
+            for item in self._get_signal_integration_package_layout()
+        }
 
     def _is_multi_package_force_mode(self, package_layout: list[dict[str, object]]) -> bool:
         if not (hasattr(self, "is_array_sensor_selection_mode") and self.is_array_sensor_selection_mode()):
@@ -2744,6 +3228,19 @@ class PressureMapPanelMixin:
         )
         try:
             package_displays = self._build_pressure_map_package_displays()
+            force_engine = getattr(self, "pressure_force_engine", None)
+            if force_engine is not None:
+                # The Jerk package grids above are the sole source of Force
+                # spatial shapes.  No force-side pressure-map generation.
+                force_engine.apply_jerk_shapes(package_displays)
+            if self._is_pressure_map_force_display_tab_active():
+                if package_displays:
+                    first_package = package_displays[0]
+                    self._latest_shear_result = first_package.shear_result
+                    self._latest_normal_force_result = first_package.normal_force_result
+                    self._latest_pressure_map_result = first_package.pressure_result
+                self._render_pressure_force_display()
+                return
             if len(package_displays) > 1:
                 first_package = package_displays[0]
                 array_result = self._build_pressure_map_array_result(package_displays)
@@ -2779,8 +3276,13 @@ class PressureMapPanelMixin:
             normal_force_result = self.normal_force_calculator.compute(
                 shear_result.residual,
             )
+            # The spatial map takes the post-shear residual, not the
+            # baseline-shifted normal-force values.  That common offset serves
+            # the numerical force/centroid calculation; as spatial anchors it
+            # can blank the sensor that was actually pressed and invent large
+            # values on quiet ones.
             pressure_map_result = self.pressure_map_generator.generate(
-                normal_force_result.normalized,
+                shear_result.residual,
             )
             self.pressure_map_widget.update_display(
                 normal_force_result,
@@ -2829,7 +3331,10 @@ class PressureMapPanelMixin:
             calibrated_values = self._calibrate_signal_integration_values_for_shear(package_values, str(sensor_id))
             shear_result = self.shear_detector.detect(calibrated_values)
             normal_force_result = self.normal_force_calculator.compute(shear_result.residual)
-            pressure_result = self.pressure_map_generator.generate(normal_force_result.normalized)
+            # Spatial anchors are the post-shear residual; see the single
+            # package path above for why the normal-force baseline shift must
+            # not reach the pressure map.
+            pressure_result = self.pressure_map_generator.generate(shear_result.residual)
             layout_item = layout_by_sensor_id.get(str(sensor_id).upper(), {})
             color_slot = int(layout_item.get("color_slot", fallback_index))
             package_displays.append(

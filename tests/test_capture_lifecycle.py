@@ -1,3 +1,4 @@
+import threading
 import unittest
 
 from data_processing.capture_lifecycle import CaptureLifecycleMixin
@@ -42,6 +43,28 @@ class CaptureLifecycleHarness(CaptureLifecycleMixin):
 
 
 class CaptureLifecycleTests(unittest.TestCase):
+    def test_reset_capture_buffer_state_resets_force_display_state(self):
+        harness = CaptureLifecycleHarness()
+        harness.buffer_lock = threading.Lock()
+        harness.raw_data = []
+        harness.sweep_timestamps = []
+        harness.sweep_count = 0
+        harness.buffer_write_index = 0
+        harness.raw_data_buffer = None
+        harness.processed_data_buffer = None
+        harness.sweep_timestamps_buffer = None
+        reset_calls = []
+        harness.reset_pressure_force_display_for_baseline_change = (
+            lambda: reset_calls.append(True)
+        )
+
+        harness._reset_capture_buffer_state()
+
+        # Clearing the shared baseline must also clear any Force history that
+        # was integrated against it.
+        self.assertEqual(harness.plot_baselines, {})
+        self.assertEqual(reset_calls, [True])
+
     def test_set_controls_enabled_updates_acquisition_controls(self):
         harness = CaptureLifecycleHarness()
 

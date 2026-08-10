@@ -280,6 +280,26 @@ class ADCPlottingTests(unittest.TestCase):
         self.assertEqual(harness.channel_plot_baselines[7], 2.0)
         self.assertTrue(harness.subtract_baseline_check.isChecked())
 
+    def test_capture_current_plot_baselines_resets_force_display_state(self):
+        harness = ADCPlottingHarness()
+        harness.sweep_count = 3
+        harness.buffer_write_index = 3
+        harness.samples_per_sweep = 1
+        harness.sweep_timestamps_buffer = np.array([0.0, 1.0, 2.0], dtype=np.float64)
+        harness._active_data_buffer = np.array([[1.0], [100.0], [2.0]], dtype=np.float32)
+        harness._display_specs = [{"key": ("adc", 7), "sample_indices": [0], "label": "CH7"}]
+        reset_calls = []
+        harness.reset_pressure_force_display_for_baseline_change = (
+            lambda: reset_calls.append(True)
+        )
+
+        success = harness.capture_current_plot_baselines(window_sec=10.0, log_message=False)
+
+        # A new shared baseline invalidates any Force history integrated
+        # against the previous one.
+        self.assertTrue(success)
+        self.assertEqual(reset_calls, [True])
+
 
 if __name__ == "__main__":
     unittest.main()

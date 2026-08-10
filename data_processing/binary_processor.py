@@ -229,6 +229,20 @@ class BinaryProcessorMixin:
                     avg_sample_time_us / 1_000_000.0 if avg_sample_time_us > 0 else 0.0
                 )
 
+                # The Force Display owns a stateful physical integrator. Feed
+                # each received acquisition block once here, rather than from a
+                # repaint or the pressure-map GUI refresh path.
+                if hasattr(self, 'process_pressure_force_block'):
+                    try:
+                        self.process_pressure_force_block(
+                            block_samples_array,
+                            sweep_timestamps_sec,
+                            first_sweep_id=int(self.sweep_count) - int(sweeps_in_block),
+                            avg_sample_time_us=float(avg_sample_time_us),
+                        )
+                    except Exception as exc:
+                        self.log_status(f"WARNING: Force Display processing unavailable: {exc}")
+
                 ghost_calibration_completed = bool(
                     hasattr(self, 'maybe_finalize_pzt_ghost_calibration')
                     and self.maybe_finalize_pzt_ghost_calibration()

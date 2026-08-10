@@ -60,6 +60,146 @@ class PztQuietBaselineEstimate:
     sample_count: int
 
 
+@dataclass(frozen=True, slots=True)
+class PztForceStepResult:
+    """One exactly-once update of a live, baseline-centred PZT channel."""
+
+    delta_force_n: float
+    accumulated_force_n: float
+    centered_voltage_v: float
+    active: bool
+    reset_occurred: bool
+
+
+@dataclass(slots=True)
+class PztForceChannelIntegrator:
+    """Stateful counterpart of :func:`calculate_pzt_force_from_voltage`.
+
+    ``process_centered_sample`` deliberately accepts voltage after the
+    application's shared time-series median-baseline stage.  It must therefore
+    never estimate or subtract another midpoint.
+    """
+
+    capacitance_f: float
+    rleak_ohm: float
+    d33_c_per_n: float
+    noise_threshold_v: float
+    off_mux_rleak_ohm: float | None = None
+    reset_on_event_complete: bool = True
+    previous_centered_voltage_v: float = 0.0
+    previous_timestamp_s: float | None = None
+    accumulated_force_n: float = 0.0
+    event_polarity: int = 0
+    saw_opposite_pair: bool = False
+    event_completed: bool = False
+    active: bool = False
+    initialized: bool = False
+
+    def __post_init__(self) -> None:
+        validate_pzt_force_settings(
+            self.capacitance_f, self.rleak_ohm, self.d33_c_per_n
+        )
+        if not np.isfinite(self.noise_threshold_v):
+            raise ValueError("PZT force noise threshold must be finite")
+        if self.off_mux_rleak_ohm is not None and (
+            not np.isfinite(self.off_mux_rleak_ohm) or self.off_mux_rleak_ohm <= 0.0
+        ):
+            raise ValueError("off-MUX leak resistance must be greater than zero")
+
+    def reset(self) -> None:
+        """Clear physical state without changing the validated parameters."""
+        self.previous_centered_voltage_v = 0.0
+        self.previous_timestamp_s = None
+        self.accumulated_force_n = 0.0
+        self.event_polarity = 0
+        self.saw_opposite_pair = False
+        self.event_completed = False
+        self.active = False
+        self.initialized = False
+
+    def process_centered_sample(
+        self,
+        centered_voltage_v: float,
+        timestamp_s: float,
+        *,
+        leak_dt_s: float | None = None,
+        pre_sample_decay_dt_s: float | None = None,
+    ) -> PztForceStepResult:
+        """Process one new sample and return its force-state transition.
+
+        The first sample establishes the previous voltage/timestamp and has no
+        charge interval to integrate.  Subsequent calls require a strictly
+        increasing timestamp, which prevents accidental integration across a
+        restart or unordered ring-buffer snapshot.
+        """
+        voltage = float(centered_voltage_v)
+        timestamp = float(timestamp_s)
+        if not np.isfinite(voltage) or not np.isfinite(timestamp):
+            raise ValueError("PZT force samples and timestamps must be finite")
+        threshold = abs(float(self.noise_threshold_v))
+        active_voltage = 0.0 if abs(voltage) < threshold else voltage
+        active = _polarity(active_voltage, threshold) != 0
+        self.active = active
+
+        if not self.initialized:
+            self.previous_centered_voltage_v = active_voltage
+            self.previous_timestamp_s = timestamp
+            self.event_polarity = _polarity(active_voltage, threshold)
+            self.event_completed = False
+            self.initialized = True
+            return PztForceStepResult(0.0, 0.0, active_voltage, active, False)
+
+        previous_timestamp = self.previous_timestamp_s
+        assert previous_timestamp is not None
+        wall_dt = timestamp - previous_timestamp
+        if not np.isfinite(wall_dt) or wall_dt <= 0.0:
+            raise ValueError("PZT force timestamps must be strictly increasing")
+        leak_dt = wall_dt if leak_dt_s is None else float(leak_dt_s)
+        if not np.isfinite(leak_dt):
+            raise ValueError("PZT force leak_dt_s must be finite")
+        leak_dt = min(max(leak_dt, 0.0), wall_dt)
+        pre_sample_dt = 0.0 if pre_sample_decay_dt_s is None else float(pre_sample_decay_dt_s)
+        if not np.isfinite(pre_sample_dt) or pre_sample_dt < 0.0:
+            raise ValueError("PZT force pre_sample_decay_dt_s must be finite and non-negative")
+
+        tau_on = float(self.rleak_ohm) * float(self.capacitance_f)
+        decay_exponent = leak_dt / tau_on
+        if self.off_mux_rleak_ohm is not None:
+            tau_off = float(self.off_mux_rleak_ohm) * float(self.capacitance_f)
+            decay_exponent += max(wall_dt - leak_dt, 0.0) / tau_off
+        alpha = float(np.exp(-decay_exponent))
+        correction = float(np.exp(pre_sample_dt / tau_on))
+        prior_force = self.accumulated_force_n
+        self.accumulated_force_n += (
+            float(self.capacitance_f) / float(self.d33_c_per_n)
+        ) * correction * (active_voltage - alpha * self.previous_centered_voltage_v)
+
+        polarity = _polarity(active_voltage, threshold)
+        reset_occurred = False
+        if polarity:
+            self.event_completed = False
+            if self.event_polarity and polarity != self.event_polarity:
+                self.saw_opposite_pair = True
+            self.event_polarity = polarity
+        elif self.saw_opposite_pair and abs(active_voltage) < threshold:
+            self.event_completed = True
+            reset_occurred = True
+            if self.reset_on_event_complete:
+                self.accumulated_force_n = 0.0
+                self.event_polarity = 0
+                self.saw_opposite_pair = False
+
+        self.previous_centered_voltage_v = active_voltage
+        self.previous_timestamp_s = timestamp
+        return PztForceStepResult(
+            self.accumulated_force_n - prior_force,
+            self.accumulated_force_n,
+            active_voltage,
+            active,
+            reset_occurred,
+        )
+
+
 def calculate_pzt_force_from_settings(
     voltage_v,
     time_s,
@@ -201,6 +341,8 @@ def validate_pzt_force_settings(capacitance_f: float, rleak_ohm: float, d33_c_pe
     ValueError
         If capacitance, leak resistance, or d33 is not strictly positive.
     """
+    if not all(np.isfinite(value) for value in (capacitance_f, rleak_ohm, d33_c_per_n)):
+        raise ValueError("PZT force parameters must be finite")
     if capacitance_f <= 0.0:
         raise ValueError("PZT capacitance must be greater than zero")
     if rleak_ohm <= 0.0:
@@ -289,55 +431,28 @@ def calculate_pzt_force_from_voltage(
     active_centered = voltage - v_mid
     threshold = abs(float(noise_threshold_v))
     active_centered[np.abs(active_centered) < threshold] = 0.0
-    tau = float(rleak_ohm) * float(capacitance_f)
-    tau_off = None
-    if off_mux_rleak_ohm is not None:
-        off_mux_rleak = float(off_mux_rleak_ohm)
-        if off_mux_rleak <= 0.0:
-            raise ValueError("off-MUX leak resistance must be greater than zero")
-        tau_off = off_mux_rleak * float(capacitance_f)
-    scale = float(capacitance_f) / float(d33_c_per_n)
     force = np.zeros_like(active_centered, dtype=np.float64)
-    accumulator = 0.0
-    event_polarity = 0
-    saw_opposite_pair = False
-
-    previous_v = float(active_centered[0])
-    current_polarity = _polarity(previous_v, threshold)
-    if current_polarity:
-        event_polarity = current_polarity
-
+    integrator = PztForceChannelIntegrator(
+        capacitance_f=float(capacitance_f),
+        rleak_ohm=float(rleak_ohm),
+        d33_c_per_n=float(d33_c_per_n),
+        noise_threshold_v=threshold,
+        off_mux_rleak_ohm=off_mux_rleak_ohm,
+    )
+    # The live integrator is the single implementation of the RC equation.
+    # Supplying pre-centred samples here preserves the public batch API while
+    # avoiding a second baseline calculation in the streaming caller.
+    integrator.process_centered_sample(float(active_centered[0]), float(times[0]))
     for index in range(1, active_centered.size):
-        dt = float(times[index] - times[index - 1])
-        if dt <= 0.0:
-            raise ValueError("PZT force timestamps must be strictly increasing")
-        leak_dt = dt if leak_intervals is None else float(leak_intervals[index - 1])
-        leak_dt = min(max(leak_dt, 0.0), dt)
-        decay_exponent = leak_dt / tau
-        if tau_off is not None:
-            decay_exponent += max(dt - leak_dt, 0.0) / tau_off
-        alpha = float(np.exp(-decay_exponent))
-        pre_sample_decay = (
-            0.0 if pre_sample_intervals is None else float(pre_sample_intervals[index - 1])
+        step = integrator.process_centered_sample(
+            float(active_centered[index]),
+            float(times[index]),
+            leak_dt_s=None if leak_intervals is None else float(leak_intervals[index - 1]),
+            pre_sample_decay_dt_s=(
+                None if pre_sample_intervals is None else float(pre_sample_intervals[index - 1])
+            ),
         )
-        new_charge_decay_correction = float(np.exp(pre_sample_decay / tau))
-        current_v = float(active_centered[index])
-        accumulator += scale * new_charge_decay_correction * (
-            current_v - (alpha * previous_v)
-        )
-
-        current_polarity = _polarity(current_v, threshold)
-        if current_polarity:
-            if event_polarity and current_polarity != event_polarity:
-                saw_opposite_pair = True
-            event_polarity = current_polarity
-        elif saw_opposite_pair and abs(current_v) < threshold:
-            accumulator = 0.0
-            event_polarity = 0
-            saw_opposite_pair = False
-
-        force[index] = accumulator
-        previous_v = current_v
+        force[index] = step.accumulated_force_n
 
     return force
 

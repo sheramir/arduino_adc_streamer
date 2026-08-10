@@ -1,8 +1,9 @@
-"""World-space package-candidate generation and overlap blending.
+"""World-space package-candidate generation and superposition.
 
 Each package keeps its own signed candidate field until every contributing
-support has been evaluated.  This replaces the historic synthetic gap bridge
-and absolute-value dominant pasting, which created artificial seams and peaks.
+support has been evaluated.  Overlapping packages then superpose: a package
+field is a physical measurement in its own right, so the presence of a
+neighbour must never attenuate or crop it.
 """
 
 from __future__ import annotations
@@ -36,7 +37,6 @@ from data_processing.pressure_map_geometry import PressureMapGeometry
 
 PRESSURE_ARRAY_GEOMETRY_EPSILON = 1e-9
 PRESSURE_ARRAY_BLEND_EPSILON = 1e-12
-PRESSURE_DIAGONAL_REGULARIZATION_SCALE = 0.05
 _FRAME_IDS = count(1)
 
 
@@ -63,6 +63,17 @@ class PressureMapArrayPackage:
     grid_position: tuple[int, int]
     normal_force_result: NormalForceResult
     pressure_result: PressureMapResult
+
+
+@dataclass(frozen=True, slots=True)
+class PressureMapArrayForcePackage:
+    """A positioned, already-accumulated local raster for Force Display."""
+
+    sensor_id: str
+    grid_position: tuple[int, int]
+    force_grid_n: np.ndarray
+    x_coordinates_mm: np.ndarray
+    y_coordinates_mm: np.ndarray
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,7 +128,7 @@ class _PackageCandidate:
 
 
 class PressureMapArrayGenerator:
-    """Blend fixed-support package candidates in a shared world coordinate system."""
+    """Superpose fixed-support package candidates in a shared world coordinate system."""
 
     def __init__(
         self,
@@ -165,7 +176,7 @@ class PressureMapArrayGenerator:
             raise ValueError("outer_boundary_reach_mm must be positive")
 
     def generate(self, packages: Sequence[PressureMapArrayPackage]) -> PressureMapArrayResult:
-        """Evaluate all package candidates first, then blend shared supports."""
+        """Evaluate all package candidates first, then superpose them."""
 
         complete_packages = sorted(
             (package for package in packages if package.grid_position is not None and package.pressure_result is not None),
@@ -198,25 +209,14 @@ class PressureMapArrayGenerator:
             (first.package.sensor_id, second.package.sensor_id)
             for first, second in structural_candidate_pairs
         )
-        (
-            pressure_grid,
-            magnitude_pressure_grid,
-            active_overlap_pairs,
-            pair_denominator,
-            candidate_denominator,
-            pair_effective_weights,
-        ) = self._blend_candidates(
-            candidates,
-            structural_candidate_pairs,
-            x_grid,
-            y_grid,
-            x_coordinates,
-            y_coordinates,
+        pressure_grid, magnitude_pressure_grid = self._superpose_candidates(candidates, x_grid)
+        active_overlap_pairs = self._active_overlap_pairs(
+            structural_candidate_pairs, x_coordinates, y_coordinates
         )
         array_support_mask = np.logical_or.reduce(
             tuple(candidate.support_mask for candidate in candidates)
         )
-        # Preserve the local support contract after every blend mode too.
+        # Preserve the local support contract after composition too.
         pressure_grid[~array_support_mask] = 0.0
         magnitude_pressure_grid[~array_support_mask] = 0.0
         diagnostics = None
@@ -224,6 +224,10 @@ class PressureMapArrayGenerator:
             diagnostics = {
                 "support_confidence": {
                     candidate.package.sensor_id: candidate.support_confidence.copy()
+                    for candidate in candidates
+                },
+                "candidate_fields": {
+                    candidate.package.sensor_id: candidate.values.copy()
                     for candidate in candidates
                 },
                 "local_presence": {
@@ -235,9 +239,6 @@ class PressureMapArrayGenerator:
                 # Compatibility diagnostic name; these are structural,
                 # signal-independent neighbor pairs.
                 "eligible_neighbor_pairs": structural_pairs,
-                "pair_confidence_denominator": pair_denominator,
-                "candidate_fallback_denominator": candidate_denominator,
-                "effective_pair_weights": pair_effective_weights,
                 "array_support_mask": array_support_mask.copy(),
                 "final_array_field": pressure_grid.copy(),
                 "final_magnitude_array_field": magnitude_pressure_grid.copy(),
@@ -295,6 +296,52 @@ class PressureMapArrayGenerator:
                 (result.pixels_per_mm, self.geometry.pixels_per_mm),
             )
         )
+
+    def compose_force_grids(
+        self,
+        packages: Sequence[PressureMapArrayForcePackage],
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, dict[str, tuple[float, float]]]:
+        """Compose static Force Display package fields on the shared array grid.
+
+        Unlike ``generate``, this consumes the authoritative accumulated local
+        rasters.  Every configured package participates in geometry/centres;
+        zero-valued packages do not dilute an active neighbour in an overlap.
+        """
+        complete = sorted(packages, key=lambda item: (item.grid_position, item.sensor_id))
+        if not complete:
+            raise ValueError("at least one positioned force package is required")
+        ids = [item.sensor_id for item in complete]
+        positions = [item.grid_position for item in complete]
+        if len(ids) != len(set(ids)) or len(positions) != len(set(positions)):
+            raise ValueError("force array packages require unique ids and grid positions")
+        # Reuse the established configured-layout centre and world-grid rules.
+        centers = self._package_centers(complete)
+        support = {item.sensor_id: self.geometry.support_bounds_mm for item in complete}
+        x_values, y_values = self._array_coordinates(complete, centers, support)
+        x_grid, y_grid = np.meshgrid(x_values, y_values)
+        combined = np.zeros_like(x_grid, dtype=np.float64)
+        for package in complete:
+            local_grid = np.asarray(package.force_grid_n, dtype=np.float64)
+            local_x = np.asarray(package.x_coordinates_mm, dtype=np.float64)
+            local_y = np.asarray(package.y_coordinates_mm, dtype=np.float64)
+            if local_grid.shape != (local_y.size, local_x.size):
+                raise ValueError("force package grid and coordinate shapes do not match")
+            center_x, center_y = centers[package.sensor_id]
+            local_world_x = x_grid - center_x
+            local_world_y = y_grid - center_y
+            ix = np.rint((local_world_x - local_x[0]) / (local_x[1] - local_x[0])).astype(int)
+            iy = np.rint((local_world_y - local_y[0]) / (local_y[1] - local_y[0])).astype(int)
+            valid = (
+                (ix >= 0) & (ix < local_x.size) & (iy >= 0) & (iy < local_y.size)
+            )
+            values = np.zeros_like(x_grid, dtype=np.float64)
+            values[valid] = local_grid[iy[valid], ix[valid]]
+            # Use the same superposition rule as the Jerk array compositor so
+            # both displays combine overlapping packages identically.
+            confidence = self._support_confidence(local_world_x, local_world_y)
+            confidence[~valid] = 0.0
+            combined += confidence * values
+        return combined, np.abs(combined), x_values, y_values, dict(centers)
 
     def _candidate_support_bounds(self, packages: Sequence[PressureMapArrayPackage], centers: Mapping[str, tuple[float, float]]) -> dict[str, tuple[float, float, float, float]]:
         """Return the same local Outer-Boundary support square for every package."""
@@ -360,9 +407,9 @@ class PressureMapArrayGenerator:
                 local_y[support_mask],
                 support_bounds_mm=support_bounds_mm,
             )
+        values[~support_mask] = 0.0
         support_confidence = self._support_confidence(local_x, local_y)
         support_confidence[~support_mask] = 0.0
-        values[~support_mask] = 0.0
         local_present = support_mask & (np.abs(values) > PRESSURE_ARRAY_BLEND_EPSILON)
         return _PackageCandidate(
             package,
@@ -390,42 +437,44 @@ class PressureMapArrayGenerator:
             confidence[transition] = 1.0 - (3.0 * t ** 2) + (2.0 * t ** 3)
         return confidence
 
-    def _blend_candidates(
+    def _superpose_candidates(
         self,
         candidates: Sequence[_PackageCandidate],
-        structural_candidate_pairs: Sequence[tuple[_PackageCandidate, _PackageCandidate]],
         x_grid_mm: np.ndarray,
-        y_grid_mm: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Add every independent package field on the shared world raster.
+
+        Each candidate is faded out by its own support confidence, so it
+        contributes nothing at its Outer Boundary and the sum is continuous.
+        That fade depends only on distance from the package centre, never on a
+        neighbour, so no package can attenuate, crop, or reshape another's
+        measured field.
+
+        Superposition produces one field, so magnitude is that field's
+        magnitude.  Accumulating ``sum |v|`` instead would double-count every
+        package that measured the same press and roughly double the reading
+        wherever two supports overlap, which is also inconsistent with the
+        single-package display taking ``abs`` of its own grid.
+        """
+
+        pressure_grid = np.zeros_like(x_grid_mm, dtype=np.float64)
+        for candidate in candidates:
+            pressure_grid += candidate.support_confidence * candidate.values
+        return pressure_grid, np.abs(pressure_grid)
+
+    def _active_overlap_pairs(
+        self,
+        structural_candidate_pairs: Sequence[tuple[_PackageCandidate, _PackageCandidate]],
         x_coordinates_mm: np.ndarray,
         y_coordinates_mm: np.ndarray,
-    ) -> tuple[
-        np.ndarray,
-        np.ndarray,
-        tuple[tuple[str, str], ...],
-        np.ndarray,
-        np.ndarray,
-        dict[tuple[str, str], tuple[np.ndarray, np.ndarray]],
-    ]:
-        """Blend local candidates using only present neighboring overlap regions."""
+    ) -> tuple[tuple[str, str], ...]:
+        """Report structural neighbours that currently share a live overlap.
 
-        candidate_numerator = np.zeros_like(x_grid_mm, dtype=np.float64)
-        candidate_magnitude_numerator = np.zeros_like(x_grid_mm, dtype=np.float64)
-        candidate_denominator = np.zeros_like(x_grid_mm, dtype=np.float64)
-        for candidate in candidates:
-            candidate_weight = (
-                candidate.support_confidence
-                * candidate.activity_confidence
-                * candidate.local_present
-            )
-            candidate_numerator += candidate_weight * candidate.values
-            candidate_magnitude_numerator += candidate_weight * np.abs(candidate.values)
-            candidate_denominator += candidate_weight
+        Superposition needs no pair enumeration; this remains as display and
+        diagnostic metadata describing where two packages actually meet.
+        """
 
-        pair_numerator = np.zeros_like(x_grid_mm, dtype=np.float64)
-        pair_magnitude_numerator = np.zeros_like(x_grid_mm, dtype=np.float64)
-        pair_denominator = np.zeros_like(x_grid_mm, dtype=np.float64)
-        active_overlap_pairs: list[tuple[str, str]] = []
-        pair_effective_weights: dict[tuple[str, str], tuple[np.ndarray, np.ndarray]] = {}
+        active: list[tuple[str, str]] = []
         for first, second in structural_candidate_pairs:
             if not self._pair_is_sensor_relevant(first, second):
                 continue
@@ -436,55 +485,11 @@ class PressureMapArrayGenerator:
                 overlap, x_coordinates_mm, y_coordinates_mm
             )
             region = np.s_[y_slice, x_slice]
-            if x_grid_mm[region].size == 0:
+            if first.local_present[region].size == 0:
                 continue
-            pair_values, magnitude_pair_values, pair_present, effective_weights = self._pair_blend(
-                first,
-                second,
-                overlap,
-                x_grid_mm[region],
-                y_grid_mm[region],
-                region,
-                include_effective_weights=self.debug,
-            )
-            if not np.any(pair_present):
-                continue
-            pair_key = (first.package.sensor_id, second.package.sensor_id)
-            active_overlap_pairs.append(pair_key)
-            if effective_weights is not None:
-                pair_effective_weights[pair_key] = effective_weights
-            pair_confidence = (
-                first.support_confidence[region]
-                * second.support_confidence[region]
-                * min(first.activity_confidence, second.activity_confidence)
-                * pair_present
-            )
-            pair_numerator[region] += pair_confidence * pair_values
-            pair_magnitude_numerator[region] += pair_confidence * magnitude_pair_values
-            pair_denominator[region] += pair_confidence
-
-        pressure_grid = np.zeros_like(x_grid_mm, dtype=np.float64)
-        magnitude_pressure_grid = np.zeros_like(x_grid_mm, dtype=np.float64)
-        pair_valid = pair_denominator > PRESSURE_ARRAY_BLEND_EPSILON
-        pressure_grid[pair_valid] = pair_numerator[pair_valid] / pair_denominator[pair_valid]
-        magnitude_pressure_grid[pair_valid] = (
-            pair_magnitude_numerator[pair_valid] / pair_denominator[pair_valid]
-        )
-        candidate_valid = ~pair_valid & (candidate_denominator > PRESSURE_ARRAY_BLEND_EPSILON)
-        pressure_grid[candidate_valid] = (
-            candidate_numerator[candidate_valid] / candidate_denominator[candidate_valid]
-        )
-        magnitude_pressure_grid[candidate_valid] = (
-            candidate_magnitude_numerator[candidate_valid] / candidate_denominator[candidate_valid]
-        )
-        return (
-            pressure_grid,
-            magnitude_pressure_grid,
-            tuple(active_overlap_pairs),
-            pair_denominator,
-            candidate_denominator,
-            pair_effective_weights,
-        )
+            if np.any(first.local_present[region] | second.local_present[region]):
+                active.append((first.package.sensor_id, second.package.sensor_id))
+        return tuple(active)
 
     def _eligible_neighbor_pairs(
         self, candidates: Sequence[_PackageCandidate]
@@ -544,84 +549,3 @@ class PressureMapArrayGenerator:
         if x1 - x0 <= PRESSURE_ARRAY_GEOMETRY_EPSILON or y1 - y0 <= PRESSURE_ARRAY_GEOMETRY_EPSILON:
             return None
         return (x0, x1, y0, y1)
-
-    def _pair_blend(
-        self,
-        first: _PackageCandidate,
-        second: _PackageCandidate,
-        overlap: tuple[float, float, float, float],
-        x_grid_mm: np.ndarray,
-        y_grid_mm: np.ndarray,
-        region: tuple[slice, slice],
-        *,
-        include_effective_weights: bool,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, tuple[np.ndarray, np.ndarray] | None]:
-        x0, x1, y0, y1 = overlap
-        first_center_x, first_center_y = first.center
-        second_center_x, second_center_y = second.center
-        if abs(first_center_y - second_center_y) <= PRESSURE_ARRAY_GEOMETRY_EPSILON:
-            u = np.clip((x_grid_mm - x0) / (x1 - x0), 0.0, 1.0)
-            if first_center_x <= second_center_x:
-                first_weight, second_weight = 1.0 - u, u
-            else:
-                first_weight, second_weight = u, 1.0 - u
-        elif abs(first_center_x - second_center_x) <= PRESSURE_ARRAY_GEOMETRY_EPSILON:
-            v = np.clip((y_grid_mm - y0) / (y1 - y0), 0.0, 1.0)
-            if first_center_y <= second_center_y:
-                first_weight, second_weight = 1.0 - v, v
-            else:
-                first_weight, second_weight = v, 1.0 - v
-        else:
-            u = np.clip((x_grid_mm - x0) / (x1 - x0), 0.0, 1.0)
-            v = np.clip((y_grid_mm - y0) / (y1 - y0), 0.0, 1.0)
-            first_is_left = first_center_x < second_center_x
-            first_is_bottom = first_center_y < second_center_y
-            if first_is_left == first_is_bottom:  # Bottom-left / Top-right
-                first_raw = (1.0 - u) * (1.0 - v) if first_is_left else u * v
-                second_raw = u * v if first_is_left else (1.0 - u) * (1.0 - v)
-            else:  # Top-left / Bottom-right
-                first_raw = (1.0 - u) * v if first_is_left else u * (1.0 - v)
-                second_raw = u * (1.0 - v) if first_is_left else (1.0 - u) * v
-            area_sum = first_raw + second_raw
-            normalized_area = np.full_like(area_sum, 0.5, dtype=np.float64)
-            np.divide(first_raw, area_sum, out=normalized_area, where=area_sum > PRESSURE_ARRAY_BLEND_EPSILON)
-            first_distance = np.hypot(x_grid_mm - first_center_x, y_grid_mm - first_center_y)
-            second_distance = np.hypot(x_grid_mm - second_center_x, y_grid_mm - second_center_y)
-            first_inverse_distance = 1.0 / np.maximum(first_distance, PRESSURE_ARRAY_BLEND_EPSILON)
-            second_inverse_distance = 1.0 / np.maximum(second_distance, PRESSURE_ARRAY_BLEND_EPSILON)
-            distance_weight = first_inverse_distance / (first_inverse_distance + second_inverse_distance)
-            normalized_sum = np.clip(area_sum / PRESSURE_DIAGONAL_REGULARIZATION_SCALE, 0.0, 1.0)
-            area_blend = 3.0 * normalized_sum ** 2 - 2.0 * normalized_sum ** 3
-            first_weight = area_blend * normalized_area + (1.0 - area_blend) * distance_weight
-            second_weight = 1.0 - first_weight
-        first_values = first.values[region]
-        second_values = second.values[region]
-        first_present = first.local_present[region]
-        second_present = second.local_present[region]
-        only_first = first_present & ~second_present
-        only_second = second_present & ~first_present
-        both_present = first_present & second_present
-        pair_present = first_present | second_present
-        pair_values = np.zeros_like(first_values, dtype=np.float64)
-        magnitude_pair_values = np.zeros_like(first_values, dtype=np.float64)
-        pair_values[only_first] = first_values[only_first]
-        pair_values[only_second] = second_values[only_second]
-        magnitude_pair_values[only_first] = np.abs(first_values[only_first])
-        magnitude_pair_values[only_second] = np.abs(second_values[only_second])
-        pair_values[both_present] = (
-            first_weight[both_present] * first_values[both_present]
-            + second_weight[both_present] * second_values[both_present]
-        )
-        magnitude_pair_values[both_present] = (
-            first_weight[both_present] * np.abs(first_values[both_present])
-            + second_weight[both_present] * np.abs(second_values[both_present])
-        )
-        if not include_effective_weights:
-            return pair_values, magnitude_pair_values, pair_present, None
-        applied_first = np.zeros_like(first_values, dtype=np.float64)
-        applied_second = np.zeros_like(first_values, dtype=np.float64)
-        applied_first[only_first] = 1.0
-        applied_second[only_second] = 1.0
-        applied_first[both_present] = first_weight[both_present]
-        applied_second[both_present] = second_weight[both_present]
-        return pair_values, magnitude_pair_values, pair_present, (applied_first, applied_second)

@@ -462,8 +462,14 @@ class ADCStreamerGUI(
         """Queue a pressure-map refresh outside the ADC block handler."""
         if not self.should_update_signal_integration_display():
             return
-        if hasattr(self, "_is_pressure_map_display_tab_active") and not self._is_pressure_map_display_tab_active():
-            return
+        if hasattr(self, "_is_pressure_map_display_tab_active"):
+            jerk_visible = self._is_pressure_map_display_tab_active()
+            force_visible = bool(
+                hasattr(self, "_is_pressure_map_force_display_tab_active")
+                and self._is_pressure_map_force_display_tab_active()
+            )
+            if not jerk_visible and not force_visible:
+                return
         if getattr(self, "_signal_integration_updating_plot", False):
             return
         if not self.signal_integration_update_timer.isActive():

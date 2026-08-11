@@ -29,6 +29,23 @@ def test_live_channel_integrator_matches_batch_reconstruction():
     np.testing.assert_allclose(observed, batch)
 
 
+def test_force_engine_uses_position_specific_capacitance():
+    engine = PressureForceDisplayEngine(
+        geometry=PressureMapGeometry(),
+        settings={
+            "center_capacitance_value": 2.0,
+            "outer_capacitance_value": 1.0,
+            "capacitance_unit": "nF",
+        },
+    )
+    engine.configure_layout({"PZT1": (0, 0)})
+    states = engine._packages["PZT1"].channel_states
+
+    assert states["C"].capacitance_f == pytest.approx(2e-9)
+    for position in ("T", "R", "L", "B"):
+        assert states[position].capacitance_f == pytest.approx(1e-9)
+
+
 def test_force_engine_processes_sample_identity_once_and_resets_completed_event():
     engine = PressureForceDisplayEngine(
         geometry=PressureMapGeometry(),

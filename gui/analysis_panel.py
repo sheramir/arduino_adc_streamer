@@ -134,6 +134,13 @@ class AnalysisPanelMixin:
                     self.analysis_state["overlays"] = default_overlays
                 pzt_force = payload.get("pzt_force")
                 if isinstance(pzt_force, dict):
+                    # Saved single-Cpzt settings remain valid: copy their value
+                    # into both new package-position fields on first load.
+                    legacy_capacitance = pzt_force.get("capacitance_value")
+                    if legacy_capacitance is not None:
+                        pzt_force = dict(pzt_force)
+                        pzt_force.setdefault("center_capacitance_value", legacy_capacitance)
+                        pzt_force.setdefault("outer_capacitance_value", legacy_capacitance)
                     default_pzt_force.update(pzt_force)
                     self.analysis_state["pzt_force"] = default_pzt_force
                 visible = payload.get("visible_labels")
@@ -257,45 +264,53 @@ class AnalysisPanelMixin:
 
         pzt_force_group = QGroupBox("PZT Force Settings")
         pzt_force_layout = QGridLayout(pzt_force_group)
-        pzt_force_layout.addWidget(QLabel("Cpzt:"), 0, 0)
-        self.analysis_pzt_capacitance_spin = QDoubleSpinBox()
-        self.analysis_pzt_capacitance_spin.setRange(1e-9, 1e12)
-        self.analysis_pzt_capacitance_spin.setDecimals(6)
-        self.analysis_pzt_capacitance_spin.setValue(float(PZT_FORCE_DEFAULT_SETTINGS["capacitance_value"]))
-        self.analysis_pzt_capacitance_spin.valueChanged.connect(self.on_analysis_settings_changed)
-        pzt_force_layout.addWidget(self.analysis_pzt_capacitance_spin, 0, 1)
+        pzt_force_layout.addWidget(QLabel("Center Cpzt:"), 0, 0)
+        self.analysis_pzt_center_capacitance_spin = QDoubleSpinBox()
+        self.analysis_pzt_center_capacitance_spin.setRange(1e-9, 1e12)
+        self.analysis_pzt_center_capacitance_spin.setDecimals(6)
+        self.analysis_pzt_center_capacitance_spin.setValue(float(PZT_FORCE_DEFAULT_SETTINGS["center_capacitance_value"]))
+        self.analysis_pzt_center_capacitance_spin.valueChanged.connect(self.on_analysis_settings_changed)
+        pzt_force_layout.addWidget(self.analysis_pzt_center_capacitance_spin, 0, 1)
         self.analysis_pzt_capacitance_unit_combo = QComboBox()
         self.analysis_pzt_capacitance_unit_combo.addItems(list(PZT_FORCE_CAPACITANCE_UNITS))
         self.analysis_pzt_capacitance_unit_combo.setCurrentText(str(PZT_FORCE_DEFAULT_SETTINGS["capacitance_unit"]))
         self.analysis_pzt_capacitance_unit_combo.currentIndexChanged.connect(self.on_analysis_settings_changed)
         pzt_force_layout.addWidget(self.analysis_pzt_capacitance_unit_combo, 0, 2)
 
-        pzt_force_layout.addWidget(QLabel("Rleak:"), 0, 3)
+        pzt_force_layout.addWidget(QLabel("Outer Cpzt:"), 0, 3)
+        self.analysis_pzt_outer_capacitance_spin = QDoubleSpinBox()
+        self.analysis_pzt_outer_capacitance_spin.setRange(1e-9, 1e12)
+        self.analysis_pzt_outer_capacitance_spin.setDecimals(6)
+        self.analysis_pzt_outer_capacitance_spin.setValue(float(PZT_FORCE_DEFAULT_SETTINGS["outer_capacitance_value"]))
+        self.analysis_pzt_outer_capacitance_spin.valueChanged.connect(self.on_analysis_settings_changed)
+        pzt_force_layout.addWidget(self.analysis_pzt_outer_capacitance_spin, 0, 4)
+
+        pzt_force_layout.addWidget(QLabel("Rleak:"), 1, 0)
         self.analysis_pzt_rleak_spin = QDoubleSpinBox()
         self.analysis_pzt_rleak_spin.setRange(1e-9, 1e15)
         self.analysis_pzt_rleak_spin.setDecimals(3)
         self.analysis_pzt_rleak_spin.setValue(float(PZT_FORCE_DEFAULT_SETTINGS["rleak_ohm"]))
         self.analysis_pzt_rleak_spin.setSuffix(" ohm")
         self.analysis_pzt_rleak_spin.valueChanged.connect(self.on_analysis_settings_changed)
-        pzt_force_layout.addWidget(self.analysis_pzt_rleak_spin, 0, 4)
+        pzt_force_layout.addWidget(self.analysis_pzt_rleak_spin, 1, 1)
 
-        pzt_force_layout.addWidget(QLabel("d33:"), 1, 0)
+        pzt_force_layout.addWidget(QLabel("d33:"), 1, 2)
         self.analysis_pzt_d33_spin = QDoubleSpinBox()
         self.analysis_pzt_d33_spin.setRange(1e-9, 1e12)
         self.analysis_pzt_d33_spin.setDecimals(6)
         self.analysis_pzt_d33_spin.setValue(float(PZT_FORCE_DEFAULT_SETTINGS["d33_pc_per_n"]))
         self.analysis_pzt_d33_spin.setSuffix(" pC/N")
         self.analysis_pzt_d33_spin.valueChanged.connect(self.on_analysis_settings_changed)
-        pzt_force_layout.addWidget(self.analysis_pzt_d33_spin, 1, 1)
+        pzt_force_layout.addWidget(self.analysis_pzt_d33_spin, 1, 3)
 
-        pzt_force_layout.addWidget(QLabel("Noise:"), 1, 2)
+        pzt_force_layout.addWidget(QLabel("Noise:"), 1, 4)
         self.analysis_pzt_noise_spin = QDoubleSpinBox()
         self.analysis_pzt_noise_spin.setRange(0.0, 1e6)
         self.analysis_pzt_noise_spin.setDecimals(6)
         self.analysis_pzt_noise_spin.setValue(float(PZT_FORCE_DEFAULT_SETTINGS["noise_threshold_v"]))
         self.analysis_pzt_noise_spin.setSuffix(" V")
         self.analysis_pzt_noise_spin.valueChanged.connect(self.on_analysis_settings_changed)
-        pzt_force_layout.addWidget(self.analysis_pzt_noise_spin, 1, 3)
+        pzt_force_layout.addWidget(self.analysis_pzt_noise_spin, 1, 5)
 
         pzt_force_layout.addWidget(QLabel("Quiet:"), 2, 0)
         self.analysis_pzt_quiet_duration_spin = QDoubleSpinBox()
@@ -495,7 +510,9 @@ class AnalysisPanelMixin:
             self.analysis_integration_check.setChecked(bool(overlays.get("integration", False)))
             pzt_force = state.get("pzt_force", {})
             self.analysis_pzt_force_check.setChecked(bool(pzt_force.get("enabled", False)))
-            self.analysis_pzt_capacitance_spin.setValue(float(pzt_force.get("capacitance_value", PZT_FORCE_DEFAULT_SETTINGS["capacitance_value"])))
+            legacy_capacitance = pzt_force.get("capacitance_value", PZT_FORCE_DEFAULT_SETTINGS["capacitance_value"])
+            self.analysis_pzt_center_capacitance_spin.setValue(float(pzt_force.get("center_capacitance_value", legacy_capacitance)))
+            self.analysis_pzt_outer_capacitance_spin.setValue(float(pzt_force.get("outer_capacitance_value", legacy_capacitance)))
             self.analysis_pzt_capacitance_unit_combo.setCurrentText(str(pzt_force.get("capacitance_unit", PZT_FORCE_DEFAULT_SETTINGS["capacitance_unit"])))
             self.analysis_pzt_rleak_spin.setValue(float(pzt_force.get("rleak_ohm", PZT_FORCE_DEFAULT_SETTINGS["rleak_ohm"])))
             self.analysis_pzt_d33_spin.setValue(float(pzt_force.get("d33_pc_per_n", PZT_FORCE_DEFAULT_SETTINGS["d33_pc_per_n"])))
@@ -729,7 +746,8 @@ class AnalysisPanelMixin:
         }
         self.analysis_state["pzt_force"] = {
             "enabled": bool(self.analysis_pzt_force_check.isChecked()),
-            "capacitance_value": float(self.analysis_pzt_capacitance_spin.value()),
+            "center_capacitance_value": float(self.analysis_pzt_center_capacitance_spin.value()),
+            "outer_capacitance_value": float(self.analysis_pzt_outer_capacitance_spin.value()),
             "capacitance_unit": str(self.analysis_pzt_capacitance_unit_combo.currentText()),
             "rleak_ohm": float(self.analysis_pzt_rleak_spin.value()),
             "d33_pc_per_n": float(self.analysis_pzt_d33_spin.value()),
@@ -1234,7 +1252,8 @@ class AnalysisPanelMixin:
             self.analysis_normal_check,
             self.analysis_integration_check,
             self.analysis_pzt_force_check,
-            self.analysis_pzt_capacitance_spin,
+            self.analysis_pzt_center_capacitance_spin,
+            self.analysis_pzt_outer_capacitance_spin,
             self.analysis_pzt_capacitance_unit_combo,
             self.analysis_pzt_rleak_spin,
             self.analysis_pzt_d33_spin,

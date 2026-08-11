@@ -205,6 +205,7 @@ def calculate_pzt_force_from_settings(
     time_s,
     settings: Mapping[str, object] | None = None,
     *,
+    sensor_position: str | None = None,
     vmid_v: float | None = None,
     noise_threshold_v: float | None = None,
     leak_dt_s=None,
@@ -222,7 +223,8 @@ def calculate_pzt_force_from_settings(
         ``voltage_v`` and strictly increasing.
     settings:
         Optional mapping with the keys from ``PZT_FORCE_DEFAULT_SETTINGS``:
-        ``capacitance_value``, ``capacitance_unit``, ``rleak_ohm``,
+        ``center_capacitance_value``, ``outer_capacitance_value``,
+        ``capacitance_unit``, ``rleak_ohm``,
         ``d33_pc_per_n``, and ``noise_threshold_v``. Missing keys are filled
         from the shared defaults.
     vmid_v:
@@ -231,15 +233,19 @@ def calculate_pzt_force_from_settings(
     noise_threshold_v:
         Optional explicit centered voltage threshold. When omitted, the value
         from ``settings`` is used.
+    sensor_position:
+        Logical sensor position in its PZT package. ``"C"`` selects the
+        center capacitance; every other position selects the outer value.
 
     Returns
     -------
     np.ndarray
         Reconstructed force samples in newtons.
     """
-    resolved = {**PZT_FORCE_DEFAULT_SETTINGS, **dict(settings or {})}
+    supplied = dict(settings or {})
+    resolved = {**PZT_FORCE_DEFAULT_SETTINGS, **supplied}
     capacitance_f = pzt_capacitance_to_farads(
-        float(resolved["capacitance_value"]),
+        pzt_capacitance_value_for_position(supplied, sensor_position),
         str(resolved["capacitance_unit"]),
     )
     d33_c_per_n = float(resolved["d33_pc_per_n"]) * PZT_FORCE_PIC_COULOMB_TO_COULOMB
@@ -257,6 +263,28 @@ def calculate_pzt_force_from_settings(
         if bool(resolved.get("off_mux_leak_enabled", False))
         else None,
     )
+
+
+def pzt_capacitance_value_for_position(
+    settings: Mapping[str, object] | None,
+    sensor_position: str | None,
+) -> float:
+    """Return the capacitance configured for one PZT package position.
+
+    ``C`` uses ``center_capacitance_value`` and all other positions use
+    ``outer_capacitance_value``. A settings mapping saved before this split
+    has only ``capacitance_value``; that value remains the fallback for both.
+    """
+    supplied = dict(settings or {})
+    legacy_value = supplied.get(
+        "capacitance_value", PZT_FORCE_DEFAULT_SETTINGS["capacitance_value"]
+    )
+    key = (
+        "center_capacitance_value"
+        if str(sensor_position or "").strip().upper() == "C"
+        else "outer_capacitance_value"
+    )
+    return float(supplied.get(key, legacy_value))
 
 
 def estimate_pzt_quiet_baseline(

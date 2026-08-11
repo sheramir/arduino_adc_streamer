@@ -352,6 +352,7 @@ def build_calculated_pzt_force_traces(
             voltage_by_label[label],
             time_s,
             settings,
+            sensor_position=_pzt_sensor_position(label),
             vmid_v=_optional_float(calibration.get("vmid_v")),
             noise_threshold_v=_optional_float(calibration.get("noise_threshold_v")),
             leak_dt_s=leak_dt_s,
@@ -359,6 +360,12 @@ def build_calculated_pzt_force_traces(
         )
         traces.append(AnalysisTrace(f"Calculated Force - {label} [N]", x_values, force_n, "force"))
     return traces
+
+
+def _pzt_sensor_position(label: str) -> str:
+    """Return the PZT package position encoded by an exported channel label."""
+    _prefix, _separator, suffix = str(label).rpartition("_")
+    return "C" if suffix.strip().upper() == "C" else "outer"
 
 
 def resolve_analysis_pzt_mux_leak_dt_s(

@@ -417,6 +417,8 @@ class AnalysisWorkbenchTests(unittest.TestCase):
 
     def test_pzt_force_settings_helper_uses_shared_defaults(self):
         self.assertEqual(PZT_FORCE_DEFAULT_SETTINGS["capacitance_value"], 150.0)
+        self.assertEqual(PZT_FORCE_DEFAULT_SETTINGS["center_capacitance_value"], 150.0)
+        self.assertEqual(PZT_FORCE_DEFAULT_SETTINGS["outer_capacitance_value"], 150.0)
         self.assertEqual(PZT_FORCE_DEFAULT_SETTINGS["capacitance_unit"], "pF")
         self.assertEqual(PZT_FORCE_DEFAULT_SETTINGS["rleak_ohm"], 1_000_000.0)
         self.assertEqual(PZT_FORCE_DEFAULT_SETTINGS["mux_timing_mode"], "auto")
@@ -427,6 +429,75 @@ class AnalysisWorkbenchTests(unittest.TestCase):
         )
 
         self.assertEqual(force.shape, (2,))
+
+    def test_pzt_force_settings_selects_center_or_outer_capacitance(self):
+        settings = {
+            "center_capacitance_value": 2.0,
+            "outer_capacitance_value": 1.0,
+            "capacitance_unit": "nF",
+            "rleak_ohm": 1e12,
+            "d33_pc_per_n": 600.0,
+            "noise_threshold_v": 0.0,
+        }
+        voltage = np.asarray([0.0, 0.1], dtype=np.float64)
+        timestamps = np.asarray([0.0, 0.001], dtype=np.float64)
+
+        center_force = calculate_pzt_force_from_settings(
+            voltage, timestamps, settings, sensor_position="C", vmid_v=0.0
+        )
+        outer_force = calculate_pzt_force_from_settings(
+            voltage, timestamps, settings, sensor_position="L", vmid_v=0.0
+        )
+
+        self.assertAlmostEqual(center_force[-1], outer_force[-1] * 2.0, places=12)
+
+    def test_analysis_force_traces_assign_center_and_outer_capacitances_by_label(self):
+        snapshot = AnalysisSourceSnapshot(
+            data=np.asarray([[0, 0], [200, 200]], dtype=np.float32),
+            timestamps_s=np.asarray([0.0, 0.01], dtype=np.float64),
+            channel_labels=["PZT6_C", "PZT6_L"],
+            metadata={"configuration": {"channels": [1, 2], "repeat_count": 1}},
+            source_id="unit",
+            sample_rate_hz=200.0,
+        )
+        prepared = prepare_analysis_data(
+            snapshot,
+            visible_labels=["PZT6_C", "PZT6_L"],
+            vref_voltage=3.3,
+            pzt_force_settings={
+                "enabled": True,
+                "center_capacitance_value": 2.0,
+                "outer_capacitance_value": 1.0,
+                "capacitance_unit": "nF",
+                "rleak_ohm": 1e12,
+                "d33_pc_per_n": 600.0,
+                "noise_threshold_v": 0.0,
+                "mux_timing_mode": "continuous",
+            },
+        )
+
+        center_force, outer_force = (trace.y[-1] for trace in prepared.force_traces)
+        np.testing.assert_allclose(center_force, outer_force * 2.0, rtol=1e-5)
+
+    def test_pzt_force_settings_legacy_capacitance_applies_to_both_positions(self):
+        settings = {
+            "capacitance_value": 1.0,
+            "capacitance_unit": "nF",
+            "rleak_ohm": 1e12,
+            "d33_pc_per_n": 600.0,
+            "noise_threshold_v": 0.0,
+        }
+        voltage = np.asarray([0.0, 0.1], dtype=np.float64)
+        timestamps = np.asarray([0.0, 0.001], dtype=np.float64)
+
+        center_force = calculate_pzt_force_from_settings(
+            voltage, timestamps, settings, sensor_position="C", vmid_v=0.0
+        )
+        outer_force = calculate_pzt_force_from_settings(
+            voltage, timestamps, settings, sensor_position="R", vmid_v=0.0
+        )
+
+        np.testing.assert_allclose(center_force, outer_force)
 
     def test_load_exported_csv_snapshot_accepts_matching_metadata_column_count(self):
         with tempfile.TemporaryDirectory() as temp_dir:

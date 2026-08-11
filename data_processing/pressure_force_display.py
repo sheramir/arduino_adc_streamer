@@ -14,7 +14,11 @@ from constants.shear import SHEAR_SENSOR_POSITIONS
 from data_processing.normal_force_calculator import NormalForceCalculator
 from data_processing.pressure_map_array_generator import PressureMapArrayForcePackage, PressureMapArrayGenerator
 from data_processing.pressure_map_geometry import PressureMapGeometry
-from data_processing.pzt_force_calculation import PztForceChannelIntegrator, pzt_capacitance_to_farads
+from data_processing.pzt_force_calculation import (
+    PztForceChannelIntegrator,
+    pzt_capacitance_to_farads,
+    pzt_capacitance_value_for_position,
+)
 from data_processing.shear_detector import ShearDetector
 
 
@@ -90,7 +94,8 @@ class PressureForceDisplayEngine:
         pressure_map_array_generator: PressureMapArrayGenerator | None = None,
     ) -> None:
         self.geometry = geometry
-        self.settings = {**PZT_FORCE_DEFAULT_SETTINGS, **dict(settings or {})}
+        self._provided_settings = dict(settings or {})
+        self.settings = {**PZT_FORCE_DEFAULT_SETTINGS, **self._provided_settings}
         self.normal_force_calculator = normal_force_calculator or NormalForceCalculator(geometry.sensor_spacing_mm)
         self.shear_detector = shear_detector or ShearDetector()
         self.pressure_map_array_generator = pressure_map_array_generator or PressureMapArrayGenerator(geometry=geometry)
@@ -304,11 +309,14 @@ class PressureForceDisplayEngine:
         )
 
     def _new_package_state(self) -> _ForcePackageState:
-        capacitance = pzt_capacitance_to_farads(float(self.settings["capacitance_value"]), str(self.settings["capacitance_unit"]))
         off_mux = self.settings.get("off_mux_rleak_ohm") if self.settings.get("off_mux_leak_enabled") else None
         states = {
             position: PztForceChannelIntegrator(
-                capacitance_f=capacitance, rleak_ohm=float(self.settings["rleak_ohm"]),
+                capacitance_f=pzt_capacitance_to_farads(
+                    pzt_capacitance_value_for_position(self._provided_settings, position),
+                    str(self.settings["capacitance_unit"]),
+                ),
+                rleak_ohm=float(self.settings["rleak_ohm"]),
                 d33_c_per_n=float(self.settings["d33_pc_per_n"]) * PZT_FORCE_PIC_COULOMB_TO_COULOMB,
                 noise_threshold_v=float(self.settings["noise_threshold_v"]),
                 off_mux_rleak_ohm=None if off_mux in (None, "") else float(off_mux),

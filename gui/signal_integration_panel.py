@@ -700,37 +700,43 @@ class PressureMapPanelMixin:
         group = QGroupBox("PZT Force Calculation")
         layout = QGridLayout(group)
         defaults = PZT_FORCE_DEFAULT_SETTINGS
-        layout.addWidget(QLabel("Cpzt:"), 0, 0)
-        self.force_pzt_capacitance_spin = QDoubleSpinBox()
-        self.force_pzt_capacitance_spin.setRange(1e-6, 1e9)
-        self.force_pzt_capacitance_spin.setDecimals(6)
-        self.force_pzt_capacitance_spin.setValue(float(defaults["capacitance_value"]))
-        layout.addWidget(self.force_pzt_capacitance_spin, 0, 1)
+        layout.addWidget(QLabel("Center Cpzt:"), 0, 0)
+        self.force_pzt_center_capacitance_spin = QDoubleSpinBox()
+        self.force_pzt_center_capacitance_spin.setRange(1e-6, 1e9)
+        self.force_pzt_center_capacitance_spin.setDecimals(6)
+        self.force_pzt_center_capacitance_spin.setValue(float(defaults["center_capacitance_value"]))
+        layout.addWidget(self.force_pzt_center_capacitance_spin, 0, 1)
         self.force_pzt_capacitance_unit_combo = QComboBox()
         self.force_pzt_capacitance_unit_combo.addItems(list(PZT_FORCE_CAPACITANCE_UNITS))
         self.force_pzt_capacitance_unit_combo.setCurrentText(str(defaults["capacitance_unit"]))
         layout.addWidget(self.force_pzt_capacitance_unit_combo, 0, 2)
-        layout.addWidget(QLabel("Rleak:"), 0, 3)
+        layout.addWidget(QLabel("Outer Cpzt:"), 0, 3)
+        self.force_pzt_outer_capacitance_spin = QDoubleSpinBox()
+        self.force_pzt_outer_capacitance_spin.setRange(1e-6, 1e9)
+        self.force_pzt_outer_capacitance_spin.setDecimals(6)
+        self.force_pzt_outer_capacitance_spin.setValue(float(defaults["outer_capacitance_value"]))
+        layout.addWidget(self.force_pzt_outer_capacitance_spin, 0, 4)
+        layout.addWidget(QLabel("Rleak:"), 1, 0)
         self.force_pzt_rleak_spin = QDoubleSpinBox()
         self.force_pzt_rleak_spin.setRange(1e-6, 1e15)
         self.force_pzt_rleak_spin.setDecimals(3)
         self.force_pzt_rleak_spin.setValue(float(defaults["rleak_ohm"]))
         self.force_pzt_rleak_spin.setSuffix(" ohm")
-        layout.addWidget(self.force_pzt_rleak_spin, 0, 4)
-        layout.addWidget(QLabel("d33:"), 1, 0)
+        layout.addWidget(self.force_pzt_rleak_spin, 1, 1)
+        layout.addWidget(QLabel("d33:"), 1, 2)
         self.force_pzt_d33_spin = QDoubleSpinBox()
         self.force_pzt_d33_spin.setRange(1e-9, 1e12)
         self.force_pzt_d33_spin.setDecimals(6)
         self.force_pzt_d33_spin.setValue(float(defaults["d33_pc_per_n"]))
         self.force_pzt_d33_spin.setSuffix(" pC/N")
-        layout.addWidget(self.force_pzt_d33_spin, 1, 1)
-        layout.addWidget(QLabel("Noise:"), 1, 2)
+        layout.addWidget(self.force_pzt_d33_spin, 1, 3)
+        layout.addWidget(QLabel("Noise:"), 1, 4)
         self.force_pzt_noise_spin = QDoubleSpinBox()
         self.force_pzt_noise_spin.setRange(0.0, 1000.0)
         self.force_pzt_noise_spin.setDecimals(6)
         self.force_pzt_noise_spin.setValue(float(defaults["noise_threshold_v"]))
         self.force_pzt_noise_spin.setSuffix(" V")
-        layout.addWidget(self.force_pzt_noise_spin, 1, 3)
+        layout.addWidget(self.force_pzt_noise_spin, 1, 5)
         self.force_pzt_off_mux_check = QCheckBox("Off-MUX leakage")
         self.force_pzt_off_mux_check.setChecked(bool(defaults["off_mux_leak_enabled"]))
         layout.addWidget(self.force_pzt_off_mux_check, 2, 0, 1, 2)
@@ -769,7 +775,8 @@ class PressureMapPanelMixin:
         self.force_display_reset_btn.clicked.connect(self.reset_pressure_force_display)
         layout.addWidget(self.force_display_reset_btn, 2, 3, 1, 2)
         for widget in (
-            self.force_pzt_capacitance_spin, self.force_pzt_capacitance_unit_combo,
+            self.force_pzt_center_capacitance_spin, self.force_pzt_outer_capacitance_spin,
+            self.force_pzt_capacitance_unit_combo,
             self.force_pzt_rleak_spin, self.force_pzt_d33_spin, self.force_pzt_noise_spin,
             self.force_pzt_off_mux_check, self.force_pzt_off_mux_rleak_spin,
             self.force_pzt_quiet_reset_spin,
@@ -782,7 +789,8 @@ class PressureMapPanelMixin:
 
     def _pzt_force_settings(self) -> dict[str, object]:
         return {
-            "capacitance_value": self._spin_float("force_pzt_capacitance_spin", float(PZT_FORCE_DEFAULT_SETTINGS["capacitance_value"])),
+            "center_capacitance_value": self._spin_float("force_pzt_center_capacitance_spin", float(PZT_FORCE_DEFAULT_SETTINGS["center_capacitance_value"])),
+            "outer_capacitance_value": self._spin_float("force_pzt_outer_capacitance_spin", float(PZT_FORCE_DEFAULT_SETTINGS["outer_capacitance_value"])),
             "capacitance_unit": self._combo_text("force_pzt_capacitance_unit_combo", str(PZT_FORCE_DEFAULT_SETTINGS["capacitance_unit"])),
             "rleak_ohm": self._spin_float("force_pzt_rleak_spin", float(PZT_FORCE_DEFAULT_SETTINGS["rleak_ohm"])),
             "d33_pc_per_n": self._spin_float("force_pzt_d33_spin", float(PZT_FORCE_DEFAULT_SETTINGS["d33_pc_per_n"])),
@@ -823,7 +831,10 @@ class PressureMapPanelMixin:
         """Return the physical PZT threshold expressed only as a display floor."""
         settings = self._pzt_force_settings()
         unit_scale = {"pf": 1e-12, "nf": 1e-9, "f": 1.0}
-        capacitance_f = float(settings["capacitance_value"]) * unit_scale.get(
+        capacitance_f = max(
+            float(settings["center_capacitance_value"]),
+            float(settings["outer_capacitance_value"]),
+        ) * unit_scale.get(
             str(settings["capacitance_unit"]).lower(), 1e-12
         )
         d33_c_per_n = float(settings["d33_pc_per_n"]) * PZT_FORCE_PIC_COULOMB_TO_COULOMB
@@ -2163,7 +2174,23 @@ class PressureMapPanelMixin:
                 "show_rs2",
             )
         changed |= self._set_spin_value("shear_noise_threshold_spin", processing, "noise_threshold", float)
-        changed |= self._set_spin_value("force_pzt_capacitance_spin", pzt_force, "capacitance_value", float)
+        legacy_capacitance = pzt_force.get("capacitance_value")
+        center_capacitance = pzt_force.get("center_capacitance_value", legacy_capacitance)
+        outer_capacitance = pzt_force.get("outer_capacitance_value", legacy_capacitance)
+        if center_capacitance is not None:
+            changed |= self._set_spin_value(
+                "force_pzt_center_capacitance_spin",
+                {"center_capacitance_value": center_capacitance},
+                "center_capacitance_value",
+                float,
+            )
+        if outer_capacitance is not None:
+            changed |= self._set_spin_value(
+                "force_pzt_outer_capacitance_spin",
+                {"outer_capacitance_value": outer_capacitance},
+                "outer_capacitance_value",
+                float,
+            )
         changed |= self._set_combo_value("force_pzt_capacitance_unit_combo", pzt_force, "capacitance_unit")
         changed |= self._set_spin_value("force_pzt_rleak_spin", pzt_force, "rleak_ohm", float)
         changed |= self._set_spin_value("force_pzt_d33_spin", pzt_force, "d33_pc_per_n", float)

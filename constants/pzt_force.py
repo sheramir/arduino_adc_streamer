@@ -2,6 +2,13 @@
 
 PZT_FORCE_DEFAULT_SETTINGS = {
     "enabled": False,
+    # The center sensor can use a different capacitance from the four outer
+    # sensors in each five-channel PZT package. Both defaults preserve the
+    # previous single-value behavior.
+    "center_capacitance_value": 150.0,
+    "outer_capacitance_value": 150.0,
+    # Retained only to read settings saved by releases with one Cpzt value.
+    # New settings persist the center/outer values above.
     "capacitance_value": 150.0,
     "capacitance_unit": "pF",
     "rleak_ohm": 1_000_000.0,

@@ -804,6 +804,49 @@ class DataExporterMixin:
                     ),
                 ),
             }
+
+            archive_ghost_metadata = {}
+            if isinstance(archive_metadata_block, dict):
+                candidate = archive_metadata_block.get("pzt_ghost_removal")
+                if isinstance(candidate, dict):
+                    archive_ghost_metadata = dict(candidate)
+
+            runtime_ghost_metadata = {}
+            if hasattr(self, "build_pzt_ghost_metadata"):
+                try:
+                    candidate = self.build_pzt_ghost_metadata()
+                    if isinstance(candidate, dict):
+                        runtime_ghost_metadata = dict(candidate)
+                except Exception:
+                    runtime_ghost_metadata = {}
+
+            if export_source == "archive" and archive_ghost_metadata:
+                ghost_metadata = dict(archive_ghost_metadata)
+                for key, value in runtime_ghost_metadata.items():
+                    ghost_metadata.setdefault(key, value)
+                ghost_metadata_source = "archive_capture_metadata"
+            else:
+                ghost_metadata = dict(runtime_ghost_metadata)
+                for key, value in archive_ghost_metadata.items():
+                    ghost_metadata.setdefault(key, value)
+                ghost_metadata_source = "runtime_state"
+
+            ghost_enabled = bool(ghost_metadata.get("enabled", False))
+            ghost_metadata["enabled"] = ghost_enabled
+            ghost_metadata["metadata_source"] = ghost_metadata_source
+            ghost_metadata["applied_to_live_displays"] = ghost_enabled
+            ghost_metadata["csv_signal_domain"] = (
+                "post_pzt_ghost_removal" if ghost_enabled else "raw_adc_counts"
+            )
+            ghost_metadata["csv_signal_domain_note"] = (
+                "CSV rows are sourced from acquisition buffers/archive. "
+                "When ghost removal is enabled, those PZT values are canonical ghost-cleaned samples "
+                "used by live displays and processing."
+                if ghost_enabled
+                else "Ghost removal was disabled, so CSV rows reflect raw ADC-domain signal values."
+            )
+            metadata["pzt_ghost_removal"] = ghost_metadata
+
             if adc_mux_timing_metadata is not None:
                 metadata["adc_mux_timing"] = adc_mux_timing_metadata
 

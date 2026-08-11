@@ -217,9 +217,44 @@ class ADCPlottingTests(unittest.TestCase):
             max_samples_per_series=100,
         )
 
-        np.testing.assert_allclose(reversed_data, -normal_data, rtol=1e-6, atol=1e-6)
+        midpoint = float(np.median(normal_data))
+        np.testing.assert_allclose(reversed_data, (2.0 * midpoint) - normal_data, rtol=1e-6, atol=1e-6)
         np.testing.assert_allclose(reversed_times, normal_times, rtol=1e-6, atol=1e-6)
-        self.assertEqual(reversed_latest, -normal_latest)
+        self.assertEqual(reversed_latest, (2.0 * midpoint) - normal_latest)
+
+    def test_prepare_channel_plot_series_reuses_plot_baseline_for_reverse_polarity_midpoint(self):
+        harness = ADCPlottingHarness()
+        harness.active_sensor_reverse_polarity = True
+        harness.yaxis_units_combo = DummyComboBox("Voltage")
+        spec = {"key": ("adc", 3), "sample_indices": [0], "label": "CH3"}
+        max_adc_value = (2 ** 12) - 1
+        vref = harness.get_vref_voltage()
+
+        def volts_to_counts(volts):
+            return (volts / vref) * max_adc_value
+
+        data = np.array(
+            [
+                [volts_to_counts(1.0)],
+                [volts_to_counts(1.2)],
+                [volts_to_counts(2.5)],
+            ],
+            dtype=np.float32,
+        )
+        timestamps = np.array([0.0, 0.1, 0.2], dtype=np.float64)
+        harness.plot_baselines[spec["key"]] = volts_to_counts(1.65)
+
+        reversed_data, _reversed_times, reversed_latest = harness._prepare_channel_plot_series(
+            spec,
+            data,
+            timestamps,
+            avg_sample_time_sec=0.0,
+            max_samples_per_series=100,
+        )
+
+        expected = np.array([2.3, 2.1, 0.8], dtype=np.float64)
+        np.testing.assert_allclose(reversed_data, expected, rtol=1e-6, atol=1e-6)
+        self.assertAlmostEqual(reversed_latest, expected[-1], places=6)
 
     def test_prepare_channel_plot_series_does_not_flip_rs_streams(self):
         harness = ADCPlottingHarness()

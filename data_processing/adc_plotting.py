@@ -22,12 +22,6 @@ from constants.plotting import (
     ROSETTE_FIXED_Y_MIN_DEFAULT_OHMS,
 )
 from data_processing.circular_buffer import recent_window_slices, take_recent
-from constants.sensor_config import (
-    SENSOR_POLARITY_NORMAL_MULTIPLIER,
-    SENSOR_POLARITY_REVERSED_MULTIPLIER,
-)
-
-
 class ADCPlottingMixin:
     """ADC plot snapshotting and curve rendering helpers."""
 
@@ -423,7 +417,7 @@ class ADCPlottingMixin:
         return channel_data, channel_times, latest_value
 
     def _apply_active_sensor_polarity(self, spec, values):
-        """Flip ADC trace sign for reverse-polarity sensor packages."""
+        """Reflect ADC traces around a stable midpoint for reverse polarity."""
         samples = np.asarray(values, dtype=np.float64)
         if getattr(self, 'device_mode', 'adc') == '555':
             return samples
@@ -432,12 +426,23 @@ class ADCPlottingMixin:
         reverse_polarity = False
         if hasattr(self, 'is_active_sensor_reverse_polarity'):
             reverse_polarity = bool(self.is_active_sensor_reverse_polarity())
-        multiplier = (
-            SENSOR_POLARITY_REVERSED_MULTIPLIER
-            if reverse_polarity
-            else SENSOR_POLARITY_NORMAL_MULTIPLIER
-        )
-        return samples * multiplier
+        if not reverse_polarity:
+            return samples
+
+        midpoint = None
+        if hasattr(self, 'plot_baselines') and isinstance(self.plot_baselines, dict):
+            baseline_value = self.plot_baselines.get(spec.get('key'))
+            if baseline_value is not None:
+                midpoint = float(baseline_value)
+                if self.yaxis_units_combo.currentText() == "Voltage":
+                    vref = self.get_vref_voltage()
+                    max_adc_value = (2 ** IADC_RESOLUTION_BITS) - 1
+                    midpoint = (midpoint / max_adc_value) * vref
+
+        if midpoint is None:
+            midpoint = float(np.median(samples)) if samples.size else 0.0
+
+        return (2.0 * midpoint) - samples
 
     def _get_or_create_adc_curve(self, curve_key, name, pen):
         """Fetch an existing ADC curve or create it on first use."""

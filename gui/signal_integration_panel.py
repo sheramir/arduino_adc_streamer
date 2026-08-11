@@ -746,17 +746,104 @@ class PressureMapPanelMixin:
         self.force_pzt_off_mux_rleak_spin.setValue(float(defaults["rleak_ohm"]))
         self.force_pzt_off_mux_rleak_spin.setSuffix(" ohm")
         layout.addWidget(self.force_pzt_off_mux_rleak_spin, 2, 2)
-        layout.addWidget(QLabel("Reset after quiet:"), 3, 0)
-        self.force_pzt_quiet_reset_spin = QSpinBox()
-        self.force_pzt_quiet_reset_spin.setRange(1, 1000)
-        self.force_pzt_quiet_reset_spin.setValue(int(defaults["reset_after_quiet_samples"]))
-        self.force_pzt_quiet_reset_spin.setSuffix(" samples")
-        self.force_pzt_quiet_reset_spin.setToolTip(
-            "Reset the reconstructed package force to zero after all five PZT channels "
-            "remain below the Force noise threshold for this many consecutive package samples. "
-            "This helps remove residual integrated force after a completed event."
+        self.force_pzt_stuck_failsafe_check = QCheckBox("Auto-clear stuck force")
+        self.force_pzt_stuck_failsafe_check.setChecked(bool(defaults["stuck_force_failsafe_enabled"]))
+        self.force_pzt_stuck_failsafe_check.setToolTip(
+            "A normal press/release already returns to exactly zero once a channel goes "
+            "below the Force noise threshold. This only covers a channel that never "
+            "fully quiets down (e.g. baseline drift, or a held press whose voltage has "
+            "decayed below the threshold): its residual force decays smoothly to zero "
+            "after the hold time below. Disable to keep such a residual until the next "
+            "event or a manual reset."
         )
-        layout.addWidget(self.force_pzt_quiet_reset_spin, 3, 1)
+        layout.addWidget(self.force_pzt_stuck_failsafe_check, 3, 0)
+        self.force_pzt_stuck_hold_spin = QDoubleSpinBox()
+        self.force_pzt_stuck_hold_spin.setRange(0.0, 3600.0)
+        self.force_pzt_stuck_hold_spin.setDecimals(3)
+        self.force_pzt_stuck_hold_spin.setValue(float(defaults["stuck_force_quiet_hold_s"]))
+        self.force_pzt_stuck_hold_spin.setSuffix(" s after quiet")
+        layout.addWidget(self.force_pzt_stuck_hold_spin, 3, 1)
+        self.force_pzt_stuck_tau_spin = QDoubleSpinBox()
+        self.force_pzt_stuck_tau_spin.setRange(0.0, 3600.0)
+        self.force_pzt_stuck_tau_spin.setDecimals(3)
+        self.force_pzt_stuck_tau_spin.setValue(float(defaults["stuck_force_decay_tau_s"]))
+        self.force_pzt_stuck_tau_spin.setSuffix(" s decay tau")
+        self.force_pzt_stuck_tau_spin.setToolTip("0 = instant reset instead of a smooth decay.")
+        layout.addWidget(self.force_pzt_stuck_tau_spin, 3, 2)
+        self.force_pzt_stuck_failsafe_check.toggled.connect(self.force_pzt_stuck_hold_spin.setEnabled)
+        self.force_pzt_stuck_failsafe_check.toggled.connect(self.force_pzt_stuck_tau_spin.setEnabled)
+        self.force_pzt_stuck_hold_spin.setEnabled(self.force_pzt_stuck_failsafe_check.isChecked())
+        self.force_pzt_stuck_tau_spin.setEnabled(self.force_pzt_stuck_failsafe_check.isChecked())
+
+        zero_floor_label = self._create_tooltip_label(
+            "Zero floor:",
+            "Absolute floor (N) for the natural-zero band and the fail-safe snap band. "
+            "A residual at or below this magnitude is treated as fully released.",
+        )
+        layout.addWidget(zero_floor_label, 5, 0)
+        self.force_pzt_zero_floor_spin = QDoubleSpinBox()
+        self.force_pzt_zero_floor_spin.setRange(0.0, 1e6)
+        self.force_pzt_zero_floor_spin.setDecimals(4)
+        self.force_pzt_zero_floor_spin.setValue(float(defaults["force_zero_band_min_n"]))
+        self.force_pzt_zero_floor_spin.setSuffix(" N")
+        self.force_pzt_zero_floor_spin.setToolTip(zero_floor_label.toolTip())
+        layout.addWidget(self.force_pzt_zero_floor_spin, 5, 1)
+        zero_band_label = self._create_tooltip_label(
+            "Zero band:",
+            "Natural-zero band as a fraction of the current press's own peak force. "
+            "The event ends once the force declines back inside this band around zero.",
+        )
+        layout.addWidget(zero_band_label, 5, 2)
+        self.force_pzt_zero_band_fraction_spin = QDoubleSpinBox()
+        self.force_pzt_zero_band_fraction_spin.setRange(0.0, 1.0)
+        self.force_pzt_zero_band_fraction_spin.setDecimals(3)
+        self.force_pzt_zero_band_fraction_spin.setValue(float(defaults["force_zero_band_fraction"]))
+        self.force_pzt_zero_band_fraction_spin.setSuffix(" x peak")
+        self.force_pzt_zero_band_fraction_spin.setToolTip(zero_band_label.toolTip())
+        layout.addWidget(self.force_pzt_zero_band_fraction_spin, 5, 3)
+        min_event_peak_label = self._create_tooltip_label(
+            "Min event peak:",
+            "A press whose own peak force never reaches this magnitude is too small to "
+            "distinguish 'declined' from 'held', so it is released unconditionally as soon "
+            "as it goes quiet instead of waiting for the natural-zero/quiet-release check.",
+        )
+        layout.addWidget(min_event_peak_label, 5, 4)
+        self.force_pzt_min_event_peak_spin = QDoubleSpinBox()
+        self.force_pzt_min_event_peak_spin.setRange(0.0, 1e6)
+        self.force_pzt_min_event_peak_spin.setDecimals(4)
+        self.force_pzt_min_event_peak_spin.setValue(float(defaults["force_zero_min_event_peak_n"]))
+        self.force_pzt_min_event_peak_spin.setSuffix(" N")
+        self.force_pzt_min_event_peak_spin.setToolTip(min_event_peak_label.toolTip())
+        layout.addWidget(self.force_pzt_min_event_peak_spin, 5, 5)
+        quiet_release_label = self._create_tooltip_label(
+            "Quiet release:",
+            "At quiet-hold expiry, the residual must have declined to within this fraction "
+            "of the press's own peak before it is released; otherwise it is presumed a held "
+            "press whose voltage merely decayed quiet, left open for the stuck-force "
+            "fail-safe above to eventually resolve.",
+        )
+        layout.addWidget(quiet_release_label, 6, 0)
+        self.force_pzt_quiet_release_spin = QDoubleSpinBox()
+        self.force_pzt_quiet_release_spin.setRange(0.0, 1.0)
+        self.force_pzt_quiet_release_spin.setDecimals(3)
+        self.force_pzt_quiet_release_spin.setValue(float(defaults["quiet_hold_release_fraction"]))
+        self.force_pzt_quiet_release_spin.setSuffix(" x peak")
+        self.force_pzt_quiet_release_spin.setToolTip(quiet_release_label.toolTip())
+        layout.addWidget(self.force_pzt_quiet_release_spin, 6, 1)
+        quiet_hold_label = self._create_tooltip_label(
+            "Quiet hold:",
+            "How long a channel must stay continuously quiet (below the Noise threshold) "
+            "before its event is considered concluded and eligible for release.",
+        )
+        layout.addWidget(quiet_hold_label, 6, 2)
+        self.force_pzt_quiet_hold_spin = QDoubleSpinBox()
+        self.force_pzt_quiet_hold_spin.setRange(0.0, 3600.0)
+        self.force_pzt_quiet_hold_spin.setDecimals(3)
+        self.force_pzt_quiet_hold_spin.setValue(float(defaults["quiet_hold_clear_s"]))
+        self.force_pzt_quiet_hold_spin.setSuffix(" s")
+        self.force_pzt_quiet_hold_spin.setToolTip(quiet_hold_label.toolTip())
+        layout.addWidget(self.force_pzt_quiet_hold_spin, 6, 3)
+
         force_color_max_label = QLabel("Force color max:")
         force_color_max_label.setToolTip(
             "Force-map value that maps to the top of the color scale. Lower values make "
@@ -779,7 +866,10 @@ class PressureMapPanelMixin:
             self.force_pzt_capacitance_unit_combo,
             self.force_pzt_rleak_spin, self.force_pzt_d33_spin, self.force_pzt_noise_spin,
             self.force_pzt_off_mux_check, self.force_pzt_off_mux_rleak_spin,
-            self.force_pzt_quiet_reset_spin,
+            self.force_pzt_stuck_failsafe_check, self.force_pzt_stuck_hold_spin, self.force_pzt_stuck_tau_spin,
+            self.force_pzt_zero_floor_spin, self.force_pzt_zero_band_fraction_spin,
+            self.force_pzt_min_event_peak_spin, self.force_pzt_quiet_release_spin,
+            self.force_pzt_quiet_hold_spin,
         ):
             signal = getattr(widget, "valueChanged", None) or getattr(widget, "currentTextChanged", None) or getattr(widget, "toggled", None)
             if signal is not None:
@@ -798,7 +888,14 @@ class PressureMapPanelMixin:
             "off_mux_leak_enabled": self._check_bool("force_pzt_off_mux_check", False),
             "off_mux_rleak_ohm": self._spin_float("force_pzt_off_mux_rleak_spin", float(PZT_FORCE_DEFAULT_SETTINGS["rleak_ohm"])),
             "display_max_force_n": self._spin_float("force_display_max_n_spin", float(PZT_FORCE_DEFAULT_SETTINGS["display_max_force_n"])),
-            "reset_after_quiet_samples": int(self._spin_float("force_pzt_quiet_reset_spin", float(PZT_FORCE_DEFAULT_SETTINGS["reset_after_quiet_samples"]))),
+            "stuck_force_failsafe_enabled": self._check_bool("force_pzt_stuck_failsafe_check", bool(PZT_FORCE_DEFAULT_SETTINGS["stuck_force_failsafe_enabled"])),
+            "stuck_force_quiet_hold_s": self._spin_float("force_pzt_stuck_hold_spin", float(PZT_FORCE_DEFAULT_SETTINGS["stuck_force_quiet_hold_s"])),
+            "stuck_force_decay_tau_s": self._spin_float("force_pzt_stuck_tau_spin", float(PZT_FORCE_DEFAULT_SETTINGS["stuck_force_decay_tau_s"])),
+            "force_zero_band_min_n": self._spin_float("force_pzt_zero_floor_spin", float(PZT_FORCE_DEFAULT_SETTINGS["force_zero_band_min_n"])),
+            "force_zero_band_fraction": self._spin_float("force_pzt_zero_band_fraction_spin", float(PZT_FORCE_DEFAULT_SETTINGS["force_zero_band_fraction"])),
+            "force_zero_min_event_peak_n": self._spin_float("force_pzt_min_event_peak_spin", float(PZT_FORCE_DEFAULT_SETTINGS["force_zero_min_event_peak_n"])),
+            "quiet_hold_release_fraction": self._spin_float("force_pzt_quiet_release_spin", float(PZT_FORCE_DEFAULT_SETTINGS["quiet_hold_release_fraction"])),
+            "quiet_hold_clear_s": self._spin_float("force_pzt_quiet_hold_spin", float(PZT_FORCE_DEFAULT_SETTINGS["quiet_hold_clear_s"])),
         }
 
     def on_pzt_force_settings_changed(self, _value: object | None = None) -> None:
@@ -2197,7 +2294,14 @@ class PressureMapPanelMixin:
         changed |= self._set_spin_value("force_pzt_noise_spin", pzt_force, "noise_threshold_v", float)
         changed |= self._set_check_value("force_pzt_off_mux_check", pzt_force, "off_mux_leak_enabled")
         changed |= self._set_spin_value("force_pzt_off_mux_rleak_spin", pzt_force, "off_mux_rleak_ohm", float)
-        changed |= self._set_spin_value("force_pzt_quiet_reset_spin", pzt_force, "reset_after_quiet_samples", int)
+        changed |= self._set_check_value("force_pzt_stuck_failsafe_check", pzt_force, "stuck_force_failsafe_enabled")
+        changed |= self._set_spin_value("force_pzt_stuck_hold_spin", pzt_force, "stuck_force_quiet_hold_s", float)
+        changed |= self._set_spin_value("force_pzt_stuck_tau_spin", pzt_force, "stuck_force_decay_tau_s", float)
+        changed |= self._set_spin_value("force_pzt_zero_floor_spin", pzt_force, "force_zero_band_min_n", float)
+        changed |= self._set_spin_value("force_pzt_zero_band_fraction_spin", pzt_force, "force_zero_band_fraction", float)
+        changed |= self._set_spin_value("force_pzt_min_event_peak_spin", pzt_force, "force_zero_min_event_peak_n", float)
+        changed |= self._set_spin_value("force_pzt_quiet_release_spin", pzt_force, "quiet_hold_release_fraction", float)
+        changed |= self._set_spin_value("force_pzt_quiet_hold_spin", pzt_force, "quiet_hold_clear_s", float)
         changed |= self._set_spin_value("force_display_max_n_spin", pzt_force, "display_max_force_n", float)
 
         raw_package_gains = processing.get("package_sensor_gains", settings.get("package_sensor_gains", {}))

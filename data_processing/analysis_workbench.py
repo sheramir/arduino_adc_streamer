@@ -970,10 +970,16 @@ def _owner_analysis_timing_metadata(owner) -> dict:
         # analysis for unsupported devices or incomplete legacy owners.
         pass
 
+    # Priority order for pzt_mux_connected_time_s/_source: the physical
+    # adc_mux_timing.t_connected_s value set above wins; only a device/config
+    # unsupported by the calculator falls back to the cached average sample
+    # time, and only that falls back to timing_state.arduino_sample_times.
+    # Both keys are set-or-skipped together so a value is never paired with a
+    # mismatched source string.
     cached_sample_time = _optional_float(getattr(owner, "_cached_avg_sample_time_sec", None))
     if cached_sample_time is not None and cached_sample_time > 0.0:
-        result["pzt_mux_connected_time_s"] = cached_sample_time
-        result["pzt_mux_connected_time_source"] = "_cached_avg_sample_time_sec"
+        result.setdefault("pzt_mux_connected_time_s", cached_sample_time)
+        result.setdefault("pzt_mux_connected_time_source", "_cached_avg_sample_time_sec")
 
     sample_times = getattr(timing_state, "arduino_sample_times", []) if timing_state is not None else []
     if sample_times:

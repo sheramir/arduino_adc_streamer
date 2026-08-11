@@ -373,6 +373,107 @@ class AnalysisPanelMixin:
         self.analysis_pzt_baseline_results.setReadOnly(True)
         self.analysis_pzt_baseline_results.setMaximumHeight(160)
         pzt_force_layout.addWidget(self.analysis_pzt_baseline_results, 5, 0, 1, 4)
+
+        self.analysis_pzt_stuck_failsafe_check = QCheckBox("Auto-clear stuck force")
+        self.analysis_pzt_stuck_failsafe_check.setChecked(bool(PZT_FORCE_DEFAULT_SETTINGS["stuck_force_failsafe_enabled"]))
+        self.analysis_pzt_stuck_failsafe_check.setToolTip(
+            "A normal press/release already returns to exactly zero once a channel goes "
+            "below the Force noise threshold. This only covers a channel that never "
+            "fully quiets down (e.g. baseline drift, or a held press whose voltage has "
+            "decayed below the threshold): its residual force decays smoothly to zero "
+            "after the hold time below. Disable to keep such a residual until the next "
+            "event or a manual reset."
+        )
+        self.analysis_pzt_stuck_failsafe_check.stateChanged.connect(self.on_analysis_settings_changed)
+        pzt_force_layout.addWidget(self.analysis_pzt_stuck_failsafe_check, 6, 0)
+        self.analysis_pzt_stuck_hold_spin = QDoubleSpinBox()
+        self.analysis_pzt_stuck_hold_spin.setRange(0.0, 3600.0)
+        self.analysis_pzt_stuck_hold_spin.setDecimals(3)
+        self.analysis_pzt_stuck_hold_spin.setValue(float(PZT_FORCE_DEFAULT_SETTINGS["stuck_force_quiet_hold_s"]))
+        self.analysis_pzt_stuck_hold_spin.setSuffix(" s after quiet")
+        self.analysis_pzt_stuck_hold_spin.valueChanged.connect(self.on_analysis_settings_changed)
+        pzt_force_layout.addWidget(self.analysis_pzt_stuck_hold_spin, 6, 1)
+        self.analysis_pzt_stuck_tau_spin = QDoubleSpinBox()
+        self.analysis_pzt_stuck_tau_spin.setRange(0.0, 3600.0)
+        self.analysis_pzt_stuck_tau_spin.setDecimals(3)
+        self.analysis_pzt_stuck_tau_spin.setValue(float(PZT_FORCE_DEFAULT_SETTINGS["stuck_force_decay_tau_s"]))
+        self.analysis_pzt_stuck_tau_spin.setSuffix(" s decay tau")
+        self.analysis_pzt_stuck_tau_spin.setToolTip("0 = instant reset instead of a smooth decay.")
+        self.analysis_pzt_stuck_tau_spin.valueChanged.connect(self.on_analysis_settings_changed)
+        pzt_force_layout.addWidget(self.analysis_pzt_stuck_tau_spin, 6, 2)
+        self.analysis_pzt_stuck_failsafe_check.toggled.connect(self.analysis_pzt_stuck_hold_spin.setEnabled)
+        self.analysis_pzt_stuck_failsafe_check.toggled.connect(self.analysis_pzt_stuck_tau_spin.setEnabled)
+        self.analysis_pzt_stuck_hold_spin.setEnabled(self.analysis_pzt_stuck_failsafe_check.isChecked())
+        self.analysis_pzt_stuck_tau_spin.setEnabled(self.analysis_pzt_stuck_failsafe_check.isChecked())
+
+        pzt_force_layout.addWidget(QLabel("Zero floor:"), 7, 0)
+        self.analysis_pzt_zero_floor_spin = QDoubleSpinBox()
+        self.analysis_pzt_zero_floor_spin.setRange(0.0, 1e6)
+        self.analysis_pzt_zero_floor_spin.setDecimals(4)
+        self.analysis_pzt_zero_floor_spin.setValue(float(PZT_FORCE_DEFAULT_SETTINGS["force_zero_band_min_n"]))
+        self.analysis_pzt_zero_floor_spin.setSuffix(" N")
+        self.analysis_pzt_zero_floor_spin.setToolTip(
+            "Absolute floor (N) for the natural-zero band and the fail-safe snap band. A "
+            "residual at or below this magnitude is treated as fully released."
+        )
+        self.analysis_pzt_zero_floor_spin.valueChanged.connect(self.on_analysis_settings_changed)
+        pzt_force_layout.addWidget(self.analysis_pzt_zero_floor_spin, 7, 1)
+
+        pzt_force_layout.addWidget(QLabel("Zero band:"), 7, 2)
+        self.analysis_pzt_zero_band_fraction_spin = QDoubleSpinBox()
+        self.analysis_pzt_zero_band_fraction_spin.setRange(0.0, 1.0)
+        self.analysis_pzt_zero_band_fraction_spin.setDecimals(3)
+        self.analysis_pzt_zero_band_fraction_spin.setValue(float(PZT_FORCE_DEFAULT_SETTINGS["force_zero_band_fraction"]))
+        self.analysis_pzt_zero_band_fraction_spin.setSuffix(" x peak")
+        self.analysis_pzt_zero_band_fraction_spin.setToolTip(
+            "Natural-zero band as a fraction of the current press's own peak force. The "
+            "event ends once the force declines back inside this band around zero."
+        )
+        self.analysis_pzt_zero_band_fraction_spin.valueChanged.connect(self.on_analysis_settings_changed)
+        pzt_force_layout.addWidget(self.analysis_pzt_zero_band_fraction_spin, 7, 3)
+
+        pzt_force_layout.addWidget(QLabel("Min event peak:"), 7, 4)
+        self.analysis_pzt_min_event_peak_spin = QDoubleSpinBox()
+        self.analysis_pzt_min_event_peak_spin.setRange(0.0, 1e6)
+        self.analysis_pzt_min_event_peak_spin.setDecimals(4)
+        self.analysis_pzt_min_event_peak_spin.setValue(float(PZT_FORCE_DEFAULT_SETTINGS["force_zero_min_event_peak_n"]))
+        self.analysis_pzt_min_event_peak_spin.setSuffix(" N")
+        self.analysis_pzt_min_event_peak_spin.setToolTip(
+            "A press whose own peak force never reaches this magnitude is too small to "
+            "distinguish 'declined' from 'held', so it is released unconditionally as soon "
+            "as it goes quiet instead of waiting for the natural-zero/quiet-release check."
+        )
+        self.analysis_pzt_min_event_peak_spin.valueChanged.connect(self.on_analysis_settings_changed)
+        pzt_force_layout.addWidget(self.analysis_pzt_min_event_peak_spin, 7, 5)
+
+        pzt_force_layout.addWidget(QLabel("Quiet release:"), 8, 0)
+        self.analysis_pzt_quiet_release_spin = QDoubleSpinBox()
+        self.analysis_pzt_quiet_release_spin.setRange(0.0, 1.0)
+        self.analysis_pzt_quiet_release_spin.setDecimals(3)
+        self.analysis_pzt_quiet_release_spin.setValue(float(PZT_FORCE_DEFAULT_SETTINGS["quiet_hold_release_fraction"]))
+        self.analysis_pzt_quiet_release_spin.setSuffix(" x peak")
+        self.analysis_pzt_quiet_release_spin.setToolTip(
+            "At quiet-hold expiry, the residual must have declined to within this fraction "
+            "of the press's own peak before it is released; otherwise it is presumed a held "
+            "press whose voltage merely decayed quiet, left open for the stuck-force "
+            "fail-safe above to eventually resolve."
+        )
+        self.analysis_pzt_quiet_release_spin.valueChanged.connect(self.on_analysis_settings_changed)
+        pzt_force_layout.addWidget(self.analysis_pzt_quiet_release_spin, 8, 1)
+
+        pzt_force_layout.addWidget(QLabel("Quiet hold:"), 8, 2)
+        self.analysis_pzt_quiet_hold_spin = QDoubleSpinBox()
+        self.analysis_pzt_quiet_hold_spin.setRange(0.0, 3600.0)
+        self.analysis_pzt_quiet_hold_spin.setDecimals(3)
+        self.analysis_pzt_quiet_hold_spin.setValue(float(PZT_FORCE_DEFAULT_SETTINGS["quiet_hold_clear_s"]))
+        self.analysis_pzt_quiet_hold_spin.setSuffix(" s")
+        self.analysis_pzt_quiet_hold_spin.setToolTip(
+            "How long a channel must stay continuously quiet (below the Noise threshold) "
+            "before its event is considered concluded and eligible for release."
+        )
+        self.analysis_pzt_quiet_hold_spin.valueChanged.connect(self.on_analysis_settings_changed)
+        pzt_force_layout.addWidget(self.analysis_pzt_quiet_hold_spin, 8, 3)
+
         settings_root.addWidget(pzt_force_group)
 
         image_export_group = QGroupBox("Analysis Image Export")
@@ -527,6 +628,30 @@ class AnalysisPanelMixin:
             off_mux_rleak = pzt_force.get("off_mux_rleak_ohm", PZT_FORCE_DEFAULT_SETTINGS["off_mux_rleak_ohm"])
             if off_mux_rleak not in (None, ""):
                 self.analysis_pzt_off_mux_rleak_spin.setValue(float(off_mux_rleak))
+            self.analysis_pzt_stuck_failsafe_check.setChecked(
+                bool(pzt_force.get("stuck_force_failsafe_enabled", PZT_FORCE_DEFAULT_SETTINGS["stuck_force_failsafe_enabled"]))
+            )
+            self.analysis_pzt_stuck_hold_spin.setValue(
+                float(pzt_force.get("stuck_force_quiet_hold_s", PZT_FORCE_DEFAULT_SETTINGS["stuck_force_quiet_hold_s"]))
+            )
+            self.analysis_pzt_stuck_tau_spin.setValue(
+                float(pzt_force.get("stuck_force_decay_tau_s", PZT_FORCE_DEFAULT_SETTINGS["stuck_force_decay_tau_s"]))
+            )
+            self.analysis_pzt_zero_floor_spin.setValue(
+                float(pzt_force.get("force_zero_band_min_n", PZT_FORCE_DEFAULT_SETTINGS["force_zero_band_min_n"]))
+            )
+            self.analysis_pzt_zero_band_fraction_spin.setValue(
+                float(pzt_force.get("force_zero_band_fraction", PZT_FORCE_DEFAULT_SETTINGS["force_zero_band_fraction"]))
+            )
+            self.analysis_pzt_min_event_peak_spin.setValue(
+                float(pzt_force.get("force_zero_min_event_peak_n", PZT_FORCE_DEFAULT_SETTINGS["force_zero_min_event_peak_n"]))
+            )
+            self.analysis_pzt_quiet_release_spin.setValue(
+                float(pzt_force.get("quiet_hold_release_fraction", PZT_FORCE_DEFAULT_SETTINGS["quiet_hold_release_fraction"]))
+            )
+            self.analysis_pzt_quiet_hold_spin.setValue(
+                float(pzt_force.get("quiet_hold_clear_s", PZT_FORCE_DEFAULT_SETTINGS["quiet_hold_clear_s"]))
+            )
             self._update_analysis_pzt_mux_timing_controls()
             self._update_analysis_pzt_baseline_results()
             self.analysis_csv_path_edit.setText(str(state.get("csv_path", "")))
@@ -763,6 +888,14 @@ class AnalysisPanelMixin:
                 if self.analysis_pzt_off_mux_leak_check.isChecked()
                 else None
             ),
+            "stuck_force_failsafe_enabled": bool(self.analysis_pzt_stuck_failsafe_check.isChecked()),
+            "stuck_force_quiet_hold_s": float(self.analysis_pzt_stuck_hold_spin.value()),
+            "stuck_force_decay_tau_s": float(self.analysis_pzt_stuck_tau_spin.value()),
+            "force_zero_band_min_n": float(self.analysis_pzt_zero_floor_spin.value()),
+            "force_zero_band_fraction": float(self.analysis_pzt_zero_band_fraction_spin.value()),
+            "force_zero_min_event_peak_n": float(self.analysis_pzt_min_event_peak_spin.value()),
+            "quiet_hold_release_fraction": float(self.analysis_pzt_quiet_release_spin.value()),
+            "quiet_hold_clear_s": float(self.analysis_pzt_quiet_hold_spin.value()),
             "channel_calibration": dict(self.analysis_state.get("pzt_force", {}).get("channel_calibration", {})),
         }
         self.analysis_state["visible_labels"] = {

@@ -47,20 +47,30 @@ def test_force_engine_uses_position_specific_capacitance():
 
 
 def test_force_engine_processes_sample_identity_once_and_resets_completed_event():
+    # noise_threshold_v=0.01 with a +-0.3 V swing keeps the event's own peak
+    # force above force_zero_min_event_peak_n (0.05 N default) so the natural
+    # zero fires on the exact symmetric return; quiet_hold_clear_s is
+    # shortened so the test doesn't need to wait out the (1.5 s) default.
     engine = PressureForceDisplayEngine(
         geometry=PressureMapGeometry(),
-        settings={"noise_threshold_v": 0.01},
+        settings={"noise_threshold_v": 0.01, "quiet_hold_clear_s": 0.05},
     )
     def package(value):
         return {"PZT1": {position: value for position in SHEAR_SENSOR_POSITIONS}}
 
     assert engine.process_sample(1, package(0.0), 0.0)
-    assert engine.process_sample(2, package(0.1), 0.01)
+    assert engine.process_sample(2, package(0.3), 0.01)
     before_duplicate = engine.package_results()[0].force_grid_n.copy()
-    assert not engine.process_sample(2, package(0.1), 0.01)
+    assert not engine.process_sample(2, package(0.3), 0.01)
     np.testing.assert_array_equal(engine.package_results()[0].force_grid_n, before_duplicate)
 
-    assert engine.process_sample(3, package(-0.1), 0.02)
+    # The equal-and-opposite swing lands the accumulator exactly on zero (a
+    # natural zero, still on this active sample); the package itself only
+    # resets on the following genuinely quiet sample.
+    assert engine.process_sample(3, package(-0.3), 0.02)
+    assert engine._packages["PZT1"].channel_states["C"].accumulated_force_n == 0.0
+    assert engine._packages["PZT1"].has_force_activity
+
     assert engine.process_sample(4, package(0.0), 0.03)
     # Event completion clears the complete package state atomically.  The
     # package remains available for a subsequent event rather than vanishing.
@@ -69,6 +79,7 @@ def test_force_engine_processes_sample_identity_once_and_resets_completed_event(
     assert result[0].normal_force_n == 0.0
     assert result[0].shear_force_n == 0.0
     assert not np.any(result[0].force_grid_n)
+    assert not engine._packages["PZT1"].has_force_activity
 
 
 def test_force_engine_rejects_backward_sample_identity():
@@ -246,8 +257,12 @@ def test_force_reset_clears_layers_and_accumulated_force():
 
 
 def test_force_engine_waits_for_staggered_channel_events_before_package_reset():
+    # Center pushes and settles (fallback-eligible bipolar swing) one sample
+    # before Left; each channel's own quiet_hold_clear_s countdown starts
+    # from when *it* individually falls quiet, so the package must wait for
+    # whichever channel resolves last.
     engine = PressureForceDisplayEngine(
-        geometry=PressureMapGeometry(), settings={"noise_threshold_v": 0.01}
+        geometry=PressureMapGeometry(), settings={"noise_threshold_v": 0.01, "quiet_hold_clear_s": 0.05}
     )
     engine.configure_layout({"PZT1": (0, 0)})
 
@@ -258,21 +273,109 @@ def test_force_engine_waits_for_staggered_channel_events_before_package_reset():
             }
         }
 
-    engine.process_sample((1, 0), sample(0.0, 0.0), 0.00)
-    engine.process_sample((2, 0), sample(0.1, 0.0), 0.01)
-    engine.process_sample((3, 0), sample(-0.1, 0.1), 0.02)
-    engine.process_sample((4, 0), sample(0.0, -0.1), 0.03)
-    # The centre event has ended, but the left channel is still active, so the
-    # package must not have been reset yet.  Assert the retained state rather
-    # than an accumulated force that legitimately cancels to zero.
-    assert engine._packages["PZT1"].has_force_activity
-    assert engine._packages["PZT1"].channel_states["L"].active
+    engine.process_sample(0, sample(0.0, 0.0), 0.00)
+    engine.process_sample(1, sample(0.3, 0.0), 0.01)
+    engine.process_sample(2, sample(-0.2, 0.3), 0.02)   # C settles quiet from here (residual 0.025)
+    engine.process_sample(3, sample(0.0, -0.2), 0.03)   # L settles quiet from here (residual 0.025)
+    for index, timestamp in enumerate((0.04, 0.05, 0.06, 0.07), start=4):
+        engine.process_sample(index, sample(0.0, 0.0), timestamp)
+        # Neither channel has reached its own quiet_hold_clear_s yet, so the
+        # package must retain state (not even Center, which resolves next).
+        assert engine._packages["PZT1"].has_force_activity
+        assert engine._packages["PZT1"].channel_states["C"].accumulated_force_n == pytest.approx(0.025)
+        assert engine._packages["PZT1"].channel_states["L"].accumulated_force_n == pytest.approx(0.025)
 
-    engine.process_sample((5, 0), sample(0.0, 0.0), 0.04)
+    # Center resolves at t=0.03+0.05=0.08 (one sample ahead of Left); the
+    # package must still not reset since Left hasn't resolved.
+    engine.process_sample(8, sample(0.0, 0.0), 0.08)
+    assert engine._packages["PZT1"].has_force_activity
+    assert engine._packages["PZT1"].channel_states["L"].accumulated_force_n == pytest.approx(0.025)
+
+    # Left resolves at t=0.04+0.05=0.09: only once both channels are resolved
+    # does the coherent package reset fire.
+    engine.process_sample(9, sample(0.0, 0.0), 0.10)
     result = engine.package_results()[0]
     assert result.normal_force_n == 0.0
     assert result.shear_force_n == 0.0
     assert not np.any(result.force_grid_n)
+    assert not engine._packages["PZT1"].has_force_activity
+
+
+def test_one_channel_tail_noise_does_not_reset_the_package_mid_press():
+    """A single sub-threshold dip on one channel, while a press is ongoing on
+    all five, must be absorbed by hysteresis (the channel's own event stays
+    active) rather than being read as that channel's event concluding."""
+    engine = PressureForceDisplayEngine(
+        geometry=PressureMapGeometry(), settings={"noise_threshold_v": 0.01, "quiet_hold_clear_s": 0.05}
+    )
+    engine.configure_layout({"PZT1": (0, 0)})
+
+    def sample(c, l, r, t, b):
+        return {"PZT1": {"C": c, "L": l, "R": r, "T": t, "B": b}}
+
+    engine.process_sample(0, sample(0.0, 0.0, 0.0, 0.0, 0.0), 0.00)
+    engine.process_sample(1, sample(0.3, 0.3, 0.3, 0.3, 0.3), 0.01)
+    before_dip = engine._packages["PZT1"].channel_states["L"].accumulated_force_n
+
+    # L alone dips below threshold for one sample while the other four are
+    # still mid-press.
+    engine.process_sample(2, sample(0.3, 0.0, 0.3, 0.3, 0.3), 0.02)
+    package = engine._packages["PZT1"]
+    assert package.has_force_activity
+    assert package.channel_states["L"].event_active
+    assert package.channel_states["L"].accumulated_force_n == pytest.approx(before_dip)
+    assert package.normal_force_n > 0.0
+
+    engine.process_sample(3, sample(0.3, 0.3, 0.3, 0.3, 0.3), 0.03)
+    assert engine._packages["PZT1"].channel_states["L"].accumulated_force_n > before_dip
+
+
+def test_force_engine_gated_release_tail_holds_residual_until_package_reset():
+    """Work item C4-6: reproduces finding F1 at the package-engine level. A
+    channel's natural zero can fire while its own release transient is still
+    supra-threshold; ``self_reset_enabled=False`` keeps the >=band residual
+    on the accumulator (not zeroed) until a coherent package reset, and the
+    re-arm gate must hold that residual exactly fixed - not integrate the
+    still-arriving tail as a spurious opposite-sign plateau - while the
+    channel keeps reporting ``active=True`` so the package completion check
+    waits instead of treating the tail as quiet."""
+    engine = PressureForceDisplayEngine(
+        geometry=PressureMapGeometry(), settings={"noise_threshold_v": 0.1, "quiet_hold_clear_s": 0.05},
+    )
+    engine.configure_layout({"PZT1": (0, 0)})
+
+    def sample(center: float):
+        return {"PZT1": {"C": center, "L": 0.0, "R": 0.0, "T": 0.0, "B": 0.0}}
+
+    engine.process_sample(0, sample(0.0), 0.00)
+    engine.process_sample(1, sample(0.5), 0.01)
+    channel = engine._packages["PZT1"].channel_states["C"]
+    assert channel.event_peak_force_n == pytest.approx(0.125)
+
+    # Fast release spike lands the residual within the natural-zero band
+    # while voltage (-0.46 V) is still far outside the noise threshold.
+    engine.process_sample(2, sample(-0.46), 0.02)
+    residual = channel.accumulated_force_n
+    assert 0.0 < abs(residual) <= 0.02
+    assert channel.rearm_pending
+    assert "C" in engine._packages["PZT1"].pending_reset_positions
+
+    # The undershoot keeps running supra-threshold for several more samples:
+    # the gate must hold the residual exactly fixed (never integrate a
+    # spurious negative plateau), and the package must not treat the tail as
+    # quiet/resolved while the channel is still reporting active.
+    for index, timestamp in enumerate((0.03, 0.04, 0.05), start=3):
+        engine.process_sample(index, sample(-0.3), timestamp)
+        assert channel.accumulated_force_n == residual
+        assert channel.active
+        assert not engine._package_event_complete(engine._packages["PZT1"])
+
+    # The tail finally returns inside the noise band: the gate clears and,
+    # now genuinely quiet with its only nonzero channel already latched in
+    # pending_reset_positions, the whole package resets coherently.
+    engine.process_sample(6, sample(0.0), 0.06)
+    assert not engine._packages["PZT1"].has_force_activity
+    assert engine._packages["PZT1"].channel_states["C"].accumulated_force_n == 0.0
 
 
 def test_force_engine_accepts_monotonic_tuple_sample_identities():
@@ -292,9 +395,16 @@ def test_force_engine_resets_instead_of_bridging_a_missing_repeat_observation():
         engine.process_sample((10, 2), package, 1.1, observations_per_sweep=3)
 
 
-def test_force_engine_resets_exactly_after_configured_quiet_package_observations():
+def test_stuck_force_failsafe_tau_zero_resets_the_whole_package_instantly():
+    """Replaces the old sample-count ``reset_after_quiet_samples`` net.
+
+    A package quiet for ``stuck_force_quiet_hold_s`` with residual force
+    outside the zero band resets all five channels together, coherently,
+    once ``tau == 0`` selects an instant reset.
+    """
     engine = PressureForceDisplayEngine(
-        geometry=PressureMapGeometry(), settings={"reset_after_quiet_samples": 10}
+        geometry=PressureMapGeometry(),
+        settings={"stuck_force_quiet_hold_s": 0.05, "stuck_force_decay_tau_s": 0.0, "quiet_hold_clear_s": 0.02},
     )
     engine.configure_layout({"PZT1": (0, 0)})
     state = engine._packages["PZT1"]
@@ -307,63 +417,162 @@ def test_force_engine_resets_exactly_after_configured_quiet_package_observations
     state.accumulated_force_grid_n.fill(0.5)
     quiet = {"PZT1": {position: 0.0 for position in SHEAR_SENSOR_POSITIONS}}
 
-    for sample_id in range(1, 10):
-        engine.process_sample(sample_id, quiet, sample_id * 0.01)
+    for sample_id in range(1, 6):
+        engine.process_sample(sample_id, quiet, sample_id * 0.011)
         assert engine._packages["PZT1"].normal_force_n == 0.5
         assert engine._packages["PZT1"].shear_x_n == -0.1
-        assert engine._packages["PZT1"].quiet_sample_count == sample_id
 
-    engine.process_sample(10, quiet, 0.10)
+    engine.process_sample(6, quiet, 6 * 0.011)
     state = engine._packages["PZT1"]
     assert state.normal_force_n == 0.0
     assert state.shear_x_n == 0.0
     assert state.shear_y_n == 0.0
-    assert state.quiet_sample_count == 0
     assert not state.has_force_activity
     assert not np.any(state.accumulated_force_grid_n)
     assert all(not channel.initialized for channel in state.channel_states.values())
 
 
-def test_force_engine_active_channel_interrupts_quiet_package_reset_counter():
+def test_stuck_force_failsafe_decays_all_five_channels_by_the_same_factor():
+    """Residual force decays exponentially; shear ratios stay intact until
+    each channel individually crosses the zero-band floor and snaps to
+    exact zero, then the package reset fires once every channel is zero."""
     engine = PressureForceDisplayEngine(
-        geometry=PressureMapGeometry(), settings={"reset_after_quiet_samples": 10}
+        geometry=PressureMapGeometry(),
+        settings={
+            "stuck_force_quiet_hold_s": 0.03, "stuck_force_decay_tau_s": 0.05,
+            "quiet_hold_clear_s": 0.02, "force_zero_band_min_n": 0.02,
+        },
+    )
+    engine.configure_layout({"PZT1": (0, 0)})
+    state = engine._packages["PZT1"]
+    state.has_force_activity = True
+    state.channel_states["C"].accumulated_force_n = 0.5
+    state.channel_states["L"].accumulated_force_n = 0.1
+    quiet = {"PZT1": {position: 0.0 for position in SHEAR_SENSOR_POSITIONS}}
+
+    seen_partial_decay = False
+    for sample_id in range(1, 20):
+        engine.process_sample(sample_id, quiet, sample_id * 0.011)
+        state = engine._packages["PZT1"]
+        c_force = state.channel_states["C"].accumulated_force_n
+        l_force = state.channel_states["L"].accumulated_force_n
+        if 0.0 < c_force < 0.5 and l_force > 0.0:
+            seen_partial_decay = True
+            assert l_force / c_force == pytest.approx(0.2, rel=1e-6)
+        if not state.has_force_activity:
+            break
+
+    assert seen_partial_decay
+    assert not engine._packages["PZT1"].has_force_activity
+
+
+def test_stuck_force_failsafe_disabled_retains_residual_indefinitely():
+    engine = PressureForceDisplayEngine(
+        geometry=PressureMapGeometry(),
+        settings={"stuck_force_failsafe_enabled": False, "stuck_force_quiet_hold_s": 0.01},
     )
     engine.configure_layout({"PZT1": (0, 0)})
     state = engine._packages["PZT1"]
     state.has_force_activity = True
     state.channel_states["C"].accumulated_force_n = 0.5
     quiet = {"PZT1": {position: 0.0 for position in SHEAR_SENSOR_POSITIONS}}
-    active = {"PZT1": {**quiet["PZT1"], "C": 0.1}}
+
+    for sample_id in range(1, 50):
+        engine.process_sample(sample_id, quiet, sample_id * 0.011)
+
+    assert engine._packages["PZT1"].normal_force_n == 0.5
+
+
+def test_stuck_force_failsafe_new_active_sample_cancels_decay():
+    engine = PressureForceDisplayEngine(
+        geometry=PressureMapGeometry(),
+        settings={"stuck_force_quiet_hold_s": 0.02, "stuck_force_decay_tau_s": 0.05,
+                  "quiet_hold_clear_s": 0.02, "noise_threshold_v": 0.01},
+    )
+    engine.configure_layout({"PZT1": (0, 0)})
+    state = engine._packages["PZT1"]
+    state.has_force_activity = True
+    state.channel_states["C"].accumulated_force_n = 0.5
+    quiet = {"PZT1": {position: 0.0 for position in SHEAR_SENSOR_POSITIONS}}
 
     for sample_id in range(1, 6):
-        engine.process_sample(sample_id, quiet, sample_id * 0.01)
-    assert engine._packages["PZT1"].quiet_sample_count == 5
-    engine.process_sample(6, active, 0.06)
-    assert engine._packages["PZT1"].quiet_sample_count == 0
-    for sample_id in range(7, 16):
-        engine.process_sample(sample_id, quiet, sample_id * 0.01)
-    assert engine._packages["PZT1"].normal_force_n != 0.0
-    engine.process_sample(16, quiet, 0.16)
-    assert engine._packages["PZT1"].normal_force_n == 0.0
+        engine.process_sample(sample_id, quiet, sample_id * 0.011)
+    decayed = engine._packages["PZT1"].channel_states["C"].accumulated_force_n
+    assert 0.0 < decayed < 0.5
+
+    active = {"PZT1": {**{p: 0.0 for p in SHEAR_SENSOR_POSITIONS}, "C": 0.3}}
+    engine.process_sample(6, active, 6 * 0.011)
+
+    resumed = engine._packages["PZT1"].channel_states["C"].accumulated_force_n
+    assert resumed == pytest.approx(decayed + 0.25 * 0.3)
 
 
-def test_force_engine_quiet_reset_is_independent_per_configured_package():
+def test_active_channel_restarts_the_package_quiet_timer():
+    """An active sample interrupts the package-wide quiet run (restarting the
+    countdown, not continuing toward the old hold) and also starts a fresh
+    per-channel event for that channel - which, since the quiet-hold reset is
+    unconditional, concludes and gets the package coherently reset via the
+    ordinary per-channel path, without needing to wait out the (longer)
+    stuck-force hold at all."""
     engine = PressureForceDisplayEngine(
-        geometry=PressureMapGeometry(), settings={"reset_after_quiet_samples": 3}
+        geometry=PressureMapGeometry(),
+        settings={"stuck_force_quiet_hold_s": 0.05, "stuck_force_decay_tau_s": 0.0,
+                  "quiet_hold_clear_s": 0.02, "noise_threshold_v": 0.01},
+    )
+    engine.configure_layout({"PZT1": (0, 0)})
+    state = engine._packages["PZT1"]
+    state.has_force_activity = True
+    state.channel_states["C"].accumulated_force_n = 0.5
+    quiet = {"PZT1": {position: 0.0 for position in SHEAR_SENSOR_POSITIONS}}
+    active = {"PZT1": {**{p: 0.0 for p in SHEAR_SENSOR_POSITIONS}, "C": 0.1}}
+
+    for sample_id in range(1, 4):
+        engine.process_sample(sample_id, quiet, sample_id * 0.011)
+    assert engine._packages["PZT1"].quiet_since_s is not None
+
+    # A single active sample interrupts the package-wide quiet run: the
+    # countdown must restart from here, not continue toward the old hold.
+    # It also integrates fresh charge on top of the retained residual.
+    engine.process_sample(4, active, 4 * 0.011)
+    assert engine._packages["PZT1"].quiet_since_s is None
+    restarted_force = engine._packages["PZT1"].channel_states["C"].accumulated_force_n
+    assert restarted_force > 0.5
+
+    for sample_id in range(5, 7):
+        engine.process_sample(sample_id, quiet, sample_id * 0.011)
+        # Not yet elapsed even the short per-channel quiet_hold_clear_s: still retained.
+        assert engine._packages["PZT1"].normal_force_n == pytest.approx(restarted_force)
+
+    for sample_id in range(7, 15):
+        engine.process_sample(sample_id, quiet, sample_id * 0.011)
+        if engine._packages["PZT1"].normal_force_n == 0.0:
+            break
+    assert engine._packages["PZT1"].normal_force_n == 0.0
+    assert not engine._packages["PZT1"].has_force_activity
+
+
+def test_stuck_force_failsafe_is_independent_per_configured_package():
+    engine = PressureForceDisplayEngine(
+        geometry=PressureMapGeometry(),
+        settings={"stuck_force_quiet_hold_s": 0.02, "stuck_force_decay_tau_s": 0.0,
+                  "quiet_hold_clear_s": 0.02, "noise_threshold_v": 0.01},
     )
     engine.configure_layout({"PZT1": (0, 0), "PZT3": (0, 1)})
     engine._packages["PZT1"].has_force_activity = True
     engine._packages["PZT1"].channel_states["C"].accumulated_force_n = 0.5
     quiet = {position: 0.0 for position in SHEAR_SENSOR_POSITIONS}
-    for sample_id in range(1, 4):
+
+    for sample_id in range(1, 8):
         engine.process_sample(
             sample_id,
-            {"PZT1": quiet, "PZT3": {**quiet, "C": 0.1}},
-            sample_id * 0.01,
+            {"PZT1": quiet, "PZT3": {**quiet, "C": 0.3}},
+            sample_id * 0.011,
         )
     assert engine._packages["PZT1"].normal_force_n == 0.0
+    # PZT3 kept accumulating the whole time; it was never quiet, so its own
+    # fail-safe never engaged and its residual survives untouched.
     assert engine._packages["PZT3"].has_force_activity
-    assert engine._packages["PZT3"].quiet_sample_count == 0
+    assert engine._packages["PZT3"].normal_force_n > 0.0
 
 
 def _spot_shape(reference: np.ndarray, row: int, column: int, value: float = 1.0) -> np.ndarray:

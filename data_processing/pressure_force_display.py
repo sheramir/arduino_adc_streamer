@@ -16,6 +16,7 @@ from data_processing.pressure_map_array_generator import PressureMapArrayForcePa
 from data_processing.pressure_map_geometry import PressureMapGeometry
 from data_processing.pzt_force_calculation import (
     PztForceChannelIntegrator,
+    PztForceStepResult,
     pzt_capacitance_to_farads,
     pzt_capacitance_value_for_position,
 )
@@ -80,8 +81,18 @@ class _ForcePackageState:
     shear_y_n: float = 0.0
     applied_load_n: float = 0.0
     applied_polarity: int = 0
-    quiet_sample_count: int = 0
     has_force_activity: bool = False
+    # Package-wide stuck-force fail-safe bookkeeping (section 3.2 of the
+    # natural-reset plan): a continuous quiet run tracked across observations,
+    # independent of any single channel's own event state.
+    quiet_since_s: float | None = None
+    previous_observation_timestamp_s: float | None = None
+    # Latched positions whose own event concluded with a recommended reset
+    # (natural zero or fallback). ``PztForceStepResult.reset_recommended`` is
+    # only true for the one step the event ends on, so staggered channels
+    # (one still active while another already concluded) need this to
+    # survive until the whole package can reset coherently.
+    pending_reset_positions: set[str] = field(default_factory=set)
 
 
 class PressureForceDisplayEngine:
@@ -158,33 +169,51 @@ class PressureForceDisplayEngine:
                 raise ValueError(f"force-display package {sensor_id} is missing a PZT position")
             package = self._packages.setdefault(sensor_id, self._new_package_state())
             calibration = (channel_calibration or {}).get(sensor_id, {})
-            current_forces: dict[str, float] = {}
+            observation_timestamp: float | None = None
             for position in SHEAR_SENSOR_POSITIONS:
                 state = package.channel_states[position]
                 timestamp = self._per_channel_value(timestamps_s, sensor_id, position)
                 if timestamp is None:
                     raise ValueError("force-display channel timestamp is required")
-                state.process_centered_sample(
+                step = state.process_centered_sample(
                     float(voltages[position]), float(timestamp),
                     leak_dt_s=self._per_channel_value(leak_dt_s, sensor_id, position),
                     pre_sample_decay_dt_s=self._per_channel_value(pre_sample_decay_dt_s, sensor_id, position),
                 )
-                current_forces[position] = state.accumulated_force_n * float(calibration.get(position, 1.0))
+                if step.reset_recommended:
+                    package.pending_reset_positions.add(position)
+                observation_timestamp = (
+                    float(timestamp) if observation_timestamp is None
+                    else max(observation_timestamp, float(timestamp))
+                )
 
             # Suppress the final channel-local transition entirely.  A package
             # reset is one coherent operation, not five nonlinear corrections.
             if any(state.active for state in package.channel_states.values()):
-                package.quiet_sample_count = 0
+                package.quiet_since_s = None
                 package.has_force_activity = True
-            else:
-                package.quiet_sample_count += 1
-            if self._package_event_complete(package) or self._package_quiet_reset_due(package):
+            elif package.quiet_since_s is None:
+                package.quiet_since_s = observation_timestamp
+
+            dt_s = 0.0
+            if package.previous_observation_timestamp_s is not None:
+                dt_s = max(0.0, observation_timestamp - package.previous_observation_timestamp_s)
+            package.previous_observation_timestamp_s = observation_timestamp
+
+            if self._package_event_complete(package):
+                self.reset_package(sensor_id)
+                continue
+            if self._package_stuck_decay_due(package, observation_timestamp) and self._apply_package_stuck_decay(package, dt_s):
                 self.reset_package(sensor_id)
                 continue
 
             # The channel integrators are the only physical integrators.
             # Package Normal/Shear are derived from their current accumulated
             # state, never accumulated a second time.
+            current_forces = {
+                position: package.channel_states[position].accumulated_force_n * float(calibration.get(position, 1.0))
+                for position in SHEAR_SENSOR_POSITIONS
+            }
             shear = self.shear_detector.detect(current_forces)
             normal = self.normal_force_calculator.compute(shear.residual)
             package.normal_force_n = normal.total_force
@@ -320,7 +349,15 @@ class PressureForceDisplayEngine:
                 d33_c_per_n=float(self.settings["d33_pc_per_n"]) * PZT_FORCE_PIC_COULOMB_TO_COULOMB,
                 noise_threshold_v=float(self.settings["noise_threshold_v"]),
                 off_mux_rleak_ohm=None if off_mux in (None, "") else float(off_mux),
-                reset_on_event_complete=False,
+                # The package engine is the only thing allowed to zero a
+                # channel's accumulator; each channel still runs its own
+                # event machine and reports whether a reset is due.
+                self_reset_enabled=False,
+                force_zero_band_fraction=float(self.settings["force_zero_band_fraction"]),
+                force_zero_band_min_n=float(self.settings["force_zero_band_min_n"]),
+                force_zero_min_event_peak_n=float(self.settings["force_zero_min_event_peak_n"]),
+                quiet_hold_release_fraction=float(self.settings["quiet_hold_release_fraction"]),
+                quiet_hold_clear_s=float(self.settings["quiet_hold_clear_s"]),
             ) for position in SHEAR_SENSOR_POSITIONS
         }
         return _ForcePackageState(
@@ -351,14 +388,68 @@ class PressureForceDisplayEngine:
 
     @staticmethod
     def _package_event_complete(package: _ForcePackageState) -> bool:
-        states = tuple(package.channel_states.values())
-        return bool(any(state.event_completed for state in states) and all(not state.active for state in states)
-                    and all((not state.saw_opposite_pair) or state.event_completed for state in states))
+        """Return whether every channel is quiet and resolved (natural/fallback).
 
-    def _package_quiet_reset_due(self, package: _ForcePackageState) -> bool:
-        """Return whether a completed package has remained synchronously quiet."""
-        quiet_limit = max(1, int(self.settings.get("reset_after_quiet_samples", 10)))
-        return bool(package.has_force_activity and package.quiet_sample_count >= quiet_limit)
+        Gated on ``has_force_activity`` so a package that has never seen any
+        force never "completes" (that would spuriously reset the channel
+        integrators' timestamp/init bookkeeping on every idle sample). A
+        channel that never accumulated any residual force trivially counts as
+        resolved; every channel that still holds residual force must be
+        latched in ``pending_reset_positions`` (its own event concluded with
+        a recommended reset, possibly several samples ago for a staggered
+        channel).
+        """
+        if not package.has_force_activity:
+            return False
+        states = package.channel_states
+        if any(state.active for state in states.values()):
+            return False
+        for position, state in states.items():
+            if state.accumulated_force_n == 0.0:
+                continue
+            if position not in package.pending_reset_positions:
+                return False
+        return True
+
+    def _package_stuck_decay_due(self, package: _ForcePackageState, observation_timestamp: float | None) -> bool:
+        """Return whether the package-wide stuck-force fail-safe should engage.
+
+        Mirrors the per-channel definition in
+        :class:`~data_processing.pzt_force_calculation.PztForceChannelIntegrator`
+        (section 3.2 of the natural-reset plan), evaluated across all five
+        channels: no channel active, quiet for at least the configured hold
+        time, and at least one channel still nonzero (defense in depth: any
+        residual class, however small, must eventually resolve).
+        """
+        if not bool(self.settings.get("stuck_force_failsafe_enabled", True)):
+            return False
+        if package.quiet_since_s is None or observation_timestamp is None:
+            return False
+        states = package.channel_states
+        if any(state.active for state in states.values()):
+            return False
+        hold_s = max(
+            float(self.settings["stuck_force_quiet_hold_s"]),
+            float(self.settings["quiet_hold_clear_s"]),
+        )
+        if (observation_timestamp - package.quiet_since_s) < hold_s:
+            return False
+        return any(state.accumulated_force_n != 0.0 for state in states.values())
+
+    def _apply_package_stuck_decay(self, package: _ForcePackageState, dt_s: float) -> bool:
+        """Decay all five channel accumulators by the same factor.
+
+        Returns whether every channel is now within the zero-band floor, in
+        which case the caller performs one coherent ``reset_package``.
+        """
+        tau_s = float(self.settings["stuck_force_decay_tau_s"])
+        # A list comprehension (not a generator passed to all()) so every
+        # channel is decayed even after one is already within the band.
+        within_band = [
+            state.decay_toward_zero(dt_s, tau_s)
+            for state in package.channel_states.values()
+        ]
+        return all(within_band)
 
     @staticmethod
     def _per_channel_value(value, sensor_id: str, position: str):

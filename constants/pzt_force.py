@@ -25,7 +25,21 @@ PZT_FORCE_DEFAULT_SETTINGS = {
     # Visualization-only default for new settings. Persisted user values keep
     # their existing value when loaded.
     "display_max_force_n": 0.25,
-    "reset_after_quiet_samples": 10,
+    # Natural-reset event-machine tunables (PztForceChannelIntegrator).
+    "force_zero_band_fraction": 0.1,
+    "force_zero_band_min_n": 0.02,
+    "force_zero_min_event_peak_n": 0.05,
+    # At quiet-hold expiry, the residual must have declined to within this
+    # fraction of the event's own peak before it is released/zeroed; a
+    # residual still near peak is presumed a held press whose voltage has
+    # merely decayed quiet, not a real release, and is left for the
+    # stuck-force fail-safe below to eventually resolve.
+    "quiet_hold_release_fraction": 0.5,
+    "quiet_hold_clear_s": 0.15,
+    # Stuck-force fail-safe (replaces reset_after_quiet_samples).
+    "stuck_force_failsafe_enabled": True,
+    "stuck_force_quiet_hold_s": 1.0,
+    "stuck_force_decay_tau_s": 1.0,
 }
 
 PZT_FORCE_CAPACITANCE_UNITS = ("pF", "nF", "F")

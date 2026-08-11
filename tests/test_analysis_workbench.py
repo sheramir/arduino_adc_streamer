@@ -10,9 +10,11 @@ import numpy as np
 from config.adc_config_state import ADCConfigurationState
 from constants.force import X_FORCE_SENSOR_TO_NEWTON, Z_FORCE_SENSOR_TO_NEWTON
 from constants.pzt_force import PZT_FORCE_DEFAULT_SETTINGS
+from data_processing.adc_mux_timing import calculate_adc_mux_timing_for_acquisition
 from data_processing.analysis_workbench import (
     AnalysisSourceSnapshot,
     _build_offline_stream_index_map,
+    _owner_analysis_timing_metadata,
     build_in_memory_snapshot,
     build_overlay_traces,
     estimate_analysis_pzt_force_calibration,
@@ -409,6 +411,59 @@ class AnalysisWorkbenchTests(unittest.TestCase):
 
         self.assertAlmostEqual(leak_dt, 0.0305)
         self.assertIn("block_timing_csv", status)
+
+    def test_owner_timing_metadata_prefers_calculator_over_cached_average(self):
+        # A calculator-capable owner's physical t_connected must win even when a
+        # cached average sample time is also present (Part A of the natural-reset
+        # plan: the cached-average block used to overwrite the correct value).
+        owner = SimpleNamespace(
+            current_mcu="Array_PZT_PZR1.7",
+            config={"osr": 4, "gain": 1, "repeat": 4, "channels": [1], "use_ground": False, "buffer": 10},
+            _cached_avg_sample_time_sec=45e-6,
+        )
+        calculated = calculate_adc_mux_timing_for_acquisition(owner.current_mcu, owner.config)
+
+        result = _owner_analysis_timing_metadata(owner)
+
+        self.assertEqual(result["pzt_mux_connected_time_s"], calculated.sensor_connected_s)
+        self.assertEqual(result["pzt_mux_connected_time_source"], "adc_mux_timing.t_connected_s")
+
+    def test_owner_timing_metadata_falls_back_to_cached_average_when_unsupported(self):
+        owner = SimpleNamespace(
+            current_mcu="Unsupported.1",
+            config={},
+            _cached_avg_sample_time_sec=45e-6,
+        )
+
+        result = _owner_analysis_timing_metadata(owner)
+
+        self.assertEqual(result["pzt_mux_connected_time_s"], 45e-6)
+        self.assertEqual(result["pzt_mux_connected_time_source"], "_cached_avg_sample_time_sec")
+
+    def test_resolve_analysis_pzt_mux_leak_dt_uses_calculator_value_end_to_end(self):
+        owner = SimpleNamespace(
+            current_mcu="Array_PZT_PZR1.7",
+            config={"osr": 4, "gain": 1, "repeat": 4, "channels": [1], "use_ground": False, "buffer": 10},
+            _cached_avg_sample_time_sec=45e-6,
+        )
+        calculated = calculate_adc_mux_timing_for_acquisition(owner.current_mcu, owner.config)
+        timing_metadata = _owner_analysis_timing_metadata(owner)
+        snapshot = AnalysisSourceSnapshot(
+            data=np.asarray([[1], [2]], dtype=np.float32),
+            timestamps_s=np.asarray([0.0, 0.1], dtype=np.float64),
+            channel_labels=["PZT6_C"],
+            metadata={
+                "configuration": {"channels": [1], "repeat_count": 1},
+                "timing": timing_metadata,
+            },
+            source_id="unit",
+            sample_rate_hz=10.0,
+        )
+
+        leak_dt, status = resolve_analysis_pzt_mux_leak_dt_s(snapshot, {"enabled": True, "mux_timing_mode": "auto"})
+
+        self.assertAlmostEqual(leak_dt, calculated.sensor_connected_s)
+        self.assertIn("adc_mux_timing.t_connected_s", status)
 
     def test_pzt_capacitance_units_convert_to_farads(self):
         self.assertAlmostEqual(pzt_capacitance_to_farads(10.0, "pF"), 10e-12)

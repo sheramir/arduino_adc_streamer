@@ -25,6 +25,7 @@ from constants.pressure_map import (
     DEFAULT_SIGNAL_INTEGRATION_SHOW_GRAPH,
     SIGNAL_INTEGRATION_DISABLED_HPF_CUTOFF_HZ,
 )
+from constants.pzt_force import PZT_FORCE_DEFAULT_SETTINGS
 from constants.shear import SHEAR_SENSOR_POSITIONS
 from config.pressure_map_mask_config import MaskConfigStore
 from data_processing.adc_filter_engine import ADCFilterEngine
@@ -998,6 +999,41 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             self.assertFalse(harness.pressure_show_near_outer_boundary_check.isChecked())
             self.assertTrue(harness.pressure_show_outer_boundary_check.isChecked())
             self.assertFalse(harness.pressure_show_mid_boundary_check.isChecked())
+
+    def test_pzt_force_event_tunables_round_trip_and_rebuild_engine(self):
+        """Work item D3: the five natural-reset event tunables (Part D) round
+        trip through save/restore, a legacy payload lacking them leaves the
+        (already default-valued) widgets untouched, and an edited value
+        reaches the rebuilt Force engine's settings."""
+        harness = SignalIntegrationPanelHarness()
+        self._install_shear_setting_widgets(harness)
+        harness.force_pzt_zero_floor_spin = DummySpinBox(PZT_FORCE_DEFAULT_SETTINGS["force_zero_band_min_n"])
+        harness.force_pzt_zero_band_fraction_spin = DummySpinBox(PZT_FORCE_DEFAULT_SETTINGS["force_zero_band_fraction"])
+        harness.force_pzt_min_event_peak_spin = DummySpinBox(PZT_FORCE_DEFAULT_SETTINGS["force_zero_min_event_peak_n"])
+        harness.force_pzt_quiet_release_spin = DummySpinBox(PZT_FORCE_DEFAULT_SETTINGS["quiet_hold_release_fraction"])
+        harness.force_pzt_quiet_hold_spin = DummySpinBox(PZT_FORCE_DEFAULT_SETTINGS["quiet_hold_clear_s"])
+
+        emitted = harness._pzt_force_settings()
+        for key in (
+            "force_zero_band_min_n", "force_zero_band_fraction", "force_zero_min_event_peak_n",
+            "quiet_hold_release_fraction", "quiet_hold_clear_s",
+        ):
+            self.assertEqual(emitted[key], PZT_FORCE_DEFAULT_SETTINGS[key])
+
+        changed = harness._apply_shear_settings({"pzt_force": {"force_zero_band_min_n": 0.05}})
+        self.assertTrue(changed)
+        self.assertEqual(harness.force_pzt_zero_floor_spin.value(), 0.05)
+
+        # A legacy payload lacking these keys must not blank or reset them.
+        harness._apply_shear_settings({"pzt_force": {"rleak_ohm": 2e6}})
+        self.assertEqual(harness.force_pzt_zero_floor_spin.value(), 0.05)
+
+        harness.pressure_map_geometry = PressureMapGeometry()
+        harness.normal_force_calculator = NormalForceCalculator()
+        harness.shear_detector = ShearDetector()
+        harness.pressure_map_array_generator = PressureMapArrayGenerator(geometry=harness.pressure_map_geometry)
+        harness._rebuild_pressure_force_engine()
+        self.assertEqual(harness.pressure_force_engine.settings["force_zero_band_min_n"], 0.05)
 
     def test_pressure_map_tab_controls_expose_tooltips(self):
         harness = SignalIntegrationPanelHarness()

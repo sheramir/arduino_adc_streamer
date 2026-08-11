@@ -113,6 +113,65 @@ def test_repeat_specific_effective_sample_helpers_are_explicit():
         timing.connected_after_effective_sample_s(adc_input=1, repeat_index=2)
 
 
+def test_sweeps_per_block_extends_one_continuous_connection():
+    # Verified against live MG24 hardware block timestamps (2026-08-11):
+    # muxSelect() no-ops on every sweep after the first when the same single
+    # channel repeats with ground sampling off, so sweeps_per_block behaves
+    # exactly like additional repeat_count pairs in one continuous connection.
+    folded = calculate(osr=4, repeat_count=4, sweeps_per_block=10, use_ground_between_channels=False)
+    equivalent = calculate(osr=4, repeat_count=40, use_ground_between_channels=False)
+
+    assert folded.continuous_pair_count == 40
+    assert folded.repeat_count == 4
+    assert folded.sweeps_per_block == 10
+    assert folded.signal_sequence_us == pytest.approx(equivalent.signal_sequence_us)
+    assert folded.sensor_connected_us == pytest.approx(equivalent.sensor_connected_us)
+    assert folded.signal_sequence_us == pytest.approx(493.61, abs=0.01)
+
+
+def test_sweeps_per_block_defaults_to_one_and_matches_prior_behavior():
+    default = calculate(osr=4, repeat_count=4, use_ground_between_channels=False)
+
+    assert default.sweeps_per_block == 1
+    assert default.continuous_pair_count == default.repeat_count
+
+
+def test_sweeps_per_block_requires_ground_sampling_off():
+    with pytest.raises(ValueError, match="sweeps_per_block"):
+        calculate(repeat_count=1, sweeps_per_block=2, use_ground_between_channels=True)
+
+
+def test_sweeps_per_block_extends_repeat_index_bounds_for_decay_helpers():
+    timing = calculate(osr=4, repeat_count=2, sweeps_per_block=3, use_ground_between_channels=False)
+
+    assert timing.decay_before_effective_sample_s(adc_input=1, repeat_index=5) == pytest.approx(
+        (3.80 + 5 * 12.093) * 1e-6
+    )
+    with pytest.raises(ValueError, match="repeat_index"):
+        timing.decay_before_effective_sample_s(adc_input=1, repeat_index=6)
+
+
+def test_acquisition_helper_only_folds_sweeps_for_single_channel_no_ground():
+    single_no_ground = calculate_adc_mux_timing_for_acquisition(
+        "Array_PZT_PZR1.7",
+        {"osr": 4, "gain": 1, "repeat": 4, "channels": [1], "use_ground": False, "buffer": 10},
+    )
+    assert single_no_ground.sweeps_per_block == 10
+    assert single_no_ground.continuous_pair_count == 40
+
+    multi_channel = calculate_adc_mux_timing_for_acquisition(
+        "Array_PZT_PZR1.7",
+        {"osr": 4, "gain": 1, "repeat": 4, "channels": [1, 2], "use_ground": False, "buffer": 10},
+    )
+    assert multi_channel.sweeps_per_block == 1
+
+    grounded = calculate_adc_mux_timing_for_acquisition(
+        "Array_PZT_PZR1.7",
+        {"osr": 4, "gain": 1, "repeat": 4, "channels": [1], "use_ground": True, "buffer": 10},
+    )
+    assert grounded.sweeps_per_block == 1
+
+
 def test_sequence_model_does_not_force_complete_block_timestamp_measurements():
     no_ground = calculate(osr=4, use_ground_between_channels=False)
     with_ground = calculate(osr=4, use_ground_between_channels=True)

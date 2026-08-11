@@ -41,6 +41,7 @@ ENV/
 tmp_pytest_basetemp/
 tmp_pytest_runtime/
 .pytest_cache/
+.claude/
 
 # Local sandboxes
 /excel_tests.c

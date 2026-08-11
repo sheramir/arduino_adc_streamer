@@ -11,6 +11,15 @@ intentionally excluded. Channel-specific pre-sample decay starts when the
 sensor physically connects to the MUX output and ends at the center of that
 ADC input's observation window. It corrects newly accumulated PZT charge
 before force extraction.
+
+For a continuous single-channel capture with ground sampling off,
+``sweeps_per_block`` extends that same connection instead of starting a new
+one: the firmware's ``muxSelect()`` no-ops (no address write, no settle delay)
+whenever the requested channel matches the previous selection, which is
+exactly what happens sweep-to-sweep when only one channel is configured and
+no ground step intervenes. Verified against live MG24 hardware block
+timestamps (2026-08-11); see the ``adc-mux-timing-hw-verification`` project
+note for the measurement method and numbers.
 """
 
 from __future__ import annotations
@@ -102,6 +111,8 @@ class AdcMuxTiming:
     osr: int
     digital_average: int
     repeat_count: int
+    sweeps_per_block: int
+    continuous_pair_count: int
     use_ground_between_channels: bool
     ground_mode: str
     mux_settle_us: float
@@ -137,7 +148,8 @@ class AdcMuxTiming:
     sensor_connected_us: float
     sensor_connected_s: float
     # Scalar pre/post fields describe the first retained pair. Use the helper
-    # methods below for later pairs when repeat_count is greater than one.
+    # methods below for later pairs when repeat_count (or, for a continuous
+    # single-channel/no-ground capture, sweeps_per_block) is greater than one.
     t_decay_before_effective_sample_ch1_us: float
     t_decay_before_effective_sample_ch1_s: float
     t_decay_before_effective_sample_ch2_us: float
@@ -153,12 +165,20 @@ class AdcMuxTiming:
     def decay_before_effective_sample_s(
         self, *, adc_input: int, repeat_index: int = 0
     ) -> float:
-        """Return physical connection-to-effective-sample decay for one pair."""
+        """Return physical connection-to-effective-sample decay for one pair.
+
+        ``repeat_index`` ranges over ``continuous_pair_count`` (repeat_count *
+        sweeps_per_block), not just ``repeat_count``: for a continuous
+        single-channel/no-ground capture, the MG24 firmware's ``muxSelect()``
+        no-ops on every sweep after the first (same channel, no ground step in
+        between), so later sweeps extend the same physical connection instead
+        of starting a fresh one.
+        """
         if adc_input not in (1, 2):
             raise ValueError("adc_input must be 1 or 2")
-        if repeat_index < 0 or repeat_index >= self.repeat_count:
+        if repeat_index < 0 or repeat_index >= self.continuous_pair_count:
             raise ValueError(
-                f"repeat_index must be between 0 and {self.repeat_count - 1}"
+                f"repeat_index must be between 0 and {self.continuous_pair_count - 1}"
             )
         base_us = (
             self.t_decay_before_effective_sample_ch1_us
@@ -192,6 +212,7 @@ class AdcMuxTimingCalculator:
         gain: int,
         repeat_count: int,
         use_ground_between_channels: bool,
+        sweeps_per_block: int = 1,
     ) -> AdcMuxTiming:
         raise NotImplementedError
 
@@ -217,10 +238,12 @@ class Mg24DualMuxTimingCalculator(AdcMuxTimingCalculator):
         gain: int,
         repeat_count: int,
         use_ground_between_channels: bool,
+        sweeps_per_block: int = 1,
     ) -> AdcMuxTiming:
         osr = int(osr)
         gain = int(gain)
         repeat_count = int(repeat_count)
+        sweeps_per_block = int(sweeps_per_block)
         if osr not in SUPPORTED_MG24_OSR_VALUES:
             raise ValueError(f"unsupported MG24 OSR: {osr}")
         clocks = self.profile["adc_clk_hz_by_gain"]
@@ -228,6 +251,19 @@ class Mg24DualMuxTimingCalculator(AdcMuxTimingCalculator):
             raise ValueError(f"unsupported MG24 gain: {gain}")
         if repeat_count < 1:
             raise ValueError("repeat_count must be at least one")
+        if sweeps_per_block < 1:
+            raise ValueError("sweeps_per_block must be at least one")
+        if sweeps_per_block > 1 and use_ground_between_channels:
+            # Verified against live hardware: groundStepIfNeeded() runs before
+            # every sweep's channel selection regardless of whether the
+            # channel repeats, so each sweep pays a full ground+signal
+            # reselect. sweeps_per_block only collapses into one continuous
+            # connection when ground sampling is off.
+            raise ValueError(
+                "sweeps_per_block > 1 requires use_ground_between_channels=False: "
+                "with ground sampling on, every sweep re-selects and re-settles, "
+                "so sweeps are not a continuous connection"
+            )
 
         adc_clk_hz = int(clocks[gain])
         adc_clk_mhz = adc_clk_hz / 1_000_000.0
@@ -299,15 +335,20 @@ class Mg24DualMuxTimingCalculator(AdcMuxTimingCalculator):
             else:
                 raise ValueError(f"unsupported MG24 ground mode: {ground_mode}")
 
+        # Verified against live hardware: for a continuous single-channel,
+        # no-ground capture, muxSelect() no-ops on every sweep after the
+        # first, so sweeps_per_block extends the same physical connection
+        # exactly like additional retained-pair repeats would.
+        continuous_pair_count = repeat_count * sweeps_per_block
         signal_sequence_us = (
             mux_address_overhead_us
             + mux_settle_us
-            + repeat_count * t_pair_loop_total_us
+            + continuous_pair_count * t_pair_loop_total_us
             + burst_finalize_overhead_us
         )
         sensor_connected_us = (
             max(0.0, mux_settle_us - mux_turn_on_us)
-            + repeat_count * t_pair_loop_total_us
+            + continuous_pair_count * t_pair_loop_total_us
             + burst_finalize_overhead_us
         )
         t_connected_after_effective_sample_ch1_us = (
@@ -327,6 +368,8 @@ class Mg24DualMuxTimingCalculator(AdcMuxTimingCalculator):
             osr=osr,
             digital_average=average,
             repeat_count=repeat_count,
+            sweeps_per_block=sweeps_per_block,
+            continuous_pair_count=continuous_pair_count,
             use_ground_between_channels=bool(use_ground_between_channels),
             ground_mode=ground_mode,
             mux_settle_us=mux_settle_us,
@@ -403,17 +446,32 @@ def calculate_adc_mux_timing_for_acquisition(
     mcu_id: str | None,
     config: Mapping[str, object],
 ) -> AdcMuxTiming | None:
-    """Calculate timing from the current acquisition configuration when supported."""
+    """Calculate timing from the current acquisition configuration when supported.
+
+    ``sweeps_per_block`` (alias ``buffer``) is only folded into the continuous
+    connection model for a single active channel with ground sampling off —
+    the one configuration where the MG24 firmware's same-channel MUX-reselect
+    skip actually applies. Any other channel count or ground-enabled config
+    ignores it, matching prior behavior exactly.
+    """
     calculator = get_adc_mux_timing_calculator(mcu_id)
     if calculator is None:
         return None
+    use_ground = bool(
+        config.get("use_ground", config.get("use_ground_between_channels", False))
+    )
+    channels = config.get("channels") or []
+    sweeps_per_block = 1
+    if not use_ground and len(channels) == 1:
+        sweeps_per_block = int(
+            config.get("sweeps_per_block", config.get("buffer", 1)) or 1
+        )
     return calculator.calculate(
         osr=int(config.get("osr", 2)),
         gain=int(config.get("gain", 1)),
         repeat_count=int(config.get("repeat", config.get("repeat_count", 1))),
-        use_ground_between_channels=bool(
-            config.get("use_ground", config.get("use_ground_between_channels", False))
-        ),
+        use_ground_between_channels=use_ground,
+        sweeps_per_block=sweeps_per_block,
     )
 
 

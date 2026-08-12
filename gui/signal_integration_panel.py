@@ -529,7 +529,7 @@ class PressureMapPanelMixin:
         settings_layout.addWidget(self._create_shear_visualization_settings_group())
         settings_layout.addWidget(self._create_pzt_force_settings_group())
         settings_layout.addWidget(self._create_pressure_map_settings_group())
-        settings_layout.addWidget(self._create_pressure_map_mask_settings_group())
+        settings_layout.addWidget(self._create_visualization_pattern_settings_group())
         settings_layout.addWidget(self._create_pressure_map_color_scale_settings_group())
         settings_layout.addWidget(self._create_pressure_package_gain_settings_group())
         settings_layout.addStretch()
@@ -1451,13 +1451,57 @@ class PressureMapPanelMixin:
                 combo.blockSignals(previous_signal_state)
         return selected_name
 
-    def _create_pressure_map_mask_settings_group(self) -> QGroupBox:
-        """Build the array-only visual pressure-map crop controls."""
+    def _create_visualization_pattern_settings_group(self) -> QGroupBox:
+        """Build the visual overlay and array-mask controls."""
 
-        group = QGroupBox("Pressure Map Mask")
+        group = QGroupBox("Visualization Pattern")
         layout = QGridLayout(group)
         layout.setHorizontalSpacing(SHEAR_SETTINGS_HORIZONTAL_SPACING_PX)
         layout.setVerticalSpacing(SHEAR_SETTINGS_VERTICAL_SPACING_PX)
+
+        show_marker_tooltip = "Show calculated pressure-point marker(s) on the pressure map."
+        self.pressure_show_marker_check = QCheckBox("Show marker")
+        self.pressure_show_marker_check.setChecked(DEFAULT_PRESSURE_SHOW_MARKER)
+        self.pressure_show_marker_check.setToolTip(show_marker_tooltip)
+        self.pressure_show_marker_check.toggled.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_show_marker_check, 0, 0)
+
+        mirror_tooltip = "Mirror the pressure-map display horizontally, flipping left-right sensor positions."
+        self.pressure_mirror_check = QCheckBox("Mirror")
+        self.pressure_mirror_check.setChecked(DEFAULT_PRESSURE_MIRROR)
+        self.pressure_mirror_check.setToolTip(mirror_tooltip)
+        self.pressure_mirror_check.toggled.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_mirror_check, 0, 1)
+
+        boundary_toggle_tooltip = "Show the inferred near-outer peak support circle."
+        self.pressure_show_near_outer_boundary_check = QCheckBox("Show near-outer circle")
+        self.pressure_show_near_outer_boundary_check.setChecked(DEFAULT_PRESSURE_SHOW_NEAR_OUTER_BOUNDARY)
+        self.pressure_show_near_outer_boundary_check.setToolTip(boundary_toggle_tooltip)
+        self.pressure_show_near_outer_boundary_check.toggled.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_show_near_outer_boundary_check, 1, 0)
+
+        outer_toggle_tooltip = "Show the package Outer-Boundary Reach as a square."
+        self.pressure_show_outer_boundary_check = QCheckBox("Show outer-boundary square")
+        self.pressure_show_outer_boundary_check.setChecked(DEFAULT_PRESSURE_SHOW_OUTER_BOUNDARY)
+        self.pressure_show_outer_boundary_check.setToolTip(outer_toggle_tooltip)
+        self.pressure_show_outer_boundary_check.toggled.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_show_outer_boundary_check, 1, 1)
+
+        mid_toggle_tooltip = "Show Mid-Boundary package dividers as a differently dashed square."
+        self.pressure_show_mid_boundary_check = QCheckBox("Show mid-boundary square")
+        self.pressure_show_mid_boundary_check.setChecked(DEFAULT_PRESSURE_SHOW_MID_BOUNDARY)
+        self.pressure_show_mid_boundary_check.setToolTip(mid_toggle_tooltip)
+        self.pressure_show_mid_boundary_check.toggled.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_show_mid_boundary_check, 1, 2)
+
+        sensor_marker_toggle_tooltip = (
+            "Show the physical sensor position placeholders (small squares) on both the Jerk and Force displays."
+        )
+        self.pressure_show_sensor_markers_check = QCheckBox("Show sensor placeholders")
+        self.pressure_show_sensor_markers_check.setChecked(DEFAULT_PRESSURE_SHOW_SENSOR_MARKERS)
+        self.pressure_show_sensor_markers_check.setToolTip(sensor_marker_toggle_tooltip)
+        self.pressure_show_sensor_markers_check.toggled.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_show_sensor_markers_check, 2, 0)
 
         self.pressure_map_mask_enabled_check = QCheckBox("Enable mask")
         self.pressure_map_mask_enabled_check.setChecked(
@@ -1467,9 +1511,9 @@ class PressureMapPanelMixin:
             "Display only the combined multi-package pressure image inside the selected polygon."
         )
         self.pressure_map_mask_enabled_check.toggled.connect(self.on_pressure_mask_settings_changed)
-        layout.addWidget(self.pressure_map_mask_enabled_check, 0, 0)
+        layout.addWidget(self.pressure_map_mask_enabled_check, 3, 0)
 
-        layout.addWidget(QLabel("Mask:"), 0, 1)
+        layout.addWidget(QLabel("Mask:"), 3, 1)
         self.pressure_map_mask_name_combo = QComboBox()
         self.pressure_map_mask_name_combo.setToolTip(
             "Select a bundled or imported world-space pressure-map mask."
@@ -1478,12 +1522,12 @@ class PressureMapPanelMixin:
             str(getattr(self, "pressure_map_mask_name", DEFAULT_PRESSURE_MASK_NAME))
         )
         self.pressure_map_mask_name_combo.currentTextChanged.connect(self.on_pressure_mask_settings_changed)
-        layout.addWidget(self.pressure_map_mask_name_combo, 0, 2)
+        layout.addWidget(self.pressure_map_mask_name_combo, 3, 2)
 
         self.pressure_map_mask_import_btn = QPushButton("Import Mask...")
         self.pressure_map_mask_import_btn.setToolTip("Import a pressure-map polygon from a JSON file.")
         self.pressure_map_mask_import_btn.clicked.connect(self.on_import_pressure_map_mask_clicked)
-        layout.addWidget(self.pressure_map_mask_import_btn, 0, 3)
+        layout.addWidget(self.pressure_map_mask_import_btn, 3, 3)
         layout.setColumnStretch(2, 1)
         return group
 
@@ -1682,54 +1726,6 @@ class PressureMapPanelMixin:
         self._add_pressure_shape_spin(layout, "Min decay reach:", "pressure_minimum_decay_reach_spin", DEFAULT_PRESSURE_MINIMUM_DECAY_REACH_MM, 3, 6, "Minimum natural spatial decay reach (mm).")
         self._add_pressure_shape_spin(layout, "Max decay reach:", "pressure_maximum_decay_reach_spin", DEFAULT_PRESSURE_MAXIMUM_DECAY_REACH_MM, 4, 0, "Maximum natural spatial decay reach (mm).")
         self._add_pressure_shape_spin(layout, "Activity threshold:", "pressure_signal_activity_threshold_spin", DEFAULT_PRESSURE_SIGNAL_ACTIVITY_THRESHOLD, 4, 2, "Signal-domain activity threshold used for all mode selection.")
-
-        show_marker_tooltip = (
-            "Show calculated pressure-point marker(s) on the pressure map."
-        )
-        self.pressure_show_marker_check = QCheckBox("Show marker")
-        self.pressure_show_marker_check.setChecked(DEFAULT_PRESSURE_SHOW_MARKER)
-        self.pressure_show_marker_check.setToolTip(show_marker_tooltip)
-        self.pressure_show_marker_check.toggled.connect(self.on_pressure_map_settings_changed)
-        layout.addWidget(self.pressure_show_marker_check, 5, 0, 1, 2)
-
-        mirror_tooltip = (
-            "Mirror the pressure-map display horizontally, flipping left-right sensor positions."
-        )
-        self.pressure_mirror_check = QCheckBox("Mirror")
-        self.pressure_mirror_check.setChecked(DEFAULT_PRESSURE_MIRROR)
-        self.pressure_mirror_check.setToolTip(mirror_tooltip)
-        self.pressure_mirror_check.toggled.connect(self.on_pressure_map_settings_changed)
-        layout.addWidget(self.pressure_mirror_check, 5, 2, 1, 2)
-
-        boundary_toggle_tooltip = "Show the inferred near-outer peak support circle."
-        self.pressure_show_near_outer_boundary_check = QCheckBox("Show near-outer circle")
-        self.pressure_show_near_outer_boundary_check.setChecked(DEFAULT_PRESSURE_SHOW_NEAR_OUTER_BOUNDARY)
-        self.pressure_show_near_outer_boundary_check.setToolTip(boundary_toggle_tooltip)
-        self.pressure_show_near_outer_boundary_check.toggled.connect(self.on_pressure_map_settings_changed)
-        layout.addWidget(self.pressure_show_near_outer_boundary_check, 6, 0, 1, 2)
-
-        outer_toggle_tooltip = "Show the package Outer-Boundary Reach as a square."
-        self.pressure_show_outer_boundary_check = QCheckBox("Show outer-boundary square")
-        self.pressure_show_outer_boundary_check.setChecked(DEFAULT_PRESSURE_SHOW_OUTER_BOUNDARY)
-        self.pressure_show_outer_boundary_check.setToolTip(outer_toggle_tooltip)
-        self.pressure_show_outer_boundary_check.toggled.connect(self.on_pressure_map_settings_changed)
-        layout.addWidget(self.pressure_show_outer_boundary_check, 6, 2, 1, 3)
-
-        mid_toggle_tooltip = "Show Mid-Boundary package dividers as a differently dashed square."
-        self.pressure_show_mid_boundary_check = QCheckBox("Show mid-boundary square")
-        self.pressure_show_mid_boundary_check.setChecked(DEFAULT_PRESSURE_SHOW_MID_BOUNDARY)
-        self.pressure_show_mid_boundary_check.setToolTip(mid_toggle_tooltip)
-        self.pressure_show_mid_boundary_check.toggled.connect(self.on_pressure_map_settings_changed)
-        layout.addWidget(self.pressure_show_mid_boundary_check, 6, 5, 1, 3)
-
-        sensor_marker_toggle_tooltip = (
-            "Show the physical sensor position placeholders (small squares) on both the Jerk and Force displays."
-        )
-        self.pressure_show_sensor_markers_check = QCheckBox("Show sensor placeholders")
-        self.pressure_show_sensor_markers_check.setChecked(DEFAULT_PRESSURE_SHOW_SENSOR_MARKERS)
-        self.pressure_show_sensor_markers_check.setToolTip(sensor_marker_toggle_tooltip)
-        self.pressure_show_sensor_markers_check.toggled.connect(self.on_pressure_map_settings_changed)
-        layout.addWidget(self.pressure_show_sensor_markers_check, 7, 0, 1, 2)
 
         return group
 

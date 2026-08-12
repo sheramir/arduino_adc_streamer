@@ -11,7 +11,7 @@ import numpy as np
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication, QScrollArea
+from PyQt6.QtWidgets import QApplication, QCheckBox, QScrollArea
 
 from constants.plotting import IADC_RESOLUTION_BITS
 from constants.pressure_map import (
@@ -202,6 +202,31 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         harness.pressure_show_near_outer_boundary_check = DummyCheckBox(True)
         harness.pressure_show_outer_boundary_check = DummyCheckBox(True)
         harness.pressure_show_mid_boundary_check = DummyCheckBox(False)
+
+    def test_visualization_pattern_group_contains_all_pressure_map_display_toggles(self):
+        harness = SignalIntegrationPanelHarness()
+
+        group = harness._create_visualization_pattern_settings_group()
+        self.addCleanup(group.close)
+
+        self.assertEqual(group.title(), "Visualization Pattern")
+        checkboxes_by_text = {checkbox.text(): checkbox for checkbox in group.findChildren(QCheckBox)}
+        self.assertEqual(
+            set(checkboxes_by_text),
+            {
+                "Show marker",
+                "Mirror",
+                "Show near-outer circle",
+                "Show outer-boundary square",
+                "Show mid-boundary square",
+                "Show sensor placeholders",
+                "Enable mask",
+            },
+        )
+        self.assertTrue(
+            all(checkbox.parent() is group for checkbox in checkboxes_by_text.values())
+        )
+        self.assertIs(harness.pressure_map_mask_enabled_check.parent(), group)
 
     def test_counts_to_voltage_ignores_time_series_units(self):
         harness = SignalIntegrationPanelHarness()

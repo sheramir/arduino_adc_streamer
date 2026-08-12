@@ -246,7 +246,6 @@ class PressureMapWidgetTests(unittest.TestCase):
         self.assertTrue(self.widget.package_circle_items[0].isVisible())
         self.assertTrue(self.widget.package_outer_boundary_items[1].isVisible())
         self.assertEqual(len(self.widget.package_sensor_marker_items[0].points()), 5)
-        self.assertFalse(self.widget.package_label_items[1].isVisible())
         self.assertTrue(self.widget.force_callout_items[1].isVisible())
         self.assertIn("N:", self.widget.force_callout_items[1].toPlainText())
         self.assertIn("S:", self.widget.force_callout_items[1].toPlainText())
@@ -447,10 +446,6 @@ class PressureMapWidgetTests(unittest.TestCase):
         )
         self.assertTrue(self.widget.package_arrow_items[0][0].isVisible())
         self.assertTrue(self.widget.package_arrow_items[1][0].isVisible())
-        self.assertTrue(self.widget.package_label_items[0].isVisible())
-        self.assertTrue(self.widget.package_label_items[1].isVisible())
-        self.assertEqual(self.widget.package_label_items[0].toPlainText(), "PZT3")
-        self.assertEqual(self.widget.package_label_items[1].toPlainText(), "PZT5")
         self.assertIn("PZT3", self.widget.readout_label.text())
         self.assertIn("PZT5", self.widget.readout_label.text())
 

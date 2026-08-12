@@ -71,6 +71,7 @@ from constants.pressure_map import (
     DEFAULT_PRESSURE_SHOW_NEAR_OUTER_BOUNDARY,
     DEFAULT_PRESSURE_SHOW_OUTER_BOUNDARY,
     DEFAULT_PRESSURE_SHOW_MARKER,
+    DEFAULT_PRESSURE_SHOW_SENSOR_MARKERS,
     DEFAULT_PRESSURE_PEAK_GAIN_SLOPE_PER_MM,
     DEFAULT_PRESSURE_MAXIMUM_PEAK_GAIN,
     DEFAULT_PRESSURE_NATURAL_DECAY_REFERENCE_DISTANCE_MM,
@@ -1276,7 +1277,10 @@ class PressureMapPanelMixin:
         source = getattr(self, "force_pressure_map_widget", None)
         if source is None:
             return
-        widget.configure_markers(show_marker=source.show_marker)
+        widget.configure_markers(
+            show_marker=source.show_marker,
+            show_sensor_markers=source.show_sensor_markers,
+        )
         widget.configure_intensity(max_intensity=source.max_intensity)
         widget.configure_force_intensity(max_force_n=source.force_max_intensity_n)
         widget.configure_noise_floor(noise_floor=source.noise_floor)
@@ -1718,6 +1722,15 @@ class PressureMapPanelMixin:
         self.pressure_show_mid_boundary_check.toggled.connect(self.on_pressure_map_settings_changed)
         layout.addWidget(self.pressure_show_mid_boundary_check, 6, 5, 1, 3)
 
+        sensor_marker_toggle_tooltip = (
+            "Show the physical sensor position placeholders (small squares) on both the Jerk and Force displays."
+        )
+        self.pressure_show_sensor_markers_check = QCheckBox("Show sensor placeholders")
+        self.pressure_show_sensor_markers_check.setChecked(DEFAULT_PRESSURE_SHOW_SENSOR_MARKERS)
+        self.pressure_show_sensor_markers_check.setToolTip(sensor_marker_toggle_tooltip)
+        self.pressure_show_sensor_markers_check.toggled.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_show_sensor_markers_check, 7, 0, 1, 2)
+
         return group
 
     def _add_pressure_shape_spin(
@@ -2137,6 +2150,10 @@ class PressureMapPanelMixin:
                     "pressure_show_mid_boundary_check",
                     DEFAULT_PRESSURE_SHOW_MID_BOUNDARY,
                 ),
+                "show_sensor_markers": self._check_bool(
+                    "pressure_show_sensor_markers_check",
+                    DEFAULT_PRESSURE_SHOW_SENSOR_MARKERS,
+                ),
                 "mask_enabled": self._check_bool(
                     "pressure_map_mask_enabled_check",
                     DEFAULT_PRESSURE_MASK_ENABLED,
@@ -2540,6 +2557,11 @@ class PressureMapPanelMixin:
             pressure_map,
             "show_mid_boundary",
         )
+        changed |= self._set_check_value(
+            "pressure_show_sensor_markers_check",
+            pressure_map,
+            "show_sensor_markers",
+        )
         changed |= self._restore_pressure_map_mask_settings(pressure_map)
         for widget_name, key, default in (
             (
@@ -2556,6 +2578,11 @@ class PressureMapPanelMixin:
                 "pressure_show_mid_boundary_check",
                 "show_mid_boundary",
                 DEFAULT_PRESSURE_SHOW_MID_BOUNDARY,
+            ),
+            (
+                "pressure_show_sensor_markers_check",
+                "show_sensor_markers",
+                DEFAULT_PRESSURE_SHOW_SENSOR_MARKERS,
             ),
         ):
             if key not in pressure_map:
@@ -2882,10 +2909,17 @@ class PressureMapPanelMixin:
                 "pressure_show_mid_boundary_check",
                 DEFAULT_PRESSURE_SHOW_MID_BOUNDARY,
             )
+            show_sensor_markers = self._check_bool(
+                "pressure_show_sensor_markers_check",
+                DEFAULT_PRESSURE_SHOW_SENSOR_MARKERS,
+            )
             for widget in self._pressure_map_display_widgets():
                 # Force Display's dedicated render path always clears peak
                 # markers, while every other presentation setting is shared.
-                widget.configure_markers(show_marker=show_marker)
+                widget.configure_markers(
+                    show_marker=show_marker,
+                    show_sensor_markers=show_sensor_markers,
+                )
                 widget.configure_intensity(max_intensity=max_intensity)
                 widget.configure_noise_floor(
                     noise_floor=min_intensity

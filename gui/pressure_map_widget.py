@@ -42,6 +42,7 @@ from constants.pressure_map import (
     DEFAULT_PRESSURE_SHOW_MARKER,
     DEFAULT_PRESSURE_SHOW_NEAR_OUTER_BOUNDARY,
     DEFAULT_PRESSURE_SHOW_OUTER_BOUNDARY,
+    DEFAULT_PRESSURE_SHOW_SENSOR_MARKERS,
     PRESSURE_DISPLAY_MODE_MAGNITUDE,
     PRESSURE_DISPLAY_MODE_SIGNED,
     PRESSURE_MAP_BACKGROUND_COLOR,
@@ -226,6 +227,7 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
         self.arrow_width_reference_magnitude = SHEAR_ARROW_WIDTH_REFERENCE_MAGNITUDE
         self.arrow_color = DEFAULT_ARROW_COLOR
         self.show_marker = DEFAULT_PRESSURE_SHOW_MARKER
+        self.show_sensor_markers = DEFAULT_PRESSURE_SHOW_SENSOR_MARKERS
         self.show_near_outer_boundary = DEFAULT_PRESSURE_SHOW_NEAR_OUTER_BOUNDARY
         self.show_outer_boundary = DEFAULT_PRESSURE_SHOW_OUTER_BOUNDARY
         self.show_mid_boundary = DEFAULT_PRESSURE_SHOW_MID_BOUNDARY
@@ -307,7 +309,6 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
         self.package_sensor_marker_items: list[pg.ScatterPlotItem] = []
         self.package_peak_marker_items: list[pg.ScatterPlotItem] = []
         self.package_arrow_items: list[tuple[QGraphicsLineItem, QGraphicsPolygonItem]] = []
-        self.package_label_items: list[pg.TextItem] = []
         self.force_callout_items: list[pg.TextItem] = []
         self._image_cache: _PressureMapImageCache | None = None
         self._package_image_caches: list[_PressureMapImageCache | None] = []
@@ -343,13 +344,25 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
         if arrow_color is not None:
             self.arrow_color = str(arrow_color)
 
-    def configure_markers(self, *, show_marker: bool | None = None) -> None:
-        """Update pressure-point marker visibility."""
+    def configure_markers(
+        self,
+        *,
+        show_marker: bool | None = None,
+        show_sensor_markers: bool | None = None,
+    ) -> None:
+        """Update pressure-point marker and sensor-placeholder visibility."""
+        changed = False
         if show_marker is not None:
             updated_show_marker = bool(show_marker)
-            if self.show_marker == updated_show_marker:
-                return
-            self.show_marker = updated_show_marker
+            if self.show_marker != updated_show_marker:
+                self.show_marker = updated_show_marker
+                changed = True
+        if show_sensor_markers is not None:
+            updated_show_sensor_markers = bool(show_sensor_markers)
+            if self.show_sensor_markers != updated_show_sensor_markers:
+                self.show_sensor_markers = updated_show_sensor_markers
+                changed = True
+        if changed:
             self._refresh_cached_display()
 
     def configure_boundary_visibility(
@@ -653,16 +666,20 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
             outer_half_width_mm=float(geometry.outer_boundary_half_width_mm),
             mid_half_width_mm=float(geometry.mid_boundary_half_width_mm),
         )
-        self.sensor_marker_item.setData([
-            {
-                "pos": (self._mirror_x(x_coord), y_coord),
-                "symbol": PRESSURE_MAP_SENSOR_MARKER_SYMBOL,
-                "size": PRESSURE_MAP_SENSOR_MARKER_SIZE_PX,
-                "pen": pg.mkPen(PRESSURE_MAP_SENSOR_MARKER_PEN_COLOR, width=PRESSURE_MAP_SENSOR_MARKER_PEN_WIDTH_PX),
-                "brush": pg.mkBrush(PRESSURE_MAP_SENSOR_MARKER_BRUSH_COLOR),
-            }
-            for x_coord, y_coord in force_result.sensor_positions.values()
-        ])
+        self.sensor_marker_item.setData(
+            [
+                {
+                    "pos": (self._mirror_x(x_coord), y_coord),
+                    "symbol": PRESSURE_MAP_SENSOR_MARKER_SYMBOL,
+                    "size": PRESSURE_MAP_SENSOR_MARKER_SIZE_PX,
+                    "pen": pg.mkPen(PRESSURE_MAP_SENSOR_MARKER_PEN_COLOR, width=PRESSURE_MAP_SENSOR_MARKER_PEN_WIDTH_PX),
+                    "brush": pg.mkBrush(PRESSURE_MAP_SENSOR_MARKER_BRUSH_COLOR),
+                }
+                for x_coord, y_coord in force_result.sensor_positions.values()
+            ]
+            if self.show_sensor_markers
+            else []
+        )
 
     def update_force_array_display(self, force_array, packages) -> None:
         """Render an accumulated world-space force field with no peak model."""
@@ -757,8 +774,6 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
             )
             self.package_peak_marker_items[index].setData([])
             self._update_force_package_shear_arrow(index, package, center_x, center_y)
-            # Force callouts replace Jerk's package-ID labels in this mode.
-            self.package_label_items[index].setVisible(False)
             callout_x, callout_y = self._force_callout_position(
                 center_x, center_y, array_center, array_bounds,
                 float(package.geometry.outer_boundary_half_width_mm), occupied_callouts,
@@ -946,7 +961,6 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
             self._update_package_sensor_markers(index, package, center_x, center_y)
             self._update_package_peak_markers(index, package, center_x, center_y)
             self._update_package_shear_arrow(index, package, center_x, center_y)
-            self._update_package_label(index, package, center_x, center_y)
 
         self._hide_unused_package_items(len(packages))
         range_signature = self._package_view_range_signature(
@@ -1012,7 +1026,6 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
             self._update_package_sensor_markers(index, package, center_x, center_y)
             self._update_package_peak_markers(index, package, center_x, center_y)
             self._update_package_shear_arrow(index, package, center_x, center_y)
-            self._update_package_label(index, package, center_x, center_y)
 
         self._hide_unused_package_items(len(packages))
         range_signature = self._array_view_range_signature(array_result)
@@ -1433,6 +1446,9 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
         item.setRect(-half_extent, -half_extent, half_extent * 2.0, half_extent * 2.0)
 
     def _update_sensor_markers(self, pressure_result: PressureMapResult) -> None:
+        if not self.show_sensor_markers:
+            self.sensor_marker_item.setData([])
+            return
         spots = [
             {
                 "pos": (self._mirror_x(x_coord), y_coord),
@@ -1554,11 +1570,6 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
             self.plot_widget.addItem(arrow_head_item)
             self.package_arrow_items.append((arrow_line_item, arrow_head_item))
 
-            label_item = pg.TextItem(anchor=(0.5, 0.5))
-            label_item.setZValue(PRESSURE_MAP_SENSOR_Z + 2)
-            self.plot_widget.addItem(label_item)
-            self.package_label_items.append(label_item)
-
     def _hide_unused_package_items(self, used_count: int) -> None:
         for index in range(used_count, len(self.package_image_items)):
             self.package_image_items[index].hide()
@@ -1569,8 +1580,6 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
             self.package_sensor_marker_items[index].setData([])
             self.package_peak_marker_items[index].setData([])
             self._hide_package_arrow(index)
-            if index < len(self.package_label_items):
-                self.package_label_items[index].setVisible(False)
 
     def _package_centers(self, packages: list[PressureMapPackageDisplay]) -> list[tuple[float, float]]:
         spacing = float(packages[0].pressure_result.package_center_spacing_mm)
@@ -1736,6 +1745,9 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
         center_y: float,
     ) -> None:
         """Draw the shared Jerk/Force package sensor-marker primitive."""
+        if not self.show_sensor_markers:
+            self.package_sensor_marker_items[index].setData([])
+            return
         spots = [
             {
                 "pos": (center_x + self._mirror_x(x_coord), center_y + y_coord),
@@ -1813,40 +1825,6 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
             self._hide_package_arrow(index)
             return
         self._apply_arrow_to_items(index, geometry, center_x, center_y, self.arrow_color)
-
-    def _update_package_label(
-        self,
-        index: int,
-        package: PressureMapPackageDisplay,
-        center_x: float,
-        center_y: float,
-    ) -> None:
-        self._update_package_label_geometry(
-            index,
-            sensor_id=package.sensor_id,
-            visual_radius_mm=float(package.pressure_result.visual_boundary_radius_mm),
-            color=package.color,
-            center_x=center_x,
-            center_y=center_y,
-        )
-
-    def _update_package_label_geometry(
-        self,
-        index: int,
-        *,
-        sensor_id: str,
-        visual_radius_mm: float,
-        color: str,
-        center_x: float,
-        center_y: float,
-    ) -> None:
-        """Draw the shared Jerk/Force package label primitive."""
-        if index >= len(self.package_label_items):
-            return
-        label_item = self.package_label_items[index]
-        label_item.setText(str(sensor_id), color=color)
-        label_item.setPos(center_x, center_y + (float(visual_radius_mm) * 0.82))
-        label_item.setVisible(True)
 
     def _apply_arrow_to_items(
         self,

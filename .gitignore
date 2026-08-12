@@ -45,6 +45,8 @@ tmp_pytest_runtime/
 
 # Local sandboxes
 /excel_tests.c
+analysis/
+
 
 # OS
 .DS_Store

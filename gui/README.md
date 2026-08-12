@@ -165,7 +165,7 @@ Custom `QWidget` (`PressureMapWidget`) rendering the backend pressure grid with 
   - `_update_boundary(...)`, `_update_sensor_markers(...)`, `_update_peak_markers(...)`, `_peak_marker_spots(...)`, `_sensor_positions_from_result(...)` — boundary/marker overlays for single-package mode.
   - `_update_readout(...)`, `_shear_readout_text(...)` — text readout formatting.
   - `_ensure_package_item_count(count)`, `_hide_unused_package_items(used_count)`, `_package_centers(packages)` — multi-package graphics item pooling and layout.
-  - `_update_package_image(...)`, `_update_package_boundary(...)`, `_update_package_sensor_markers(...)`, `_update_package_peak_markers(...)`, `_update_package_shear_arrow(...)`, `_update_package_label(...)` — per-package overlay updates.
+  - `_update_package_image(...)`, `_update_package_boundary(...)`, `_update_package_sensor_markers(...)`, `_update_package_peak_markers(...)`, `_update_package_shear_arrow(...)` — per-package overlay updates.
   - `_apply_arrow_to_items(...)`, `_hide_package_arrow(index)` — per-package arrow drawing.
   - `_set_package_ranges(...)`, `_update_package_readout(packages)`, `package_color_for_index(index)` — multi-package view range and summary readout.
   - `_initialize_dynamic_arrow()`, `_update_shear_arrow(shear_result)`, `calculate_arrow_geometry(shear_result)`, `_apply_arrow_geometry(...)`, `_build_arrow_head_polygon(...)`, `_calculate_arrow_head_base(...)`, `_calculate_arrow_head_half_width(...)`, `_hide_arrow()`, `_hidden_arrow_geometry()`, `_calculate_arrow_width(magnitude)` — single-package shear arrow geometry and rendering.

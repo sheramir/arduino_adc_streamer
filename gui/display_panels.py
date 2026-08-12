@@ -470,7 +470,7 @@ class DisplayPanelsMixin:
         display_settings_layout.addWidget(QLabel("Y Range:"), 0, 0)
         self.yaxis_range_combo = QComboBox()
         self.yaxis_range_combo.addItems(["Adaptive", "Full-Scale"])
-        self.yaxis_range_combo.setCurrentIndex(1)  # Default to Full-Scale
+        self.yaxis_range_combo.setCurrentIndex(0)  # Default to Adaptive
         self.yaxis_range_combo.setToolTip("Adaptive: Auto-scale to visible data | Full-Scale: 0 to max ADC value")
         self.yaxis_range_combo.currentIndexChanged.connect(self.on_yaxis_range_changed)
         display_settings_layout.addWidget(self.yaxis_range_combo, 0, 1)

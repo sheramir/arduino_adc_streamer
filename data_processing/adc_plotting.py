@@ -210,6 +210,36 @@ class ADCPlottingMixin:
         for curve in getattr(self, '_rosette_curves', {}).values():
             curve.setVisible(False)
 
+    def _clear_all_plot_curves(self):
+        """Remove and discard every live time-series curve from its plot."""
+        for curve in self._adc_curves.values():
+            curve.setData([], [])
+            self.plot_widget.removeItem(curve)
+        self._adc_curves.clear()
+
+        rosette_curves = getattr(self, '_rosette_curves', None)
+        if rosette_curves is not None:
+            for curve in rosette_curves.values():
+                curve.setData([], [])
+                if hasattr(self, 'rosette_plot_widget'):
+                    self.rosette_plot_widget.removeItem(curve)
+            rosette_curves.clear()
+
+        for curve_attr, viewbox_attr in (
+            ('_force_x_curve', 'force_viewbox'),
+            ('_force_z_curve', 'force_viewbox'),
+            ('_rosette_force_x_curve', 'rosette_force_viewbox'),
+            ('_rosette_force_z_curve', 'rosette_force_viewbox'),
+        ):
+            curve = getattr(self, curve_attr, None)
+            if curve is None:
+                continue
+            curve.setData([], [])
+            viewbox = getattr(self, viewbox_attr, None)
+            if viewbox is not None:
+                viewbox.removeItem(curve)
+            setattr(self, curve_attr, None)
+
     def _get_selected_plot_channels(self):
         """Return the set of currently selected channel keys."""
         return {

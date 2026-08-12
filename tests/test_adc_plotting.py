@@ -33,6 +33,22 @@ class DummyCheckBox:
         self._checked = bool(checked)
 
 
+class DummyCurve:
+    def __init__(self):
+        self.data_calls = []
+
+    def setData(self, *args):
+        self.data_calls.append(args)
+
+
+class DummyItemContainer:
+    def __init__(self):
+        self.removed_items = []
+
+    def removeItem(self, item):
+        self.removed_items.append(item)
+
+
 class ADCPlottingHarness(ADCPlottingMixin):
     MAX_SWEEPS_BUFFER = 5
 
@@ -334,6 +350,54 @@ class ADCPlottingTests(unittest.TestCase):
         # against the previous one.
         self.assertTrue(success)
         self.assertEqual(reset_calls, [True])
+
+    def test_clear_all_plot_curves_removes_main_rosette_and_force_curves(self):
+        harness = ADCPlottingHarness()
+        main_plot = DummyItemContainer()
+        rosette_plot = DummyItemContainer()
+        main_force_viewbox = DummyItemContainer()
+        rosette_force_viewbox = DummyItemContainer()
+        adc_curve = DummyCurve()
+        rosette_curve = DummyCurve()
+        force_x_curve = DummyCurve()
+        force_z_curve = DummyCurve()
+        rosette_force_x_curve = DummyCurve()
+        rosette_force_z_curve = DummyCurve()
+        harness.plot_widget = main_plot
+        harness.rosette_plot_widget = rosette_plot
+        harness.force_viewbox = main_force_viewbox
+        harness.rosette_force_viewbox = rosette_force_viewbox
+        harness._adc_curves = {"adc": adc_curve}
+        harness._rosette_curves = {"rosette": rosette_curve}
+        harness._force_x_curve = force_x_curve
+        harness._force_z_curve = force_z_curve
+        harness._rosette_force_x_curve = rosette_force_x_curve
+        harness._rosette_force_z_curve = rosette_force_z_curve
+
+        harness._clear_all_plot_curves()
+
+        self.assertEqual(harness._adc_curves, {})
+        self.assertEqual(harness._rosette_curves, {})
+        self.assertEqual(main_plot.removed_items, [adc_curve])
+        self.assertEqual(rosette_plot.removed_items, [rosette_curve])
+        self.assertEqual(main_force_viewbox.removed_items, [force_x_curve, force_z_curve])
+        self.assertEqual(
+            rosette_force_viewbox.removed_items,
+            [rosette_force_x_curve, rosette_force_z_curve],
+        )
+        for curve in (
+            adc_curve,
+            rosette_curve,
+            force_x_curve,
+            force_z_curve,
+            rosette_force_x_curve,
+            rosette_force_z_curve,
+        ):
+            self.assertEqual(curve.data_calls, [([], [])])
+        self.assertIsNone(harness._force_x_curve)
+        self.assertIsNone(harness._force_z_curve)
+        self.assertIsNone(harness._rosette_force_x_curve)
+        self.assertIsNone(harness._rosette_force_z_curve)
 
 
 if __name__ == "__main__":

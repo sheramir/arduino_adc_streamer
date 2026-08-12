@@ -154,8 +154,8 @@ static const uint32_t PARK_MUX_DWELL_US    = 0;
 static const bool     COMPUTE_AVG_DT_US  = true;
 
 // ── IADC clock targets ────────────────────────────────────────────────
-// Faster ADC clock → higher throughput, more noise.
-// Slower ADC clock → better SNR, lower throughput.
+// Faster ADC clock → higher throughput, more noise. SRC/ADC = 20MHz / 10 MHz
+// Slower ADC clock → better SNR, lower throughput. SRC/ADC = 10MHz / 5 MHz
 static const uint32_t IADC_SRC_CLK_HZ   = 20000000UL; // source clock (Hz) / orig was 20000000UL 20Mhz
 static const uint32_t IADC_ADC_CLK_HZ   = 10000000UL; // ADC clock   (Hz) / orig was 10000000UL 10Mhz
 

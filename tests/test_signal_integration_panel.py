@@ -12,7 +12,7 @@ import numpy as np
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication, QCheckBox, QScrollArea
-from PyQt6.QtCore import QSettings, Qt
+from PyQt6.QtCore import QByteArray, QSettings, Qt
 
 from constants.plotting import IADC_RESOLUTION_BITS
 from constants.pressure_map import (
@@ -1572,6 +1572,44 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             source_tab.close()
             if restored_tab is not None:
                 restored_tab.close()
+
+    def test_pressure_map_workspace_ignores_legacy_floating_layout_state(self):
+        harness = SignalIntegrationPanelHarness()
+        settings = harness._pressure_map_workspace_qsettings()
+        settings.setValue("layout_version", 1)
+        settings.setValue("dock_state", QByteArray(b"legacy floating layout"))
+
+        tab = harness.create_signal_integration_tab()
+        try:
+            tabified = set(
+                harness.pressure_map_workspace.tabifiedDockWidgets(
+                    harness.pressure_map_display_dock
+                )
+            )
+            self.assertIn(harness.pressure_map_force_display_dock, tabified)
+            self.assertIn(harness.pressure_map_settings_dock, tabified)
+        finally:
+            tab.close()
+
+    def test_pressure_map_workspace_does_not_persist_floating_geometry(self):
+        harness = SignalIntegrationPanelHarness()
+        settings = harness._pressure_map_workspace_qsettings()
+        settings.clear()
+        tab = harness.create_signal_integration_tab()
+        try:
+            tab.show()
+            self.app.processEvents()
+            harness.pressure_map_force_display_dock.raise_()
+            self.app.processEvents()
+            harness.pressure_map_force_display_dock.setFloating(True)
+            self.app.processEvents()
+
+            harness.save_pressure_map_workspace_layout()
+
+            self.assertFalse(settings.contains("layout_version"))
+            self.assertFalse(settings.contains("dock_state"))
+        finally:
+            tab.close()
 
     def test_settings_dock_activation_refreshes_package_gain_controls(self):
         harness = SignalIntegrationPanelHarness()

@@ -225,6 +225,9 @@ from file_operations.settings_persistence import load_settings_payload, save_set
 from gui.pressure_map_widget import PressureMapPackageDisplay, PressureMapWidget
 
 
+PRESSURE_MAP_WORKSPACE_LAYOUT_VERSION = 2
+
+
 class PressureMapPanelMixin:
     """Create and refresh the Pressure Map tab pipeline preview.
 
@@ -588,15 +591,24 @@ class PressureMapPanelMixin:
         return dock
 
     def _restore_pressure_map_workspace_layout(self) -> None:
-        """Restore the last dock arrangement, or use the tabbed default."""
+        """Restore a compatible docked layout, or use the tabbed default."""
 
         workspace = getattr(self, "pressure_map_workspace", None)
         if workspace is None:
             return
-        state = self._pressure_map_workspace_qsettings().value("dock_state")
+        settings = self._pressure_map_workspace_qsettings()
+        try:
+            layout_version = int(settings.value("layout_version", 0))
+        except (TypeError, ValueError):
+            layout_version = 0
+        state = settings.value("dock_state") if layout_version == PRESSURE_MAP_WORKSPACE_LAYOUT_VERSION else None
         if isinstance(state, str):
             state = QByteArray.fromBase64(state.encode("ascii"))
-        if isinstance(state, QByteArray) and not state.isEmpty() and workspace.restoreState(state, 1):
+        if (
+            isinstance(state, QByteArray)
+            and not state.isEmpty()
+            and workspace.restoreState(state, PRESSURE_MAP_WORKSPACE_LAYOUT_VERSION)
+        ):
             return
         self.reset_pressure_map_workspace_layout(save=False)
 
@@ -604,13 +616,31 @@ class PressureMapPanelMixin:
         return QSettings("ArduinoADCStreamer", "PressureMapWorkspace")
 
     def save_pressure_map_workspace_layout(self) -> None:
-        """Persist dock locations and floating-window geometry independently of map settings."""
+        """Persist docked layout without restoring stale floating-window geometry."""
 
         workspace = getattr(self, "pressure_map_workspace", None)
         if workspace is None:
             return
+        docks = (
+            ("pressure_map_display_dock", "pressure_map_jerk_display_dock"),
+            ("pressure_map_force_display_dock", "pressure_map_force_display_dock"),
+            ("pressure_map_settings_dock", "pressure_map_settings_dock"),
+        )
+        for dock_name, object_name in docks:
+            dock = getattr(self, dock_name, None)
+            if dock is None:
+                return
+            # Qt requires a stable object name to serialize a dock layout.
+            # Reassert it after a pane is floated or regrouped on Windows.
+            dock.setObjectName(object_name)
+            if dock.isFloating():
+                return
         settings = self._pressure_map_workspace_qsettings()
-        settings.setValue("dock_state", workspace.saveState(1))
+        settings.setValue("layout_version", PRESSURE_MAP_WORKSPACE_LAYOUT_VERSION)
+        settings.setValue(
+            "dock_state",
+            workspace.saveState(PRESSURE_MAP_WORKSPACE_LAYOUT_VERSION),
+        )
 
     def reset_pressure_map_workspace_layout(self, _checked: bool = False, *, save: bool = True) -> None:
         """Return the Pressure Map workspace to its original tabbed arrangement."""
@@ -663,7 +693,6 @@ class PressureMapPanelMixin:
                 timer = getattr(self, "signal_integration_update_timer", None)
                 if timer is not None and timer.isActive():
                     timer.stop()
-                self.save_pressure_map_workspace_layout()
                 return
 
         if self._is_pressure_map_force_display_visible():
@@ -678,7 +707,6 @@ class PressureMapPanelMixin:
                 self.trigger_signal_integration_update()
             elif hasattr(self, "update_signal_integration_plot"):
                 self.update_signal_integration_plot()
-        self.save_pressure_map_workspace_layout()
 
     def update_pressure_map_timeline_controls(self) -> None:
         """Keep Pressure Map timeline selectors aligned with the active MCU mode."""

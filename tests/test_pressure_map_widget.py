@@ -130,6 +130,84 @@ class PressureMapWidgetTests(unittest.TestCase):
         self.assertEqual(result.normal_force_n, -0.125)
         self.assertIn("Normal Force: -0.125 N", self.widget.readout_label.text())
 
+    def test_configure_arrow_sets_the_force_specific_width_reference_magnitude(self):
+        from constants.shear import SHEAR_ARROW_WIDTH_REFERENCE_MAGNITUDE
+
+        self.assertEqual(self.widget.arrow_width_reference_magnitude, SHEAR_ARROW_WIDTH_REFERENCE_MAGNITUDE)
+
+        self.widget.configure_arrow(arrow_width_reference_magnitude=0.25)
+
+        self.assertEqual(self.widget.arrow_width_reference_magnitude, 0.25)
+
+    def test_force_display_draws_shear_arrow_from_force_derived_result(self):
+        geometry = PressureMapGeometry()
+        template = self.generator.generate({"C": 0.0, "L": 0.0, "R": 0.0, "T": 0.0, "B": 0.0})
+        shear_result = self.detector.detect({"C": 0.0, "L": -1.0, "R": 1.0, "T": 0.0, "B": 0.0})
+        result = ForceMapPackageResult(
+            sensor_id="PZT1",
+            force_grid_n=np.zeros_like(template.pressure_grid),
+            normal_force_n=0.0,
+            shear_x_n=shear_result.b_lr,
+            shear_y_n=shear_result.b_tb,
+            geometry=geometry,
+            x_coordinates_mm=template.x_coordinates_mm,
+            y_coordinates_mm=template.y_coordinates_mm,
+            sensor_positions=template.sensor_positions,
+            grid_position=(0, 0),
+            frame_id=1,
+            shear_result=shear_result,
+        )
+
+        self.widget.update_force_display(result)
+
+        self.assertTrue(self.widget.last_arrow_geometry.visible)
+        self.assertTrue(self.widget.arrow_line_item.isVisible())
+        expected_geometry = self.widget.calculate_arrow_geometry(shear_result)
+        self.assertAlmostEqual(self.widget.last_arrow_geometry.length, expected_geometry.length)
+        self.assertAlmostEqual(self.widget.last_arrow_geometry.angle_deg, expected_geometry.angle_deg)
+
+    def test_force_display_hides_arrow_without_shear_result_or_below_threshold(self):
+        geometry = PressureMapGeometry()
+        template = self.generator.generate({"C": 0.0, "L": 0.0, "R": 0.0, "T": 0.0, "B": 0.0})
+        no_shear = self.detector.detect({"C": 0.0, "L": 0.0, "R": 0.0, "T": 0.0, "B": 0.0})
+        result = ForceMapPackageResult(
+            sensor_id="PZT1",
+            force_grid_n=np.zeros_like(template.pressure_grid),
+            normal_force_n=0.0,
+            shear_x_n=0.0,
+            shear_y_n=0.0,
+            geometry=geometry,
+            x_coordinates_mm=template.x_coordinates_mm,
+            y_coordinates_mm=template.y_coordinates_mm,
+            sensor_positions=template.sensor_positions,
+            grid_position=(0, 0),
+            frame_id=1,
+            shear_result=no_shear,
+        )
+
+        self.widget.update_force_display(result)
+        self.assertFalse(self.widget.last_arrow_geometry.visible)
+        self.assertFalse(self.widget.arrow_line_item.isVisible())
+
+        # A fresh/reset package (shear_result=None) also hides the arrow.
+        none_result = replace(result, shear_result=None, frame_id=2)
+        self.widget.update_force_display(none_result)
+        self.assertFalse(self.widget.last_arrow_geometry.visible)
+        self.assertFalse(self.widget.arrow_line_item.isVisible())
+
+        # Nonzero shear below an explicit threshold is also hidden.
+        self.widget.configure_arrow(arrow_min_threshold=10.0)
+        shear_result = self.detector.detect({"C": 0.0, "L": -1.0, "R": 1.0, "T": 0.0, "B": 0.0})
+        thresholded = replace(
+            result,
+            shear_x_n=shear_result.b_lr,
+            shear_y_n=shear_result.b_tb,
+            shear_result=shear_result,
+            frame_id=3,
+        )
+        self.widget.update_force_display(thresholded)
+        self.assertFalse(self.widget.last_arrow_geometry.visible)
+
     def test_force_array_reuses_jerk_package_background_primitives(self):
         geometry = PressureMapGeometry()
         template = self.generator.generate({"C": 0.0, "L": 0.0, "R": 0.0, "T": 0.0, "B": 0.0})
@@ -187,6 +265,54 @@ class PressureMapWidgetTests(unittest.TestCase):
         self.assertEqual(self.widget.sizeHint().width(), initial_size_hint)
         self.assertEqual(self.widget.plot_widget.getViewBox().viewRange(), initial_range)
         self.assertFalse(self.widget.readout_label.isVisible())
+
+    def test_force_array_draws_per_package_shear_arrow_and_hides_for_zero_package(self):
+        geometry = PressureMapGeometry()
+        template = self.generator.generate({"C": 0.0, "L": 0.0, "R": 0.0, "T": 0.0, "B": 0.0})
+        shear_result = self.detector.detect({"C": 0.0, "L": -1.0, "R": 1.0, "T": 0.0, "B": 0.0})
+        packages = [
+            ForceMapPackageResult(
+                sensor_id="PZT1",
+                force_grid_n=np.zeros_like(template.pressure_grid),
+                normal_force_n=0.0,
+                shear_x_n=shear_result.b_lr,
+                shear_y_n=shear_result.b_tb,
+                geometry=geometry,
+                x_coordinates_mm=template.x_coordinates_mm,
+                y_coordinates_mm=template.y_coordinates_mm,
+                sensor_positions=template.sensor_positions,
+                grid_position=(0, 0),
+                frame_id=1,
+                shear_result=shear_result,
+            ),
+            ForceMapPackageResult(
+                sensor_id="PZT2",
+                force_grid_n=np.zeros_like(template.pressure_grid),
+                normal_force_n=0.0,
+                shear_x_n=0.0,
+                shear_y_n=0.0,
+                geometry=geometry,
+                x_coordinates_mm=template.x_coordinates_mm,
+                y_coordinates_mm=template.y_coordinates_mm,
+                sensor_positions=template.sensor_positions,
+                grid_position=(0, 1),
+                frame_id=2,
+                shear_result=None,
+            ),
+        ]
+        array = ForceMapArrayResult(
+            force_grid_n=np.zeros((template.y_coordinates_mm.size, template.x_coordinates_mm.size)),
+            magnitude_force_grid_n=np.zeros((template.y_coordinates_mm.size, template.x_coordinates_mm.size)),
+            x_coordinates_mm=template.x_coordinates_mm,
+            y_coordinates_mm=template.y_coordinates_mm,
+            package_centers={"PZT1": (-5.0, 0.0), "PZT2": (5.0, 0.0)},
+            frame_id=1,
+        )
+
+        self.widget.update_force_array_display(array, packages)
+
+        self.assertTrue(self.widget.package_arrow_items[0][0].isVisible())
+        self.assertFalse(self.widget.package_arrow_items[1][0].isVisible())
 
     def test_force_callouts_choose_outward_top_and_center_positions_without_collision(self):
         bounds = (-20.0, 20.0, -20.0, 20.0)

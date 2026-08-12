@@ -566,6 +566,12 @@ class DisplayPanelsMixin:
             self.remove_ghost_check.isChecked(),
             self.remove_ghost_attenuation_spin.value(),
         )
+        # Toggling ghost removal changes whether buffered/incoming blocks are
+        # net-space or raw, which the accumulated Force Display state was
+        # built against.  Reset it exactly once per toggle, mirroring the
+        # Time Series baseline-change reset.
+        if hasattr(self, 'reset_pressure_force_display_for_baseline_change'):
+            self.reset_pressure_force_display_for_baseline_change()
 
     def set_pzt_ghost_controls_enabled(self, enabled: bool):
         """Keep canonical-data controls fixed for the duration of a capture."""

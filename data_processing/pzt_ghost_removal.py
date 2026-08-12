@@ -63,6 +63,10 @@ class PztGhostRemovalMixin:
     def is_pzt_ghost_calibration_pending(self) -> bool:
         return bool(self.should_remove_pzt_ghost() and self._pzt_ghost_calibration_pending)
 
+    def is_pzt_ghost_block_net_centered(self) -> bool:
+        """Whether ingest blocks/buffers currently carry net-space PZT data."""
+        return self.should_remove_pzt_ghost() and self._pzt_ghost_baselines is not None
+
     def _get_pzt_ghost_groups(self, samples_per_sweep: int) -> list[list[int]]:
         """Return ordered PZT columns, independently for each physical MUX path."""
         width = max(0, int(samples_per_sweep))

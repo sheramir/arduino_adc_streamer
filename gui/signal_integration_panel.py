@@ -163,6 +163,14 @@ from constants.shear import (
     DEFAULT_ARROW_WIDTH_SCALES,
     DEFAULT_SHEAR_CALIBRATION_GAIN,
     DEFAULT_SHEAR_NOISE_THRESHOLD,
+    FORCE_ARROW_GAIN_DECIMALS,
+    FORCE_ARROW_GAIN_MAX,
+    FORCE_ARROW_GAIN_MIN,
+    FORCE_ARROW_GAIN_STEP,
+    FORCE_ARROW_MIN_THRESHOLD_DECIMALS,
+    FORCE_ARROW_MIN_THRESHOLD_MAX,
+    FORCE_ARROW_MIN_THRESHOLD_MIN,
+    FORCE_ARROW_MIN_THRESHOLD_STEP,
     SHEAR_ARROW_BASE_WIDTH_DECIMALS,
     SHEAR_ARROW_BASE_WIDTH_MAX_PX,
     SHEAR_ARROW_BASE_WIDTH_MIN_PX,
@@ -858,6 +866,38 @@ class PressureMapPanelMixin:
         self.force_display_max_n_spin.setSuffix(" N")
         self.force_display_max_n_spin.setToolTip(force_color_max_label.toolTip())
         layout.addWidget(self.force_display_max_n_spin, 4, 1)
+
+        force_arrow_gain_label = QLabel("Force arrow gain:")
+        force_arrow_gain_label.setToolTip(
+            "Multiplier from force-derived shear magnitude (newtons) to arrow length "
+            "(mm). Same mechanism as the Jerk display arrow, but newton-scaled since "
+            "the Force Display shear vector is in newtons, not volts."
+        )
+        layout.addWidget(force_arrow_gain_label, 4, 2)
+        self.force_arrow_gain_spin = QDoubleSpinBox()
+        self.force_arrow_gain_spin.setRange(FORCE_ARROW_GAIN_MIN, FORCE_ARROW_GAIN_MAX)
+        self.force_arrow_gain_spin.setDecimals(FORCE_ARROW_GAIN_DECIMALS)
+        self.force_arrow_gain_spin.setSingleStep(FORCE_ARROW_GAIN_STEP)
+        self.force_arrow_gain_spin.setValue(float(PZT_FORCE_DEFAULT_SETTINGS["force_arrow_gain_mm_per_n"]))
+        self.force_arrow_gain_spin.setSuffix(" mm/N")
+        self.force_arrow_gain_spin.setToolTip(force_arrow_gain_label.toolTip())
+        layout.addWidget(self.force_arrow_gain_spin, 4, 3)
+
+        force_arrow_threshold_label = QLabel("Force arrow threshold:")
+        force_arrow_threshold_label.setToolTip(
+            "Force-derived shear magnitude (newtons) below which the arrow is hidden. "
+            "Display-only: never changes computed Normal/Shear force."
+        )
+        layout.addWidget(force_arrow_threshold_label, 4, 4)
+        self.force_arrow_threshold_spin = QDoubleSpinBox()
+        self.force_arrow_threshold_spin.setRange(FORCE_ARROW_MIN_THRESHOLD_MIN, FORCE_ARROW_MIN_THRESHOLD_MAX)
+        self.force_arrow_threshold_spin.setDecimals(FORCE_ARROW_MIN_THRESHOLD_DECIMALS)
+        self.force_arrow_threshold_spin.setSingleStep(FORCE_ARROW_MIN_THRESHOLD_STEP)
+        self.force_arrow_threshold_spin.setValue(float(PZT_FORCE_DEFAULT_SETTINGS["force_arrow_min_threshold_n"]))
+        self.force_arrow_threshold_spin.setSuffix(" N")
+        self.force_arrow_threshold_spin.setToolTip(force_arrow_threshold_label.toolTip())
+        layout.addWidget(self.force_arrow_threshold_spin, 4, 5)
+
         self.force_display_reset_btn = QPushButton("Reset Force Display")
         self.force_display_reset_btn.clicked.connect(self.reset_pressure_force_display)
         layout.addWidget(self.force_display_reset_btn, 2, 3, 1, 2)
@@ -875,6 +915,8 @@ class PressureMapPanelMixin:
             if signal is not None:
                 signal.connect(self.on_pzt_force_settings_changed)
         self.force_display_max_n_spin.valueChanged.connect(self.on_force_display_settings_changed)
+        self.force_arrow_gain_spin.valueChanged.connect(self.on_force_display_settings_changed)
+        self.force_arrow_threshold_spin.valueChanged.connect(self.on_force_display_settings_changed)
         return group
 
     def _pzt_force_settings(self) -> dict[str, object]:
@@ -888,6 +930,8 @@ class PressureMapPanelMixin:
             "off_mux_leak_enabled": self._check_bool("force_pzt_off_mux_check", False),
             "off_mux_rleak_ohm": self._spin_float("force_pzt_off_mux_rleak_spin", float(PZT_FORCE_DEFAULT_SETTINGS["rleak_ohm"])),
             "display_max_force_n": self._spin_float("force_display_max_n_spin", float(PZT_FORCE_DEFAULT_SETTINGS["display_max_force_n"])),
+            "force_arrow_gain_mm_per_n": self._spin_float("force_arrow_gain_spin", float(PZT_FORCE_DEFAULT_SETTINGS["force_arrow_gain_mm_per_n"])),
+            "force_arrow_min_threshold_n": self._spin_float("force_arrow_threshold_spin", float(PZT_FORCE_DEFAULT_SETTINGS["force_arrow_min_threshold_n"])),
             "stuck_force_failsafe_enabled": self._check_bool("force_pzt_stuck_failsafe_check", bool(PZT_FORCE_DEFAULT_SETTINGS["stuck_force_failsafe_enabled"])),
             "stuck_force_quiet_hold_s": self._spin_float("force_pzt_stuck_hold_spin", float(PZT_FORCE_DEFAULT_SETTINGS["stuck_force_quiet_hold_s"])),
             "stuck_force_decay_tau_s": self._spin_float("force_pzt_stuck_tau_spin", float(PZT_FORCE_DEFAULT_SETTINGS["stuck_force_decay_tau_s"])),
@@ -919,10 +963,37 @@ class PressureMapPanelMixin:
             )
             for widget in self._pressure_map_display_widgets():
                 widget.configure_force_intensity(max_force_n=max_force_n)
+            self._apply_force_arrow_settings()
             self.save_last_shear_settings()
         except Exception as exc:
             if hasattr(self, "log_status"):
                 self.log_status(f"ERROR updating Force Display scale: {exc}")
+
+    def _apply_force_arrow_settings(self) -> None:
+        """Give every Force widget its own newton-domain arrow gain/threshold.
+
+        The unit-carrying parameters (gain, threshold, width reference) are
+        Force-specific because the Force Display shear vector is in newtons,
+        not the Jerk display's volts; the unitless geometric/pixel parameters
+        and the rendering mechanism itself stay shared with Jerk.
+        """
+        if not hasattr(self, "force_arrow_gain_spin"):
+            return
+        arrow_kwargs = dict(
+            arrow_gain=float(self.force_arrow_gain_spin.value()),
+            arrow_min_threshold=float(self.force_arrow_threshold_spin.value()),
+            arrow_max_length_fraction=float(self.shear_arrow_max_length_spin.value()),
+            arrow_width_scales=bool(self.shear_arrow_width_scales_check.isChecked()),
+            arrow_base_width_px=float(self.shear_arrow_base_width_spin.value()),
+            arrow_width_reference_magnitude=float(self.force_display_max_n_spin.value()),
+        )
+        for widget in (
+            getattr(self, "force_pressure_map_widget", None),
+            *getattr(self, "force_package_widgets", {}).values(),
+        ):
+            if widget is not None:
+                widget.configure_arrow(**arrow_kwargs)
+        self._queue_pressure_force_display_render()
 
     def _force_display_noise_floor_n(self) -> float:
         """Return the physical PZT threshold expressed only as a display floor."""
@@ -1026,12 +1097,34 @@ class PressureMapPanelMixin:
         dt_s = max(0.0, float(avg_sample_time_us) / 1_000_000.0)
         mux_timing = getattr(self, "adc_mux_timing", None)
         voltage_scale = float(self.get_vref_voltage()) / float((2 ** IADC_RESOLUTION_BITS) - 1)
+        # PZT ghost removal writes net-space (already baseline-centred) data
+        # into blocks/buffers; ``plot_baselines`` are raw-equivalent medians
+        # captured against the reconstructed signal.  Subtracting them again
+        # here would double-subtract, mirroring the gate Time Series applies
+        # in ``adc_plotting.py``.
+        ghost_net_centered = bool(
+            getattr(self, "is_pzt_ghost_block_net_centered", lambda: False)()
+        )
         grid_positions = self._get_force_display_grid_positions()
         repeat_slots = min(
             len(spec["sample_indices"])
             for positions in complete_packages.values()
             for spec in positions.values()
         )
+        # Only the sign of a flipped-mount sensor (e.g. a reverse-polarity
+        # center channel) is a physical fact; the magnitude of
+        # ``_pressure_package_sensor_gains`` is Jerk visualization tuning and
+        # is deliberately never applied here (Cpzt/d33 remain the Force
+        # Display's Newton calibration). A ±1 factor is safe for the
+        # natural-reset machinery: it multiplies the uncalibrated accumulator
+        # and every reset threshold there is magnitude-based.
+        channel_calibration = {
+            package_id: {
+                position: math.copysign(1.0, gain) if gain != 0.0 else 1.0
+                for position, gain in self._pressure_sensor_gains_for_package(package_id).items()
+            }
+            for package_id in complete_packages
+        }
         for row_index, sweep in enumerate(block):
             for repeat_index in range(repeat_slots):
                 package_voltages: dict[str, dict[str, float]] = {}
@@ -1045,7 +1138,9 @@ class PressureMapPanelMixin:
                     pre_sample_times: dict[str, float] = {}
                     for position, spec in positions.items():
                         sample_index = int(spec["sample_indices"][repeat_index])
-                        baseline = float(getattr(self, "plot_baselines", {}).get(spec.get("key"), 0.0))
+                        baseline = 0.0 if ghost_net_centered else float(
+                            getattr(self, "plot_baselines", {}).get(spec.get("key"), 0.0)
+                        )
                         # This is the shared baseline-centred ADC stream.  The
                         # force engine receives volts before every Jerk transform.
                         centered_counts = float(sweep[sample_index]) - baseline
@@ -1106,12 +1201,11 @@ class PressureMapPanelMixin:
                         # exposure when that physical model is enabled.
                         leak_dt_s=package_leak_times,
                         pre_sample_decay_dt_s=package_pre_sample_times,
-                        # ``_pressure_package_sensor_gains`` belongs to the
-                        # Jerk/shear visualization path after its filtering;
-                        # it is not a Newton calibration and is deliberately
-                        # never applied here.  Cpzt and d33 are the current
-                        # Force Display physical calibration contract.
-                        channel_calibration={},
+                        # Sign-only mount polarity from
+                        # ``_pressure_package_sensor_gains``; see
+                        # ``channel_calibration`` above for why only the sign
+                        # crosses over from the Jerk/shear visualization path.
+                        channel_calibration=channel_calibration,
                     )
                 except ValueError as exc:
                     # A capture restart/buffer discontinuity must not bridge an
@@ -1198,6 +1292,15 @@ class PressureMapPanelMixin:
             mask_enabled=source.mask_enabled,
             mask_points_mm=source.mask_points_mm,
             mask_color=source.mask_color,
+        )
+        widget.configure_arrow(
+            arrow_gain=source.arrow_gain,
+            arrow_min_threshold=source.arrow_min_threshold,
+            arrow_max_length_fraction=source.arrow_max_length_fraction,
+            arrow_width_scales=source.arrow_width_scales,
+            arrow_base_width_px=source.arrow_base_width_px,
+            arrow_width_reference_magnitude=source.arrow_width_reference_magnitude,
+            arrow_color=source.arrow_color,
         )
 
     def _create_shear_visualization_settings_group(self) -> QGroupBox:
@@ -2303,6 +2406,8 @@ class PressureMapPanelMixin:
         changed |= self._set_spin_value("force_pzt_quiet_release_spin", pzt_force, "quiet_hold_release_fraction", float)
         changed |= self._set_spin_value("force_pzt_quiet_hold_spin", pzt_force, "quiet_hold_clear_s", float)
         changed |= self._set_spin_value("force_display_max_n_spin", pzt_force, "display_max_force_n", float)
+        changed |= self._set_spin_value("force_arrow_gain_spin", pzt_force, "force_arrow_gain_mm_per_n", float)
+        changed |= self._set_spin_value("force_arrow_threshold_spin", pzt_force, "force_arrow_min_threshold_n", float)
 
         raw_package_gains = processing.get("package_sensor_gains", settings.get("package_sensor_gains", {}))
         if not raw_package_gains:
@@ -2732,6 +2837,9 @@ class PressureMapPanelMixin:
             arrow_base_width_px=float(self.shear_arrow_base_width_spin.value()),
         )
         self._update_pressure_map_from_latest()
+        # Shared unitless parameters (max length, width scaling, base width)
+        # propagate to the Force widgets too; gain/threshold stay Force-specific.
+        self._apply_force_arrow_settings()
         self.save_last_shear_settings()
 
     def on_pressure_map_settings_changed(self, _value: object | None = None) -> None:

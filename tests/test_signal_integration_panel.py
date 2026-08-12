@@ -26,7 +26,7 @@ from constants.pressure_map import (
     SIGNAL_INTEGRATION_DISABLED_HPF_CUTOFF_HZ,
 )
 from constants.pzt_force import PZT_FORCE_DEFAULT_SETTINGS
-from constants.shear import SHEAR_SENSOR_POSITIONS
+from constants.shear import DEFAULT_ARROW_GAIN, DEFAULT_ARROW_MIN_THRESHOLD, SHEAR_SENSOR_POSITIONS
 from config.pressure_map_mask_config import MaskConfigStore
 from data_processing.adc_filter_engine import ADCFilterEngine
 from data_processing.normal_force_calculator import NormalForceCalculator
@@ -187,6 +187,9 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         harness.shear_arrow_max_length_spin = DummySpinBox(1.4)
         harness.shear_arrow_base_width_spin = DummySpinBox(0.6)
         harness.shear_arrow_width_scales_check = DummyCheckBox(False)
+        harness.force_arrow_gain_spin = DummySpinBox(15.0)
+        harness.force_arrow_threshold_spin = DummySpinBox(0.0125)
+        harness.force_display_max_n_spin = DummySpinBox(7.5)
         harness.pressure_sensor_spacing_spin = DummySpinBox(1.75)
         harness.pressure_package_center_spacing_spin = DummySpinBox(8.0)
         harness.pressure_pixels_per_mm_spin = DummySpinBox(12.5)
@@ -231,6 +234,93 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         self.assertEqual(engine._last_sample_id, (9, 0))
         np.testing.assert_array_equal(engine.package_results()[0].force_grid_n, before_state)
         self.assertAlmostEqual(widget.force_max_intensity_n, 0.1)
+
+    def _force_arrow_settings_harness(self):
+        harness = SignalIntegrationPanelHarness()
+        self._install_shear_setting_widgets(harness)
+        harness.pressure_map_widget = PressureMapWidget()
+        self.addCleanup(harness.pressure_map_widget.close)
+        harness.force_pressure_map_widget = PressureMapWidget()
+        self.addCleanup(harness.force_pressure_map_widget.close)
+        harness.force_package_widgets = {}
+        harness.save_last_shear_settings = lambda: None
+        harness._is_pressure_map_force_display_tab_active = lambda: False
+        return harness
+
+    def test_apply_force_arrow_settings_uses_force_specific_gain_and_shared_unitless_params(self):
+        harness = self._force_arrow_settings_harness()
+
+        harness._apply_force_arrow_settings()
+
+        force_widget = harness.force_pressure_map_widget
+        # Unit-carrying gain/threshold come from the Force-specific (newton)
+        # controls, not the Jerk (volt) ``shear_arrow_*`` controls.
+        self.assertAlmostEqual(force_widget.arrow_gain, 15.0)
+        self.assertAlmostEqual(force_widget.arrow_min_threshold, 0.0125)
+        self.assertAlmostEqual(force_widget.arrow_width_reference_magnitude, 7.5)
+        # Unitless geometric/pixel parameters are shared with Jerk.
+        self.assertAlmostEqual(force_widget.arrow_max_length_fraction, 1.4)
+        self.assertFalse(force_widget.arrow_width_scales)
+        self.assertAlmostEqual(force_widget.arrow_base_width_px, 0.6)
+        # The Jerk widget itself is never touched by the Force-specific call.
+        self.assertAlmostEqual(harness.pressure_map_widget.arrow_gain, DEFAULT_ARROW_GAIN)
+        self.assertAlmostEqual(harness.pressure_map_widget.arrow_min_threshold, DEFAULT_ARROW_MIN_THRESHOLD)
+
+    def test_on_force_display_settings_changed_updates_force_arrow_without_rebuilding_engine(self):
+        harness = self._force_arrow_settings_harness()
+        engine = PressureForceDisplayEngine(geometry=PressureMapGeometry())
+        engine.configure_layout({"PZT1": (0, 0)})
+        engine._last_sample_id = (3, 0)
+        harness.pressure_force_engine = engine
+
+        harness.on_force_display_settings_changed()
+
+        force_widget = harness.force_pressure_map_widget
+        self.assertAlmostEqual(force_widget.arrow_gain, 15.0)
+        self.assertAlmostEqual(force_widget.arrow_min_threshold, 0.0125)
+        # Force color max doubles as the width-scaling reference.
+        self.assertAlmostEqual(force_widget.arrow_width_reference_magnitude, 7.5)
+        self.assertIs(harness.pressure_force_engine, engine)
+        self.assertEqual(engine._last_sample_id, (3, 0))
+
+    def test_configure_force_package_widget_clones_arrow_settings_from_source(self):
+        harness = self._force_arrow_settings_harness()
+        harness._apply_force_arrow_settings()
+        new_widget = PressureMapWidget()
+        self.addCleanup(new_widget.close)
+
+        harness._configure_force_package_widget(new_widget)
+
+        source = harness.force_pressure_map_widget
+        self.assertAlmostEqual(new_widget.arrow_gain, source.arrow_gain)
+        self.assertAlmostEqual(new_widget.arrow_min_threshold, source.arrow_min_threshold)
+        self.assertAlmostEqual(new_widget.arrow_max_length_fraction, source.arrow_max_length_fraction)
+        self.assertEqual(new_widget.arrow_width_scales, source.arrow_width_scales)
+        self.assertAlmostEqual(new_widget.arrow_base_width_px, source.arrow_base_width_px)
+        self.assertAlmostEqual(
+            new_widget.arrow_width_reference_magnitude, source.arrow_width_reference_magnitude
+        )
+        self.assertEqual(new_widget.arrow_color, source.arrow_color)
+
+    def test_force_arrow_settings_round_trip_through_pzt_force_section(self):
+        harness = SignalIntegrationPanelHarness()
+        self._install_shear_setting_widgets(harness)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            settings_path = Path(temp_dir) / "shear_settings.json"
+            harness.save_shear_settings_to_path(settings_path, log_message=False)
+
+            payload = json.loads(settings_path.read_text(encoding="utf-8"))
+            pzt_force = payload["shear_settings"]["pzt_force"]
+            self.assertEqual(pzt_force["force_arrow_gain_mm_per_n"], 15.0)
+            self.assertEqual(pzt_force["force_arrow_min_threshold_n"], 0.0125)
+
+            harness.force_arrow_gain_spin.setValue(1.0)
+            harness.force_arrow_threshold_spin.setValue(0.0)
+
+            self.assertTrue(harness.load_shear_settings_from_path(settings_path, log_message=False))
+            self.assertEqual(harness.force_arrow_gain_spin.value(), 15.0)
+            self.assertEqual(harness.force_arrow_threshold_spin.value(), 0.0125)
 
     def test_hpf_removes_constant_dc_bias_without_integration(self):
         harness = SignalIntegrationPanelHarness()
@@ -763,6 +853,138 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             block, times, first_sweep_id=3, avg_sample_time_us=100.0
         )
         self.assertEqual(reset_calls, [True, True])
+
+    def test_ghost_net_centered_block_skips_plot_baseline_subtraction(self):
+        # PZT ghost removal writes net-space data (already ~0-centred); the
+        # captured ``plot_baselines`` are raw-equivalent mid-scale ADC
+        # counts. Subtracting them again would fabricate a huge standing
+        # offset (data_processing/pzt_ghost_removal.py double-subtraction).
+        harness, engine = self._force_block_harness()
+        harness.is_pzt_ghost_block_net_centered = lambda: True
+        mid_scale_counts = float((2 ** IADC_RESOLUTION_BITS - 1) / 2.0)
+        harness.plot_baselines = {
+            ("sensor", "PZT1", position): mid_scale_counts for position in SHEAR_SENSOR_POSITIONS
+        }
+        rng = np.random.default_rng(0)
+        # Net-space noise counts small enough to stay under the 10 mV
+        # noise_threshold_v default at this harness's 3.3 V / 12-bit scale.
+        block = rng.uniform(-3.0, 3.0, size=(20, len(SHEAR_SENSOR_POSITIONS)))
+        times = np.arange(20, dtype=np.float64) * 1e-4
+
+        harness.process_pressure_force_block(
+            block, times, first_sweep_id=0, avg_sample_time_us=100.0
+        )
+
+        package = engine._packages["PZT1"]
+        self.assertFalse(any(state.active for state in package.channel_states.values()))
+        self.assertTrue(all(state.accumulated_force_n == 0.0 for state in package.channel_states.values()))
+        self.assertEqual(package.normal_force_n, 0.0)
+
+    def test_raw_block_still_applies_plot_baseline_subtraction(self):
+        # Regression: when the block is not ghost-net-centered, the existing
+        # plot_baselines subtraction must still happen exactly as before.
+        harness, engine = self._force_block_harness()
+        harness.is_pzt_ghost_block_net_centered = lambda: False
+        mid_scale_counts = float((2 ** IADC_RESOLUTION_BITS - 1) / 2.0)
+        harness.plot_baselines = {
+            ("sensor", "PZT1", position): mid_scale_counts for position in SHEAR_SENSOR_POSITIONS
+        }
+        rng = np.random.default_rng(1)
+        # Raw counts centred on the baseline itself; small deviations stay
+        # under the noise threshold once the baseline is subtracted.
+        block = mid_scale_counts + rng.uniform(-3.0, 3.0, size=(20, len(SHEAR_SENSOR_POSITIONS)))
+        times = np.arange(20, dtype=np.float64) * 1e-4
+
+        harness.process_pressure_force_block(
+            block, times, first_sweep_id=0, avg_sample_time_us=100.0
+        )
+
+        package = engine._packages["PZT1"]
+        self.assertFalse(any(state.active for state in package.channel_states.values()))
+        self.assertTrue(all(state.accumulated_force_n == 0.0 for state in package.channel_states.values()))
+        self.assertEqual(package.normal_force_n, 0.0)
+
+    def _run_force_block_with_center_gain(self, gain):
+        """Process an identical flipped-center press with the given C factor."""
+        harness, engine = self._force_block_harness()
+        harness.plot_baselines = {
+            ("sensor", "PZT1", position): 0.0 for position in SHEAR_SENSOR_POSITIONS
+        }
+        if gain is not None:
+            harness._pressure_package_sensor_gains = {"PZT1": {"C": gain}}
+        # Column order matches SHEAR_SENSOR_POSITIONS: C, L, R, T, B.
+        # A physical press drives the outer channels positive; a
+        # flipped-mount center sensor reads the opposite sign for the same
+        # physical press.
+        block = np.array([[-130.0, 130.0, 130.0, 130.0, 130.0]] * 3, dtype=np.float64)
+        times = np.asarray([0.0, 0.01, 0.02], dtype=np.float64)
+
+        harness.process_pressure_force_block(
+            block, times, first_sweep_id=0, avg_sample_time_us=10000.0
+        )
+        return engine._packages["PZT1"]
+
+    def test_center_polarity_flip_yields_consistent_sign_normal_force_and_compression(self):
+        package = self._run_force_block_with_center_gain(-1.0)
+
+        forces = {
+            position: package.channel_states[position].accumulated_force_n
+            for position in SHEAR_SENSOR_POSITIONS
+        }
+        # The raw center accumulator still carries the opposite sign from the
+        # outers (it saw a physically flipped voltage); the sign-only
+        # calibration corrects that in the derived Normal/Shear numbers only.
+        self.assertLess(forces["C"], 0.0)
+        for position in ("L", "R", "T", "B"):
+            self.assertGreater(forces[position], 0.0)
+        self.assertGreater(package.normal_force_n, 0.0)
+
+        normal_result = NormalForceCalculator().compute(package.shear_result.residual)
+        self.assertEqual(normal_result.force_type, "compression")
+
+    def test_sign_only_calibration_ignores_magnitude(self):
+        negative_one = self._run_force_block_with_center_gain(-1.0)
+        negative_point_seven = self._run_force_block_with_center_gain(-0.7)
+        self.assertAlmostEqual(negative_one.normal_force_n, negative_point_seven.normal_force_n)
+        self.assertAlmostEqual(
+            negative_one.channel_states["C"].accumulated_force_n,
+            negative_point_seven.channel_states["C"].accumulated_force_n,
+        )
+
+        positive_one = self._run_force_block_with_center_gain(1.0)
+        positive_point_seven = self._run_force_block_with_center_gain(0.7)
+        no_override = self._run_force_block_with_center_gain(None)
+        self.assertAlmostEqual(positive_one.normal_force_n, positive_point_seven.normal_force_n)
+        self.assertAlmostEqual(positive_one.normal_force_n, no_override.normal_force_n)
+
+    def test_no_sensor_gains_configured_calibration_is_sign_only_identity(self):
+        # Regression: with no _pressure_package_sensor_gains overrides at
+        # all, every position's calibration factor must resolve to +1.0 -
+        # mathematically identical to the previous ``channel_calibration={}``
+        # behavior, since the engine also defaults missing entries to 1.0.
+        harness, engine = self._force_block_harness()
+        harness.plot_baselines = {
+            ("sensor", "PZT1", position): 0.0 for position in SHEAR_SENSOR_POSITIONS
+        }
+        captured_calibration = []
+        original_process_sample = engine.process_sample
+
+        def capture(*args, **kwargs):
+            captured_calibration.append(kwargs.get("channel_calibration"))
+            return original_process_sample(*args, **kwargs)
+
+        engine.process_sample = capture
+        block = np.zeros((1, len(SHEAR_SENSOR_POSITIONS)), dtype=np.float64)
+        times = np.asarray([0.0], dtype=np.float64)
+
+        harness.process_pressure_force_block(
+            block, times, first_sweep_id=0, avg_sample_time_us=100.0
+        )
+
+        self.assertEqual(
+            captured_calibration[0],
+            {"PZT1": {position: 1.0 for position in SHEAR_SENSOR_POSITIONS}},
+        )
 
     def test_no_package_display_uses_the_single_result_compatibility_path(self):
         harness = SignalIntegrationPanelHarness()

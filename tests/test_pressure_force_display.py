@@ -624,6 +624,41 @@ def test_shear_is_derived_from_current_state_not_integrated():
     assert state.shear_y_n == expected.b_tb
 
 
+def test_package_results_expose_the_shear_result_matching_shear_x_y():
+    engine = PressureForceDisplayEngine(
+        geometry=PressureMapGeometry(), settings={"noise_threshold_v": 0.01}
+    )
+    engine.configure_layout({"PZT1": (0, 0)})
+
+    def sample(left, right):
+        return {"PZT1": {"C": 0.0, "L": left, "R": right, "T": 0.0, "B": 0.0}}
+
+    engine.process_sample(1, sample(0.0, 0.0), 0.00)
+    engine.process_sample(2, sample(0.10, -0.08), 0.01)
+    engine.process_sample(3, sample(0.05, -0.02), 0.02)
+
+    result = engine.package_results()[0]
+    assert result.shear_result is not None
+    assert result.shear_result.b_lr == result.shear_x_n
+    assert result.shear_result.b_tb == result.shear_y_n
+
+
+def test_fresh_and_reset_packages_have_no_shear_result():
+    engine = PressureForceDisplayEngine(geometry=PressureMapGeometry())
+    engine.configure_layout({"PZT1": (0, 0)})
+
+    assert engine.package_results()[0].shear_result is None
+
+    def sample(value):
+        return {"PZT1": {position: value for position in SHEAR_SENSOR_POSITIONS}}
+
+    engine.process_sample(1, sample(0.1), 0.00)
+    assert engine.package_results()[0].shear_result is not None
+
+    engine.reset_package("PZT1")
+    assert engine.package_results()[0].shear_result is None
+
+
 def test_loading_adds_layers_with_the_exact_delta_magnitude():
     engine = PressureForceDisplayEngine(geometry=PressureMapGeometry())
     engine.configure_layout({"PZT1": (0, 0)})

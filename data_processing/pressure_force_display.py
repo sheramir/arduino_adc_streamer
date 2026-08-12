@@ -20,7 +20,7 @@ from data_processing.pzt_force_calculation import (
     pzt_capacitance_to_farads,
     pzt_capacitance_value_for_position,
 )
-from data_processing.shear_detector import ShearDetector
+from data_processing.shear_detector import ShearDetector, ShearResult
 
 
 _FORCE_FRAME_IDS = count(1)
@@ -53,6 +53,7 @@ class ForceMapPackageResult:
     sensor_positions: dict[str, tuple[float, float]]
     grid_position: tuple[int, int] | None
     frame_id: int
+    shear_result: ShearResult | None = None
 
     @property
     def shear_force_n(self) -> float:
@@ -79,6 +80,7 @@ class _ForcePackageState:
     normal_force_n: float = 0.0
     shear_x_n: float = 0.0
     shear_y_n: float = 0.0
+    shear_result: ShearResult | None = None
     applied_load_n: float = 0.0
     applied_polarity: int = 0
     has_force_activity: bool = False
@@ -219,6 +221,7 @@ class PressureForceDisplayEngine:
             package.normal_force_n = normal.total_force
             package.shear_x_n = shear.b_lr
             package.shear_y_n = shear.b_tb
+            package.shear_result = shear
 
         self._last_sample_id = sample_id
         return True
@@ -320,6 +323,7 @@ class PressureForceDisplayEngine:
                 x_coordinates_mm=self._x_coordinates_mm, y_coordinates_mm=self._y_coordinates_mm,
                 sensor_positions=dict(self._sensor_positions),
                 grid_position=self._configured_grid_positions.get(sensor_id), frame_id=next(_FORCE_FRAME_IDS),
+                shear_result=state.shear_result,
             ) for sensor_id, state in self._packages.items()
         ]
 

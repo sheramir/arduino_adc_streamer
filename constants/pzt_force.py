@@ -25,6 +25,13 @@ PZT_FORCE_DEFAULT_SETTINGS = {
     # Visualization-only default for new settings. Persisted user values keep
     # their existing value when loaded.
     "display_max_force_n": 0.25,
+    # Force-specific shear-arrow parameters (newtons, not the Jerk display's
+    # volts). With the default 0.25 N color max and a ~5 mm package radius, a
+    # full-scale shear draws a full-radius arrow.
+    "force_arrow_gain_mm_per_n": 20.0,
+    # Matches the existing display noise floor (force_alpha_floor_n default
+    # 0.0025 N) so noise-level shear draws no arrow.
+    "force_arrow_min_threshold_n": 0.0025,
     # Natural-reset event-machine tunables (PztForceChannelIntegrator).
     "force_zero_band_fraction": 0.1,
     "force_zero_band_min_n": 0.02,

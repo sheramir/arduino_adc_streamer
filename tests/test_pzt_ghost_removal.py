@@ -137,6 +137,28 @@ class PztGhostRemovalTests(unittest.TestCase):
 
         np.testing.assert_allclose(harness._pzt_ghost_baselines, [10, 30, 20, 40])
 
+    def test_net_centered_predicate_matches_prepare_block_cleaning(self):
+        harness = PztGhostHarness(channels=[0, 1, 2])
+
+        # Feature enabled but calibration not yet captured: raw passthrough.
+        self.assertIsNone(harness._pzt_ghost_baselines)
+        self.assertFalse(harness.is_pzt_ghost_block_net_centered())
+        raw = np.array([[110, 105, 120, 107, 130, 109]], dtype=np.float32)
+        passthrough = harness.prepare_pzt_ghost_block(raw)
+        np.testing.assert_array_equal(passthrough, raw)
+
+        # Calibration captured: blocks are cleaned (net-space).
+        harness._pzt_ghost_baselines = np.full(6, 100.0, dtype=np.float32)
+        harness._pzt_ghost_noise = np.zeros(6, dtype=np.float32)
+        self.assertTrue(harness.is_pzt_ghost_block_net_centered())
+        cleaned = harness.prepare_pzt_ghost_block(raw)
+        self.assertFalse(np.array_equal(cleaned, raw))
+
+        # Feature disabled: always raw passthrough, predicate false.
+        harness.set_pzt_ghost_removal_settings(False, 0.5)
+        self.assertFalse(harness.is_pzt_ghost_block_net_centered())
+        np.testing.assert_array_equal(harness.prepare_pzt_ghost_block(raw), raw)
+
     def test_calibration_captures_hidden_paired_mux_columns_from_same_window(self):
         harness = PztGhostHarness(channels=[0, 1])
         harness.samples_per_sweep = 4

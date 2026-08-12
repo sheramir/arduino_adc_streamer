@@ -87,6 +87,7 @@ from constants.shear import (
     SHEAR_AXIS_EQUAL_ASPECT_LOCKED,
     SHEAR_COMPONENT_DECIMALS,
     SHEAR_LAYOUT_CIRCLE_LINE_WIDTH_PX,
+    SHEAR_ARROW_WIDTH_REFERENCE_MAGNITUDE,
     SHEAR_LAYOUT_PENS_ARE_COSMETIC,
     SHEAR_READOUT_ANGLE_DECIMALS,
     SHEAR_READOUT_MAGNITUDE_DECIMALS,
@@ -222,6 +223,7 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
         self.arrow_min_threshold = DEFAULT_ARROW_MIN_THRESHOLD
         self.arrow_width_scales = DEFAULT_ARROW_WIDTH_SCALES
         self.arrow_base_width_px = DEFAULT_ARROW_BASE_WIDTH_PX
+        self.arrow_width_reference_magnitude = SHEAR_ARROW_WIDTH_REFERENCE_MAGNITUDE
         self.arrow_color = DEFAULT_ARROW_COLOR
         self.show_marker = DEFAULT_PRESSURE_SHOW_MARKER
         self.show_near_outer_boundary = DEFAULT_PRESSURE_SHOW_NEAR_OUTER_BOUNDARY
@@ -322,6 +324,7 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
         arrow_min_threshold: float | None = None,
         arrow_width_scales: bool | None = None,
         arrow_base_width_px: float | None = None,
+        arrow_width_reference_magnitude: float | None = None,
         arrow_color: str | None = None,
     ) -> None:
         """Update shear-arrow visualization settings."""
@@ -335,6 +338,8 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
             self.arrow_width_scales = bool(arrow_width_scales)
         if arrow_base_width_px is not None:
             self.arrow_base_width_px = float(arrow_base_width_px)
+        if arrow_width_reference_magnitude is not None:
+            self.arrow_width_reference_magnitude = float(arrow_width_reference_magnitude)
         if arrow_color is not None:
             self.arrow_color = str(arrow_color)
 
@@ -629,7 +634,7 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
         self.debug_saturation_mask = np.abs(grid) >= self.force_max_intensity_n
         self._update_force_geometry(force_result)
         self.peak_marker_item.setData([])  # Force Display never has peak markers.
-        self._hide_arrow()
+        self._update_shear_arrow(getattr(force_result, "shear_result", None))
         self.readout_label.setText(
             f"{force_result.sensor_id} | Normal Force: {force_result.normal_force_n:.3f} N | "
             f"Shear Force: {force_result.shear_force_n:.3f} N"
@@ -751,7 +756,7 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
                 center_y=center_y,
             )
             self.package_peak_marker_items[index].setData([])
-            self._hide_package_arrow(index)
+            self._update_force_package_shear_arrow(index, package, center_x, center_y)
             # Force callouts replace Jerk's package-ID labels in this mode.
             self.package_label_items[index].setVisible(False)
             callout_x, callout_y = self._force_callout_position(
@@ -1785,6 +1790,25 @@ class PressureMapWidget(ShearArrowRenderMixin, QWidget):
             return
         self.circle_radius_mm = float(package.pressure_result.outer_boundary_half_width_mm)
         geometry = self.calculate_arrow_geometry(package.shear_result)
+        if not geometry.visible:
+            self._hide_package_arrow(index)
+            return
+        self._apply_arrow_to_items(index, geometry, center_x, center_y, self.arrow_color)
+
+    def _update_force_package_shear_arrow(
+        self,
+        index: int,
+        package,
+        center_x: float,
+        center_y: float,
+    ) -> None:
+        """Mirror ``_update_package_shear_arrow`` for a Force array package."""
+        shear_result = getattr(package, "shear_result", None)
+        if shear_result is None:
+            self._hide_package_arrow(index)
+            return
+        self.circle_radius_mm = float(package.geometry.outer_boundary_half_width_mm)
+        geometry = self.calculate_arrow_geometry(shear_result)
         if not geometry.visible:
             self._hide_package_arrow(index)
             return

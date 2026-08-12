@@ -199,7 +199,10 @@ class ShearArrowRenderMixin:
         base_width = float(self.arrow_base_width_px)
         if not self.arrow_width_scales:
             return base_width
-        reference = max(SHEAR_ZERO_VALUE, SHEAR_ARROW_WIDTH_REFERENCE_MAGNITUDE)
+        reference = max(
+            SHEAR_ZERO_VALUE,
+            float(getattr(self, "arrow_width_reference_magnitude", SHEAR_ARROW_WIDTH_REFERENCE_MAGNITUDE)),
+        )
         magnitude_fraction = SHEAR_ZERO_VALUE if not reference else min(1.0, abs(float(magnitude)) / reference)
         scaled_width = base_width + (magnitude_fraction * SHEAR_ARROW_WIDTH_SCALE_RANGE_PX)
         return min(scaled_width, max(base_width, SHEAR_ARROW_MAX_WIDTH_PX))
@@ -226,6 +229,7 @@ class ShearVisualizationWidget(ShearArrowRenderMixin, QWidget):
         self.arrow_min_threshold = DEFAULT_ARROW_MIN_THRESHOLD
         self.arrow_width_scales = DEFAULT_ARROW_WIDTH_SCALES
         self.arrow_base_width_px = DEFAULT_ARROW_BASE_WIDTH_PX
+        self.arrow_width_reference_magnitude = SHEAR_ARROW_WIDTH_REFERENCE_MAGNITUDE
         self.arrow_color = DEFAULT_ARROW_COLOR
 
         self.circle_radius_mm = self.display_diameter_mm / 2.0
@@ -266,6 +270,7 @@ class ShearVisualizationWidget(ShearArrowRenderMixin, QWidget):
         arrow_min_threshold: float | None = None,
         arrow_width_scales: bool | None = None,
         arrow_base_width_px: float | None = None,
+        arrow_width_reference_magnitude: float | None = None,
         arrow_color: str | None = None,
     ) -> None:
         """Update arrow visualization settings.
@@ -278,6 +283,8 @@ class ShearVisualizationWidget(ShearArrowRenderMixin, QWidget):
                 arrow is hidden.
             arrow_width_scales: Optional flag enabling width scaling.
             arrow_base_width_px: Optional base shaft width in pixels.
+            arrow_width_reference_magnitude: Optional magnitude at which width
+                scaling reaches its maximum.
             arrow_color: Optional arrow color string.
 
         Returns:
@@ -296,6 +303,8 @@ class ShearVisualizationWidget(ShearArrowRenderMixin, QWidget):
             self.arrow_width_scales = bool(arrow_width_scales)
         if arrow_base_width_px is not None:
             self.arrow_base_width_px = float(arrow_base_width_px)
+        if arrow_width_reference_magnitude is not None:
+            self.arrow_width_reference_magnitude = float(arrow_width_reference_magnitude)
         if arrow_color is not None:
             self.arrow_color = str(arrow_color)
 

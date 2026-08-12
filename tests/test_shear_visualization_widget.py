@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import QApplication
 
 from constants.shear import (
     DEFAULT_SENSOR_SPACING_MM,
+    SHEAR_ARROW_WIDTH_REFERENCE_MAGNITUDE,
     SHEAR_LAYOUT_MIN_VISIBLE_LINE_WIDTH_PX,
     SHEAR_POSITION_BOTTOM,
     SHEAR_POSITION_CENTER,
@@ -117,6 +118,23 @@ class ShearVisualizationWidgetTests(unittest.TestCase):
 
         self.assertGreater(scaled_width, fixed_width)
         self.assertAlmostEqual(scaled_width, self.widget.last_arrow_geometry.width_px)
+
+    def test_arrow_width_reference_magnitude_defaults_to_the_shared_constant(self):
+        self.assertEqual(self.widget.arrow_width_reference_magnitude, SHEAR_ARROW_WIDTH_REFERENCE_MAGNITUDE)
+
+    def test_arrow_width_reference_magnitude_rescales_width_without_changing_default(self):
+        # Newton-domain magnitudes (~0.25 max) are tiny relative to the
+        # default volt-domain reference (2.0), so a Force widget must be able
+        # to set its own reference for width scaling to engage at all.
+        result = self.detector.detect({"C": 0.0, "L": -0.2, "R": 0.2, "T": 0.0, "B": 0.0})
+        self.widget.configure(arrow_base_width_px=1.0, arrow_width_scales=True)
+
+        default_reference_geometry = self.widget.calculate_arrow_geometry(result)
+
+        self.widget.configure(arrow_width_reference_magnitude=0.25)
+        rescaled_geometry = self.widget.calculate_arrow_geometry(result)
+
+        self.assertGreater(rescaled_geometry.width_px, default_reference_geometry.width_px)
 
     def test_arrow_width_does_not_scale_with_arrow_gain(self):
         result = self.detector.detect({"C": 0.0, "L": -1.0, "R": 1.0, "T": 0.0, "B": 0.0})

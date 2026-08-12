@@ -377,6 +377,7 @@ class ADCStreamerGUI(
         self.save_last_spectrum_settings()
         self.save_last_heatmap_settings()
         self.save_last_shear_settings()
+        self.save_pressure_map_workspace_layout()
         self.save_last_analysis_settings()
 
         if self.serial_port and self.serial_port.is_open:
@@ -460,16 +461,14 @@ class ADCStreamerGUI(
 
     def trigger_signal_integration_update(self):
         """Queue a pressure-map refresh outside the ADC block handler."""
-        if not self.should_update_signal_integration_display():
+        workspace_display_visible = bool(
+            hasattr(self, "_has_visible_pressure_map_display")
+            and self._has_visible_pressure_map_display()
+        )
+        if not self.should_update_signal_integration_display() and not workspace_display_visible:
             return
-        if hasattr(self, "_is_pressure_map_display_tab_active"):
-            jerk_visible = self._is_pressure_map_display_tab_active()
-            force_visible = bool(
-                hasattr(self, "_is_pressure_map_force_display_tab_active")
-                and self._is_pressure_map_force_display_tab_active()
-            )
-            if not jerk_visible and not force_visible:
-                return
+        if hasattr(self, "_has_visible_pressure_map_display") and not workspace_display_visible:
+            return
         if getattr(self, "_signal_integration_updating_plot", False):
             return
         if not self.signal_integration_update_timer.isActive():

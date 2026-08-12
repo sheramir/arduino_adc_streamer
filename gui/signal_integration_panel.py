@@ -25,10 +25,11 @@ from typing import Hashable
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import QByteArray, QSettings, Qt, QTimer
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDockWidget,
     QHBoxLayout,
     QGridLayout,
     QGroupBox,
@@ -38,7 +39,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
-    QTabWidget,
+    QMainWindow,
     QVBoxLayout,
     QWidget,
 )
@@ -262,9 +263,16 @@ class PressureMapPanelMixin:
         tab.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         root_layout = QVBoxLayout(tab)
 
-        self.pressure_map_inner_tabs = QTabWidget()
-        self.pressure_map_inner_tabs.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        root_layout.addWidget(self.pressure_map_inner_tabs)
+        self.pressure_map_workspace = QMainWindow()
+        self.pressure_map_workspace.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.pressure_map_workspace.setDockNestingEnabled(True)
+        self.pressure_map_workspace.setDockOptions(
+            QMainWindow.DockOption.AnimatedDocks
+            | QMainWindow.DockOption.AllowNestedDocks
+            | QMainWindow.DockOption.AllowTabbedDocks
+            | QMainWindow.DockOption.GroupedDragging
+        )
+        root_layout.addWidget(self.pressure_map_workspace)
 
         display_tab = QScrollArea()
         display_tab.setWidgetResizable(True)
@@ -274,8 +282,11 @@ class PressureMapPanelMixin:
         display_content.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         display_layout = QVBoxLayout(display_content)
         display_tab.setWidget(display_content)
-        self.pressure_map_inner_tabs.addTab(display_tab, "Jerk Display")
-        self.pressure_map_display_tab_index = 0
+        self.pressure_map_display_dock = self._create_pressure_map_workspace_dock(
+            "pressure_map_jerk_display_dock",
+            "Jerk Display",
+            display_tab,
+        )
 
         force_display_tab = QScrollArea()
         force_display_tab.setWidgetResizable(True)
@@ -285,8 +296,11 @@ class PressureMapPanelMixin:
         force_display_content.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.force_display_layout = QVBoxLayout(force_display_content)
         force_display_tab.setWidget(force_display_content)
-        self.pressure_map_inner_tabs.addTab(force_display_tab, "Force Display")
-        self.pressure_map_force_display_tab_index = 1
+        self.pressure_map_force_display_dock = self._create_pressure_map_workspace_dock(
+            "pressure_map_force_display_dock",
+            "Force Display",
+            force_display_tab,
+        )
 
         settings_tab = QScrollArea()
         settings_tab.setWidgetResizable(True)
@@ -296,9 +310,11 @@ class PressureMapPanelMixin:
         settings_content.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         settings_layout = QVBoxLayout(settings_content)
         settings_tab.setWidget(settings_content)
-        self.pressure_map_inner_tabs.addTab(settings_tab, "Settings")
-        self.pressure_map_settings_tab_index = 2
-        self.pressure_map_inner_tabs.currentChanged.connect(self.on_pressure_map_inner_tab_changed)
+        self.pressure_map_settings_dock = self._create_pressure_map_workspace_dock(
+            "pressure_map_settings_dock",
+            "Settings",
+            settings_tab,
+        )
 
         controls_group = QGroupBox("Signal Integration Controls")
         controls_layout = QGridLayout(controls_group)
@@ -547,35 +563,122 @@ class PressureMapPanelMixin:
         self._signal_integration_updating_plot = False
         self._rebuild_pressure_force_engine()
         self.update_pressure_map_timeline_controls()
+        self._restore_pressure_map_workspace_layout()
+        self._connect_pressure_map_workspace_signals()
 
         return tab
 
-    def on_pressure_map_inner_tab_changed(self, index: int) -> None:
-        if index == getattr(self, "pressure_map_settings_tab_index", 1):
-            timer = getattr(self, "signal_integration_update_timer", None)
-            if timer is not None and timer.isActive():
-                timer.stop()
+    def _create_pressure_map_workspace_dock(
+        self,
+        object_name: str,
+        title: str,
+        content: QWidget,
+    ) -> QDockWidget:
+        """Add one movable, floatable Pressure Map pane to the workspace."""
+
+        dock = QDockWidget(title, self.pressure_map_workspace)
+        dock.setObjectName(object_name)
+        dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
+        dock.setFeatures(
+            QDockWidget.DockWidgetFeature.DockWidgetMovable
+            | QDockWidget.DockWidgetFeature.DockWidgetFloatable
+        )
+        dock.setWidget(content)
+        self.pressure_map_workspace.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
+        return dock
+
+    def _restore_pressure_map_workspace_layout(self) -> None:
+        """Restore the last dock arrangement, or use the tabbed default."""
+
+        workspace = getattr(self, "pressure_map_workspace", None)
+        if workspace is None:
+            return
+        state = self._pressure_map_workspace_qsettings().value("dock_state")
+        if isinstance(state, str):
+            state = QByteArray.fromBase64(state.encode("ascii"))
+        if isinstance(state, QByteArray) and not state.isEmpty() and workspace.restoreState(state, 1):
+            return
+        self.reset_pressure_map_workspace_layout(save=False)
+
+    def _pressure_map_workspace_qsettings(self) -> QSettings:
+        return QSettings("ArduinoADCStreamer", "PressureMapWorkspace")
+
+    def save_pressure_map_workspace_layout(self) -> None:
+        """Persist dock locations and floating-window geometry independently of map settings."""
+
+        workspace = getattr(self, "pressure_map_workspace", None)
+        if workspace is None:
+            return
+        settings = self._pressure_map_workspace_qsettings()
+        settings.setValue("dock_state", workspace.saveState(1))
+
+    def reset_pressure_map_workspace_layout(self, _checked: bool = False, *, save: bool = True) -> None:
+        """Return the Pressure Map workspace to its original tabbed arrangement."""
+
+        workspace = getattr(self, "pressure_map_workspace", None)
+        jerk_dock = getattr(self, "pressure_map_display_dock", None)
+        force_dock = getattr(self, "pressure_map_force_display_dock", None)
+        settings_dock = getattr(self, "pressure_map_settings_dock", None)
+        if workspace is None or jerk_dock is None or force_dock is None or settings_dock is None:
+            return
+        for dock in (jerk_dock, force_dock, settings_dock):
+            dock.setFloating(False)
+            workspace.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
+        workspace.tabifyDockWidget(jerk_dock, force_dock)
+        workspace.tabifyDockWidget(force_dock, settings_dock)
+        jerk_dock.raise_()
+        if save:
+            self.save_pressure_map_workspace_layout()
+
+    def _connect_pressure_map_workspace_signals(self) -> None:
+        self._pressure_map_visible_dock_names = {"pressure_map_display_dock"}
+        for dock_name, dock in (
+            ("pressure_map_display_dock", getattr(self, "pressure_map_display_dock", None)),
+            ("pressure_map_force_display_dock", getattr(self, "pressure_map_force_display_dock", None)),
+            ("pressure_map_settings_dock", getattr(self, "pressure_map_settings_dock", None)),
+        ):
+            if dock is None:
+                continue
+            dock.visibilityChanged.connect(
+                lambda visible, name=dock_name: self.on_pressure_map_workspace_visibility_changed(name, visible)
+            )
+            dock.topLevelChanged.connect(lambda _floating: self.save_pressure_map_workspace_layout())
+            dock.dockLocationChanged.connect(lambda _area: self.save_pressure_map_workspace_layout())
+
+    def on_pressure_map_workspace_visibility_changed(self, dock_name: str, visible: bool) -> None:
+        """Refresh the active dock contents and pause pending redraws for Settings-only layouts."""
+
+        visible_docks = getattr(self, "_pressure_map_visible_dock_names", set())
+        if visible:
+            visible_docks.add(dock_name)
+        else:
+            visible_docks.discard(dock_name)
+        self._pressure_map_visible_dock_names = visible_docks
+
+        if self._is_pressure_map_settings_visible():
             self._refresh_pressure_package_gain_controls(
                 getattr(self, "_latest_signal_integration_package_layout", None)
             )
-            return
+            if not self._has_visible_pressure_map_display():
+                timer = getattr(self, "signal_integration_update_timer", None)
+                if timer is not None and timer.isActive():
+                    timer.stop()
+                self.save_pressure_map_workspace_layout()
+                return
 
-        if index == getattr(self, "pressure_map_force_display_tab_index", 1):
+        if self._is_pressure_map_force_display_visible():
             # Force consumes the shared Jerk shapes even while Jerk itself is
-            # hidden.  Build them, then render only the Force raster.
+            # hidden.  Build them before rendering the force raster.
             if self._should_refresh_signal_integration_plot():
                 self.update_signal_integration_plot()
             else:
                 self._render_pressure_force_display()
-            return
-        if index != getattr(self, "pressure_map_display_tab_index", 0):
-            return
-        if not self._should_refresh_signal_integration_plot():
-            return
-        if hasattr(self, "trigger_signal_integration_update"):
-            self.trigger_signal_integration_update()
-        elif hasattr(self, "update_signal_integration_plot"):
-            self.update_signal_integration_plot()
+        elif self._is_pressure_map_display_visible() and self._should_refresh_signal_integration_plot():
+            if hasattr(self, "trigger_signal_integration_update"):
+                self.trigger_signal_integration_update()
+            elif hasattr(self, "update_signal_integration_plot"):
+                self.update_signal_integration_plot()
+        self.save_pressure_map_workspace_layout()
 
     def update_pressure_map_timeline_controls(self) -> None:
         """Keep Pressure Map timeline selectors aligned with the active MCU mode."""
@@ -1089,7 +1192,7 @@ class PressureMapPanelMixin:
             if not getattr(self, "_pressure_force_waiting_for_baseline", False):
                 self._pressure_force_waiting_for_baseline = True
                 self.reset_pressure_force_display_for_baseline_change()
-            if self._is_pressure_map_force_display_tab_active() and hasattr(self, "force_display_status_label"):
+            if self._is_pressure_map_force_display_visible() and hasattr(self, "force_display_status_label"):
                 self.force_display_status_label.setText(
                     "Waiting for Time Series baseline — open Time Series or press Zero Signals"
                 )
@@ -1222,7 +1325,7 @@ class PressureMapPanelMixin:
 
     def _queue_pressure_force_display_render(self) -> None:
         """Coalesce force-map paints without delaying sample integration."""
-        if not self._is_pressure_map_force_display_tab_active():
+        if not self._is_pressure_map_force_display_visible():
             return
         timer = getattr(self, "force_display_update_timer", None)
         if timer is None:
@@ -1397,6 +1500,13 @@ class PressureMapPanelMixin:
         )
         self.shear_load_settings_btn.clicked.connect(self.on_load_shear_settings_clicked)
         actions.addWidget(self.shear_load_settings_btn)
+
+        self.pressure_map_reset_layout_btn = QPushButton("Reset View Layout")
+        self.pressure_map_reset_layout_btn.setToolTip(
+            "Restore the default tabbed Jerk Display, Force Display, and Settings layout."
+        )
+        self.pressure_map_reset_layout_btn.clicked.connect(self.reset_pressure_map_workspace_layout)
+        actions.addWidget(self.pressure_map_reset_layout_btn)
         actions.addStretch()
         return actions
 
@@ -3076,7 +3186,7 @@ class PressureMapPanelMixin:
             avg_sample_time_sec = getattr(self, "_cached_avg_sample_time_sec", 0.0)
             repeat_count = max(1, int(self.config.get("repeat", 1)))
             package_layout = self._get_signal_integration_package_layout()
-            if self._is_pressure_map_settings_tab_active():
+            if self._is_pressure_map_settings_visible():
                 self._refresh_pressure_package_gain_controls(package_layout)
             multi_package_force_mode = (
                 timeline_mode != "PZR" and self._is_multi_package_force_mode(package_layout)
@@ -3189,34 +3299,52 @@ class PressureMapPanelMixin:
         finally:
             self._signal_integration_updating_plot = False
 
+    def _pressure_map_dock_is_visible(self, dock_name: str, fallback: bool = False) -> bool:
+        """Return whether a dock's content is actually visible to the user."""
+
+        dock = getattr(self, dock_name, None)
+        if dock is None:
+            return fallback
+        visible_docks = getattr(self, "_pressure_map_visible_dock_names", None)
+        if visible_docks is not None:
+            return dock_name in visible_docks
+        content = dock.widget() if hasattr(dock, "widget") else None
+        return bool(content is not None and content.isVisible())
+
+    def _is_pressure_map_display_visible(self) -> bool:
+        return self._pressure_map_dock_is_visible("pressure_map_display_dock", fallback=True)
+
+    def _is_pressure_map_force_display_visible(self) -> bool:
+        return self._pressure_map_dock_is_visible("pressure_map_force_display_dock")
+
+    def _is_pressure_map_settings_visible(self) -> bool:
+        return self._pressure_map_dock_is_visible("pressure_map_settings_dock")
+
+    def _has_visible_pressure_map_display(self) -> bool:
+        return (
+            self._is_pressure_map_display_visible()
+            or self._is_pressure_map_force_display_visible()
+        )
+
+    def _has_visible_floating_pressure_map_display(self) -> bool:
+        return any(
+            bool(dock is not None and dock.isFloating() and self._pressure_map_dock_is_visible(name))
+            for name, dock in (
+                ("pressure_map_display_dock", getattr(self, "pressure_map_display_dock", None)),
+                ("pressure_map_force_display_dock", getattr(self, "pressure_map_force_display_dock", None)),
+            )
+        )
+
     def _should_refresh_signal_integration_plot(self) -> bool:
         outer_tab_visible = True
         if hasattr(self, "should_update_signal_integration_display"):
             outer_tab_visible = bool(self.should_update_signal_integration_display())
         elif hasattr(self, "get_current_visualization_tab_name"):
             outer_tab_visible = self.get_current_visualization_tab_name() == PRESSURE_MAP_TAB_NAME
-        return outer_tab_visible and (
-            self._is_pressure_map_display_tab_active()
-            or self._is_pressure_map_force_display_tab_active()
+        return (
+            self._has_visible_pressure_map_display()
+            and (outer_tab_visible or self._has_visible_floating_pressure_map_display())
         )
-
-    def _is_pressure_map_display_tab_active(self) -> bool:
-        inner_tabs = getattr(self, "pressure_map_inner_tabs", None)
-        if inner_tabs is None:
-            return True
-        return inner_tabs.currentIndex() == getattr(self, "pressure_map_display_tab_index", 0)
-
-    def _is_pressure_map_force_display_tab_active(self) -> bool:
-        inner_tabs = getattr(self, "pressure_map_inner_tabs", None)
-        if inner_tabs is None:
-            return False
-        return inner_tabs.currentIndex() == getattr(self, "pressure_map_force_display_tab_index", 1)
-
-    def _is_pressure_map_settings_tab_active(self) -> bool:
-        inner_tabs = getattr(self, "pressure_map_inner_tabs", None)
-        if inner_tabs is None:
-            return False
-        return inner_tabs.currentIndex() == getattr(self, "pressure_map_settings_tab_index", 1)
 
     def _should_refresh_pressure_map_display(self) -> bool:
         return self._should_refresh_signal_integration_plot()
@@ -3502,13 +3630,16 @@ class PressureMapPanelMixin:
                 # The Jerk package grids above are the sole source of Force
                 # spatial shapes.  No force-side pressure-map generation.
                 force_engine.apply_jerk_shapes(package_displays)
-            if self._is_pressure_map_force_display_tab_active():
+            force_display_visible = self._is_pressure_map_force_display_visible()
+            jerk_display_visible = self._is_pressure_map_display_visible()
+            if force_display_visible:
                 if package_displays:
                     first_package = package_displays[0]
                     self._latest_shear_result = first_package.shear_result
                     self._latest_normal_force_result = first_package.normal_force_result
                     self._latest_pressure_map_result = first_package.pressure_result
                 self._render_pressure_force_display()
+            if not jerk_display_visible:
                 return
             if len(package_displays) > 1:
                 first_package = package_displays[0]

@@ -12,6 +12,7 @@ import numpy as np
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication, QCheckBox, QScrollArea
+from PyQt6.QtCore import QSettings, Qt
 
 from constants.plotting import IADC_RESOLUTION_BITS
 from constants.pressure_map import (
@@ -124,6 +125,15 @@ class SignalIntegrationPanelHarness(PressureMapPanelMixin):
         self.signal_integration_rosette_y_min_ohms = 0.0
         self.signal_integration_rosette_y_max_ohms = 65500.0
         self.plot_baselines = {}
+        self._pressure_map_workspace_settings_path = (
+            Path(tempfile.gettempdir()) / f"pressure_map_workspace_{id(self)}.ini"
+        )
+
+    def _pressure_map_workspace_qsettings(self):
+        return QSettings(
+            str(self._pressure_map_workspace_settings_path),
+            QSettings.Format.IniFormat,
+        )
 
     def get_vref_voltage(self):
         return self.VREF_VOLTS
@@ -269,7 +279,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         self.addCleanup(harness.force_pressure_map_widget.close)
         harness.force_package_widgets = {}
         harness.save_last_shear_settings = lambda: None
-        harness._is_pressure_map_force_display_tab_active = lambda: False
+        harness._is_pressure_map_force_display_visible = lambda: False
         return harness
 
     def test_apply_force_arrow_settings_uses_force_specific_gain_and_shared_unitless_params(self):
@@ -766,7 +776,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         self.assertIs(harness._latest_pressure_map_result, pressure)
         self.assertIs(harness._latest_shear_result, shear)
 
-    def test_force_tab_reuses_shared_jerk_shapes_without_rendering_jerk(self):
+    def test_force_display_reuses_shared_jerk_shapes_without_rendering_jerk(self):
         harness = SignalIntegrationPanelHarness()
         harness.pressure_map_widget = PressureMapWidget()
         self.addCleanup(harness.pressure_map_widget.close)
@@ -784,7 +794,8 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         engine.configure_layout({"PZT1": (0, 0)})
         engine._packages["PZT1"].normal_force_n = 0.25
         harness.pressure_force_engine = engine
-        harness._is_pressure_map_force_display_tab_active = lambda: True
+        harness._is_pressure_map_force_display_visible = lambda: True
+        harness._is_pressure_map_display_visible = lambda: False
         force_render_calls = []
         harness._render_pressure_force_display = lambda: force_render_calls.append(True)
 
@@ -843,7 +854,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             }
             for index, position in enumerate(SHEAR_SENSOR_POSITIONS)
         ]
-        harness._is_pressure_map_force_display_tab_active = lambda: False
+        harness._is_pressure_map_force_display_visible = lambda: False
         return harness, engine
 
     def test_missing_baseline_resets_force_state_once_per_transition(self):
@@ -1438,42 +1449,131 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         finally:
             tab.close()
 
-    def test_pressure_map_settings_inner_tab_pauses_refresh_until_display_returns(self):
+    def test_pressure_map_settings_dock_pauses_refresh_until_display_returns(self):
         harness = SignalIntegrationPanelHarness()
 
         tab = harness.create_signal_integration_tab()
         try:
+            tab.show()
+            self.app.processEvents()
             self.assertTrue(harness._should_refresh_signal_integration_plot())
 
-            harness.pressure_map_inner_tabs.setCurrentIndex(harness.pressure_map_settings_tab_index)
+            harness.pressure_map_settings_dock.raise_()
+            self.app.processEvents()
 
             self.assertFalse(harness._should_refresh_signal_integration_plot())
 
             previous_calls = getattr(harness, "signal_integration_update_calls", 0)
-            harness.pressure_map_inner_tabs.setCurrentIndex(harness.pressure_map_display_tab_index)
+            harness.pressure_map_display_dock.raise_()
+            self.app.processEvents()
 
             self.assertTrue(harness._should_refresh_signal_integration_plot())
             self.assertGreater(getattr(harness, "signal_integration_update_calls", 0), previous_calls)
         finally:
             tab.close()
 
-    def test_pressure_map_inner_tabs_split_display_and_settings_content(self):
+    def test_pressure_map_workspace_can_split_jerk_and_force_displays(self):
         harness = SignalIntegrationPanelHarness()
 
         tab = harness.create_signal_integration_tab()
         try:
-            display_tab = harness.pressure_map_inner_tabs.widget(harness.pressure_map_display_tab_index)
-            settings_tab = harness.pressure_map_inner_tabs.widget(harness.pressure_map_settings_tab_index)
+            workspace = harness.pressure_map_workspace
+            workspace.addDockWidget(
+                Qt.DockWidgetArea.LeftDockWidgetArea,
+                harness.pressure_map_display_dock,
+            )
+            workspace.addDockWidget(
+                Qt.DockWidgetArea.RightDockWidgetArea,
+                harness.pressure_map_force_display_dock,
+            )
+            workspace.addDockWidget(
+                Qt.DockWidgetArea.BottomDockWidgetArea,
+                harness.pressure_map_settings_dock,
+            )
+            tab.show()
+            self.app.processEvents()
 
-            self.assertIsInstance(display_tab, QScrollArea)
-            self.assertIsInstance(settings_tab, QScrollArea)
-            self.assertTrue(display_tab.widget().isAncestorOf(harness.pressure_map_widget))
-            self.assertTrue(settings_tab.widget().isAncestorOf(harness.signal_integration_reset_btn))
-            self.assertFalse(display_tab.widget().isAncestorOf(harness.signal_integration_reset_btn))
+            self.assertIsInstance(harness.pressure_map_display_dock.widget(), QScrollArea)
+            self.assertIsInstance(harness.pressure_map_force_display_dock.widget(), QScrollArea)
+            self.assertTrue(
+                harness.pressure_map_display_dock.widget().widget().isAncestorOf(harness.pressure_map_widget)
+            )
+            self.assertTrue(
+                harness.pressure_map_settings_dock.widget().widget().isAncestorOf(
+                    harness.signal_integration_reset_btn
+                )
+            )
+            self.assertTrue(harness._is_pressure_map_display_visible())
+            self.assertTrue(harness._is_pressure_map_force_display_visible())
         finally:
             tab.close()
 
-    def test_settings_tab_activation_refreshes_package_gain_controls(self):
+    def test_pressure_map_force_display_can_float_independently(self):
+        harness = SignalIntegrationPanelHarness()
+
+        tab = harness.create_signal_integration_tab()
+        try:
+            tab.show()
+            self.app.processEvents()
+
+            harness.pressure_map_force_display_dock.raise_()
+            self.app.processEvents()
+            harness.pressure_map_force_display_dock.setFloating(True)
+            self.app.processEvents()
+
+            self.assertTrue(harness.pressure_map_force_display_dock.isFloating())
+            self.assertTrue(harness._is_pressure_map_force_display_visible())
+        finally:
+            tab.close()
+
+    def test_reset_pressure_map_workspace_layout_restores_tabbed_default(self):
+        harness = SignalIntegrationPanelHarness()
+
+        tab = harness.create_signal_integration_tab()
+        try:
+            workspace = harness.pressure_map_workspace
+            workspace.addDockWidget(
+                Qt.DockWidgetArea.RightDockWidgetArea,
+                harness.pressure_map_force_display_dock,
+            )
+
+            harness.reset_pressure_map_workspace_layout()
+
+            tabified = set(workspace.tabifiedDockWidgets(harness.pressure_map_display_dock))
+            self.assertIn(harness.pressure_map_force_display_dock, tabified)
+            self.assertIn(harness.pressure_map_settings_dock, tabified)
+            self.assertFalse(harness.pressure_map_display_dock.isFloating())
+            self.assertFalse(harness.pressure_map_force_display_dock.isFloating())
+        finally:
+            tab.close()
+
+    def test_pressure_map_workspace_restores_saved_dock_layout(self):
+        source = SignalIntegrationPanelHarness()
+        source_tab = source.create_signal_integration_tab()
+        restored_tab = None
+        try:
+            source.pressure_map_workspace.addDockWidget(
+                Qt.DockWidgetArea.RightDockWidgetArea,
+                source.pressure_map_force_display_dock,
+            )
+            source.save_pressure_map_workspace_layout()
+
+            restored = SignalIntegrationPanelHarness()
+            restored._pressure_map_workspace_settings_path = source._pressure_map_workspace_settings_path
+            restored_tab = restored.create_signal_integration_tab()
+
+            self.assertEqual(
+                restored.pressure_map_workspace.dockWidgetArea(
+                    restored.pressure_map_force_display_dock
+                ),
+                Qt.DockWidgetArea.RightDockWidgetArea,
+            )
+        finally:
+            source_tab.close()
+            if restored_tab is not None:
+                restored_tab.close()
+
+    def test_settings_dock_activation_refreshes_package_gain_controls(self):
         harness = SignalIntegrationPanelHarness()
 
         tab = harness.create_signal_integration_tab()
@@ -1485,10 +1585,13 @@ class SignalIntegrationPanelTests(unittest.TestCase):
 
             harness._refresh_pressure_package_gain_controls = record_refresh
 
-            harness.pressure_map_inner_tabs.setCurrentIndex(harness.pressure_map_display_tab_index)
+            tab.show()
+            harness.pressure_map_display_dock.raise_()
+            self.app.processEvents()
             self.assertEqual(len(refresh_calls), 0)
 
-            harness.pressure_map_inner_tabs.setCurrentIndex(harness.pressure_map_settings_tab_index)
+            harness.pressure_map_settings_dock.raise_()
+            self.app.processEvents()
             self.assertEqual(len(refresh_calls), 1)
         finally:
             tab.close()
@@ -1527,7 +1630,9 @@ class SignalIntegrationPanelTests(unittest.TestCase):
 
         tab = harness.create_signal_integration_tab()
         try:
-            harness.pressure_map_inner_tabs.setCurrentIndex(harness.pressure_map_settings_tab_index)
+            tab.show()
+            harness.pressure_map_settings_dock.raise_()
+            self.app.processEvents()
 
             self.assertEqual(harness.signal_integration_update_timer.stop_calls, 1)
             self.assertFalse(harness.signal_integration_update_timer.isActive())

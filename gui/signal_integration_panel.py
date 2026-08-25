@@ -551,6 +551,7 @@ class PressureMapPanelMixin:
         self._force_last_dispatch_time: float = 0.0
         self._force_last_print_time: float = 0.0
         self._latest_jerk_package_displays: list = []
+        self._jerk_updates_since_dispatch: int = 0
         self._force_worker: ForceBlockWorker | None = None
         self._force_last_result: ForceRenderResult | None = None
         settings_layout.addWidget(self._create_shear_visualization_settings_group())
@@ -1338,6 +1339,7 @@ class PressureMapPanelMixin:
             self._force_last_dispatch_time = 0.0
             self._force_last_print_time = 0.0
             self._latest_jerk_package_displays = []
+            self._jerk_updates_since_dispatch = 0
         accumulator = self._force_sweep_accumulator
         if not accumulator:
             self._force_accumulator_first_sweep_id = first_sweep_id
@@ -1406,8 +1408,10 @@ class PressureMapPanelMixin:
             grid_positions=self._get_force_display_grid_positions(),
             channel_calibration=channel_calibration,
         )
+        missed_jerk = max(0, self._jerk_updates_since_dispatch - 1)
+        self._jerk_updates_since_dispatch = 0
         dropped = self._force_worker.enqueue_batch(batch)
-        self._force_drop_count += dropped
+        self._force_drop_count += dropped + missed_jerk
 
     def _force_update_drop_window(self, now: float) -> None:
         """Update the per-second drop rate counter every 1.0 s."""
@@ -3731,6 +3735,7 @@ class PressureMapPanelMixin:
             # Store Jerk shapes for the force worker; it reads them at
             # dispatch time rather than having the GUI thread call apply_jerk_shapes.
             self._latest_jerk_package_displays = package_displays
+            self._jerk_updates_since_dispatch = getattr(self, "_jerk_updates_since_dispatch", 0) + 1
             force_display_visible = self._is_pressure_map_force_display_visible()
             jerk_display_visible = self._is_pressure_map_display_visible()
             if force_display_visible:

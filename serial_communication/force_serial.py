@@ -72,6 +72,9 @@ class ForceSerialMixin:
             self._auto_connect_force()
 
     def _show_force_connect_menu(self):
+        force_state = getattr(self, "force_conn_state", ForceConnectionState.DISCONNECTED)
+        if force_state != ForceConnectionState.DISCONNECTED:
+            return
         btn = self._force_arrow_btn
         pos = btn.mapToGlobal(btn.rect().bottomLeft())
         self._force_connect_menu.exec(pos)

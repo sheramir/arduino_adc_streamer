@@ -99,6 +99,9 @@ class ADCSerialMixin:
             self._auto_connect_adc()
 
     def _show_adc_connect_menu(self):
+        adc_state = getattr(self, "adc_conn_state", ADCConnectionState.DISCONNECTED)
+        if adc_state != ADCConnectionState.DISCONNECTED:
+            return
         btn = self._adc_arrow_btn
         pos = btn.mapToGlobal(btn.rect().bottomLeft())
         self._adc_connect_menu.exec(pos)

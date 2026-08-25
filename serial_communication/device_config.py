@@ -30,6 +30,7 @@ def find_device_port(device_list: list[dict]) -> tuple[str | None, dict | None]:
     it must match exactly. Returns ``(port_device, matched_entry)`` for the
     first hit, or ``(None, None)`` if nothing found.
     """
+    ports = list(serial.tools.list_ports.comports())
     for dev in device_list:
         try:
             want_vid = int(dev["vid"], 16)
@@ -37,7 +38,7 @@ def find_device_port(device_list: list[dict]) -> tuple[str | None, dict | None]:
         except (ValueError, TypeError, KeyError):
             continue
         want_sn = dev.get("serial_number")
-        for p in serial.tools.list_ports.comports():
+        for p in ports:
             if p.vid != want_vid or p.pid != want_pid:
                 continue
             if want_sn is not None and p.serial_number != want_sn:

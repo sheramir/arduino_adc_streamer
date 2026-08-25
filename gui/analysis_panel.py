@@ -99,7 +99,7 @@ class AnalysisPanelMixin:
         self._analysis_marker_timer = QTimer()
         self._analysis_marker_timer.setSingleShot(True)
         self._analysis_pending_marker_x = None
-        self._analysis_saved_view_ranges: dict[str, list] = {}
+        self._analysis_saved_view_ranges: dict[str, tuple[list[float], list[float]]] = {}
 
     def _get_last_analysis_settings_path(self):
         return Path.home() / ".adc_streamer" / "analysis" / "last_used_analysis_settings.json"
@@ -1171,10 +1171,10 @@ class AnalysisPanelMixin:
         """Show only Analysis plots that have requested, available traces."""
         saved = getattr(self, "_analysis_saved_view_ranges", {})
         plot_states = (
-            ("signal", self.analysis_signal_plot, bool(show_signal), 360),
-            ("integration", self.analysis_integration_plot, bool(show_integration), 260),
-            ("derived", self.analysis_derived_plot, bool(show_derived), 240),
-            ("force", self.analysis_force_plot, bool(show_force), 300),
+            ("signal", self.analysis_signal_plot, bool(show_signal), 250),
+            ("integration", self.analysis_integration_plot, bool(show_integration), 200),
+            ("derived", self.analysis_derived_plot, bool(show_derived), 200),
+            ("force", self.analysis_force_plot, bool(show_force), 100),
         )
         for key, plot, visible, _minimum_height in plot_states:
             was_visible = plot.isVisible()

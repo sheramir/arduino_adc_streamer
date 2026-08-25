@@ -1263,7 +1263,69 @@ class PressureMapPanelMixin:
             }
             for package_id in complete_packages
         }
+        # Polarity is a global setting, constant for the entire block.
+        polarity_multiplier = float(
+            self._apply_signal_integration_sensor_polarity(np.ones(1, dtype=np.float64))[0]
+        )
+        # Baselines are constant per spec for the entire block.
+        plot_baselines = getattr(self, "plot_baselines", {})
+        baseline_by_pkg_pos: dict[str, dict[str, float]] = {
+            package_id: {
+                position: 0.0 if ghost_net_centered else float(plot_baselines.get(spec.get("key"), 0.0))
+                for position, spec in positions.items()
+            }
+            for package_id, positions in complete_packages.items()
+        }
+        # Sample indices are constant per (spec, repeat_index) across sweeps.
+        sample_idx_by_pkg_pos_repeat: dict[str, dict[str, list[int]]] = {
+            package_id: {
+                position: [int(spec["sample_indices"][r]) for r in range(repeat_slots)]
+                for position, spec in positions.items()
+            }
+            for package_id, positions in complete_packages.items()
+        }
+        # MUX timing offsets depend only on (adc_input, repeat_index), not on sweep.
+        # Precompute: (adc_input, repeat_index) -> (time_offset_s, leak_dt_s, pre_sample_dt_s)
+        _MuxKey = tuple[int, int]
+        mux_time_offset: dict[_MuxKey, float] = {}
+        mux_leak_dt: dict[_MuxKey, float] = {}
+        mux_pre_sample_dt: dict[_MuxKey, float] = {}
+        adc_input_by_pkg_pos: dict[str, dict[str, int | None]] = {}
+        first_sample_dt_by_pkg_pos: dict[str, dict[str, float]] = {}
+        if mux_timing is not None:
+            for package_id, positions in complete_packages.items():
+                adc_input_by_pkg_pos[package_id] = {}
+                first_sample_dt_by_pkg_pos[package_id] = {}
+                for position, spec in positions.items():
+                    key = spec.get("key")
+                    raw_adc = key[4] if isinstance(key, tuple) and len(key) >= 5 else None
+                    try:
+                        adc_input = int(raw_adc)
+                    except (TypeError, ValueError):
+                        adc_input = None
+                    adc_input_by_pkg_pos[package_id][position] = adc_input
+                    if adc_input in (1, 2):
+                        first_sample_dt_by_pkg_pos[package_id][position] = (
+                            int(spec["sample_indices"][0]) * dt_s
+                        )
+                        try:
+                            ctx = PztDecayTimingContext.from_adc_mux_timing(mux_timing, adc_input)
+                            offset_0 = ctx.observation_offset_s(0)
+                            for r in range(repeat_slots):
+                                mux_key: _MuxKey = (adc_input, r)
+                                if mux_key not in mux_time_offset:
+                                    prev_r = repeat_slots - 1 if r == 0 else r - 1
+                                    mux_time_offset[mux_key] = ctx.observation_offset_s(r) - offset_0
+                                    mux_leak_dt[mux_key] = ctx.connected_exposure_between(prev_r, r)
+                                    mux_pre_sample_dt[mux_key] = float(
+                                        mux_timing.decay_before_effective_sample_s(
+                                            adc_input=adc_input, repeat_index=r,
+                                        )
+                                    )
+                        except (TypeError, ValueError, AttributeError):
+                            pass
         for row_index, sweep in enumerate(block):
+            sweep_time = float(times[row_index])
             for repeat_index in range(repeat_slots):
                 package_voltages: dict[str, dict[str, float]] = {}
                 package_times: dict[str, dict[str, float]] = {}
@@ -1274,54 +1336,25 @@ class PressureMapPanelMixin:
                     channel_times: dict[str, float] = {}
                     channel_leak_times: dict[str, float] = {}
                     pre_sample_times: dict[str, float] = {}
-                    for position, spec in positions.items():
-                        sample_index = int(spec["sample_indices"][repeat_index])
-                        baseline = 0.0 if ghost_net_centered else float(
-                            getattr(self, "plot_baselines", {}).get(spec.get("key"), 0.0)
-                        )
-                        # This is the shared baseline-centred ADC stream.  The
-                        # force engine receives volts before every Jerk transform.
-                        centered_counts = float(sweep[sample_index]) - baseline
-                        value = centered_counts * voltage_scale
-                        # Force uses the same configured physical polarity as
-                        # Jerk before PZT charge/force reconstruction.
-                        values[position] = float(self._apply_signal_integration_sensor_polarity(
-                            np.asarray([value], dtype=np.float64)
-                        )[0])
-                        channel_times[position] = float(times[row_index]) + float(sample_index) * dt_s
+                    pkg_baselines = baseline_by_pkg_pos[package_id]
+                    pkg_sample_indices = sample_idx_by_pkg_pos_repeat[package_id]
+                    for position in positions:
+                        sample_index = pkg_sample_indices[position][repeat_index]
+                        centered_counts = float(sweep[sample_index]) - pkg_baselines[position]
+                        values[position] = centered_counts * voltage_scale * polarity_multiplier
+                        channel_times[position] = sweep_time + sample_index * dt_s
                         if mux_timing is not None:
-                            key = spec.get("key")
-                            adc_input = key[4] if isinstance(key, tuple) and len(key) >= 5 else None
-                            try:
-                                adc_input = int(adc_input)
-                                if adc_input in (1, 2):
-                                    timing_context = PztDecayTimingContext.from_adc_mux_timing(
-                                        mux_timing, adc_input
-                                    )
-                                    # The measured sweep timestamp anchors the
-                                    # burst.  The shared MUX model supplies the
-                                    # precise effective offset within it.
-                                    first_index = int(spec["sample_indices"][0])
+                            adc_input = adc_input_by_pkg_pos.get(package_id, {}).get(position)
+                            if adc_input in (1, 2):
+                                mux_key = (adc_input, repeat_index)
+                                if mux_key in mux_time_offset:
                                     channel_times[position] = (
-                                        float(times[row_index]) + float(first_index) * dt_s
-                                        + timing_context.observation_offset_s(repeat_index)
-                                        - timing_context.observation_offset_s(0)
+                                        sweep_time
+                                        + first_sample_dt_by_pkg_pos[package_id][position]
+                                        + mux_time_offset[mux_key]
                                     )
-                                    previous_repeat = (
-                                        repeat_slots - 1 if repeat_index == 0 else repeat_index - 1
-                                    )
-                                    channel_leak_times[position] = (
-                                        timing_context.connected_exposure_between(
-                                            previous_repeat, repeat_index
-                                        )
-                                    )
-                                    pre_sample_times[position] = float(
-                                        mux_timing.decay_before_effective_sample_s(
-                                            adc_input=adc_input, repeat_index=repeat_index
-                                        )
-                                    )
-                            except (TypeError, ValueError, AttributeError):
-                                pass
+                                    channel_leak_times[position] = mux_leak_dt[mux_key]
+                                    pre_sample_times[position] = mux_pre_sample_dt[mux_key]
                     package_voltages[package_id] = values
                     package_times[package_id] = channel_times
                     package_leak_times[package_id] = channel_leak_times

@@ -854,7 +854,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
             }
             for index, position in enumerate(SHEAR_SENSOR_POSITIONS)
         ]
-        harness._is_pressure_map_force_display_visible = lambda: False
+        harness._is_pressure_map_force_display_visible = lambda: True
         return harness, engine
 
     def test_missing_baseline_resets_force_state_once_per_transition(self):

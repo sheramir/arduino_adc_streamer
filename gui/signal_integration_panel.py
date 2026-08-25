@@ -1087,7 +1087,11 @@ class PressureMapPanelMixin:
             "Number of sweep batches dropped per second because the force worker "
             "could not keep up.  Non-zero values mean the refresh rate is too high."
         )
-        layout.addWidget(self.force_drop_rate_label, 7, 2, 1, 3)
+        layout.addWidget(self.force_drop_rate_label, 7, 2, 1, 2)
+        self.force_drop_rate_refresh_btn = QPushButton("Update")
+        self.force_drop_rate_refresh_btn.setToolTip("Read the latest dropped force data rate.")
+        self.force_drop_rate_refresh_btn.clicked.connect(self._refresh_force_drop_rate_label)
+        layout.addWidget(self.force_drop_rate_refresh_btn, 7, 4)
 
         for widget in (
             self.force_pzt_center_capacitance_spin, self.force_pzt_outer_capacitance_spin,

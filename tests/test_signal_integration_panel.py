@@ -32,6 +32,7 @@ from config.pressure_map_mask_config import MaskConfigStore
 from data_processing.adc_filter_engine import ADCFilterEngine
 from data_processing.normal_force_calculator import NormalForceCalculator
 from data_processing.pressure_map_array_generator import PressureMapArrayGenerator
+from data_processing.force_block_worker import ForceBlockWorker
 from data_processing.pressure_force_display import PressureForceDisplayEngine
 from data_processing.pressure_map_geometry import PressureMapGeometry
 from data_processing.pressure_map_generator import PressureMapGenerator
@@ -776,7 +777,9 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         self.assertIs(harness._latest_pressure_map_result, pressure)
         self.assertIs(harness._latest_shear_result, shear)
 
-    def test_force_display_reuses_shared_jerk_shapes_without_rendering_jerk(self):
+    def test_force_display_stores_jerk_shapes_without_rendering_jerk(self):
+        # Jerk shapes are now stored for the background worker rather than
+        # applied directly to the engine from the Jerk render path.
         harness = SignalIntegrationPanelHarness()
         harness.pressure_map_widget = PressureMapWidget()
         self.addCleanup(harness.pressure_map_widget.close)
@@ -801,9 +804,14 @@ class SignalIntegrationPanelTests(unittest.TestCase):
 
         harness._update_pressure_map_from_latest()
 
+        # Jerk shapes are stored for the worker; _render_pressure_force_display
+        # is still called (it reads from _force_last_result, mocked away here).
         self.assertEqual(force_render_calls, [True])
-        self.assertEqual(engine._packages["PZT1"].applied_load_n, 0.25)
-        self.assertTrue(np.any(engine._packages["PZT1"].accumulated_force_grid_n))
+        # Shapes must be stored so the worker can apply them on the next batch.
+        self.assertGreater(len(harness._latest_jerk_package_displays), 0)
+        # The engine is NOT mutated from the Jerk path; apply_jerk_shapes runs
+        # only inside ForceBlockWorker._process_batch.
+        self.assertEqual(engine._packages["PZT1"].applied_load_n, 0.0)
         self.assertIsNone(harness.pressure_map_widget.last_pressure_result)
 
     def test_baseline_change_reset_rebuilds_engine_and_renders_immediately(self):
@@ -846,6 +854,9 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         engine = PressureForceDisplayEngine(geometry=harness.pressure_map_geometry)
         engine.configure_layout({"PZT1": (0, 0)})
         harness.pressure_force_engine = engine
+        # Create worker unstarted so drain_synchronous() runs on the test thread.
+        worker = ForceBlockWorker(engine)
+        harness._force_worker = worker
         harness.get_display_channel_specs = lambda: [
             {
                 "key": ("sensor", "PZT1", position),
@@ -910,6 +921,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         harness.process_pressure_force_block(
             block, times, first_sweep_id=0, avg_sample_time_us=100.0
         )
+        harness._force_worker.drain_synchronous()
 
         package = engine._packages["PZT1"]
         self.assertFalse(any(state.active for state in package.channel_states.values()))
@@ -934,6 +946,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         harness.process_pressure_force_block(
             block, times, first_sweep_id=0, avg_sample_time_us=100.0
         )
+        harness._force_worker.drain_synchronous()
 
         package = engine._packages["PZT1"]
         self.assertFalse(any(state.active for state in package.channel_states.values()))
@@ -958,6 +971,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         harness.process_pressure_force_block(
             block, times, first_sweep_id=0, avg_sample_time_us=10000.0
         )
+        harness._force_worker.drain_synchronous()
         return engine._packages["PZT1"]
 
     def test_center_polarity_flip_yields_consistent_sign_normal_force_and_compression(self):
@@ -1016,6 +1030,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         harness.process_pressure_force_block(
             block, times, first_sweep_id=0, avg_sample_time_us=100.0
         )
+        harness._force_worker.drain_synchronous()
 
         self.assertEqual(
             captured_calibration[0],

@@ -262,7 +262,7 @@ class ForceBlockWorker(QThread):
         """Overwrite channel time with MUX-model values when available."""
         if batch.mux_timing is None:
             return
-        from data_processing.pzt_decay_timing import PztDecayTimingContext
+        from data_processing.pzt_decay import PztDecayTimingContext
         key = spec.get("key")
         adc_input = key[4] if isinstance(key, tuple) and len(key) >= 5 else None
         try:

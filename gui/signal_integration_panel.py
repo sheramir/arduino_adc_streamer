@@ -1219,9 +1219,8 @@ class PressureMapPanelMixin:
         worker = getattr(self, "_force_worker", None)
         if worker is None:
             self._force_worker = ForceBlockWorker(new_engine)
-            # Use a lambda so the signal can connect even when the mixin host
-            # is not a QObject (e.g. test harnesses).
             self._force_worker.result_ready.connect(lambda r: self._on_force_result_ready(r))
+            self._force_worker.start()
         else:
             worker.swap_engine(new_engine)
 

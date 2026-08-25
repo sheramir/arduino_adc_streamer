@@ -586,6 +586,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         harness.normal_force_calculator = NormalForceCalculator()
         harness.pressure_map_generator = PressureMapGenerator()
         harness.shear_noise_threshold_spin = DummySpinBox(0.0)
+        harness.plot_baselines = {"dummy_key": 0.0}
         harness._latest_signal_integration_values_by_package = {
             "PZT3": {"C": 0.0, "L": -1.0, "R": 1.0, "T": 0.0, "B": 0.0},
             "PZT5": {"C": 0.0, "L": 0.0, "R": 0.0, "T": 1.0, "B": -1.0},
@@ -610,6 +611,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         harness.shear_detector = ShearDetector()
         harness.normal_force_calculator = NormalForceCalculator()
         harness.shear_noise_threshold_spin = DummySpinBox(0.0)
+        harness.plot_baselines = {"dummy_key": 0.0}
         # A strong left press with a small opposite-sign centre ghost: the
         # baseline-shifted values would blank L and lift R/T/B to 1.0.
         harness._latest_signal_integration_values_by_package = {
@@ -646,6 +648,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         harness.pressure_map_generator = PressureMapGenerator()
         harness.pressure_map_array_generator = PressureMapArrayGenerator()
         harness.shear_noise_threshold_spin = DummySpinBox(0.0)
+        harness.plot_baselines = {"dummy_key": 0.0}
         empty = {position: 0.0 for position in SHEAR_SENSOR_POSITIONS}
         harness._latest_signal_integration_values_by_package = {
             "PZT3": dict(empty),
@@ -721,6 +724,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         harness.pressure_map_widget = PressureMapWidget()
         self.addCleanup(harness.pressure_map_widget.close)
         harness.shear_noise_threshold_spin = DummySpinBox(0.0)
+        harness.plot_baselines = {"dummy_key": 0.0}
         harness._latest_signal_integration_values_by_package = {
             "PZT3": {"C": 2.0, "R": 1.0, "T": 0.0, "L": 0.0, "B": 0.0},
         }
@@ -787,6 +791,7 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         harness.shear_detector = ShearDetector()
         harness.normal_force_calculator = NormalForceCalculator()
         harness.pressure_map_generator = PressureMapGenerator()
+        harness.plot_baselines = {"dummy_key": 0.0}
         harness._latest_signal_integration_values_by_package = {
             "PZT1": {"C": 2.0, "R": 1.0, "T": 0.0, "L": 0.0, "B": 0.0},
         }

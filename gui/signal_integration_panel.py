@@ -3822,6 +3822,8 @@ class PressureMapPanelMixin:
             self._pressure_map_last_error_time = now
 
     def _build_pressure_map_package_displays(self) -> list[PressureMapPackageDisplay]:
+        if not getattr(self, "plot_baselines", {}):
+            return []
         values_by_package = getattr(self, "_latest_signal_integration_values_by_package", {})
         layout_by_sensor_id = {
             str(item.get("sensor_id", "")).upper(): item

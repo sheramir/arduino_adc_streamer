@@ -696,6 +696,10 @@ class PressureMapPanelMixin:
                 return
 
         if self._is_pressure_map_force_display_visible():
+            # Force integration was paused while hidden; reset so the display
+            # starts from the current moment rather than showing a stale integral.
+            if dock_name == "pressure_map_force_display_dock" and visible:
+                self._rebuild_pressure_force_engine()
             # Force consumes the shared Jerk shapes even while Jerk itself is
             # hidden.  Build them before rendering the force raster.
             if self._should_refresh_signal_integration_plot():
@@ -1186,6 +1190,8 @@ class PressureMapPanelMixin:
         """
         engine = getattr(self, "pressure_force_engine", None)
         if engine is None or not hasattr(self, "get_display_channel_specs"):
+            return
+        if not self._is_pressure_map_force_display_visible():
             return
         block = np.asarray(block_samples_array, dtype=np.float64)
         times = np.asarray(sweep_timestamps_sec, dtype=np.float64).reshape(-1)
@@ -3653,13 +3659,13 @@ class PressureMapPanelMixin:
         )
         try:
             package_displays = self._build_pressure_map_package_displays()
+            force_display_visible = self._is_pressure_map_force_display_visible()
+            jerk_display_visible = self._is_pressure_map_display_visible()
             force_engine = getattr(self, "pressure_force_engine", None)
-            if force_engine is not None:
+            if force_engine is not None and force_display_visible:
                 # The Jerk package grids above are the sole source of Force
                 # spatial shapes.  No force-side pressure-map generation.
                 force_engine.apply_jerk_shapes(package_displays)
-            force_display_visible = self._is_pressure_map_force_display_visible()
-            jerk_display_visible = self._is_pressure_map_display_visible()
             if force_display_visible:
                 if package_displays:
                     first_package = package_displays[0]

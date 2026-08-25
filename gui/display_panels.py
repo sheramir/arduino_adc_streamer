@@ -125,11 +125,11 @@ class DisplayPanelsMixin:
         vb = self.plot_widget.getViewBox()
         vb._orig_wheel_event = vb.wheelEvent
 
-        def wheel_event_guard(_self, event):
+        def wheel_event_guard(_self, event, **kwargs):
             if getattr(self, 'is_capturing', False):
                 event.ignore()
                 return
-            vb._orig_wheel_event(event)
+            vb._orig_wheel_event(event, **kwargs)
 
         vb.wheelEvent = types.MethodType(wheel_event_guard, vb)
 
@@ -137,11 +137,11 @@ class DisplayPanelsMixin:
         pw = self.plot_widget
         pw._orig_wheel_event = pw.wheelEvent
 
-        def pw_wheel_event_guard(_self, event):
+        def pw_wheel_event_guard(_self, event, **kwargs):
             if getattr(self, 'is_capturing', False):
                 event.ignore()
                 return
-            pw._orig_wheel_event(event)
+            pw._orig_wheel_event(event, **kwargs)
 
         pw.wheelEvent = types.MethodType(pw_wheel_event_guard, pw)
         

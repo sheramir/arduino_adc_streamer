@@ -48,6 +48,7 @@ from data_processing.analysis_workbench import (
     AnalysisPreparedData,
     AnalysisSourceSnapshot,
     build_in_memory_snapshot,
+    build_snapshot_from_archive,
     estimate_analysis_pzt_force_calibration,
     load_exported_csv_snapshot,
     prepare_analysis_data,
@@ -650,7 +651,15 @@ class AnalysisPanelMixin:
                     self.analysis_state["metadata_path"],
                 )
             else:
-                self.analysis_snapshot = build_in_memory_snapshot(self)
+                buffer_overflowed = (
+                    hasattr(self, '_capture_exceeds_memory_buffer')
+                    and self._capture_exceeds_memory_buffer()
+                    and getattr(self, '_archive_path', None)
+                )
+                if buffer_overflowed:
+                    self.analysis_snapshot = build_snapshot_from_archive(self)
+                else:
+                    self.analysis_snapshot = build_in_memory_snapshot(self)
             self._rebuild_analysis_channel_checks()
             self._analysis_pending_auto_range = True
             self.refresh_analysis_plot()

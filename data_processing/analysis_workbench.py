@@ -156,6 +156,51 @@ def build_in_memory_snapshot(owner) -> AnalysisSourceSnapshot:
     )
 
 
+def build_snapshot_from_archive(owner) -> AnalysisSourceSnapshot:
+    """Build an analysis snapshot from the persisted archive when the ring buffer has overflowed.
+
+    Falls back to the in-memory ring buffer if the archive is unavailable or empty.
+    Caller must ensure capture is stopped before calling.
+    """
+    if hasattr(owner, '_finalize_archive_if_active'):   
+        owner._finalize_archive_if_active()
+
+    sweeps = timestamps = None
+    if hasattr(owner, 'load_archive_data'):
+        sweeps, timestamps = owner.load_archive_data()
+
+    if not sweeps or not timestamps:
+        return build_in_memory_snapshot(owner)
+
+    owner_config = getattr(owner, "config", {}) or {}
+    data = np.asarray(sweeps, dtype=np.float32)
+    ts = np.asarray(timestamps, dtype=np.float64)
+
+    channel_labels, channel_indices = _build_in_memory_channel_labels(
+        owner,
+        data.shape[1],
+        fallback_channels=_config_get(owner_config, "channels", []),
+        fallback_repeat=int(_config_get(owner_config, "repeat", 1) or 1),
+    )
+    metadata = {
+        "configuration": _config_to_dict(owner_config),
+        "source": "archive",
+        "timing": _owner_analysis_timing_metadata(owner),
+    }
+    return AnalysisSourceSnapshot(
+        data=data,
+        timestamps_s=_normalize_timestamps(ts, data.shape[0]),
+        channel_labels=channel_labels,
+        channel_indices=channel_indices,
+        metadata=metadata,
+        force_timestamps_s=_force_times(owner),
+        force_x_n=_force_values(owner, "x"),
+        force_z_n=_force_values(owner, "z"),
+        source_id="archive",
+        sample_rate_hz=_owner_sample_rate_hz(owner, data, ts),
+    )
+
+
 def load_exported_csv_snapshot(csv_path, metadata_path) -> AnalysisSourceSnapshot:
     """Load an app-exported CSV plus its JSON metadata sidecar."""
     csv_path = Path(csv_path)

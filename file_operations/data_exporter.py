@@ -13,8 +13,9 @@ import numpy as np
 from PyQt6.QtWidgets import QMessageBox
 
 from constants.plotting import IADC_RESOLUTION_BITS
-from constants.pzt_rs import get_pzt_rs_ohms_per_wire_unit
+from constants.pzt_rs import extract_archive_rs_units, get_pzt_rs_ohms_per_wire_unit
 from data_processing.force_state import get_force_runtime_state
+from data_processing.adc_mux_timing import adc_mux_timing_log, calculate_adc_mux_timing_for_acquisition
 from file_operations.force_export_alignment import (
     build_export_row_timestamps,
     build_force_export_series,
@@ -23,6 +24,35 @@ from file_operations.force_export_alignment import (
     resolve_export_start_datetime,
 )
 from file_operations.export_metadata import build_vmid_noise_metadata
+
+
+def build_export_row(
+    sweep,
+    row_time,
+    *,
+    rs_round_indices,
+    export_column_indices,
+    is_555_mode,
+    force_series,
+    export_start_datetime,
+):
+    """Build one CSV row: RS rounding, column selection, time columns, force values.
+
+    Shared by the archive-streaming and in-memory export paths so their column
+    layouts cannot drift apart.
+    """
+    row = np.asarray(sweep).tolist()
+    if rs_round_indices:
+        for index in rs_round_indices:
+            if index < len(row):
+                row[index] = round(row[index], 2)
+    if export_column_indices:
+        row = [row[index] for index in export_column_indices if 0 <= index < len(row)]
+    row.insert(0, format_export_clock_time(export_start_datetime, row_time))
+    if is_555_mode:
+        row.insert(1, float(row_time if row_time is not None else 0.0))
+    row.extend(list(get_nearest_force_values(force_series, row_time)))
+    return row
 
 
 class DataExporterMixin:
@@ -47,6 +77,8 @@ class DataExporterMixin:
         Active acquisition time comes from MCU block timestamps. Effective rates include
         the MCU-measured gaps between acquisition blocks, which makes them representative
         of the data stream over the whole capture rather than a single recent block.
+        ``adc_active_sample_interval_us`` is therefore an amortized complete-block
+        duration per exported sample, not physical same-input spacing within a burst.
         """
         timing = self.timing_state
         active_duration_us = int(getattr(timing, "adc_active_capture_duration_us", 0) or 0)
@@ -96,6 +128,10 @@ class DataExporterMixin:
         ground_sample_enabled = bool(self.config.get("use_ground", False))
         return {
             "adc_active_sample_interval_us": self._round_timing_value(active_sample_interval_us),
+            "adc_active_sample_interval_note": (
+                "Amortized complete-block duration per exported sample; do not use "
+                "for same-input PZT decay spacing within a retained-pair burst."
+            ),
             "adc_mean_block_capture_time_us": self._round_timing_value(
                 active_duration_us / block_count if block_count > 0 else None
             ),
@@ -352,11 +388,7 @@ class DataExporterMixin:
         filter_runtime = None
         total_fs_hz = 0.0
         archive_metadata = self._read_archive_metadata(archive_path)
-        archive_rs_units = (
-            archive_metadata.get('metadata', {}).get('pzt_rs_rs_units')
-            if isinstance(archive_metadata.get('metadata'), dict)
-            else archive_metadata.get('pzt_rs_rs_units')
-        )
+        archive_rs_units = extract_archive_rs_units(archive_metadata)
 
         if apply_filter:
             total_fs_hz = float(self._get_filter_total_sample_rate_hz())
@@ -408,18 +440,15 @@ class DataExporterMixin:
                 data = self.adc_filter_engine.filter_block(filter_runtime, data.astype(np.float32, copy=True))
 
             for sweep, row_time in zip(data, chunk_row_times):
-                row = np.asarray(sweep).tolist()
-                if rs_round_indices:
-                    for _i in rs_round_indices:
-                        if _i < len(row):
-                            row[_i] = round(row[_i], 2)
-                if export_column_indices:
-                    row = [row[index] for index in export_column_indices if 0 <= index < len(row)]
-                row.insert(0, format_export_clock_time(export_start_datetime, row_time))
-                if is_555_mode:
-                    row.insert(1, float(row_time if row_time is not None else 0.0))
-                row.extend(list(get_nearest_force_values(force_series, row_time)))
-                writer.writerow(row)
+                writer.writerow(build_export_row(
+                    sweep,
+                    row_time,
+                    rs_round_indices=rs_round_indices,
+                    export_column_indices=export_column_indices,
+                    is_555_mode=is_555_mode,
+                    force_series=force_series,
+                    export_start_datetime=export_start_datetime,
+                ))
                 saved_index += 1
 
             chunk_sweeps = []
@@ -684,19 +713,15 @@ class DataExporterMixin:
                         row_time = None
                         if row_timestamps is not None and saved_index < len(row_timestamps):
                             row_time = float(row_timestamps[saved_index])
-                        row = np.asarray(sweep).tolist()
-                        if rs_round_indices:
-                            for _i in rs_round_indices:
-                                if _i < len(row):
-                                    row[_i] = round(row[_i], 2)
-                        if export_column_indices:
-                            row = [row[index] for index in export_column_indices if 0 <= index < len(row)]
-                        row.insert(0, format_export_clock_time(export_start_datetime, row_time))
-                        if is_555_mode:
-                            timestamp_to_write = row_time if row_time is not None else 0.0
-                            row.insert(1, float(timestamp_to_write))
-                        row.extend(list(get_nearest_force_values(force_series, row_time)))
-                        writer.writerow(row)
+                        writer.writerow(build_export_row(
+                            sweep,
+                            row_time,
+                            rs_round_indices=rs_round_indices,
+                            export_column_indices=export_column_indices,
+                            is_555_mode=is_555_mode,
+                            force_series=force_series,
+                            export_start_datetime=export_start_datetime,
+                        ))
 
                     saved_index = saved_total
 
@@ -705,6 +730,17 @@ class DataExporterMixin:
             if self.timing_state.capture_start_time and self.timing_state.capture_end_time:
                 capture_duration_s = self.timing_state.capture_end_time - self.timing_state.capture_start_time
 
+            adc_mux_timing = calculate_adc_mux_timing_for_acquisition(
+                self.current_mcu if hasattr(self, "current_mcu") else None,
+                self.config,
+            )
+            adc_mux_timing_metadata = adc_mux_timing_log(adc_mux_timing)
+            capture_timing_metadata = self._build_capture_timing_metadata(signal_header)
+            if adc_mux_timing is not None:
+                # This value remains full precision for PZT force reconstruction;
+                # the adjacent adc_mux_timing section is intentionally rounded for display.
+                capture_timing_metadata["pzt_mux_connected_time_s"] = adc_mux_timing.sensor_connected_s
+                capture_timing_metadata["pzt_mux_connected_time_source"] = "adc_mux_timing.t_connected_s"
             metadata = {
                 "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 "mcu_type": self.current_mcu if self.current_mcu else "Unknown",
@@ -727,7 +763,7 @@ class DataExporterMixin:
                     "exported_signal_columns": list(signal_header),
                 },
                 "block_timing_csv": self._block_timing_path,
-                "timing": self._build_capture_timing_metadata(signal_header),
+                "timing": capture_timing_metadata,
                 "force_data": {
                     "available": len(force_state.data) > 0,
                     "x_force_available": has_force_x,
@@ -768,6 +804,51 @@ class DataExporterMixin:
                     ),
                 ),
             }
+
+            archive_ghost_metadata = {}
+            if isinstance(archive_metadata_block, dict):
+                candidate = archive_metadata_block.get("pzt_ghost_removal")
+                if isinstance(candidate, dict):
+                    archive_ghost_metadata = dict(candidate)
+
+            runtime_ghost_metadata = {}
+            if hasattr(self, "build_pzt_ghost_metadata"):
+                try:
+                    candidate = self.build_pzt_ghost_metadata()
+                    if isinstance(candidate, dict):
+                        runtime_ghost_metadata = dict(candidate)
+                except Exception:
+                    runtime_ghost_metadata = {}
+
+            if export_source == "archive" and archive_ghost_metadata:
+                ghost_metadata = dict(archive_ghost_metadata)
+                for key, value in runtime_ghost_metadata.items():
+                    ghost_metadata.setdefault(key, value)
+                ghost_metadata_source = "archive_capture_metadata"
+            else:
+                ghost_metadata = dict(runtime_ghost_metadata)
+                for key, value in archive_ghost_metadata.items():
+                    ghost_metadata.setdefault(key, value)
+                ghost_metadata_source = "runtime_state"
+
+            ghost_enabled = bool(ghost_metadata.get("enabled", False))
+            ghost_metadata["enabled"] = ghost_enabled
+            ghost_metadata["metadata_source"] = ghost_metadata_source
+            ghost_metadata["applied_to_live_displays"] = ghost_enabled
+            ghost_metadata["csv_signal_domain"] = (
+                "post_pzt_ghost_removal" if ghost_enabled else "raw_adc_counts"
+            )
+            ghost_metadata["csv_signal_domain_note"] = (
+                "CSV rows are sourced from acquisition buffers/archive. "
+                "When ghost removal is enabled, those PZT values are canonical ghost-cleaned samples "
+                "used by live displays and processing."
+                if ghost_enabled
+                else "Ghost removal was disabled, so CSV rows reflect raw ADC-domain signal values."
+            )
+            metadata["pzt_ghost_removal"] = ghost_metadata
+
+            if adc_mux_timing_metadata is not None:
+                metadata["adc_mux_timing"] = adc_mux_timing_metadata
 
             if hasattr(self, 'build_filter_metadata'):
                 metadata["filtering"] = self.build_filter_metadata(

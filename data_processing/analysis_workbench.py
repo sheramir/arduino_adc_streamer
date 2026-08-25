@@ -330,6 +330,10 @@ def prepare_analysis_data(
             snapshot,
             pzt_force_settings or {},
         )
+        pzt_pre_sample_decay_by_label = resolve_analysis_pzt_pre_sample_decay_dt_s(
+            snapshot,
+            pzt_force_settings or {},
+        )
         force_traces.extend(
             build_calculated_pzt_force_traces(
                 snapshot,
@@ -338,6 +342,7 @@ def prepare_analysis_data(
                 voltage_by_label,
                 pzt_force_settings or {},
                 leak_dt_s=pzt_leak_dt_s,
+                pre_sample_decay_dt_s_by_label=pzt_pre_sample_decay_by_label,
             )
         )
         if pzt_timing_status:
@@ -365,6 +370,7 @@ def build_calculated_pzt_force_traces(
     settings: Mapping[str, object],
     *,
     leak_dt_s=None,
+    pre_sample_decay_dt_s_by_label: Mapping[str, float] | None = None,
 ) -> list[AnalysisTrace]:
     if not bool(settings.get("enabled", False)):
         return []
@@ -391,12 +397,20 @@ def build_calculated_pzt_force_traces(
             voltage_by_label[label],
             time_s,
             settings,
+            sensor_position=_pzt_sensor_position(label),
             vmid_v=_optional_float(calibration.get("vmid_v")),
             noise_threshold_v=_optional_float(calibration.get("noise_threshold_v")),
             leak_dt_s=leak_dt_s,
+            pre_sample_decay_dt_s=(pre_sample_decay_dt_s_by_label or {}).get(label),
         )
         traces.append(AnalysisTrace(f"Calculated Force - {label} [N]", x_values, force_n, "force"))
     return traces
+
+
+def _pzt_sensor_position(label: str) -> str:
+    """Return the PZT package position encoded by an exported channel label."""
+    _prefix, _separator, suffix = str(label).rpartition("_")
+    return "C" if suffix.strip().upper() == "C" else "outer"
 
 
 def resolve_analysis_pzt_mux_leak_dt_s(
@@ -428,6 +442,48 @@ def resolve_analysis_pzt_mux_leak_dt_s(
     if value is None or value <= 0.0:
         raise ValueError("PZT MUX connected time unavailable; choose Manual or Infer from total sample rate")
     return value, f"PZT MUX timing: Auto {value * 1000.0:.3f} ms from {source}."
+
+
+def resolve_analysis_pzt_pre_sample_decay_dt_s(
+    snapshot: AnalysisSourceSnapshot,
+    settings: Mapping[str, object],
+) -> dict[str, float]:
+    """Return exact per-label PZT pre-sample decay from the physical MUX map.
+
+    Unknown mappings intentionally receive no correction; column position is
+    not a physical ADC-input mapping.
+    """
+    if not bool(settings.get("enabled", False)):
+        return {}
+    metadata = snapshot.metadata if isinstance(snapshot.metadata, Mapping) else {}
+    timing = metadata.get("timing", {}) if isinstance(metadata, Mapping) else {}
+    if not isinstance(timing, Mapping):
+        return {}
+    by_label_exact = timing.get("pzt_pre_sample_decay_s_by_label", {})
+    if isinstance(by_label_exact, Mapping):
+        result: dict[str, float] = {}
+        for label, value in by_label_exact.items():
+            try:
+                parsed = float(value)
+            except (TypeError, ValueError):
+                continue
+            if parsed >= 0.0:
+                result[str(label)] = parsed
+        if result:
+            return result
+    by_input = timing.get("pzt_pre_sample_decay_s_by_adc_input", {})
+    by_label = timing.get("pzt_adc_input_by_label", {})
+    if not isinstance(by_input, Mapping) or not isinstance(by_label, Mapping):
+        return {}
+    result: dict[str, float] = {}
+    for label, adc_input in by_label.items():
+        try:
+            value = float(by_input[str(int(adc_input))])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if value >= 0.0:
+            result[str(label)] = value
+    return result
 
 
 def estimate_analysis_pzt_force_calibration(
@@ -927,10 +983,48 @@ def _owner_analysis_timing_metadata(owner) -> dict:
     timing_data = getattr(timing_state, "timing_data", {}) if timing_state is not None else {}
     result = dict(timing_data) if isinstance(timing_data, dict) else {}
 
+    # The current run may be analysed before export.  Preserve the same compact
+    # calculator payload that is written to capture JSON so Auto timing uses the
+    # physical sensor-to-MUX connected interval in either workflow.
+    try:
+        from data_processing.adc_mux_timing import (
+            adc_mux_timing_log,
+            calculate_adc_mux_timing_for_acquisition,
+        )
+
+        calculated = calculate_adc_mux_timing_for_acquisition(
+            getattr(owner, "current_mcu", None),
+            getattr(owner, "config", {}),
+        )
+        if calculated is not None:
+            result["adc_mux_timing"] = adc_mux_timing_log(calculated)
+            # Keep the full-precision seconds value outside the display-oriented
+            # timing JSON. Force reconstruction must never consume rounded JSON.
+            result["pzt_mux_connected_time_s"] = calculated.sensor_connected_s
+            result["pzt_mux_connected_time_source"] = "adc_mux_timing.t_connected_s"
+            result["pzt_pre_sample_decay_s_by_adc_input"] = {
+                "1": calculated.decay_before_effective_sample_s(adc_input=1),
+                "2": calculated.decay_before_effective_sample_s(adc_input=2),
+            }
+            result["pzt_pre_sample_decay_s_by_label"] = (
+                _owner_pzt_pre_sample_decay_s_by_label(owner, calculated)
+            )
+            result["pzt_adc_input_by_label"] = _owner_pzt_adc_input_by_label(owner)
+    except (AttributeError, TypeError, ValueError):
+        # Timing support is optional and must not prevent generic acquisition
+        # analysis for unsupported devices or incomplete legacy owners.
+        pass
+
+    # Priority order for pzt_mux_connected_time_s/_source: the physical
+    # adc_mux_timing.t_connected_s value set above wins; only a device/config
+    # unsupported by the calculator falls back to the cached average sample
+    # time, and only that falls back to timing_state.arduino_sample_times.
+    # Both keys are set-or-skipped together so a value is never paired with a
+    # mismatched source string.
     cached_sample_time = _optional_float(getattr(owner, "_cached_avg_sample_time_sec", None))
     if cached_sample_time is not None and cached_sample_time > 0.0:
-        result["pzt_mux_connected_time_s"] = cached_sample_time
-        result["pzt_mux_connected_time_source"] = "_cached_avg_sample_time_sec"
+        result.setdefault("pzt_mux_connected_time_s", cached_sample_time)
+        result.setdefault("pzt_mux_connected_time_source", "_cached_avg_sample_time_sec")
 
     sample_times = getattr(timing_state, "arduino_sample_times", []) if timing_state is not None else []
     if sample_times:
@@ -943,6 +1037,70 @@ def _owner_analysis_timing_metadata(owner) -> dict:
     block_timing_path = getattr(owner, "_block_timing_path", None)
     if block_timing_path:
         result["block_timing_csv"] = str(block_timing_path)
+    return result
+
+
+def _owner_pzt_adc_input_by_label(owner) -> dict[str, int]:
+    """Extract the actual physical ADC input from display-channel MUX keys."""
+    if not hasattr(owner, "get_display_channel_specs"):
+        return {}
+    try:
+        specs = owner.get_display_channel_specs() or []
+    except Exception:
+        return {}
+    mapping: dict[str, int] = {}
+    for spec in specs:
+        if not isinstance(spec, Mapping):
+            continue
+        label = str(spec.get("label", "")).strip()
+        key = spec.get("key")
+        if not label or not isinstance(key, tuple):
+            continue
+        # Array_PZT_PZR1 specs encode the physical MUX number in element 4.
+        if len(key) >= 5 and key[0] == "sensor":
+            try:
+                adc_input = int(key[4])
+            except (TypeError, ValueError):
+                continue
+            if adc_input in (1, 2):
+                mapping[label] = adc_input
+    return mapping
+
+
+def _owner_pzt_pre_sample_decay_s_by_label(owner, timing) -> dict[str, float]:
+    """Map display labels to exact timing for their physical MUX and repeat."""
+    if not hasattr(owner, "get_display_channel_specs"):
+        return {}
+    try:
+        specs = owner.get_display_channel_specs() or []
+    except Exception:
+        return {}
+    result: dict[str, float] = {}
+    for spec in specs:
+        if not isinstance(spec, Mapping):
+            continue
+        label = str(spec.get("label", "")).strip()
+        key = spec.get("key")
+        sample_indices = list(spec.get("sample_indices", []) or [])
+        if not label or not sample_indices or not isinstance(key, tuple):
+            continue
+        if len(key) < 5 or key[0] != "sensor":
+            continue
+        try:
+            adc_input = int(key[4])
+        except (TypeError, ValueError):
+            continue
+        if adc_input not in (1, 2):
+            continue
+        for repeat_index, _sample_index in enumerate(sample_indices):
+            try:
+                value = timing.decay_before_effective_sample_s(
+                    adc_input=adc_input, repeat_index=repeat_index
+                )
+            except ValueError:
+                break
+            mapped_label = label if len(sample_indices) == 1 else f"{label}.{repeat_index + 1}"
+            result[mapped_label] = value
     return result
 
 
@@ -972,10 +1130,17 @@ def _normalize_pzt_mux_timing_mode(value) -> str:
 
 def _auto_pzt_mux_connected_time_s(snapshot: AnalysisSourceSnapshot) -> tuple[float | None, str]:
     timing = snapshot.metadata.get("timing", {}) if isinstance(snapshot.metadata, dict) else {}
+    direct_value = _optional_float(snapshot.metadata.get("pzt_mux_connected_time_s")) if isinstance(snapshot.metadata, Mapping) else None
+    if direct_value is not None and direct_value > 0.0:
+        return direct_value, str(snapshot.metadata.get("pzt_mux_connected_time_source") or "metadata timing")
     if isinstance(timing, Mapping):
         value = _optional_float(timing.get("pzt_mux_connected_time_s"))
         if value is not None and value > 0.0:
             return value, str(timing.get("pzt_mux_connected_time_source") or "metadata timing")
+
+    calculated = _adc_mux_sensor_connected_time_s(snapshot.metadata)
+    if calculated is not None:
+        return calculated, "adc_mux_timing.calculated_timing.t_connected_us"
 
     sidecar_value = _pzt_mux_connected_time_from_block_timing(snapshot)
     if sidecar_value is not None and sidecar_value > 0.0:
@@ -990,6 +1155,26 @@ def _auto_pzt_mux_connected_time_s(snapshot: AnalysisSourceSnapshot) -> tuple[fl
         if value_us is not None and value_us > 0.0:
             return value_us / 1_000_000.0, f"metadata timing.{source_key}"
     return None, ""
+
+
+def _adc_mux_sensor_connected_time_s(metadata: Mapping[str, object]) -> float | None:
+    """Read the calculated physical MUX connection duration from capture metadata."""
+    candidates = []
+    if isinstance(metadata, Mapping):
+        candidates.append(metadata.get("adc_mux_timing"))
+        timing = metadata.get("timing")
+        if isinstance(timing, Mapping):
+            candidates.append(timing.get("adc_mux_timing"))
+    for candidate in candidates:
+        if not isinstance(candidate, Mapping):
+            continue
+        calculated_timing = candidate.get("calculated_timing")
+        if not isinstance(calculated_timing, Mapping):
+            continue
+        value = _optional_float(calculated_timing.get("t_connected_us"))
+        if value is not None and value > 0.0:
+            return value / 1_000_000.0
+    return None
 
 
 def _pzt_mux_connected_time_from_block_timing(snapshot: AnalysisSourceSnapshot) -> float | None:

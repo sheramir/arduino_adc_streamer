@@ -33,6 +33,22 @@ class DummyCheckBox:
         self._checked = bool(checked)
 
 
+class DummyCurve:
+    def __init__(self):
+        self.data_calls = []
+
+    def setData(self, *args):
+        self.data_calls.append(args)
+
+
+class DummyItemContainer:
+    def __init__(self):
+        self.removed_items = []
+
+    def removeItem(self, item):
+        self.removed_items.append(item)
+
+
 class ADCPlottingHarness(ADCPlottingMixin):
     MAX_SWEEPS_BUFFER = 5
 
@@ -121,6 +137,20 @@ class ADCPlottingTests(unittest.TestCase):
         )
         np.testing.assert_array_equal(window_timestamps, np.array([12.0, 13.0, 14.0], dtype=np.float64))
 
+    def test_ordered_snapshot_limits_baseline_capture_to_recent_window(self):
+        harness = ADCPlottingHarness()
+        harness.sweep_count = 5
+        harness.buffer_write_index = 5
+        harness._cached_avg_sample_time_sec = 0.1
+        harness._active_data_buffer = np.array(
+            [[10], [20], [30], [40], [50]], dtype=np.float32
+        )
+
+        data, timestamps, _ = harness._get_ordered_active_buffer_snapshot(recent_window_sec=0.15)
+
+        np.testing.assert_array_equal(data, np.array([[30], [40], [50]], dtype=np.float32))
+        np.testing.assert_array_equal(timestamps, np.array([12.0, 13.0, 14.0], dtype=np.float64))
+
     def test_get_live_plot_filter_snapshot_includes_history_for_warmup(self):
         harness = ADCPlottingHarness()
         harness.window_size_spin = DummySpinBox(2)
@@ -203,9 +233,44 @@ class ADCPlottingTests(unittest.TestCase):
             max_samples_per_series=100,
         )
 
-        np.testing.assert_allclose(reversed_data, -normal_data, rtol=1e-6, atol=1e-6)
+        midpoint = float(np.median(normal_data))
+        np.testing.assert_allclose(reversed_data, (2.0 * midpoint) - normal_data, rtol=1e-6, atol=1e-6)
         np.testing.assert_allclose(reversed_times, normal_times, rtol=1e-6, atol=1e-6)
-        self.assertEqual(reversed_latest, -normal_latest)
+        self.assertEqual(reversed_latest, (2.0 * midpoint) - normal_latest)
+
+    def test_prepare_channel_plot_series_reuses_plot_baseline_for_reverse_polarity_midpoint(self):
+        harness = ADCPlottingHarness()
+        harness.active_sensor_reverse_polarity = True
+        harness.yaxis_units_combo = DummyComboBox("Voltage")
+        spec = {"key": ("adc", 3), "sample_indices": [0], "label": "CH3"}
+        max_adc_value = (2 ** 12) - 1
+        vref = harness.get_vref_voltage()
+
+        def volts_to_counts(volts):
+            return (volts / vref) * max_adc_value
+
+        data = np.array(
+            [
+                [volts_to_counts(1.0)],
+                [volts_to_counts(1.2)],
+                [volts_to_counts(2.5)],
+            ],
+            dtype=np.float32,
+        )
+        timestamps = np.array([0.0, 0.1, 0.2], dtype=np.float64)
+        harness.plot_baselines[spec["key"]] = volts_to_counts(1.65)
+
+        reversed_data, _reversed_times, reversed_latest = harness._prepare_channel_plot_series(
+            spec,
+            data,
+            timestamps,
+            avg_sample_time_sec=0.0,
+            max_samples_per_series=100,
+        )
+
+        expected = np.array([2.3, 2.1, 0.8], dtype=np.float64)
+        np.testing.assert_allclose(reversed_data, expected, rtol=1e-6, atol=1e-6)
+        self.assertAlmostEqual(reversed_latest, expected[-1], places=6)
 
     def test_prepare_channel_plot_series_does_not_flip_rs_streams(self):
         harness = ADCPlottingHarness()
@@ -265,6 +330,74 @@ class ADCPlottingTests(unittest.TestCase):
         self.assertEqual(harness.plot_baselines[("adc", 7)], 2.0)
         self.assertEqual(harness.channel_plot_baselines[7], 2.0)
         self.assertTrue(harness.subtract_baseline_check.isChecked())
+
+    def test_capture_current_plot_baselines_resets_force_display_state(self):
+        harness = ADCPlottingHarness()
+        harness.sweep_count = 3
+        harness.buffer_write_index = 3
+        harness.samples_per_sweep = 1
+        harness.sweep_timestamps_buffer = np.array([0.0, 1.0, 2.0], dtype=np.float64)
+        harness._active_data_buffer = np.array([[1.0], [100.0], [2.0]], dtype=np.float32)
+        harness._display_specs = [{"key": ("adc", 7), "sample_indices": [0], "label": "CH7"}]
+        reset_calls = []
+        harness.reset_pressure_force_display_for_baseline_change = (
+            lambda: reset_calls.append(True)
+        )
+
+        success = harness.capture_current_plot_baselines(window_sec=10.0, log_message=False)
+
+        # A new shared baseline invalidates any Force history integrated
+        # against the previous one.
+        self.assertTrue(success)
+        self.assertEqual(reset_calls, [True])
+
+    def test_clear_all_plot_curves_removes_main_rosette_and_force_curves(self):
+        harness = ADCPlottingHarness()
+        main_plot = DummyItemContainer()
+        rosette_plot = DummyItemContainer()
+        main_force_viewbox = DummyItemContainer()
+        rosette_force_viewbox = DummyItemContainer()
+        adc_curve = DummyCurve()
+        rosette_curve = DummyCurve()
+        force_x_curve = DummyCurve()
+        force_z_curve = DummyCurve()
+        rosette_force_x_curve = DummyCurve()
+        rosette_force_z_curve = DummyCurve()
+        harness.plot_widget = main_plot
+        harness.rosette_plot_widget = rosette_plot
+        harness.force_viewbox = main_force_viewbox
+        harness.rosette_force_viewbox = rosette_force_viewbox
+        harness._adc_curves = {"adc": adc_curve}
+        harness._rosette_curves = {"rosette": rosette_curve}
+        harness._force_x_curve = force_x_curve
+        harness._force_z_curve = force_z_curve
+        harness._rosette_force_x_curve = rosette_force_x_curve
+        harness._rosette_force_z_curve = rosette_force_z_curve
+
+        harness._clear_all_plot_curves()
+
+        self.assertEqual(harness._adc_curves, {})
+        self.assertEqual(harness._rosette_curves, {})
+        self.assertEqual(main_plot.removed_items, [adc_curve])
+        self.assertEqual(rosette_plot.removed_items, [rosette_curve])
+        self.assertEqual(main_force_viewbox.removed_items, [force_x_curve, force_z_curve])
+        self.assertEqual(
+            rosette_force_viewbox.removed_items,
+            [rosette_force_x_curve, rosette_force_z_curve],
+        )
+        for curve in (
+            adc_curve,
+            rosette_curve,
+            force_x_curve,
+            force_z_curve,
+            rosette_force_x_curve,
+            rosette_force_z_curve,
+        ):
+            self.assertEqual(curve.data_calls, [([], [])])
+        self.assertIsNone(harness._force_x_curve)
+        self.assertIsNone(harness._force_z_curve)
+        self.assertIsNone(harness._rosette_force_x_curve)
+        self.assertIsNone(harness._rosette_force_z_curve)
 
 
 if __name__ == "__main__":

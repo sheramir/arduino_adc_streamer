@@ -32,6 +32,8 @@ ENV/
 *.swp
 *.swo
 *~
+# Office owner lock files
+~$*
 .codex_test_tmp/
 .codex_pytest_tmp/
 .tmp_pytest_basetemp/
@@ -39,9 +41,12 @@ ENV/
 tmp_pytest_basetemp/
 tmp_pytest_runtime/
 .pytest_cache/
+.claude/
 
 # Local sandboxes
 /excel_tests.c
+analysis/
+
 
 # OS
 .DS_Store
@@ -52,5 +57,4 @@ Thumbs.db
 # *.png
 # *_metadata.txt
 token_dont_read_ai
-.claude/
 .archived/

@@ -12,6 +12,7 @@ from data_processing.timing_display import TimingDisplayMixin
 from serial_communication.serial_parser import SerialParserMixin
 from data_processing.binary_processor import BinaryProcessorMixin
 from data_processing.filter_processor import FilterProcessorMixin
+from data_processing.pzt_ghost_removal import PztGhostRemovalMixin
 from data_processing.force_processor import ForceProcessorMixin
 from data_processing.heatmap_processor import HeatmapProcessorMixin
 from data_processing.signal_integration_processor import SignalIntegrationProcessorMixin
@@ -26,6 +27,7 @@ class DataProcessorMixin(
     ADCPlottingMixin,
     CaptureLifecycleMixin,
     FilterProcessorMixin,
+    PztGhostRemovalMixin,
     SerialParserMixin,
     BinaryProcessorMixin,
     ForceProcessorMixin,

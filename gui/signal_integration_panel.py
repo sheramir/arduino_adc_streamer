@@ -9,8 +9,8 @@ live acquisition loop still does not run the streaming integrator, so
 responsiveness can be evaluated one processing stage at a time.
 
 Array configurations can additionally render one combined pressure surface
-across adjacent packages. The Settings tab exposes the physical package gap,
-gap contrast, and gap fade width used by that array interpolation path.
+from overlapping package candidates. The Settings tab exposes package-center
+spacing and fixed physical support geometry.
 
 Dependencies:
     PyQt6, pyqtgraph, numpy, existing ADC plotting helpers, and config constants.
@@ -19,24 +19,27 @@ Dependencies:
 from __future__ import annotations
 
 import math
+import time
 from pathlib import Path
 from typing import Hashable
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QByteArray, QSettings, Qt, QTimer
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDockWidget,
     QHBoxLayout,
     QGridLayout,
     QGroupBox,
     QLabel,
     QLineEdit,
     QFileDialog,
+    QMessageBox,
     QPushButton,
     QScrollArea,
-    QTabWidget,
+    QMainWindow,
     QVBoxLayout,
     QWidget,
 )
@@ -52,20 +55,41 @@ from constants.sensor_config import (
     SENSOR_POLARITY_NORMAL_MULTIPLIER,
     SENSOR_POLARITY_REVERSED_MULTIPLIER,
 )
+from constants.pzt_force import (
+    PZT_FORCE_CAPACITANCE_UNITS,
+    PZT_FORCE_DEFAULT_SETTINGS,
+    PZT_FORCE_PIC_COULOMB_TO_COULOMB,
+)
+from config.pressure_map_mask_config import MaskConfigStore
 from config.sensor_config import normalize_array_cell
 from constants.ui import PRESSURE_MAP_TAB_NAME
 from constants.pressure_map import (
-    DEFAULT_PRESSURE_GAP_CONTRAST_GAIN,
+    DEFAULT_PRESSURE_PEAK_POSITION_OUTER_OFFSET_MM,
+    DEFAULT_PRESSURE_OUTER_BOUNDARY_REACH_MM,
+    DEFAULT_PRESSURE_PACKAGE_CENTER_SPACING_MM,
+    DEFAULT_PRESSURE_PIXELS_PER_MM,
+    DEFAULT_PRESSURE_SHOW_MID_BOUNDARY,
+    DEFAULT_PRESSURE_SHOW_NEAR_OUTER_BOUNDARY,
+    DEFAULT_PRESSURE_SHOW_OUTER_BOUNDARY,
     DEFAULT_PRESSURE_SHOW_MARKER,
-    DEFAULT_PRESSURE_DECAY_RATE,
-    DEFAULT_PRESSURE_DECAY_REF_DISTANCE_MM,
-    DEFAULT_PRESSURE_GAP_FADE_WIDTH_FRACTION,
-    DEFAULT_PRESSURE_GRID_MARGIN,
-    DEFAULT_PRESSURE_GRID_RESOLUTION,
+    DEFAULT_PRESSURE_SHOW_SENSOR_MARKERS,
+    DEFAULT_PRESSURE_PEAK_GAIN_SLOPE_PER_MM,
+    DEFAULT_PRESSURE_MAXIMUM_PEAK_GAIN,
+    DEFAULT_PRESSURE_NATURAL_DECAY_REFERENCE_DISTANCE_MM,
+    DEFAULT_PRESSURE_DECAY_AMPLITUDE_REFERENCE,
+    DEFAULT_PRESSURE_MINIMUM_DECAY_REACH_MM,
+    DEFAULT_PRESSURE_MAXIMUM_DECAY_REACH_MM,
+    DEFAULT_PRESSURE_SIGNAL_ACTIVITY_THRESHOLD,
+    PRESSURE_PEAK_GAIN_SLOPE_DECIMALS,
+    PRESSURE_PEAK_GAIN_SLOPE_MAX_PER_MM,
+    PRESSURE_PEAK_GAIN_SLOPE_MIN_PER_MM,
+    PRESSURE_PEAK_GAIN_SLOPE_STEP_PER_MM,
+    PRESSURE_DISPLAY_MODE_MAGNITUDE,
+    PRESSURE_DISPLAY_MODE_SIGNED,
     DEFAULT_PRESSURE_MAP_MAX_INTENSITY,
     DEFAULT_PRESSURE_MIRROR,
-    DEFAULT_PRESSURE_PACKAGE_GAP_MM,
-    DEFAULT_PRESSURE_PACKAGE_BOUNDARY_SHAPE,
+    DEFAULT_PRESSURE_MASK_ENABLED,
+    DEFAULT_PRESSURE_MASK_NAME,
     DEFAULT_PRESSURE_SENSOR_SPACING_MM,
     DEFAULT_DISPLAY_WINDOW_SEC,
     DEFAULT_HPF_CUTOFF_HZ,
@@ -75,43 +99,28 @@ from constants.pressure_map import (
     DEFAULT_SIGNAL_INTEGRATION_ROSETTE_RS2_ENABLED,
     DEFAULT_SIGNAL_INTEGRATION_ROSETTE_Y_MAX_OHMS,
     DEFAULT_SIGNAL_INTEGRATION_ROSETTE_Y_MIN_OHMS,
-    PRESSURE_CIRCLE_DIAMETER_DECIMALS,
-    PRESSURE_CIRCLE_DIAMETER_MAX_MM,
-    PRESSURE_CIRCLE_DIAMETER_MIN_MM,
-    PRESSURE_CIRCLE_DIAMETER_STEP_MM,
-    PRESSURE_DECAY_RATE_DECIMALS,
-    PRESSURE_DECAY_RATE_MAX,
-    PRESSURE_DECAY_RATE_MIN,
-    PRESSURE_DECAY_RATE_STEP,
-    PRESSURE_DECAY_REF_DISTANCE_DECIMALS,
-    PRESSURE_DECAY_REF_DISTANCE_MAX_MM,
-    PRESSURE_DECAY_REF_DISTANCE_MIN_MM,
-    PRESSURE_DECAY_REF_DISTANCE_STEP_MM,
-    PRESSURE_GAP_CONTRAST_GAIN_DECIMALS,
-    PRESSURE_GAP_CONTRAST_GAIN_MAX,
-    PRESSURE_GAP_CONTRAST_GAIN_MIN,
-    PRESSURE_GAP_CONTRAST_GAIN_STEP,
-    PRESSURE_GAP_FADE_WIDTH_FRACTION_DECIMALS,
-    PRESSURE_GAP_FADE_WIDTH_FRACTION_MAX,
-    PRESSURE_GAP_FADE_WIDTH_FRACTION_MIN,
-    PRESSURE_GAP_FADE_WIDTH_FRACTION_STEP,
-    PRESSURE_GRID_MARGIN_MAX,
-    PRESSURE_GRID_MARGIN_STEP,
-    PRESSURE_GRID_MIN_MARGIN,
-    PRESSURE_PACKAGE_GAP_DECIMALS,
-    PRESSURE_PACKAGE_GAP_MAX_MM,
-    PRESSURE_PACKAGE_GAP_MIN_MM,
-    PRESSURE_PACKAGE_GAP_STEP_MM,
-    PRESSURE_GRID_RESOLUTION_MAX,
-    PRESSURE_GRID_RESOLUTION_MIN,
-    PRESSURE_GRID_RESOLUTION_STEP,
+    PRESSURE_PEAK_POSITION_OUTER_OFFSET_DECIMALS,
+    PRESSURE_PEAK_POSITION_OUTER_OFFSET_MAX_MM,
+    PRESSURE_PEAK_POSITION_OUTER_OFFSET_MIN_MM,
+    PRESSURE_PEAK_POSITION_OUTER_OFFSET_STEP_MM,
+    PRESSURE_OUTER_BOUNDARY_REACH_DECIMALS,
+    PRESSURE_OUTER_BOUNDARY_REACH_MAX_MM,
+    PRESSURE_OUTER_BOUNDARY_REACH_MIN_MM,
+    PRESSURE_OUTER_BOUNDARY_REACH_STEP_MM,
+    PRESSURE_PACKAGE_CENTER_SPACING_DECIMALS,
+    PRESSURE_PACKAGE_CENTER_SPACING_MAX_MM,
+    PRESSURE_PACKAGE_CENTER_SPACING_MIN_MM,
+    PRESSURE_PACKAGE_CENTER_SPACING_STEP_MM,
+    PRESSURE_PIXELS_PER_MM_DECIMALS,
+    PRESSURE_PIXELS_PER_MM_MAX,
+    PRESSURE_PIXELS_PER_MM_MIN,
+    PRESSURE_PIXELS_PER_MM_STEP,
     PRESSURE_MAP_STRETCH,
     PRESSURE_MAP_MAX_INTENSITY_DECIMALS,
     PRESSURE_MAP_MAX_INTENSITY_MAX,
     PRESSURE_MAP_MAX_INTENSITY_MIN,
     PRESSURE_MAP_MAX_INTENSITY_STEP,
     PRESSURE_MAP_LEVEL_EPSILON,
-    PRESSURE_PACKAGE_BOUNDARY_SHAPES,
     PRESSURE_SENSOR_SPACING_DECIMALS,
     PRESSURE_SENSOR_SPACING_MAX_MM,
     PRESSURE_SENSOR_SPACING_MIN_MM,
@@ -154,9 +163,16 @@ from constants.shear import (
     DEFAULT_ARROW_MAX_LENGTH_PX,
     DEFAULT_ARROW_MIN_THRESHOLD,
     DEFAULT_ARROW_WIDTH_SCALES,
-    DEFAULT_CIRCLE_DIAMETER_MM,
     DEFAULT_SHEAR_CALIBRATION_GAIN,
     DEFAULT_SHEAR_NOISE_THRESHOLD,
+    FORCE_ARROW_GAIN_DECIMALS,
+    FORCE_ARROW_GAIN_MAX,
+    FORCE_ARROW_GAIN_MIN,
+    FORCE_ARROW_GAIN_STEP,
+    FORCE_ARROW_MIN_THRESHOLD_DECIMALS,
+    FORCE_ARROW_MIN_THRESHOLD_MAX,
+    FORCE_ARROW_MIN_THRESHOLD_MIN,
+    FORCE_ARROW_MIN_THRESHOLD_STEP,
     SHEAR_ARROW_BASE_WIDTH_DECIMALS,
     SHEAR_ARROW_BASE_WIDTH_MAX_PX,
     SHEAR_ARROW_BASE_WIDTH_MIN_PX,
@@ -196,18 +212,20 @@ from constants.shear import (
 )
 from data_processing.adc_filter_engine import ADCFilterEngine, SCIPY_FILTERS_AVAILABLE
 from data_processing.normal_force_calculator import NormalForceCalculator, NormalForceResult
-from data_processing.pressure_map_generator import (
-    DEFAULT_PRESSURE_SHOW_NEGATIVE,
-    PressureMapGenerator,
-    PressureMapResult,
-)
+from data_processing.pressure_map_generator import PressureMapGenerator, PressureMapResult
 from data_processing.pressure_map_array_generator import (
     PressureMapArrayGenerator,
     PressureMapArrayPackage,
 )
+from data_processing.pressure_map_geometry import PressureMapGeometry
+from data_processing.pressure_force_display import PressureForceDisplayEngine
+from data_processing.pzt_decay import PztDecayTimingContext
 from data_processing.shear_detector import ShearDetector, ShearResult
 from file_operations.settings_persistence import load_settings_payload, save_settings_payload
 from gui.pressure_map_widget import PressureMapPackageDisplay, PressureMapWidget
+
+
+PRESSURE_MAP_WORKSPACE_LAYOUT_VERSION = 2
 
 
 class PressureMapPanelMixin:
@@ -239,14 +257,25 @@ class PressureMapPanelMixin:
         """
         self._shear_settings_loading = False
         self._shear_autosave_enabled = True
+        self.pressure_map_mask_store = MaskConfigStore()
+        self.pressure_map_masks = []
+        self.pressure_map_masks_by_name = {}
+        self._load_pressure_map_masks()
 
         tab = QWidget()
         tab.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         root_layout = QVBoxLayout(tab)
 
-        self.pressure_map_inner_tabs = QTabWidget()
-        self.pressure_map_inner_tabs.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        root_layout.addWidget(self.pressure_map_inner_tabs)
+        self.pressure_map_workspace = QMainWindow()
+        self.pressure_map_workspace.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.pressure_map_workspace.setDockNestingEnabled(True)
+        self.pressure_map_workspace.setDockOptions(
+            QMainWindow.DockOption.AnimatedDocks
+            | QMainWindow.DockOption.AllowNestedDocks
+            | QMainWindow.DockOption.AllowTabbedDocks
+            | QMainWindow.DockOption.GroupedDragging
+        )
+        root_layout.addWidget(self.pressure_map_workspace)
 
         display_tab = QScrollArea()
         display_tab.setWidgetResizable(True)
@@ -256,8 +285,25 @@ class PressureMapPanelMixin:
         display_content.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         display_layout = QVBoxLayout(display_content)
         display_tab.setWidget(display_content)
-        self.pressure_map_inner_tabs.addTab(display_tab, "Display")
-        self.pressure_map_display_tab_index = 0
+        self.pressure_map_display_dock = self._create_pressure_map_workspace_dock(
+            "pressure_map_jerk_display_dock",
+            "Jerk Display",
+            display_tab,
+        )
+
+        force_display_tab = QScrollArea()
+        force_display_tab.setWidgetResizable(True)
+        force_display_tab.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        force_display_tab.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        force_display_content = QWidget()
+        force_display_content.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.force_display_layout = QVBoxLayout(force_display_content)
+        force_display_tab.setWidget(force_display_content)
+        self.pressure_map_force_display_dock = self._create_pressure_map_workspace_dock(
+            "pressure_map_force_display_dock",
+            "Force Display",
+            force_display_tab,
+        )
 
         settings_tab = QScrollArea()
         settings_tab.setWidgetResizable(True)
@@ -267,9 +313,11 @@ class PressureMapPanelMixin:
         settings_content.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         settings_layout = QVBoxLayout(settings_content)
         settings_tab.setWidget(settings_content)
-        self.pressure_map_inner_tabs.addTab(settings_tab, "Settings")
-        self.pressure_map_settings_tab_index = 1
-        self.pressure_map_inner_tabs.currentChanged.connect(self.on_pressure_map_inner_tab_changed)
+        self.pressure_map_settings_dock = self._create_pressure_map_workspace_dock(
+            "pressure_map_settings_dock",
+            "Settings",
+            settings_tab,
+        )
 
         controls_group = QGroupBox("Signal Integration Controls")
         controls_layout = QGridLayout(controls_group)
@@ -478,12 +526,29 @@ class PressureMapPanelMixin:
 
         self.shear_detector = ShearDetector()
         self.normal_force_calculator = NormalForceCalculator()
-        self.pressure_map_generator = PressureMapGenerator()
-        self.pressure_map_array_generator = PressureMapArrayGenerator()
+        self.pressure_map_geometry = PressureMapGeometry()
+        self.pressure_map_generator = PressureMapGenerator(geometry=self.pressure_map_geometry)
+        self.pressure_map_array_generator = PressureMapArrayGenerator(geometry=self.pressure_map_geometry)
         self.pressure_map_widget = PressureMapWidget()
         display_layout.addWidget(self.pressure_map_widget, stretch=PRESSURE_MAP_STRETCH)
+        self.force_pressure_map_widget = PressureMapWidget()
+        self.force_display_layout.addWidget(self.force_pressure_map_widget, stretch=PRESSURE_MAP_STRETCH)
+        self.force_package_widgets: dict[str, PressureMapWidget] = {}
+        self.force_display_status_label = QLabel("Waiting for baseline-centred PZT samples")
+        self.force_display_layout.addWidget(self.force_display_status_label)
+        # Acquisition can deliver blocks much faster than Qt can rasterize a
+        # pressure field.  Keep physical integration synchronous/exact, but
+        # coalesce the expensive array paint to a responsive 10 Hz.
+        self.force_display_update_timer = QTimer()
+        self.force_display_update_timer.setSingleShot(True)
+        self.force_display_update_timer.timeout.connect(self._render_pressure_force_display)
+        self.pressure_force_engine: PressureForceDisplayEngine | None = None
+        self._pressure_force_last_processed_sweep_count = 0
+        self._pressure_force_last_error = ""
         settings_layout.addWidget(self._create_shear_visualization_settings_group())
+        settings_layout.addWidget(self._create_pzt_force_settings_group())
         settings_layout.addWidget(self._create_pressure_map_settings_group())
+        settings_layout.addWidget(self._create_visualization_pattern_settings_group())
         settings_layout.addWidget(self._create_pressure_map_color_scale_settings_group())
         settings_layout.addWidget(self._create_pressure_package_gain_settings_group())
         settings_layout.addStretch()
@@ -499,28 +564,149 @@ class PressureMapPanelMixin:
         self._signal_integration_filter_engine = ADCFilterEngine()
         self._signal_integration_filter_warning = ""
         self._signal_integration_updating_plot = False
+        self._rebuild_pressure_force_engine()
         self.update_pressure_map_timeline_controls()
+        self._restore_pressure_map_workspace_layout()
+        self._connect_pressure_map_workspace_signals()
 
         return tab
 
-    def on_pressure_map_inner_tab_changed(self, index: int) -> None:
-        if index == getattr(self, "pressure_map_settings_tab_index", 1):
-            timer = getattr(self, "signal_integration_update_timer", None)
-            if timer is not None and timer.isActive():
-                timer.stop()
+    def _create_pressure_map_workspace_dock(
+        self,
+        object_name: str,
+        title: str,
+        content: QWidget,
+    ) -> QDockWidget:
+        """Add one movable, floatable Pressure Map pane to the workspace."""
+
+        dock = QDockWidget(title, self.pressure_map_workspace)
+        dock.setObjectName(object_name)
+        dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
+        dock.setFeatures(
+            QDockWidget.DockWidgetFeature.DockWidgetMovable
+            | QDockWidget.DockWidgetFeature.DockWidgetFloatable
+        )
+        dock.setWidget(content)
+        self.pressure_map_workspace.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
+        return dock
+
+    def _restore_pressure_map_workspace_layout(self) -> None:
+        """Restore a compatible docked layout, or use the tabbed default."""
+
+        workspace = getattr(self, "pressure_map_workspace", None)
+        if workspace is None:
+            return
+        settings = self._pressure_map_workspace_qsettings()
+        try:
+            layout_version = int(settings.value("layout_version", 0))
+        except (TypeError, ValueError):
+            layout_version = 0
+        state = settings.value("dock_state") if layout_version == PRESSURE_MAP_WORKSPACE_LAYOUT_VERSION else None
+        if isinstance(state, str):
+            state = QByteArray.fromBase64(state.encode("ascii"))
+        if (
+            isinstance(state, QByteArray)
+            and not state.isEmpty()
+            and workspace.restoreState(state, PRESSURE_MAP_WORKSPACE_LAYOUT_VERSION)
+        ):
+            return
+        self.reset_pressure_map_workspace_layout(save=False)
+
+    def _pressure_map_workspace_qsettings(self) -> QSettings:
+        return QSettings("ArduinoADCStreamer", "PressureMapWorkspace")
+
+    def save_pressure_map_workspace_layout(self) -> None:
+        """Persist docked layout without restoring stale floating-window geometry."""
+
+        workspace = getattr(self, "pressure_map_workspace", None)
+        if workspace is None:
+            return
+        docks = (
+            ("pressure_map_display_dock", "pressure_map_jerk_display_dock"),
+            ("pressure_map_force_display_dock", "pressure_map_force_display_dock"),
+            ("pressure_map_settings_dock", "pressure_map_settings_dock"),
+        )
+        for dock_name, object_name in docks:
+            dock = getattr(self, dock_name, None)
+            if dock is None:
+                return
+            # Qt requires a stable object name to serialize a dock layout.
+            # Reassert it after a pane is floated or regrouped on Windows.
+            dock.setObjectName(object_name)
+            if dock.isFloating():
+                return
+        settings = self._pressure_map_workspace_qsettings()
+        settings.setValue("layout_version", PRESSURE_MAP_WORKSPACE_LAYOUT_VERSION)
+        settings.setValue(
+            "dock_state",
+            workspace.saveState(PRESSURE_MAP_WORKSPACE_LAYOUT_VERSION),
+        )
+
+    def reset_pressure_map_workspace_layout(self, _checked: bool = False, *, save: bool = True) -> None:
+        """Return the Pressure Map workspace to its original tabbed arrangement."""
+
+        workspace = getattr(self, "pressure_map_workspace", None)
+        jerk_dock = getattr(self, "pressure_map_display_dock", None)
+        force_dock = getattr(self, "pressure_map_force_display_dock", None)
+        settings_dock = getattr(self, "pressure_map_settings_dock", None)
+        if workspace is None or jerk_dock is None or force_dock is None or settings_dock is None:
+            return
+        for dock in (jerk_dock, force_dock, settings_dock):
+            dock.setFloating(False)
+            workspace.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
+        workspace.tabifyDockWidget(jerk_dock, force_dock)
+        workspace.tabifyDockWidget(force_dock, settings_dock)
+        jerk_dock.raise_()
+        if save:
+            self.save_pressure_map_workspace_layout()
+
+    def _connect_pressure_map_workspace_signals(self) -> None:
+        self._pressure_map_visible_dock_names = {"pressure_map_display_dock"}
+        for dock_name, dock in (
+            ("pressure_map_display_dock", getattr(self, "pressure_map_display_dock", None)),
+            ("pressure_map_force_display_dock", getattr(self, "pressure_map_force_display_dock", None)),
+            ("pressure_map_settings_dock", getattr(self, "pressure_map_settings_dock", None)),
+        ):
+            if dock is None:
+                continue
+            dock.visibilityChanged.connect(
+                lambda visible, name=dock_name: self.on_pressure_map_workspace_visibility_changed(name, visible)
+            )
+            dock.topLevelChanged.connect(lambda _floating: self.save_pressure_map_workspace_layout())
+            dock.dockLocationChanged.connect(lambda _area: self.save_pressure_map_workspace_layout())
+
+    def on_pressure_map_workspace_visibility_changed(self, dock_name: str, visible: bool) -> None:
+        """Refresh the active dock contents and pause pending redraws for Settings-only layouts."""
+
+        visible_docks = getattr(self, "_pressure_map_visible_dock_names", set())
+        if visible:
+            visible_docks.add(dock_name)
+        else:
+            visible_docks.discard(dock_name)
+        self._pressure_map_visible_dock_names = visible_docks
+
+        if self._is_pressure_map_settings_visible():
             self._refresh_pressure_package_gain_controls(
                 getattr(self, "_latest_signal_integration_package_layout", None)
             )
-            return
+            if not self._has_visible_pressure_map_display():
+                timer = getattr(self, "signal_integration_update_timer", None)
+                if timer is not None and timer.isActive():
+                    timer.stop()
+                return
 
-        if index != getattr(self, "pressure_map_display_tab_index", 0):
-            return
-        if not self._should_refresh_signal_integration_plot():
-            return
-        if hasattr(self, "trigger_signal_integration_update"):
-            self.trigger_signal_integration_update()
-        elif hasattr(self, "update_signal_integration_plot"):
-            self.update_signal_integration_plot()
+        if self._is_pressure_map_force_display_visible():
+            # Force consumes the shared Jerk shapes even while Jerk itself is
+            # hidden.  Build them before rendering the force raster.
+            if self._should_refresh_signal_integration_plot():
+                self.update_signal_integration_plot()
+            else:
+                self._render_pressure_force_display()
+        elif self._is_pressure_map_display_visible() and self._should_refresh_signal_integration_plot():
+            if hasattr(self, "trigger_signal_integration_update"):
+                self.trigger_signal_integration_update()
+            elif hasattr(self, "update_signal_integration_plot"):
+                self.update_signal_integration_plot()
 
     def update_pressure_map_timeline_controls(self) -> None:
         """Keep Pressure Map timeline selectors aligned with the active MCU mode."""
@@ -649,6 +835,609 @@ class PressureMapPanelMixin:
         label.setToolTip(tooltip)
         return label
 
+    def _create_pzt_force_settings_group(self) -> QGroupBox:
+        """Controls required only for physical PZT voltage-to-force recovery."""
+        group = QGroupBox("PZT Force Calculation")
+        layout = QGridLayout(group)
+        defaults = PZT_FORCE_DEFAULT_SETTINGS
+        layout.addWidget(QLabel("Center Cpzt:"), 0, 0)
+        self.force_pzt_center_capacitance_spin = QDoubleSpinBox()
+        self.force_pzt_center_capacitance_spin.setRange(1e-6, 1e9)
+        self.force_pzt_center_capacitance_spin.setDecimals(6)
+        self.force_pzt_center_capacitance_spin.setValue(float(defaults["center_capacitance_value"]))
+        layout.addWidget(self.force_pzt_center_capacitance_spin, 0, 1)
+        self.force_pzt_capacitance_unit_combo = QComboBox()
+        self.force_pzt_capacitance_unit_combo.addItems(list(PZT_FORCE_CAPACITANCE_UNITS))
+        self.force_pzt_capacitance_unit_combo.setCurrentText(str(defaults["capacitance_unit"]))
+        layout.addWidget(self.force_pzt_capacitance_unit_combo, 0, 2)
+        layout.addWidget(QLabel("Outer Cpzt:"), 0, 3)
+        self.force_pzt_outer_capacitance_spin = QDoubleSpinBox()
+        self.force_pzt_outer_capacitance_spin.setRange(1e-6, 1e9)
+        self.force_pzt_outer_capacitance_spin.setDecimals(6)
+        self.force_pzt_outer_capacitance_spin.setValue(float(defaults["outer_capacitance_value"]))
+        layout.addWidget(self.force_pzt_outer_capacitance_spin, 0, 4)
+        layout.addWidget(QLabel("Rleak:"), 1, 0)
+        self.force_pzt_rleak_spin = QDoubleSpinBox()
+        self.force_pzt_rleak_spin.setRange(1e-6, 1e15)
+        self.force_pzt_rleak_spin.setDecimals(3)
+        self.force_pzt_rleak_spin.setValue(float(defaults["rleak_ohm"]))
+        self.force_pzt_rleak_spin.setSuffix(" ohm")
+        layout.addWidget(self.force_pzt_rleak_spin, 1, 1)
+        layout.addWidget(QLabel("d33:"), 1, 2)
+        self.force_pzt_d33_spin = QDoubleSpinBox()
+        self.force_pzt_d33_spin.setRange(1e-9, 1e12)
+        self.force_pzt_d33_spin.setDecimals(6)
+        self.force_pzt_d33_spin.setValue(float(defaults["d33_pc_per_n"]))
+        self.force_pzt_d33_spin.setSuffix(" pC/N")
+        layout.addWidget(self.force_pzt_d33_spin, 1, 3)
+        layout.addWidget(QLabel("Noise:"), 1, 4)
+        self.force_pzt_noise_spin = QDoubleSpinBox()
+        self.force_pzt_noise_spin.setRange(0.0, 1000.0)
+        self.force_pzt_noise_spin.setDecimals(6)
+        self.force_pzt_noise_spin.setValue(float(defaults["noise_threshold_v"]))
+        self.force_pzt_noise_spin.setSuffix(" V")
+        layout.addWidget(self.force_pzt_noise_spin, 1, 5)
+        self.force_pzt_off_mux_check = QCheckBox("Off-MUX leakage")
+        self.force_pzt_off_mux_check.setChecked(bool(defaults["off_mux_leak_enabled"]))
+        layout.addWidget(self.force_pzt_off_mux_check, 2, 0, 1, 2)
+        self.force_pzt_off_mux_rleak_spin = QDoubleSpinBox()
+        self.force_pzt_off_mux_rleak_spin.setRange(1e-6, 1e15)
+        self.force_pzt_off_mux_rleak_spin.setDecimals(3)
+        self.force_pzt_off_mux_rleak_spin.setValue(float(defaults["rleak_ohm"]))
+        self.force_pzt_off_mux_rleak_spin.setSuffix(" ohm")
+        layout.addWidget(self.force_pzt_off_mux_rleak_spin, 2, 2)
+        self.force_pzt_stuck_failsafe_check = QCheckBox("Auto-clear stuck force")
+        self.force_pzt_stuck_failsafe_check.setChecked(bool(defaults["stuck_force_failsafe_enabled"]))
+        self.force_pzt_stuck_failsafe_check.setToolTip(
+            "A normal press/release already returns to exactly zero once a channel goes "
+            "below the Force noise threshold. This only covers a channel that never "
+            "fully quiets down (e.g. baseline drift, or a held press whose voltage has "
+            "decayed below the threshold): its residual force decays smoothly to zero "
+            "after the hold time below. Disable to keep such a residual until the next "
+            "event or a manual reset."
+        )
+        layout.addWidget(self.force_pzt_stuck_failsafe_check, 3, 0)
+        self.force_pzt_stuck_hold_spin = QDoubleSpinBox()
+        self.force_pzt_stuck_hold_spin.setRange(0.0, 3600.0)
+        self.force_pzt_stuck_hold_spin.setDecimals(3)
+        self.force_pzt_stuck_hold_spin.setValue(float(defaults["stuck_force_quiet_hold_s"]))
+        self.force_pzt_stuck_hold_spin.setSuffix(" s after quiet")
+        layout.addWidget(self.force_pzt_stuck_hold_spin, 3, 1)
+        self.force_pzt_stuck_tau_spin = QDoubleSpinBox()
+        self.force_pzt_stuck_tau_spin.setRange(0.0, 3600.0)
+        self.force_pzt_stuck_tau_spin.setDecimals(3)
+        self.force_pzt_stuck_tau_spin.setValue(float(defaults["stuck_force_decay_tau_s"]))
+        self.force_pzt_stuck_tau_spin.setSuffix(" s decay tau")
+        self.force_pzt_stuck_tau_spin.setToolTip("0 = instant reset instead of a smooth decay.")
+        layout.addWidget(self.force_pzt_stuck_tau_spin, 3, 2)
+        self.force_pzt_stuck_failsafe_check.toggled.connect(self.force_pzt_stuck_hold_spin.setEnabled)
+        self.force_pzt_stuck_failsafe_check.toggled.connect(self.force_pzt_stuck_tau_spin.setEnabled)
+        self.force_pzt_stuck_hold_spin.setEnabled(self.force_pzt_stuck_failsafe_check.isChecked())
+        self.force_pzt_stuck_tau_spin.setEnabled(self.force_pzt_stuck_failsafe_check.isChecked())
+
+        zero_floor_label = self._create_tooltip_label(
+            "Zero floor:",
+            "Absolute floor (N) for the natural-zero band and the fail-safe snap band. "
+            "A residual at or below this magnitude is treated as fully released.",
+        )
+        layout.addWidget(zero_floor_label, 5, 0)
+        self.force_pzt_zero_floor_spin = QDoubleSpinBox()
+        self.force_pzt_zero_floor_spin.setRange(0.0, 1e6)
+        self.force_pzt_zero_floor_spin.setDecimals(4)
+        self.force_pzt_zero_floor_spin.setValue(float(defaults["force_zero_band_min_n"]))
+        self.force_pzt_zero_floor_spin.setSuffix(" N")
+        self.force_pzt_zero_floor_spin.setToolTip(zero_floor_label.toolTip())
+        layout.addWidget(self.force_pzt_zero_floor_spin, 5, 1)
+        zero_band_label = self._create_tooltip_label(
+            "Zero band:",
+            "Natural-zero band as a fraction of the current press's own peak force. "
+            "The event ends once the force declines back inside this band around zero.",
+        )
+        layout.addWidget(zero_band_label, 5, 2)
+        self.force_pzt_zero_band_fraction_spin = QDoubleSpinBox()
+        self.force_pzt_zero_band_fraction_spin.setRange(0.0, 1.0)
+        self.force_pzt_zero_band_fraction_spin.setDecimals(3)
+        self.force_pzt_zero_band_fraction_spin.setValue(float(defaults["force_zero_band_fraction"]))
+        self.force_pzt_zero_band_fraction_spin.setSuffix(" x peak")
+        self.force_pzt_zero_band_fraction_spin.setToolTip(zero_band_label.toolTip())
+        layout.addWidget(self.force_pzt_zero_band_fraction_spin, 5, 3)
+        min_event_peak_label = self._create_tooltip_label(
+            "Min event peak:",
+            "A press whose own peak force never reaches this magnitude is too small to "
+            "distinguish 'declined' from 'held', so it is released unconditionally as soon "
+            "as it goes quiet instead of waiting for the natural-zero/quiet-release check.",
+        )
+        layout.addWidget(min_event_peak_label, 5, 4)
+        self.force_pzt_min_event_peak_spin = QDoubleSpinBox()
+        self.force_pzt_min_event_peak_spin.setRange(0.0, 1e6)
+        self.force_pzt_min_event_peak_spin.setDecimals(4)
+        self.force_pzt_min_event_peak_spin.setValue(float(defaults["force_zero_min_event_peak_n"]))
+        self.force_pzt_min_event_peak_spin.setSuffix(" N")
+        self.force_pzt_min_event_peak_spin.setToolTip(min_event_peak_label.toolTip())
+        layout.addWidget(self.force_pzt_min_event_peak_spin, 5, 5)
+        quiet_release_label = self._create_tooltip_label(
+            "Quiet release:",
+            "At quiet-hold expiry, the residual must have declined to within this fraction "
+            "of the press's own peak before it is released; otherwise it is presumed a held "
+            "press whose voltage merely decayed quiet, left open for the stuck-force "
+            "fail-safe above to eventually resolve.",
+        )
+        layout.addWidget(quiet_release_label, 6, 0)
+        self.force_pzt_quiet_release_spin = QDoubleSpinBox()
+        self.force_pzt_quiet_release_spin.setRange(0.0, 1.0)
+        self.force_pzt_quiet_release_spin.setDecimals(3)
+        self.force_pzt_quiet_release_spin.setValue(float(defaults["quiet_hold_release_fraction"]))
+        self.force_pzt_quiet_release_spin.setSuffix(" x peak")
+        self.force_pzt_quiet_release_spin.setToolTip(quiet_release_label.toolTip())
+        layout.addWidget(self.force_pzt_quiet_release_spin, 6, 1)
+        quiet_hold_label = self._create_tooltip_label(
+            "Quiet hold:",
+            "How long a channel must stay continuously quiet (below the Noise threshold) "
+            "before its event is considered concluded and eligible for release.",
+        )
+        layout.addWidget(quiet_hold_label, 6, 2)
+        self.force_pzt_quiet_hold_spin = QDoubleSpinBox()
+        self.force_pzt_quiet_hold_spin.setRange(0.0, 3600.0)
+        self.force_pzt_quiet_hold_spin.setDecimals(3)
+        self.force_pzt_quiet_hold_spin.setValue(float(defaults["quiet_hold_clear_s"]))
+        self.force_pzt_quiet_hold_spin.setSuffix(" s")
+        self.force_pzt_quiet_hold_spin.setToolTip(quiet_hold_label.toolTip())
+        layout.addWidget(self.force_pzt_quiet_hold_spin, 6, 3)
+
+        force_color_max_label = QLabel("Force color max:")
+        force_color_max_label.setToolTip(
+            "Force-map value that maps to the top of the color scale. Lower values make "
+            "small forces more visible; values above this level saturate. This changes "
+            "visualization only and does not change calculated force."
+        )
+        layout.addWidget(force_color_max_label, 4, 0)
+        self.force_display_max_n_spin = QDoubleSpinBox()
+        self.force_display_max_n_spin.setRange(1e-9, 1e9)
+        self.force_display_max_n_spin.setDecimals(6)
+        self.force_display_max_n_spin.setValue(float(defaults["display_max_force_n"]))
+        self.force_display_max_n_spin.setSuffix(" N")
+        self.force_display_max_n_spin.setToolTip(force_color_max_label.toolTip())
+        layout.addWidget(self.force_display_max_n_spin, 4, 1)
+
+        force_arrow_gain_label = QLabel("Force arrow gain:")
+        force_arrow_gain_label.setToolTip(
+            "Multiplier from force-derived shear magnitude (newtons) to arrow length "
+            "(mm). Same mechanism as the Jerk display arrow, but newton-scaled since "
+            "the Force Display shear vector is in newtons, not volts."
+        )
+        layout.addWidget(force_arrow_gain_label, 4, 2)
+        self.force_arrow_gain_spin = QDoubleSpinBox()
+        self.force_arrow_gain_spin.setRange(FORCE_ARROW_GAIN_MIN, FORCE_ARROW_GAIN_MAX)
+        self.force_arrow_gain_spin.setDecimals(FORCE_ARROW_GAIN_DECIMALS)
+        self.force_arrow_gain_spin.setSingleStep(FORCE_ARROW_GAIN_STEP)
+        self.force_arrow_gain_spin.setValue(float(PZT_FORCE_DEFAULT_SETTINGS["force_arrow_gain_mm_per_n"]))
+        self.force_arrow_gain_spin.setSuffix(" mm/N")
+        self.force_arrow_gain_spin.setToolTip(force_arrow_gain_label.toolTip())
+        layout.addWidget(self.force_arrow_gain_spin, 4, 3)
+
+        force_arrow_threshold_label = QLabel("Force arrow threshold:")
+        force_arrow_threshold_label.setToolTip(
+            "Force-derived shear magnitude (newtons) below which the arrow is hidden. "
+            "Display-only: never changes computed Normal/Shear force."
+        )
+        layout.addWidget(force_arrow_threshold_label, 4, 4)
+        self.force_arrow_threshold_spin = QDoubleSpinBox()
+        self.force_arrow_threshold_spin.setRange(FORCE_ARROW_MIN_THRESHOLD_MIN, FORCE_ARROW_MIN_THRESHOLD_MAX)
+        self.force_arrow_threshold_spin.setDecimals(FORCE_ARROW_MIN_THRESHOLD_DECIMALS)
+        self.force_arrow_threshold_spin.setSingleStep(FORCE_ARROW_MIN_THRESHOLD_STEP)
+        self.force_arrow_threshold_spin.setValue(float(PZT_FORCE_DEFAULT_SETTINGS["force_arrow_min_threshold_n"]))
+        self.force_arrow_threshold_spin.setSuffix(" N")
+        self.force_arrow_threshold_spin.setToolTip(force_arrow_threshold_label.toolTip())
+        layout.addWidget(self.force_arrow_threshold_spin, 4, 5)
+
+        self.force_display_reset_btn = QPushButton("Reset Force Display")
+        self.force_display_reset_btn.clicked.connect(self.reset_pressure_force_display)
+        layout.addWidget(self.force_display_reset_btn, 2, 3, 1, 2)
+        for widget in (
+            self.force_pzt_center_capacitance_spin, self.force_pzt_outer_capacitance_spin,
+            self.force_pzt_capacitance_unit_combo,
+            self.force_pzt_rleak_spin, self.force_pzt_d33_spin, self.force_pzt_noise_spin,
+            self.force_pzt_off_mux_check, self.force_pzt_off_mux_rleak_spin,
+            self.force_pzt_stuck_failsafe_check, self.force_pzt_stuck_hold_spin, self.force_pzt_stuck_tau_spin,
+            self.force_pzt_zero_floor_spin, self.force_pzt_zero_band_fraction_spin,
+            self.force_pzt_min_event_peak_spin, self.force_pzt_quiet_release_spin,
+            self.force_pzt_quiet_hold_spin,
+        ):
+            signal = getattr(widget, "valueChanged", None) or getattr(widget, "currentTextChanged", None) or getattr(widget, "toggled", None)
+            if signal is not None:
+                signal.connect(self.on_pzt_force_settings_changed)
+        self.force_display_max_n_spin.valueChanged.connect(self.on_force_display_settings_changed)
+        self.force_arrow_gain_spin.valueChanged.connect(self.on_force_display_settings_changed)
+        self.force_arrow_threshold_spin.valueChanged.connect(self.on_force_display_settings_changed)
+        return group
+
+    def _pzt_force_settings(self) -> dict[str, object]:
+        return {
+            "center_capacitance_value": self._spin_float("force_pzt_center_capacitance_spin", float(PZT_FORCE_DEFAULT_SETTINGS["center_capacitance_value"])),
+            "outer_capacitance_value": self._spin_float("force_pzt_outer_capacitance_spin", float(PZT_FORCE_DEFAULT_SETTINGS["outer_capacitance_value"])),
+            "capacitance_unit": self._combo_text("force_pzt_capacitance_unit_combo", str(PZT_FORCE_DEFAULT_SETTINGS["capacitance_unit"])),
+            "rleak_ohm": self._spin_float("force_pzt_rleak_spin", float(PZT_FORCE_DEFAULT_SETTINGS["rleak_ohm"])),
+            "d33_pc_per_n": self._spin_float("force_pzt_d33_spin", float(PZT_FORCE_DEFAULT_SETTINGS["d33_pc_per_n"])),
+            "noise_threshold_v": self._spin_float("force_pzt_noise_spin", float(PZT_FORCE_DEFAULT_SETTINGS["noise_threshold_v"])),
+            "off_mux_leak_enabled": self._check_bool("force_pzt_off_mux_check", False),
+            "off_mux_rleak_ohm": self._spin_float("force_pzt_off_mux_rleak_spin", float(PZT_FORCE_DEFAULT_SETTINGS["rleak_ohm"])),
+            "display_max_force_n": self._spin_float("force_display_max_n_spin", float(PZT_FORCE_DEFAULT_SETTINGS["display_max_force_n"])),
+            "force_arrow_gain_mm_per_n": self._spin_float("force_arrow_gain_spin", float(PZT_FORCE_DEFAULT_SETTINGS["force_arrow_gain_mm_per_n"])),
+            "force_arrow_min_threshold_n": self._spin_float("force_arrow_threshold_spin", float(PZT_FORCE_DEFAULT_SETTINGS["force_arrow_min_threshold_n"])),
+            "stuck_force_failsafe_enabled": self._check_bool("force_pzt_stuck_failsafe_check", bool(PZT_FORCE_DEFAULT_SETTINGS["stuck_force_failsafe_enabled"])),
+            "stuck_force_quiet_hold_s": self._spin_float("force_pzt_stuck_hold_spin", float(PZT_FORCE_DEFAULT_SETTINGS["stuck_force_quiet_hold_s"])),
+            "stuck_force_decay_tau_s": self._spin_float("force_pzt_stuck_tau_spin", float(PZT_FORCE_DEFAULT_SETTINGS["stuck_force_decay_tau_s"])),
+            "force_zero_band_min_n": self._spin_float("force_pzt_zero_floor_spin", float(PZT_FORCE_DEFAULT_SETTINGS["force_zero_band_min_n"])),
+            "force_zero_band_fraction": self._spin_float("force_pzt_zero_band_fraction_spin", float(PZT_FORCE_DEFAULT_SETTINGS["force_zero_band_fraction"])),
+            "force_zero_min_event_peak_n": self._spin_float("force_pzt_min_event_peak_spin", float(PZT_FORCE_DEFAULT_SETTINGS["force_zero_min_event_peak_n"])),
+            "quiet_hold_release_fraction": self._spin_float("force_pzt_quiet_release_spin", float(PZT_FORCE_DEFAULT_SETTINGS["quiet_hold_release_fraction"])),
+            "quiet_hold_clear_s": self._spin_float("force_pzt_quiet_hold_spin", float(PZT_FORCE_DEFAULT_SETTINGS["quiet_hold_clear_s"])),
+        }
+
+    def on_pzt_force_settings_changed(self, _value: object | None = None) -> None:
+        try:
+            for widget in self._pressure_map_display_widgets():
+                widget.configure_force_display_floor(
+                    noise_equivalent_n=self._force_display_noise_floor_n()
+                )
+            self._rebuild_pressure_force_engine()
+            self.save_last_shear_settings()
+        except Exception as exc:
+            if hasattr(self, "log_status"):
+                self.log_status(f"ERROR updating PZT Force settings: {exc}")
+
+    def on_force_display_settings_changed(self, _value: object | None = None) -> None:
+        """Refresh Newton colour presentation without resetting physical state."""
+        try:
+            max_force_n = self._spin_float(
+                "force_display_max_n_spin",
+                float(PZT_FORCE_DEFAULT_SETTINGS["display_max_force_n"]),
+            )
+            for widget in self._pressure_map_display_widgets():
+                widget.configure_force_intensity(max_force_n=max_force_n)
+            self._apply_force_arrow_settings()
+            self.save_last_shear_settings()
+        except Exception as exc:
+            if hasattr(self, "log_status"):
+                self.log_status(f"ERROR updating Force Display scale: {exc}")
+
+    def _apply_force_arrow_settings(self) -> None:
+        """Give every Force widget its own newton-domain arrow gain/threshold.
+
+        The unit-carrying parameters (gain, threshold, width reference) are
+        Force-specific because the Force Display shear vector is in newtons,
+        not the Jerk display's volts; the unitless geometric/pixel parameters
+        and the rendering mechanism itself stay shared with Jerk.
+        """
+        if not hasattr(self, "force_arrow_gain_spin"):
+            return
+        arrow_kwargs = dict(
+            arrow_gain=float(self.force_arrow_gain_spin.value()),
+            arrow_min_threshold=float(self.force_arrow_threshold_spin.value()),
+            arrow_max_length_fraction=float(self.shear_arrow_max_length_spin.value()),
+            arrow_width_scales=bool(self.shear_arrow_width_scales_check.isChecked()),
+            arrow_base_width_px=float(self.shear_arrow_base_width_spin.value()),
+            arrow_width_reference_magnitude=float(self.force_display_max_n_spin.value()),
+        )
+        for widget in (
+            getattr(self, "force_pressure_map_widget", None),
+            *getattr(self, "force_package_widgets", {}).values(),
+        ):
+            if widget is not None:
+                widget.configure_arrow(**arrow_kwargs)
+        self._queue_pressure_force_display_render()
+
+    def _force_display_noise_floor_n(self) -> float:
+        """Return the physical PZT threshold expressed only as a display floor."""
+        settings = self._pzt_force_settings()
+        unit_scale = {"pf": 1e-12, "nf": 1e-9, "f": 1.0}
+        capacitance_f = max(
+            float(settings["center_capacitance_value"]),
+            float(settings["outer_capacitance_value"]),
+        ) * unit_scale.get(
+            str(settings["capacitance_unit"]).lower(), 1e-12
+        )
+        d33_c_per_n = float(settings["d33_pc_per_n"]) * PZT_FORCE_PIC_COULOMB_TO_COULOMB
+        if capacitance_f <= 0.0 or d33_c_per_n <= 0.0:
+            return 0.0025
+        return max(1e-12, float(settings["noise_threshold_v"]) * capacitance_f / d33_c_per_n)
+
+    def _rebuild_pressure_force_engine(self) -> None:
+        if not hasattr(self, "pressure_map_geometry"):
+            return
+        self.pressure_force_engine = PressureForceDisplayEngine(
+            geometry=self.pressure_map_geometry,
+            settings=self._pzt_force_settings(),
+            normal_force_calculator=self.normal_force_calculator,
+            shear_detector=self.shear_detector,
+            pressure_map_array_generator=self.pressure_map_array_generator,
+        )
+        self._pressure_force_last_processed_sweep_count = int(getattr(self, "sweep_count", 0))
+
+    def reset_pressure_force_display(self) -> None:
+        self._rebuild_pressure_force_engine()
+        self._render_pressure_force_display()
+        if hasattr(self, "force_display_status_label"):
+            self.force_display_status_label.setText("Force Display reset")
+
+    def reset_pressure_force_display_for_baseline_change(self) -> None:
+        """A Force integral is only meaningful against the baseline it started on."""
+        if getattr(self, "pressure_force_engine", None) is None:
+            return
+        self._rebuild_pressure_force_engine()
+        self._render_pressure_force_display()
+        if hasattr(self, "force_display_status_label"):
+            self.force_display_status_label.setText(
+                "Force Display reset: Time Series baseline changed"
+            )
+
+    def process_pressure_force_block(
+        self,
+        block_samples_array: np.ndarray,
+        sweep_timestamps_sec: np.ndarray,
+        *,
+        first_sweep_id: int,
+        avg_sample_time_us: float,
+    ) -> None:
+        """Consume an acquisition block once, before any Jerk-only filters.
+
+        The raw values are centred with the same ``plot_baselines`` values used
+        by Time Series.  No HPF, DC removal, or moving sum is applied here.
+        """
+        engine = getattr(self, "pressure_force_engine", None)
+        if engine is None or not hasattr(self, "get_display_channel_specs"):
+            return
+        block = np.asarray(block_samples_array, dtype=np.float64)
+        times = np.asarray(sweep_timestamps_sec, dtype=np.float64).reshape(-1)
+        if block.ndim != 2 or block.shape[0] != times.size:
+            return
+        specs_by_package: dict[str, dict[str, dict]] = {}
+        for spec_index, spec in enumerate(self.get_display_channel_specs()):
+            position = self._get_shear_position_for_display_spec(spec, spec_index)
+            sample_indices = [int(index) for index in spec.get("sample_indices", []) if 0 <= int(index) < block.shape[1]]
+            if position not in SHEAR_SENSOR_POSITIONS or not sample_indices:
+                continue
+            package_id = self._get_signal_integration_package_id_for_display_spec(spec, spec_index)
+            specs_by_package.setdefault(package_id, {})[position] = spec
+        complete_packages = {
+            package_id: positions for package_id, positions in specs_by_package.items()
+            if all(position in positions for position in SHEAR_SENSOR_POSITIONS)
+        }
+        if not complete_packages:
+            return
+        # Force Display is a consumer of the Time Series baseline, never a
+        # baseline producer.  This prevents a live force event from silently
+        # re-zeroing itself.  The shared baseline is captured once by Time
+        # Series startup or explicitly through its Zero Signals button.
+        baselines = getattr(self, "plot_baselines", {})
+        required_specs = [
+            spec for positions in complete_packages.values() for spec in positions.values()
+        ]
+        if any(spec.get("key") not in baselines for spec in required_specs):
+            # An accumulated Force history is invalid without the baseline it
+            # was integrated against.  Reset once per transition so stale
+            # values never persist behind the waiting status.
+            if not getattr(self, "_pressure_force_waiting_for_baseline", False):
+                self._pressure_force_waiting_for_baseline = True
+                self.reset_pressure_force_display_for_baseline_change()
+            if self._is_pressure_map_force_display_visible() and hasattr(self, "force_display_status_label"):
+                self.force_display_status_label.setText(
+                    "Waiting for Time Series baseline — open Time Series or press Zero Signals"
+                )
+            return
+        self._pressure_force_waiting_for_baseline = False
+        dt_s = max(0.0, float(avg_sample_time_us) / 1_000_000.0)
+        mux_timing = getattr(self, "adc_mux_timing", None)
+        voltage_scale = float(self.get_vref_voltage()) / float((2 ** IADC_RESOLUTION_BITS) - 1)
+        # PZT ghost removal writes net-space (already baseline-centred) data
+        # into blocks/buffers; ``plot_baselines`` are raw-equivalent medians
+        # captured against the reconstructed signal.  Subtracting them again
+        # here would double-subtract, mirroring the gate Time Series applies
+        # in ``adc_plotting.py``.
+        ghost_net_centered = bool(
+            getattr(self, "is_pzt_ghost_block_net_centered", lambda: False)()
+        )
+        grid_positions = self._get_force_display_grid_positions()
+        repeat_slots = min(
+            len(spec["sample_indices"])
+            for positions in complete_packages.values()
+            for spec in positions.values()
+        )
+        # Only the sign of a flipped-mount sensor (e.g. a reverse-polarity
+        # center channel) is a physical fact; the magnitude of
+        # ``_pressure_package_sensor_gains`` is Jerk visualization tuning and
+        # is deliberately never applied here (Cpzt/d33 remain the Force
+        # Display's Newton calibration). A ±1 factor is safe for the
+        # natural-reset machinery: it multiplies the uncalibrated accumulator
+        # and every reset threshold there is magnitude-based.
+        channel_calibration = {
+            package_id: {
+                position: math.copysign(1.0, gain) if gain != 0.0 else 1.0
+                for position, gain in self._pressure_sensor_gains_for_package(package_id).items()
+            }
+            for package_id in complete_packages
+        }
+        for row_index, sweep in enumerate(block):
+            for repeat_index in range(repeat_slots):
+                package_voltages: dict[str, dict[str, float]] = {}
+                package_times: dict[str, dict[str, float]] = {}
+                package_leak_times: dict[str, dict[str, float]] = {}
+                package_pre_sample_times: dict[str, dict[str, float]] = {}
+                for package_id, positions in complete_packages.items():
+                    values: dict[str, float] = {}
+                    channel_times: dict[str, float] = {}
+                    channel_leak_times: dict[str, float] = {}
+                    pre_sample_times: dict[str, float] = {}
+                    for position, spec in positions.items():
+                        sample_index = int(spec["sample_indices"][repeat_index])
+                        baseline = 0.0 if ghost_net_centered else float(
+                            getattr(self, "plot_baselines", {}).get(spec.get("key"), 0.0)
+                        )
+                        # This is the shared baseline-centred ADC stream.  The
+                        # force engine receives volts before every Jerk transform.
+                        centered_counts = float(sweep[sample_index]) - baseline
+                        value = centered_counts * voltage_scale
+                        # Force uses the same configured physical polarity as
+                        # Jerk before PZT charge/force reconstruction.
+                        values[position] = float(self._apply_signal_integration_sensor_polarity(
+                            np.asarray([value], dtype=np.float64)
+                        )[0])
+                        channel_times[position] = float(times[row_index]) + float(sample_index) * dt_s
+                        if mux_timing is not None:
+                            key = spec.get("key")
+                            adc_input = key[4] if isinstance(key, tuple) and len(key) >= 5 else None
+                            try:
+                                adc_input = int(adc_input)
+                                if adc_input in (1, 2):
+                                    timing_context = PztDecayTimingContext.from_adc_mux_timing(
+                                        mux_timing, adc_input
+                                    )
+                                    # The measured sweep timestamp anchors the
+                                    # burst.  The shared MUX model supplies the
+                                    # precise effective offset within it.
+                                    first_index = int(spec["sample_indices"][0])
+                                    channel_times[position] = (
+                                        float(times[row_index]) + float(first_index) * dt_s
+                                        + timing_context.observation_offset_s(repeat_index)
+                                        - timing_context.observation_offset_s(0)
+                                    )
+                                    previous_repeat = (
+                                        repeat_slots - 1 if repeat_index == 0 else repeat_index - 1
+                                    )
+                                    channel_leak_times[position] = (
+                                        timing_context.connected_exposure_between(
+                                            previous_repeat, repeat_index
+                                        )
+                                    )
+                                    pre_sample_times[position] = float(
+                                        mux_timing.decay_before_effective_sample_s(
+                                            adc_input=adc_input, repeat_index=repeat_index
+                                        )
+                                    )
+                            except (TypeError, ValueError, AttributeError):
+                                pass
+                    package_voltages[package_id] = values
+                    package_times[package_id] = channel_times
+                    package_leak_times[package_id] = channel_leak_times
+                    package_pre_sample_times[package_id] = pre_sample_times
+                try:
+                    engine.process_sample(
+                        (int(first_sweep_id) + row_index, repeat_index),
+                        package_voltages,
+                        package_times,
+                        grid_positions=grid_positions,
+                        observations_per_sweep=repeat_slots,
+                        # The shared timing model provides connected exposure
+                        # between consecutive effective samples.  The low-level
+                        # integrator derives remaining wall time as off-MUX
+                        # exposure when that physical model is enabled.
+                        leak_dt_s=package_leak_times,
+                        pre_sample_decay_dt_s=package_pre_sample_times,
+                        # Sign-only mount polarity from
+                        # ``_pressure_package_sensor_gains``; see
+                        # ``channel_calibration`` above for why only the sign
+                        # crosses over from the Jerk/shear visualization path.
+                        channel_calibration=channel_calibration,
+                    )
+                except ValueError as exc:
+                    # A capture restart/buffer discontinuity must not bridge an
+                    # unknown interval.  Reset and continue from the next block.
+                    self._rebuild_pressure_force_engine()
+                    message = f"Force Display reset: {exc}"
+                    if message != getattr(self, "_pressure_force_last_error", "") and hasattr(self, "log_status"):
+                        self.log_status(message)
+                        self._pressure_force_last_error = message
+                    return
+        self._pressure_force_last_processed_sweep_count = int(first_sweep_id) + block.shape[0]
+        self._queue_pressure_force_display_render()
+
+    def _queue_pressure_force_display_render(self) -> None:
+        """Coalesce force-map paints without delaying sample integration."""
+        if not self._is_pressure_map_force_display_visible():
+            return
+        timer = getattr(self, "force_display_update_timer", None)
+        if timer is None:
+            self._render_pressure_force_display()
+            return
+        if not timer.isActive():
+            timer.start(100)
+
+    def _render_pressure_force_display(self) -> None:
+        engine = getattr(self, "pressure_force_engine", None)
+        if engine is None or not hasattr(self, "force_pressure_map_widget"):
+            return
+        grid_positions = self._get_force_display_grid_positions()
+        engine.configure_layout(grid_positions)
+        results = engine.package_results()
+        if not results:
+            self.force_pressure_map_widget.update_force_display(None)
+            return
+        status = getattr(self, "force_display_status_label", None)
+        if status is not None and status.text() in {
+            "Waiting for baseline-centred PZT samples",
+            "Force Display reset",
+        }:
+            status.setText("")
+        array_result = engine.array_result()
+        # A positioned package layout is always a complete, static Force
+        # array.  Zero packages remain visible as zero fields rather than
+        # being dropped when they have no current force increment.
+        if array_result is not None:
+            self.force_pressure_map_widget.update_force_array_display(array_result, results)
+            for widget in self.force_package_widgets.values():
+                widget.setVisible(False)
+        else:
+            # Each package preserves an independent accumulated state and gets
+            # its own readout.  All widgets use the Jerk visual configuration.
+            self.force_pressure_map_widget.update_force_display(results[0])
+            active_ids = {item.sensor_id for item in results[1:]}
+            for item in results[1:]:
+                widget = self.force_package_widgets.get(item.sensor_id)
+                if widget is None:
+                    widget = PressureMapWidget()
+                    self._configure_force_package_widget(widget)
+                    self.force_package_widgets[item.sensor_id] = widget
+                    # Insert above the shared status label.
+                    self.force_display_layout.insertWidget(max(0, self.force_display_layout.count() - 1), widget, PRESSURE_MAP_STRETCH)
+                widget.update_force_display(item)
+            for sensor_id, widget in self.force_package_widgets.items():
+                widget.setVisible(sensor_id in active_ids)
+
+    def _configure_force_package_widget(self, widget: PressureMapWidget) -> None:
+        """Clone the current shared Pressure Map presentation for lazy widgets."""
+        source = getattr(self, "force_pressure_map_widget", None)
+        if source is None:
+            return
+        widget.configure_markers(
+            show_marker=source.show_marker,
+            show_sensor_markers=source.show_sensor_markers,
+        )
+        widget.configure_intensity(max_intensity=source.max_intensity)
+        widget.configure_force_intensity(max_force_n=source.force_max_intensity_n)
+        widget.configure_noise_floor(noise_floor=source.noise_floor)
+        widget.configure_color_scale(color_scale=source.color_scale)
+        widget.configure_mirror(mirror=source.mirror)
+        widget.configure_display_mode(display_mode=source.display_mode)
+        widget.configure_boundary_visibility(
+            show_near_outer_boundary=source.show_near_outer_boundary,
+            show_outer_boundary=source.show_outer_boundary,
+            show_mid_boundary=source.show_mid_boundary,
+        )
+        widget.configure_mask(
+            mask_enabled=source.mask_enabled,
+            mask_points_mm=source.mask_points_mm,
+            mask_color=source.mask_color,
+        )
+        widget.configure_arrow(
+            arrow_gain=source.arrow_gain,
+            arrow_min_threshold=source.arrow_min_threshold,
+            arrow_max_length_fraction=source.arrow_max_length_fraction,
+            arrow_width_scales=source.arrow_width_scales,
+            arrow_base_width_px=source.arrow_base_width_px,
+            arrow_width_reference_magnitude=source.arrow_width_reference_magnitude,
+            arrow_color=source.arrow_color,
+        )
+
     def _create_shear_visualization_settings_group(self) -> QGroupBox:
         group = QGroupBox("Shear Visualization Settings")
         layout = QGridLayout(group)
@@ -658,85 +1447,61 @@ class PressureMapPanelMixin:
         noise_threshold_tooltip = (
             "Zeros each integrated channel before gain and shear detection when its magnitude is below this value."
         )
-        layout.addWidget(self._create_tooltip_label("Noise threshold:", noise_threshold_tooltip), 0, 0)
-        self.shear_noise_threshold_spin = QDoubleSpinBox()
-        self.shear_noise_threshold_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
-        self.shear_noise_threshold_spin.setRange(SHEAR_NOISE_THRESHOLD_MIN, SHEAR_NOISE_THRESHOLD_MAX)
-        self.shear_noise_threshold_spin.setDecimals(SHEAR_NOISE_THRESHOLD_DECIMALS)
-        self.shear_noise_threshold_spin.setSingleStep(SHEAR_NOISE_THRESHOLD_STEP)
-        self.shear_noise_threshold_spin.setValue(DEFAULT_SHEAR_NOISE_THRESHOLD)
-        self.shear_noise_threshold_spin.setToolTip(noise_threshold_tooltip)
-        self.shear_noise_threshold_spin.valueChanged.connect(self.on_shear_processing_settings_changed)
-        layout.addWidget(self.shear_noise_threshold_spin, 0, 1)
+        self._add_pressure_shape_spin(
+            layout, "Noise threshold:", "shear_noise_threshold_spin",
+            DEFAULT_SHEAR_NOISE_THRESHOLD, 0, 0, noise_threshold_tooltip,
+            minimum=SHEAR_NOISE_THRESHOLD_MIN, maximum=SHEAR_NOISE_THRESHOLD_MAX,
+            decimals=SHEAR_NOISE_THRESHOLD_DECIMALS, step=SHEAR_NOISE_THRESHOLD_STEP,
+            slot=self.on_shear_processing_settings_changed,
+        )
 
         arrow_row = 1
         arrow_gain_tooltip = (
             "Scales detected shear magnitude into displayed arrow length. "
             "Higher values make the arrow longer for the same shear."
         )
-        layout.addWidget(self._create_tooltip_label("Arrow gain:", arrow_gain_tooltip), arrow_row, 0)
-        self.shear_arrow_gain_spin = QDoubleSpinBox()
-        self.shear_arrow_gain_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
-        self.shear_arrow_gain_spin.setRange(SHEAR_ARROW_GAIN_MIN, SHEAR_ARROW_GAIN_MAX)
-        self.shear_arrow_gain_spin.setDecimals(SHEAR_ARROW_GAIN_DECIMALS)
-        self.shear_arrow_gain_spin.setSingleStep(SHEAR_ARROW_GAIN_STEP)
-        self.shear_arrow_gain_spin.setValue(DEFAULT_ARROW_GAIN)
-        self.shear_arrow_gain_spin.setToolTip(arrow_gain_tooltip)
-        self.shear_arrow_gain_spin.valueChanged.connect(self.on_shear_visualization_settings_changed)
-        layout.addWidget(self.shear_arrow_gain_spin, arrow_row, 1)
+        self._add_pressure_shape_spin(
+            layout, "Arrow gain:", "shear_arrow_gain_spin",
+            DEFAULT_ARROW_GAIN, arrow_row, 0, arrow_gain_tooltip,
+            minimum=SHEAR_ARROW_GAIN_MIN, maximum=SHEAR_ARROW_GAIN_MAX,
+            decimals=SHEAR_ARROW_GAIN_DECIMALS, step=SHEAR_ARROW_GAIN_STEP,
+            slot=self.on_shear_visualization_settings_changed,
+        )
 
         arrow_threshold_tooltip = (
             "Hides only the displayed arrow when detected shear magnitude is below this value."
         )
-        layout.addWidget(self._create_tooltip_label("Arrow threshold:", arrow_threshold_tooltip), arrow_row, 2)
-        self.shear_arrow_threshold_spin = QDoubleSpinBox()
-        self.shear_arrow_threshold_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
-        self.shear_arrow_threshold_spin.setRange(
-            SHEAR_ARROW_MIN_THRESHOLD_MIN,
-            SHEAR_ARROW_MIN_THRESHOLD_MAX,
+        self._add_pressure_shape_spin(
+            layout, "Arrow threshold:", "shear_arrow_threshold_spin",
+            DEFAULT_ARROW_MIN_THRESHOLD, arrow_row, 2, arrow_threshold_tooltip,
+            minimum=SHEAR_ARROW_MIN_THRESHOLD_MIN, maximum=SHEAR_ARROW_MIN_THRESHOLD_MAX,
+            decimals=SHEAR_ARROW_MIN_THRESHOLD_DECIMALS, step=SHEAR_ARROW_MIN_THRESHOLD_STEP,
+            slot=self.on_shear_visualization_settings_changed,
         )
-        self.shear_arrow_threshold_spin.setDecimals(SHEAR_ARROW_MIN_THRESHOLD_DECIMALS)
-        self.shear_arrow_threshold_spin.setSingleStep(SHEAR_ARROW_MIN_THRESHOLD_STEP)
-        self.shear_arrow_threshold_spin.setValue(DEFAULT_ARROW_MIN_THRESHOLD)
-        self.shear_arrow_threshold_spin.setToolTip(arrow_threshold_tooltip)
-        self.shear_arrow_threshold_spin.valueChanged.connect(self.on_shear_visualization_settings_changed)
-        layout.addWidget(self.shear_arrow_threshold_spin, arrow_row, 3)
 
         arrow_max_radius_tooltip = (
             "Caps arrow length as a multiple of the visualization circle radius. "
             "A value of 1.0 reaches the circle edge."
         )
-        layout.addWidget(self._create_tooltip_label("Arrow max radius:", arrow_max_radius_tooltip), arrow_row, 4)
-        self.shear_arrow_max_length_spin = QDoubleSpinBox()
-        self.shear_arrow_max_length_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
-        self.shear_arrow_max_length_spin.setRange(
-            SHEAR_ARROW_MAX_LENGTH_MIN,
-            SHEAR_ARROW_MAX_LENGTH_MAX,
+        self._add_pressure_shape_spin(
+            layout, "Arrow max radius:", "shear_arrow_max_length_spin",
+            DEFAULT_ARROW_MAX_LENGTH_PX, arrow_row, 4, arrow_max_radius_tooltip,
+            minimum=SHEAR_ARROW_MAX_LENGTH_MIN, maximum=SHEAR_ARROW_MAX_LENGTH_MAX,
+            decimals=SHEAR_ARROW_MAX_LENGTH_DECIMALS, step=SHEAR_ARROW_MAX_LENGTH_STEP,
+            slot=self.on_shear_visualization_settings_changed,
         )
-        self.shear_arrow_max_length_spin.setDecimals(SHEAR_ARROW_MAX_LENGTH_DECIMALS)
-        self.shear_arrow_max_length_spin.setSingleStep(SHEAR_ARROW_MAX_LENGTH_STEP)
-        self.shear_arrow_max_length_spin.setValue(DEFAULT_ARROW_MAX_LENGTH_PX)
-        self.shear_arrow_max_length_spin.setToolTip(arrow_max_radius_tooltip)
-        self.shear_arrow_max_length_spin.valueChanged.connect(self.on_shear_visualization_settings_changed)
-        layout.addWidget(self.shear_arrow_max_length_spin, arrow_row, 5)
 
         arrow_width_tooltip = (
             "Base shaft width in screen pixels. With Scale width enabled, "
             "this becomes the minimum width before magnitude-based widening."
         )
-        layout.addWidget(self._create_tooltip_label("Arrow width:", arrow_width_tooltip), arrow_row, 6)
-        self.shear_arrow_base_width_spin = QDoubleSpinBox()
-        self.shear_arrow_base_width_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
-        self.shear_arrow_base_width_spin.setRange(
-            SHEAR_ARROW_BASE_WIDTH_MIN_PX,
-            SHEAR_ARROW_BASE_WIDTH_MAX_PX,
+        self._add_pressure_shape_spin(
+            layout, "Arrow width:", "shear_arrow_base_width_spin",
+            DEFAULT_ARROW_BASE_WIDTH_PX, arrow_row, 6, arrow_width_tooltip,
+            minimum=SHEAR_ARROW_BASE_WIDTH_MIN_PX, maximum=SHEAR_ARROW_BASE_WIDTH_MAX_PX,
+            decimals=SHEAR_ARROW_BASE_WIDTH_DECIMALS, step=SHEAR_ARROW_BASE_WIDTH_STEP_PX,
+            slot=self.on_shear_visualization_settings_changed,
         )
-        self.shear_arrow_base_width_spin.setDecimals(SHEAR_ARROW_BASE_WIDTH_DECIMALS)
-        self.shear_arrow_base_width_spin.setSingleStep(SHEAR_ARROW_BASE_WIDTH_STEP_PX)
-        self.shear_arrow_base_width_spin.setValue(DEFAULT_ARROW_BASE_WIDTH_PX)
-        self.shear_arrow_base_width_spin.setToolTip(arrow_width_tooltip)
-        self.shear_arrow_base_width_spin.valueChanged.connect(self.on_shear_visualization_settings_changed)
-        layout.addWidget(self.shear_arrow_base_width_spin, arrow_row, 7)
 
         self.shear_arrow_width_scales_check = QCheckBox("Scale width")
         self.shear_arrow_width_scales_check.setChecked(DEFAULT_ARROW_WIDTH_SCALES)
@@ -763,16 +1528,197 @@ class PressureMapPanelMixin:
         )
         self.shear_load_settings_btn.clicked.connect(self.on_load_shear_settings_clicked)
         actions.addWidget(self.shear_load_settings_btn)
+
+        self.pressure_map_reset_layout_btn = QPushButton("Reset View Layout")
+        self.pressure_map_reset_layout_btn.setToolTip(
+            "Restore the default tabbed Jerk Display, Force Display, and Settings layout."
+        )
+        self.pressure_map_reset_layout_btn.clicked.connect(self.reset_pressure_map_workspace_layout)
+        actions.addWidget(self.pressure_map_reset_layout_btn)
         actions.addStretch()
         return actions
+
+    def _load_pressure_map_masks(self) -> None:
+        """Load the bundled/user mask library without exposing duplicate names."""
+
+        store = getattr(self, "pressure_map_mask_store", None)
+        if store is None:
+            self.pressure_map_masks = []
+            self.pressure_map_masks_by_name = {}
+            return
+        try:
+            masks = store.load()
+        except Exception as exc:
+            masks = []
+            if hasattr(self, "log_status"):
+                self.log_status(f"Warning: could not load pressure-map masks: {exc}")
+        lookup = {}
+        for mask in masks:
+            lookup.setdefault(mask.name, mask)
+        self.pressure_map_masks = list(lookup.values())
+        self.pressure_map_masks_by_name = lookup
+
+    def _reload_pressure_map_mask_selector(self, preferred_name: str | None = None) -> str:
+        """Refresh the selector while retaining a valid requested selection."""
+
+        combo = getattr(self, "pressure_map_mask_name_combo", None)
+        current_name = (
+            str(combo.currentText())
+            if preferred_name is None and combo is not None and hasattr(combo, "currentText")
+            else str(preferred_name or DEFAULT_PRESSURE_MASK_NAME)
+        )
+        self._load_pressure_map_masks()
+        if combo is None or not all(hasattr(combo, method) for method in ("clear", "addItem", "setCurrentText")):
+            return current_name if current_name in self.pressure_map_masks_by_name else DEFAULT_PRESSURE_MASK_NAME
+
+        previous_signal_state = combo.blockSignals(True) if hasattr(combo, "blockSignals") else None
+        try:
+            combo.clear()
+            combo.addItem(DEFAULT_PRESSURE_MASK_NAME)
+            for mask in self.pressure_map_masks:
+                if mask.name != DEFAULT_PRESSURE_MASK_NAME:
+                    combo.addItem(mask.name)
+            selected_name = (
+                current_name
+                if current_name in self.pressure_map_masks_by_name
+                else DEFAULT_PRESSURE_MASK_NAME
+            )
+            combo.setCurrentText(selected_name)
+        finally:
+            if previous_signal_state is not None:
+                combo.blockSignals(previous_signal_state)
+        return selected_name
+
+    def _create_visualization_pattern_settings_group(self) -> QGroupBox:
+        """Build the visual overlay and array-mask controls."""
+
+        group = QGroupBox("Visualization Pattern")
+        layout = QGridLayout(group)
+        layout.setHorizontalSpacing(SHEAR_SETTINGS_HORIZONTAL_SPACING_PX)
+        layout.setVerticalSpacing(SHEAR_SETTINGS_VERTICAL_SPACING_PX)
+
+        show_marker_tooltip = "Show calculated pressure-point marker(s) on the pressure map."
+        self.pressure_show_marker_check = QCheckBox("Show marker")
+        self.pressure_show_marker_check.setChecked(DEFAULT_PRESSURE_SHOW_MARKER)
+        self.pressure_show_marker_check.setToolTip(show_marker_tooltip)
+        self.pressure_show_marker_check.toggled.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_show_marker_check, 0, 0)
+
+        mirror_tooltip = "Mirror the pressure-map display horizontally, flipping left-right sensor positions."
+        self.pressure_mirror_check = QCheckBox("Mirror")
+        self.pressure_mirror_check.setChecked(DEFAULT_PRESSURE_MIRROR)
+        self.pressure_mirror_check.setToolTip(mirror_tooltip)
+        self.pressure_mirror_check.toggled.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_mirror_check, 0, 1)
+
+        boundary_toggle_tooltip = "Show the inferred near-outer peak support circle."
+        self.pressure_show_near_outer_boundary_check = QCheckBox("Show near-outer circle")
+        self.pressure_show_near_outer_boundary_check.setChecked(DEFAULT_PRESSURE_SHOW_NEAR_OUTER_BOUNDARY)
+        self.pressure_show_near_outer_boundary_check.setToolTip(boundary_toggle_tooltip)
+        self.pressure_show_near_outer_boundary_check.toggled.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_show_near_outer_boundary_check, 1, 0)
+
+        outer_toggle_tooltip = "Show the package Outer-Boundary Reach as a square."
+        self.pressure_show_outer_boundary_check = QCheckBox("Show outer-boundary square")
+        self.pressure_show_outer_boundary_check.setChecked(DEFAULT_PRESSURE_SHOW_OUTER_BOUNDARY)
+        self.pressure_show_outer_boundary_check.setToolTip(outer_toggle_tooltip)
+        self.pressure_show_outer_boundary_check.toggled.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_show_outer_boundary_check, 1, 1)
+
+        mid_toggle_tooltip = "Show Mid-Boundary package dividers as a differently dashed square."
+        self.pressure_show_mid_boundary_check = QCheckBox("Show mid-boundary square")
+        self.pressure_show_mid_boundary_check.setChecked(DEFAULT_PRESSURE_SHOW_MID_BOUNDARY)
+        self.pressure_show_mid_boundary_check.setToolTip(mid_toggle_tooltip)
+        self.pressure_show_mid_boundary_check.toggled.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_show_mid_boundary_check, 1, 2)
+
+        sensor_marker_toggle_tooltip = (
+            "Show the physical sensor position placeholders (small squares) on both the Jerk and Force displays."
+        )
+        self.pressure_show_sensor_markers_check = QCheckBox("Show sensor placeholders")
+        self.pressure_show_sensor_markers_check.setChecked(DEFAULT_PRESSURE_SHOW_SENSOR_MARKERS)
+        self.pressure_show_sensor_markers_check.setToolTip(sensor_marker_toggle_tooltip)
+        self.pressure_show_sensor_markers_check.toggled.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_show_sensor_markers_check, 2, 0)
+
+        self.pressure_map_mask_enabled_check = QCheckBox("Enable mask")
+        self.pressure_map_mask_enabled_check.setChecked(
+            bool(getattr(self, "pressure_map_mask_enabled", DEFAULT_PRESSURE_MASK_ENABLED))
+        )
+        self.pressure_map_mask_enabled_check.setToolTip(
+            "Display only the combined multi-package pressure image inside the selected polygon."
+        )
+        self.pressure_map_mask_enabled_check.toggled.connect(self.on_pressure_mask_settings_changed)
+        layout.addWidget(self.pressure_map_mask_enabled_check, 3, 0)
+
+        layout.addWidget(QLabel("Mask:"), 3, 1)
+        self.pressure_map_mask_name_combo = QComboBox()
+        self.pressure_map_mask_name_combo.setToolTip(
+            "Select a bundled or imported world-space pressure-map mask."
+        )
+        self._reload_pressure_map_mask_selector(
+            str(getattr(self, "pressure_map_mask_name", DEFAULT_PRESSURE_MASK_NAME))
+        )
+        self.pressure_map_mask_name_combo.currentTextChanged.connect(self.on_pressure_mask_settings_changed)
+        layout.addWidget(self.pressure_map_mask_name_combo, 3, 2)
+
+        self.pressure_map_mask_import_btn = QPushButton("Import Mask...")
+        self.pressure_map_mask_import_btn.setToolTip("Import a pressure-map polygon from a JSON file.")
+        self.pressure_map_mask_import_btn.clicked.connect(self.on_import_pressure_map_mask_clicked)
+        layout.addWidget(self.pressure_map_mask_import_btn, 3, 3)
+        layout.setColumnStretch(2, 1)
+        return group
+
+    def on_pressure_mask_settings_changed(self, _value: object | None = None) -> None:
+        """Apply the current mask selection through the widget display refresh path."""
+
+        selected_name = self._combo_text("pressure_map_mask_name_combo", DEFAULT_PRESSURE_MASK_NAME)
+        geometry = getattr(self, "pressure_map_masks_by_name", {}).get(selected_name)
+        enabled = self._check_bool("pressure_map_mask_enabled_check", DEFAULT_PRESSURE_MASK_ENABLED)
+        self.pressure_map_mask_enabled = enabled
+        self.pressure_map_mask_name = selected_name
+        for widget in self._pressure_map_display_widgets():
+            widget.configure_mask(
+                mask_enabled=bool(enabled and geometry is not None),
+                mask_points_mm=geometry.points_mm if geometry is not None else (),
+            )
+        self.save_last_shear_settings()
+
+    def on_import_pressure_map_mask_clicked(self) -> None:
+        """Import one standalone mask JSON file and make it immediately selectable."""
+
+        store = getattr(self, "pressure_map_mask_store", None)
+        if store is None:
+            return
+        default_dir = store.file_path.parent
+        default_dir.mkdir(parents=True, exist_ok=True)
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Import Pressure Map Mask",
+            str(default_dir),
+            "Mask JSON Files (*.json);;All Files (*)",
+        )
+        if not file_path:
+            return
+        try:
+            imported_name = store.import_file(file_path)
+            self._reload_pressure_map_mask_selector(imported_name)
+            self.on_pressure_mask_settings_changed()
+        except Exception as exc:
+            if hasattr(self, "log_status"):
+                self.log_status(f"ERROR: failed to import pressure-map mask - {exc}")
+            QMessageBox.critical(
+                self,
+                "Import Pressure Map Mask",
+                f"Could not import the pressure-map mask:\n{exc}",
+            )
 
     def _create_pressure_map_settings_group(self) -> QGroupBox:
         """Build persistent Pressure Map geometry and rendering controls.
 
-        The group includes package-local pressure-map parameters, array
-        adjacent-gap interpolation controls with hover explanations, fixed
-        intensity display scaling, package-boundary shape, and mirror/negative
-        display toggles.
+        The group includes package-local pressure-map parameters, physical
+        overlap/support geometry, fixed intensity display scaling,
+        package-boundary rendering, and mirror/negative display toggles.
         """
         group = QGroupBox("Pressure Map Settings")
         layout = QGridLayout(group)
@@ -798,146 +1744,85 @@ class PressureMapPanelMixin:
         self.pressure_sensor_spacing_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
         layout.addWidget(self.pressure_sensor_spacing_spin, 0, 1)
 
-        circle_diameter_tooltip = (
-            "Diameter of the circular pressure footprint in millimeters. "
-            "Also sets grid cell size for a given grid resolution."
+        package_center_spacing_tooltip = (
+            "Distance between neighbouring package centers in millimeters. "
+            "This directly positions array packages and defines the Mid Boundary."
         )
-        layout.addWidget(self._create_tooltip_label("Circle diameter:", circle_diameter_tooltip), 0, 2)
-        self.pressure_circle_diameter_spin = QDoubleSpinBox()
-        self.pressure_circle_diameter_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
-        self.pressure_circle_diameter_spin.setRange(
-            PRESSURE_CIRCLE_DIAMETER_MIN_MM,
-            PRESSURE_CIRCLE_DIAMETER_MAX_MM,
+        layout.addWidget(self._create_tooltip_label("Package center spacing:", package_center_spacing_tooltip), 0, 2)
+        self.pressure_package_center_spacing_spin = QDoubleSpinBox()
+        self.pressure_package_center_spacing_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
+        self.pressure_package_center_spacing_spin.setRange(
+            PRESSURE_PACKAGE_CENTER_SPACING_MIN_MM,
+            PRESSURE_PACKAGE_CENTER_SPACING_MAX_MM,
         )
-        self.pressure_circle_diameter_spin.setDecimals(PRESSURE_CIRCLE_DIAMETER_DECIMALS)
-        self.pressure_circle_diameter_spin.setSingleStep(PRESSURE_CIRCLE_DIAMETER_STEP_MM)
-        self.pressure_circle_diameter_spin.setSuffix(" mm")
-        self.pressure_circle_diameter_spin.setValue(DEFAULT_CIRCLE_DIAMETER_MM)
-        self.pressure_circle_diameter_spin.setToolTip(circle_diameter_tooltip)
-        self.pressure_circle_diameter_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
-        layout.addWidget(self.pressure_circle_diameter_spin, 0, 3)
+        self.pressure_package_center_spacing_spin.setDecimals(PRESSURE_PACKAGE_CENTER_SPACING_DECIMALS)
+        self.pressure_package_center_spacing_spin.setSingleStep(PRESSURE_PACKAGE_CENTER_SPACING_STEP_MM)
+        self.pressure_package_center_spacing_spin.setSuffix(" mm")
+        self.pressure_package_center_spacing_spin.setValue(DEFAULT_PRESSURE_PACKAGE_CENTER_SPACING_MM)
+        self.pressure_package_center_spacing_spin.setToolTip(package_center_spacing_tooltip)
+        self.pressure_package_center_spacing_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_package_center_spacing_spin, 0, 3)
 
-        grid_resolution_tooltip = (
-            "Number of grid cells across the pressure-circle diameter before margin cells are added. "
-            "Higher values increase detail and computation."
+        pixels_per_mm_tooltip = (
+            "Numerical grid density in pixels per millimeter. The generated grid "
+            "uses at least this density while placing the center and Outer Boundary edges exactly on pixels."
         )
-        layout.addWidget(self._create_tooltip_label("Grid:", grid_resolution_tooltip), 0, 4)
-        self.pressure_grid_resolution_spin = QSpinBox()
-        self.pressure_grid_resolution_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
-        self.pressure_grid_resolution_spin.setRange(
-            PRESSURE_GRID_RESOLUTION_MIN,
-            PRESSURE_GRID_RESOLUTION_MAX,
-        )
-        self.pressure_grid_resolution_spin.setSingleStep(PRESSURE_GRID_RESOLUTION_STEP)
-        self.pressure_grid_resolution_spin.setValue(DEFAULT_PRESSURE_GRID_RESOLUTION)
-        self.pressure_grid_resolution_spin.setToolTip(grid_resolution_tooltip)
-        self.pressure_grid_resolution_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
-        layout.addWidget(self.pressure_grid_resolution_spin, 0, 5)
+        layout.addWidget(self._create_tooltip_label("Pixels per mm:", pixels_per_mm_tooltip), 0, 4)
+        self.pressure_pixels_per_mm_spin = QDoubleSpinBox()
+        self.pressure_pixels_per_mm_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
+        self.pressure_pixels_per_mm_spin.setRange(PRESSURE_PIXELS_PER_MM_MIN, PRESSURE_PIXELS_PER_MM_MAX)
+        self.pressure_pixels_per_mm_spin.setDecimals(PRESSURE_PIXELS_PER_MM_DECIMALS)
+        self.pressure_pixels_per_mm_spin.setSingleStep(PRESSURE_PIXELS_PER_MM_STEP)
+        self.pressure_pixels_per_mm_spin.setSuffix(" px/mm")
+        self.pressure_pixels_per_mm_spin.setValue(DEFAULT_PRESSURE_PIXELS_PER_MM)
+        self.pressure_pixels_per_mm_spin.setToolTip(pixels_per_mm_tooltip)
+        self.pressure_pixels_per_mm_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_pixels_per_mm_spin, 0, 5)
 
-        grid_margin_tooltip = (
-            "Extra grid cells added beyond the circle on each side so the pressure planes "
-            "can extrapolate smoothly into the PDMS overhang region."
+        peak_position_outer_offset_tooltip = (
+            "For inferred peak-location calculations, treat each outer sensor as if it "
+            "were this distance farther from the package center. Physical sensor markers "
+            "and measured sensor anchors remain at their actual positions."
         )
-        layout.addWidget(self._create_tooltip_label("Margin:", grid_margin_tooltip), 0, 6)
-        self.pressure_grid_margin_spin = QSpinBox()
-        self.pressure_grid_margin_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
-        self.pressure_grid_margin_spin.setRange(PRESSURE_GRID_MIN_MARGIN, PRESSURE_GRID_MARGIN_MAX)
-        self.pressure_grid_margin_spin.setSingleStep(PRESSURE_GRID_MARGIN_STEP)
-        self.pressure_grid_margin_spin.setValue(DEFAULT_PRESSURE_GRID_MARGIN)
-        self.pressure_grid_margin_spin.setToolTip(grid_margin_tooltip)
-        self.pressure_grid_margin_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
-        layout.addWidget(self.pressure_grid_margin_spin, 0, 7)
+        layout.addWidget(self._create_tooltip_label("Peak-position outer offset:", peak_position_outer_offset_tooltip), 1, 4)
+        self.pressure_peak_position_outer_offset_spin = QDoubleSpinBox()
+        self.pressure_peak_position_outer_offset_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
+        self.pressure_peak_position_outer_offset_spin.setRange(
+            PRESSURE_PEAK_POSITION_OUTER_OFFSET_MIN_MM,
+            PRESSURE_PEAK_POSITION_OUTER_OFFSET_MAX_MM,
+        )
+        self.pressure_peak_position_outer_offset_spin.setDecimals(PRESSURE_PEAK_POSITION_OUTER_OFFSET_DECIMALS)
+        self.pressure_peak_position_outer_offset_spin.setSingleStep(PRESSURE_PEAK_POSITION_OUTER_OFFSET_STEP_MM)
+        self.pressure_peak_position_outer_offset_spin.setSuffix(" mm")
+        self.pressure_peak_position_outer_offset_spin.setValue(DEFAULT_PRESSURE_PEAK_POSITION_OUTER_OFFSET_MM)
+        self.pressure_peak_position_outer_offset_spin.setToolTip(peak_position_outer_offset_tooltip)
+        self.pressure_peak_position_outer_offset_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
+        # Compatibility for extensions/tests that still resolve the old widget
+        # attribute.  Persistence below writes only the renamed key.
+        self.pressure_near_outer_peak_offset_spin = self.pressure_peak_position_outer_offset_spin
+        layout.addWidget(self.pressure_peak_position_outer_offset_spin, 1, 5)
 
-        decay_rate_tooltip = (
-            "Distance gain used when estimating pressure-point height from sensor values. "
-            "Higher values increase distance-based amplification."
+        outer_boundary_reach_tooltip = (
+            "Distance from the Mid Boundary to the package Outer Boundary. "
+            "Together with package-center spacing, this defines the fixed local support square."
         )
-        layout.addWidget(self._create_tooltip_label("Decay rate:", decay_rate_tooltip), 1, 0)
-        self.pressure_decay_rate_spin = QDoubleSpinBox()
-        self.pressure_decay_rate_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
-        self.pressure_decay_rate_spin.setRange(PRESSURE_DECAY_RATE_MIN, PRESSURE_DECAY_RATE_MAX)
-        self.pressure_decay_rate_spin.setDecimals(PRESSURE_DECAY_RATE_DECIMALS)
-        self.pressure_decay_rate_spin.setSingleStep(PRESSURE_DECAY_RATE_STEP)
-        self.pressure_decay_rate_spin.setValue(DEFAULT_PRESSURE_DECAY_RATE)
-        self.pressure_decay_rate_spin.setToolTip(decay_rate_tooltip)
-        self.pressure_decay_rate_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
-        layout.addWidget(self.pressure_decay_rate_spin, 1, 1)
-
-        decay_ref_tooltip = (
-            "Reference distance in millimeters for pressure-point height decay shaping."
+        layout.addWidget(self._create_tooltip_label("Outer-Boundary Reach:", outer_boundary_reach_tooltip), 1, 6)
+        self.pressure_outer_boundary_reach_spin = QDoubleSpinBox()
+        self.pressure_outer_boundary_reach_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
+        self.pressure_outer_boundary_reach_spin.setRange(
+            PRESSURE_OUTER_BOUNDARY_REACH_MIN_MM,
+            PRESSURE_OUTER_BOUNDARY_REACH_MAX_MM,
         )
-        layout.addWidget(self._create_tooltip_label("Decay ref:", decay_ref_tooltip), 1, 2)
-        self.pressure_decay_ref_distance_spin = QDoubleSpinBox()
-        self.pressure_decay_ref_distance_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
-        self.pressure_decay_ref_distance_spin.setRange(
-            PRESSURE_DECAY_REF_DISTANCE_MIN_MM,
-            PRESSURE_DECAY_REF_DISTANCE_MAX_MM,
-        )
-        self.pressure_decay_ref_distance_spin.setDecimals(PRESSURE_DECAY_REF_DISTANCE_DECIMALS)
-        self.pressure_decay_ref_distance_spin.setSingleStep(PRESSURE_DECAY_REF_DISTANCE_STEP_MM)
-        self.pressure_decay_ref_distance_spin.setSuffix(" mm")
-        self.pressure_decay_ref_distance_spin.setValue(DEFAULT_PRESSURE_DECAY_REF_DISTANCE_MM)
-        self.pressure_decay_ref_distance_spin.setToolTip(decay_ref_tooltip)
-        self.pressure_decay_ref_distance_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
-        layout.addWidget(self.pressure_decay_ref_distance_spin, 1, 3)
-
-        package_gap_tooltip = (
-            "Physical edge-to-edge distance between adjacent sensor packages in array layouts. "
-            "Single-package pressure maps are unchanged."
-        )
-        layout.addWidget(self._create_tooltip_label("Package gap:", package_gap_tooltip), 1, 4)
-        self.pressure_package_gap_spin = QDoubleSpinBox()
-        self.pressure_package_gap_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
-        self.pressure_package_gap_spin.setRange(PRESSURE_PACKAGE_GAP_MIN_MM, PRESSURE_PACKAGE_GAP_MAX_MM)
-        self.pressure_package_gap_spin.setDecimals(PRESSURE_PACKAGE_GAP_DECIMALS)
-        self.pressure_package_gap_spin.setSingleStep(PRESSURE_PACKAGE_GAP_STEP_MM)
-        self.pressure_package_gap_spin.setSuffix(" mm")
-        self.pressure_package_gap_spin.setValue(DEFAULT_PRESSURE_PACKAGE_GAP_MM)
-        self.pressure_package_gap_spin.setToolTip(package_gap_tooltip)
-        self.pressure_package_gap_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
-        layout.addWidget(self.pressure_package_gap_spin, 1, 5)
-
-        gap_contrast_tooltip = (
-            "Array gap interpolation tuning. When facing edge sensors indicate a pressure point "
-            "between packages, this gain controls how much the estimated gap peak can rise above "
-            "the stronger facing sensor. 0 disables extra peak lift; larger values make between-package "
-            "pressure appear brighter."
-        )
-        layout.addWidget(self._create_tooltip_label("Gap contrast:", gap_contrast_tooltip), 1, 6)
-        self.pressure_gap_contrast_gain_spin = QDoubleSpinBox()
-        self.pressure_gap_contrast_gain_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
-        self.pressure_gap_contrast_gain_spin.setRange(
-            PRESSURE_GAP_CONTRAST_GAIN_MIN,
-            PRESSURE_GAP_CONTRAST_GAIN_MAX,
-        )
-        self.pressure_gap_contrast_gain_spin.setDecimals(PRESSURE_GAP_CONTRAST_GAIN_DECIMALS)
-        self.pressure_gap_contrast_gain_spin.setSingleStep(PRESSURE_GAP_CONTRAST_GAIN_STEP)
-        self.pressure_gap_contrast_gain_spin.setValue(DEFAULT_PRESSURE_GAP_CONTRAST_GAIN)
-        self.pressure_gap_contrast_gain_spin.setToolTip(gap_contrast_tooltip)
-        self.pressure_gap_contrast_gain_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
-        layout.addWidget(self.pressure_gap_contrast_gain_spin, 1, 7)
-
-        gap_fade_tooltip = (
-            "Array gap interpolation tuning. This sets the lateral half-width of pressure in the gap "
-            "as a fraction of the package footprint diameter. Smaller values create a narrow bridge "
-            "between facing sensors; larger values spread the gap pressure wider."
-        )
-        layout.addWidget(self._create_tooltip_label("Gap fade width:", gap_fade_tooltip), 2, 0)
-        self.pressure_gap_fade_width_spin = QDoubleSpinBox()
-        self.pressure_gap_fade_width_spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
-        self.pressure_gap_fade_width_spin.setRange(
-            PRESSURE_GAP_FADE_WIDTH_FRACTION_MIN,
-            PRESSURE_GAP_FADE_WIDTH_FRACTION_MAX,
-        )
-        self.pressure_gap_fade_width_spin.setDecimals(PRESSURE_GAP_FADE_WIDTH_FRACTION_DECIMALS)
-        self.pressure_gap_fade_width_spin.setSingleStep(PRESSURE_GAP_FADE_WIDTH_FRACTION_STEP)
-        self.pressure_gap_fade_width_spin.setValue(DEFAULT_PRESSURE_GAP_FADE_WIDTH_FRACTION)
-        self.pressure_gap_fade_width_spin.setToolTip(gap_fade_tooltip)
-        self.pressure_gap_fade_width_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
-        layout.addWidget(self.pressure_gap_fade_width_spin, 2, 1)
+        self.pressure_outer_boundary_reach_spin.setDecimals(PRESSURE_OUTER_BOUNDARY_REACH_DECIMALS)
+        self.pressure_outer_boundary_reach_spin.setSingleStep(PRESSURE_OUTER_BOUNDARY_REACH_STEP_MM)
+        self.pressure_outer_boundary_reach_spin.setSuffix(" mm")
+        self.pressure_outer_boundary_reach_spin.setValue(DEFAULT_PRESSURE_OUTER_BOUNDARY_REACH_MM)
+        self.pressure_outer_boundary_reach_spin.setToolTip(outer_boundary_reach_tooltip)
+        self.pressure_outer_boundary_reach_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_outer_boundary_reach_spin, 1, 7)
 
         max_intensity_tooltip = "Fixed upper intensity mapped to white or the final pressure-map color."
-        layout.addWidget(self._create_tooltip_label("Max intensity:", max_intensity_tooltip), 2, 2)
+        layout.addWidget(self._create_tooltip_label("Max intensity:", max_intensity_tooltip), 2, 0)
         self.pressure_max_intensity_spin = QDoubleSpinBox()
         self.pressure_max_intensity_spin.setRange(PRESSURE_MAP_MAX_INTENSITY_MIN, PRESSURE_MAP_MAX_INTENSITY_MAX)
         self.pressure_max_intensity_spin.setDecimals(PRESSURE_MAP_MAX_INTENSITY_DECIMALS)
@@ -945,50 +1830,77 @@ class PressureMapPanelMixin:
         self.pressure_max_intensity_spin.setValue(DEFAULT_PRESSURE_MAP_MAX_INTENSITY)
         self.pressure_max_intensity_spin.setToolTip(max_intensity_tooltip)
         self.pressure_max_intensity_spin.valueChanged.connect(self.on_pressure_map_settings_changed)
-        layout.addWidget(self.pressure_max_intensity_spin, 2, 3)
+        layout.addWidget(self.pressure_max_intensity_spin, 2, 1)
 
-        boundary_shape_tooltip = (
-            "Whole-package boundary shape on the pressure map. "
-            "This does not affect the small T/R/L/C/B sensor markers or the pressure-point marker."
+        display_mode_tooltip = (
+            "Magnitude renders inferred relative intensity. Signed renders a "
+            "zero-centered diverging field; it never changes the backend calculation."
         )
-        layout.addWidget(self._create_tooltip_label("Package boundary:", boundary_shape_tooltip), 2, 4)
-        self.pressure_package_boundary_shape_combo = QComboBox()
-        self.pressure_package_boundary_shape_combo.addItems(["Circle", "Square", "None"])
-        self.pressure_package_boundary_shape_combo.setCurrentText(DEFAULT_PRESSURE_PACKAGE_BOUNDARY_SHAPE.title())
-        self.pressure_package_boundary_shape_combo.setToolTip(boundary_shape_tooltip)
-        self.pressure_package_boundary_shape_combo.currentTextChanged.connect(self.on_pressure_map_settings_changed)
-        layout.addWidget(self.pressure_package_boundary_shape_combo, 2, 5)
+        layout.addWidget(self._create_tooltip_label("Display mode:", display_mode_tooltip), 2, 2)
+        self.pressure_display_mode_combo = QComboBox()
+        self.pressure_display_mode_combo.addItems(["Magnitude", "Signed"])
+        self.pressure_display_mode_combo.setCurrentText("Magnitude")
+        self.pressure_display_mode_combo.setToolTip(display_mode_tooltip)
+        self.pressure_display_mode_combo.currentTextChanged.connect(self.on_pressure_map_settings_changed)
+        layout.addWidget(self.pressure_display_mode_combo, 2, 3)
 
-        show_negative_tooltip = (
-            "When enabled, pressure-point placement uses absolute signal magnitude so "
-            "negative release values contribute. When disabled, only positive pressure "
-            "signals influence pressure-point placement."
+        self._add_pressure_shape_spin(
+            layout,
+            "Peak gain slope:",
+            "pressure_peak_gain_slope_spin",
+            DEFAULT_PRESSURE_PEAK_GAIN_SLOPE_PER_MM,
+            2,
+            4,
+            "Additional inferred peak gain per millimetre from a sensor anchor.",
+            suffix=" /mm",
+            minimum=PRESSURE_PEAK_GAIN_SLOPE_MIN_PER_MM,
+            maximum=PRESSURE_PEAK_GAIN_SLOPE_MAX_PER_MM,
+            decimals=PRESSURE_PEAK_GAIN_SLOPE_DECIMALS,
+            step=PRESSURE_PEAK_GAIN_SLOPE_STEP_PER_MM,
         )
-        self.pressure_show_negative_check = QCheckBox("Show negative")
-        self.pressure_show_negative_check.setChecked(DEFAULT_PRESSURE_SHOW_NEGATIVE)
-        self.pressure_show_negative_check.setToolTip(show_negative_tooltip)
-        self.pressure_show_negative_check.toggled.connect(self.on_pressure_map_settings_changed)
-        layout.addWidget(self.pressure_show_negative_check, 3, 0, 1, 4)
-
-        show_marker_tooltip = (
-            "Show calculated pressure-point marker(s) on the pressure map."
-        )
-        self.pressure_show_marker_check = QCheckBox("Show marker")
-        self.pressure_show_marker_check.setChecked(DEFAULT_PRESSURE_SHOW_MARKER)
-        self.pressure_show_marker_check.setToolTip(show_marker_tooltip)
-        self.pressure_show_marker_check.toggled.connect(self.on_pressure_map_settings_changed)
-        layout.addWidget(self.pressure_show_marker_check, 3, 4, 1, 2)
-
-        mirror_tooltip = (
-            "Mirror the pressure-map display horizontally, flipping left-right sensor positions."
-        )
-        self.pressure_mirror_check = QCheckBox("Mirror")
-        self.pressure_mirror_check.setChecked(DEFAULT_PRESSURE_MIRROR)
-        self.pressure_mirror_check.setToolTip(mirror_tooltip)
-        self.pressure_mirror_check.toggled.connect(self.on_pressure_map_settings_changed)
-        layout.addWidget(self.pressure_mirror_check, 3, 6, 1, 2)
+        self._add_pressure_shape_spin(layout, "Peak gain cap:", "pressure_maximum_peak_gain_spin", DEFAULT_PRESSURE_MAXIMUM_PEAK_GAIN, 3, 0, "Maximum inferred peak gain.")
+        self._add_pressure_shape_spin(layout, "Natural reach:", "pressure_natural_decay_reference_distance_spin", DEFAULT_PRESSURE_NATURAL_DECAY_REFERENCE_DISTANCE_MM, 3, 2, "Natural spatial decay reach (mm) at the amplitude reference.")
+        self._add_pressure_shape_spin(layout, "Decay amplitude ref:", "pressure_decay_amplitude_reference_spin", DEFAULT_PRESSURE_DECAY_AMPLITUDE_REFERENCE, 3, 4, "Representative integrated-signal magnitude for the reference decay reach.")
+        self._add_pressure_shape_spin(layout, "Min decay reach:", "pressure_minimum_decay_reach_spin", DEFAULT_PRESSURE_MINIMUM_DECAY_REACH_MM, 3, 6, "Minimum natural spatial decay reach (mm).")
+        self._add_pressure_shape_spin(layout, "Max decay reach:", "pressure_maximum_decay_reach_spin", DEFAULT_PRESSURE_MAXIMUM_DECAY_REACH_MM, 4, 0, "Maximum natural spatial decay reach (mm).")
+        self._add_pressure_shape_spin(layout, "Activity threshold:", "pressure_signal_activity_threshold_spin", DEFAULT_PRESSURE_SIGNAL_ACTIVITY_THRESHOLD, 4, 2, "Signal-domain activity threshold used for all mode selection.")
 
         return group
+
+    def _add_pressure_shape_spin(
+        self,
+        layout,
+        label,
+        attribute,
+        value,
+        row,
+        column,
+        tooltip,
+        *,
+        suffix="",
+        minimum=0.0,
+        maximum=1_000_000.0,
+        decimals=6,
+        step=0.05,
+        slot=None,
+    ):
+        """Add a labelled QDoubleSpinBox and bind it to ``attribute``.
+
+        ``slot`` defaults to the pressure-map settings handler; the shear
+        controls pass their own handler.
+        """
+        layout.addWidget(self._create_tooltip_label(label, tooltip), row, column)
+        spin = QDoubleSpinBox()
+        spin.setMaximumWidth(SHEAR_CONTROL_SPIN_WIDTH_PX)
+        spin.setRange(minimum, maximum)
+        spin.setDecimals(decimals)
+        spin.setSingleStep(step)
+        spin.setSuffix(suffix)
+        spin.setValue(value)
+        spin.setToolTip(tooltip)
+        spin.valueChanged.connect(slot if slot is not None else self.on_pressure_map_settings_changed)
+        setattr(self, attribute, spin)
+        layout.addWidget(spin, row, column + 1)
 
     def _create_pressure_package_gain_settings_group(self) -> QGroupBox:
         group = QGroupBox("Per-Package Gain Calibration")
@@ -1290,6 +2202,7 @@ class PressureMapPanelMixin:
                     if str(package_id).strip()
                 },
             },
+            "pzt_force": self._pzt_force_settings(),
             "visualization": {
                 "arrow_gain": self._spin_float("shear_arrow_gain_spin", DEFAULT_ARROW_GAIN),
                 "arrow_min_threshold": self._spin_float(
@@ -1314,57 +2227,43 @@ class PressureMapPanelMixin:
                     "pressure_sensor_spacing_spin",
                     DEFAULT_PRESSURE_SENSOR_SPACING_MM,
                 ),
-                "circle_diameter_mm": self._spin_float(
-                    "pressure_circle_diameter_spin",
-                    DEFAULT_CIRCLE_DIAMETER_MM,
+                "package_center_spacing_mm": self._spin_float(
+                    "pressure_package_center_spacing_spin",
+                    DEFAULT_PRESSURE_PACKAGE_CENTER_SPACING_MM,
                 ),
-                "grid_resolution": self._spin_int(
-                    "pressure_grid_resolution_spin",
-                    DEFAULT_PRESSURE_GRID_RESOLUTION,
+                "pixels_per_mm": self._spin_float(
+                    "pressure_pixels_per_mm_spin",
+                    DEFAULT_PRESSURE_PIXELS_PER_MM,
                 ),
-                "grid_margin": self._spin_int(
-                    "pressure_grid_margin_spin",
-                    DEFAULT_PRESSURE_GRID_MARGIN,
+                "peak_gain_slope_per_mm": self._spin_float("pressure_peak_gain_slope_spin", DEFAULT_PRESSURE_PEAK_GAIN_SLOPE_PER_MM),
+                "maximum_peak_gain": self._spin_float("pressure_maximum_peak_gain_spin", DEFAULT_PRESSURE_MAXIMUM_PEAK_GAIN),
+                "natural_decay_reference_distance_mm": self._spin_float("pressure_natural_decay_reference_distance_spin", DEFAULT_PRESSURE_NATURAL_DECAY_REFERENCE_DISTANCE_MM),
+                "decay_amplitude_reference": self._spin_float("pressure_decay_amplitude_reference_spin", DEFAULT_PRESSURE_DECAY_AMPLITUDE_REFERENCE),
+                "minimum_decay_reach_mm": self._spin_float("pressure_minimum_decay_reach_spin", DEFAULT_PRESSURE_MINIMUM_DECAY_REACH_MM),
+                "maximum_decay_reach_mm": self._spin_float("pressure_maximum_decay_reach_spin", DEFAULT_PRESSURE_MAXIMUM_DECAY_REACH_MM),
+                "signal_activity_threshold": self._spin_float("pressure_signal_activity_threshold_spin", DEFAULT_PRESSURE_SIGNAL_ACTIVITY_THRESHOLD),
+                "peak_position_outer_offset_mm": self._spin_float(
+                    self._peak_position_outer_offset_widget_name(),
+                    DEFAULT_PRESSURE_PEAK_POSITION_OUTER_OFFSET_MM,
                 ),
-                "decay_rate": self._spin_float(
-                    "pressure_decay_rate_spin",
-                    DEFAULT_PRESSURE_DECAY_RATE,
-                ),
-                "decay_ref_distance_mm": self._spin_float(
-                    "pressure_decay_ref_distance_spin",
-                    DEFAULT_PRESSURE_DECAY_REF_DISTANCE_MM,
-                ),
-                "package_gap_mm": self._spin_float(
-                    "pressure_package_gap_spin",
-                    DEFAULT_PRESSURE_PACKAGE_GAP_MM,
-                ),
-                "gap_contrast_gain": self._spin_float(
-                    "pressure_gap_contrast_gain_spin",
-                    DEFAULT_PRESSURE_GAP_CONTRAST_GAIN,
-                ),
-                "gap_fade_width_fraction": self._spin_float(
-                    "pressure_gap_fade_width_spin",
-                    DEFAULT_PRESSURE_GAP_FADE_WIDTH_FRACTION,
+                "outer_boundary_reach_mm": self._spin_float(
+                    "pressure_outer_boundary_reach_spin",
+                    DEFAULT_PRESSURE_OUTER_BOUNDARY_REACH_MM,
                 ),
                 "max_intensity": self._spin_float(
                     "pressure_max_intensity_spin",
                     DEFAULT_PRESSURE_MAP_MAX_INTENSITY,
+                ),
+                "display_mode": (
+                    PRESSURE_DISPLAY_MODE_SIGNED
+                    if self._combo_text("pressure_display_mode_combo", "Magnitude").lower() == "signed"
+                    else PRESSURE_DISPLAY_MODE_MAGNITUDE
                 ),
                 "legend_min_value": self._spin_float("pressure_color_min_spin", DEFAULT_SHEAR_NOISE_THRESHOLD),
                 "legend_max_value": self._spin_float("pressure_color_max_spin", DEFAULT_PRESSURE_MAP_MAX_INTENSITY),
                 "color_scale": self._combo_text("pressure_map_color_scale_combo", "Grayscale"),
                 "legend_range_count": self._spin_int("pressure_map_color_range_count_spin", 10),
                 "legend_unit": self._line_edit_text("pressure_map_color_unit_edit"),
-                "package_boundary_shape": self._normalized_pressure_package_boundary_shape(
-                    self._combo_text(
-                        "pressure_package_boundary_shape_combo",
-                        DEFAULT_PRESSURE_PACKAGE_BOUNDARY_SHAPE,
-                    )
-                ),
-                "show_negative": self._check_bool(
-                    "pressure_show_negative_check",
-                    DEFAULT_PRESSURE_SHOW_NEGATIVE,
-                ),
                 "show_marker": self._check_bool(
                     "pressure_show_marker_check",
                     DEFAULT_PRESSURE_SHOW_MARKER,
@@ -1372,6 +2271,30 @@ class PressureMapPanelMixin:
                 "mirror": self._check_bool(
                     "pressure_mirror_check",
                     DEFAULT_PRESSURE_MIRROR,
+                ),
+                "show_near_outer_boundary": self._check_bool(
+                    "pressure_show_near_outer_boundary_check",
+                    DEFAULT_PRESSURE_SHOW_NEAR_OUTER_BOUNDARY,
+                ),
+                "show_outer_boundary": self._check_bool(
+                    "pressure_show_outer_boundary_check",
+                    DEFAULT_PRESSURE_SHOW_OUTER_BOUNDARY,
+                ),
+                "show_mid_boundary": self._check_bool(
+                    "pressure_show_mid_boundary_check",
+                    DEFAULT_PRESSURE_SHOW_MID_BOUNDARY,
+                ),
+                "show_sensor_markers": self._check_bool(
+                    "pressure_show_sensor_markers_check",
+                    DEFAULT_PRESSURE_SHOW_SENSOR_MARKERS,
+                ),
+                "mask_enabled": self._check_bool(
+                    "pressure_map_mask_enabled_check",
+                    DEFAULT_PRESSURE_MASK_ENABLED,
+                ),
+                "mask_name": self._combo_text(
+                    "pressure_map_mask_name_combo",
+                    DEFAULT_PRESSURE_MASK_NAME,
                 ),
             },
         }
@@ -1536,6 +2459,7 @@ class PressureMapPanelMixin:
         processing = self._settings_section(settings, "processing")
         visualization = self._settings_section(settings, "visualization")
         pressure_map = self._settings_section(settings, "pressure_map")
+        pzt_force = self._settings_section(settings, "pzt_force")
         changed = False
 
         changed |= self._set_spin_value("signal_integration_hpf_spin", signal_integration, "hpf_cutoff_hz", float)
@@ -1601,6 +2525,40 @@ class PressureMapPanelMixin:
                 "show_rs2",
             )
         changed |= self._set_spin_value("shear_noise_threshold_spin", processing, "noise_threshold", float)
+        legacy_capacitance = pzt_force.get("capacitance_value")
+        center_capacitance = pzt_force.get("center_capacitance_value", legacy_capacitance)
+        outer_capacitance = pzt_force.get("outer_capacitance_value", legacy_capacitance)
+        if center_capacitance is not None:
+            changed |= self._set_spin_value(
+                "force_pzt_center_capacitance_spin",
+                {"center_capacitance_value": center_capacitance},
+                "center_capacitance_value",
+                float,
+            )
+        if outer_capacitance is not None:
+            changed |= self._set_spin_value(
+                "force_pzt_outer_capacitance_spin",
+                {"outer_capacitance_value": outer_capacitance},
+                "outer_capacitance_value",
+                float,
+            )
+        changed |= self._set_combo_value("force_pzt_capacitance_unit_combo", pzt_force, "capacitance_unit")
+        changed |= self._set_spin_value("force_pzt_rleak_spin", pzt_force, "rleak_ohm", float)
+        changed |= self._set_spin_value("force_pzt_d33_spin", pzt_force, "d33_pc_per_n", float)
+        changed |= self._set_spin_value("force_pzt_noise_spin", pzt_force, "noise_threshold_v", float)
+        changed |= self._set_check_value("force_pzt_off_mux_check", pzt_force, "off_mux_leak_enabled")
+        changed |= self._set_spin_value("force_pzt_off_mux_rleak_spin", pzt_force, "off_mux_rleak_ohm", float)
+        changed |= self._set_check_value("force_pzt_stuck_failsafe_check", pzt_force, "stuck_force_failsafe_enabled")
+        changed |= self._set_spin_value("force_pzt_stuck_hold_spin", pzt_force, "stuck_force_quiet_hold_s", float)
+        changed |= self._set_spin_value("force_pzt_stuck_tau_spin", pzt_force, "stuck_force_decay_tau_s", float)
+        changed |= self._set_spin_value("force_pzt_zero_floor_spin", pzt_force, "force_zero_band_min_n", float)
+        changed |= self._set_spin_value("force_pzt_zero_band_fraction_spin", pzt_force, "force_zero_band_fraction", float)
+        changed |= self._set_spin_value("force_pzt_min_event_peak_spin", pzt_force, "force_zero_min_event_peak_n", float)
+        changed |= self._set_spin_value("force_pzt_quiet_release_spin", pzt_force, "quiet_hold_release_fraction", float)
+        changed |= self._set_spin_value("force_pzt_quiet_hold_spin", pzt_force, "quiet_hold_clear_s", float)
+        changed |= self._set_spin_value("force_display_max_n_spin", pzt_force, "display_max_force_n", float)
+        changed |= self._set_spin_value("force_arrow_gain_spin", pzt_force, "force_arrow_gain_mm_per_n", float)
+        changed |= self._set_spin_value("force_arrow_threshold_spin", pzt_force, "force_arrow_min_threshold_n", float)
 
         raw_package_gains = processing.get("package_sensor_gains", settings.get("package_sensor_gains", {}))
         if not raw_package_gains:
@@ -1635,30 +2593,75 @@ class PressureMapPanelMixin:
             "arrow_width_scales",
         )
         changed |= self._set_spin_value("pressure_sensor_spacing_spin", pressure_map, "sensor_spacing_mm", float)
-        changed |= self._set_spin_value("pressure_circle_diameter_spin", pressure_map, "circle_diameter_mm", float)
-        changed |= self._set_spin_value("pressure_grid_resolution_spin", pressure_map, "grid_resolution", int)
-        changed |= self._set_spin_value("pressure_grid_margin_spin", pressure_map, "grid_margin", int)
-        changed |= self._set_spin_value("pressure_decay_rate_spin", pressure_map, "decay_rate", float)
         changed |= self._set_spin_value(
-            "pressure_decay_ref_distance_spin",
+            "pressure_package_center_spacing_spin",
             pressure_map,
-            "decay_ref_distance_mm",
+            "package_center_spacing_mm",
             float,
         )
-        changed |= self._set_spin_value("pressure_package_gap_spin", pressure_map, "package_gap_mm", float)
-        changed |= self._set_spin_value("pressure_gap_contrast_gain_spin", pressure_map, "gap_contrast_gain", float)
+        changed |= self._set_spin_value("pressure_pixels_per_mm_spin", pressure_map, "pixels_per_mm", float)
         changed |= self._set_spin_value(
-            "pressure_gap_fade_width_spin",
-            pressure_map,
-            "gap_fade_width_fraction",
+            self._peak_position_outer_offset_widget_name(),
+            pressure_map if "peak_position_outer_offset_mm" in pressure_map else {
+                "peak_position_outer_offset_mm": pressure_map.get(
+                    "near_outer_peak_offset_mm", DEFAULT_PRESSURE_PEAK_POSITION_OUTER_OFFSET_MM
+                )
+            },
+            "peak_position_outer_offset_mm",
             float,
         )
+        if pressure_map.get("outer_boundary_reach_mm") is None:
+            changed |= self._set_spin_value(
+                "pressure_outer_boundary_reach_spin",
+                {"outer_boundary_reach_mm": DEFAULT_PRESSURE_OUTER_BOUNDARY_REACH_MM},
+                "outer_boundary_reach_mm",
+                float,
+            )
+        else:
+            changed |= self._set_spin_value(
+                "pressure_outer_boundary_reach_spin",
+                pressure_map,
+                "outer_boundary_reach_mm",
+                float,
+            )
+        # Retired geometry controls cannot be translated unambiguously. Use
+        # the new physical defaults whenever a legacy payload omits a field.
+        for widget_name, key, default in (
+            ("pressure_sensor_spacing_spin", "sensor_spacing_mm", DEFAULT_PRESSURE_SENSOR_SPACING_MM),
+            ("pressure_package_center_spacing_spin", "package_center_spacing_mm", DEFAULT_PRESSURE_PACKAGE_CENTER_SPACING_MM),
+            ("pressure_pixels_per_mm_spin", "pixels_per_mm", DEFAULT_PRESSURE_PIXELS_PER_MM),
+            ("pressure_outer_boundary_reach_spin", "outer_boundary_reach_mm", DEFAULT_PRESSURE_OUTER_BOUNDARY_REACH_MM),
+        ):
+            if key not in pressure_map:
+                changed |= self._set_spin_value(widget_name, {key: default}, key, float)
         changed |= self._set_spin_value(
             "pressure_max_intensity_spin",
             pressure_map,
             "max_intensity",
             float,
         )
+        for widget_name, key, default in (
+            ("pressure_peak_gain_slope_spin", "peak_gain_slope_per_mm", DEFAULT_PRESSURE_PEAK_GAIN_SLOPE_PER_MM),
+            ("pressure_maximum_peak_gain_spin", "maximum_peak_gain", DEFAULT_PRESSURE_MAXIMUM_PEAK_GAIN),
+            ("pressure_natural_decay_reference_distance_spin", "natural_decay_reference_distance_mm", pressure_map.get("decay_ref_distance_mm", DEFAULT_PRESSURE_NATURAL_DECAY_REFERENCE_DISTANCE_MM)),
+            ("pressure_decay_amplitude_reference_spin", "decay_amplitude_reference", DEFAULT_PRESSURE_DECAY_AMPLITUDE_REFERENCE),
+            ("pressure_minimum_decay_reach_spin", "minimum_decay_reach_mm", DEFAULT_PRESSURE_MINIMUM_DECAY_REACH_MM),
+            ("pressure_maximum_decay_reach_spin", "maximum_decay_reach_mm", DEFAULT_PRESSURE_MAXIMUM_DECAY_REACH_MM),
+            ("pressure_signal_activity_threshold_spin", "signal_activity_threshold", DEFAULT_PRESSURE_SIGNAL_ACTIVITY_THRESHOLD),
+        ):
+            changed |= self._set_spin_value(widget_name, pressure_map if key in pressure_map else {key: default}, key, float)
+        if "display_mode" in pressure_map:
+            changed |= self._set_combo_value(
+                "pressure_display_mode_combo",
+                {"display_mode": "Signed" if pressure_map["display_mode"] == PRESSURE_DISPLAY_MODE_SIGNED else "Magnitude"},
+                "display_mode",
+            )
+        elif "show_negative" in pressure_map:
+            changed |= self._set_combo_value(
+                "pressure_display_mode_combo",
+                {"display_mode": "Signed" if pressure_map["show_negative"] else "Magnitude"},
+                "display_mode",
+            )
         changed |= self._set_spin_value("pressure_color_min_spin", pressure_map, "legend_min_value", float)
         changed |= self._set_spin_value("pressure_color_max_spin", pressure_map, "legend_max_value", float)
         changed |= self._set_combo_value("pressure_map_color_scale_combo", pressure_map, "color_scale")
@@ -1671,16 +2674,72 @@ class PressureMapPanelMixin:
         if "legend_unit" in pressure_map and hasattr(self, "pressure_map_color_unit_edit"):
             self.pressure_map_color_unit_edit.setText(str(pressure_map["legend_unit"]))
             changed = True
-        boundary_shape_key = "package_boundary_shape" if "package_boundary_shape" in pressure_map else "sensor_marker_shape"
-        if boundary_shape_key in pressure_map:
-            changed |= self._set_combo_value(
-                "pressure_package_boundary_shape_combo",
-                {"package_boundary_shape": self._pressure_boundary_shape_label(pressure_map.get(boundary_shape_key))},
-                "package_boundary_shape",
-            )
-        changed |= self._set_check_value("pressure_show_negative_check", pressure_map, "show_negative")
         changed |= self._set_check_value("pressure_show_marker_check", pressure_map, "show_marker")
         changed |= self._set_check_value("pressure_mirror_check", pressure_map, "mirror")
+        changed |= self._set_check_value(
+            "pressure_show_near_outer_boundary_check",
+            pressure_map,
+            "show_near_outer_boundary",
+        )
+        changed |= self._set_check_value(
+            "pressure_show_outer_boundary_check",
+            pressure_map,
+            "show_outer_boundary",
+        )
+        changed |= self._set_check_value(
+            "pressure_show_mid_boundary_check",
+            pressure_map,
+            "show_mid_boundary",
+        )
+        changed |= self._set_check_value(
+            "pressure_show_sensor_markers_check",
+            pressure_map,
+            "show_sensor_markers",
+        )
+        changed |= self._restore_pressure_map_mask_settings(pressure_map)
+        for widget_name, key, default in (
+            (
+                "pressure_show_near_outer_boundary_check",
+                "show_near_outer_boundary",
+                DEFAULT_PRESSURE_SHOW_NEAR_OUTER_BOUNDARY,
+            ),
+            (
+                "pressure_show_outer_boundary_check",
+                "show_outer_boundary",
+                DEFAULT_PRESSURE_SHOW_OUTER_BOUNDARY,
+            ),
+            (
+                "pressure_show_mid_boundary_check",
+                "show_mid_boundary",
+                DEFAULT_PRESSURE_SHOW_MID_BOUNDARY,
+            ),
+            (
+                "pressure_show_sensor_markers_check",
+                "show_sensor_markers",
+                DEFAULT_PRESSURE_SHOW_SENSOR_MARKERS,
+            ),
+        ):
+            if key not in pressure_map:
+                changed |= self._set_check_value(widget_name, {key: default}, key)
+
+        legacy_boundary_shape = pressure_map.get(
+            "package_boundary_shape",
+            pressure_map.get("sensor_marker_shape"),
+        )
+        if legacy_boundary_shape is not None:
+            normalized_shape = str(legacy_boundary_shape).strip().lower()
+            if "show_near_outer_boundary" not in pressure_map:
+                changed |= self._set_check_value(
+                    "pressure_show_near_outer_boundary_check",
+                    {"show_near_outer_boundary": normalized_shape == "circle"},
+                    "show_near_outer_boundary",
+                )
+            if "show_outer_boundary" not in pressure_map:
+                changed |= self._set_check_value(
+                    "pressure_show_outer_boundary_check",
+                    {"show_outer_boundary": normalized_shape == "square"},
+                    "show_outer_boundary",
+                )
 
         if changed:
             self._refresh_pressure_package_gain_controls()
@@ -1688,11 +2747,53 @@ class PressureMapPanelMixin:
             self.on_shear_processing_settings_changed()
             self.on_shear_visualization_settings_changed()
             self.on_pressure_map_settings_changed()
+            self.on_pressure_mask_settings_changed()
+        return changed
+
+    def _restore_pressure_map_mask_settings(self, pressure_map: dict) -> bool:
+        """Restore mask state once, safely disabling a no-longer-available name."""
+
+        enabled_check = getattr(self, "pressure_map_mask_enabled_check", None)
+        name_combo = getattr(self, "pressure_map_mask_name_combo", None)
+        if enabled_check is None or name_combo is None:
+            return False
+
+        self._reload_pressure_map_mask_selector()
+        requested_name = str(pressure_map.get("mask_name", DEFAULT_PRESSURE_MASK_NAME)).strip()
+        selected_name = (
+            requested_name
+            if requested_name in getattr(self, "pressure_map_masks_by_name", {})
+            else DEFAULT_PRESSURE_MASK_NAME
+        )
+        requested_enabled = bool(pressure_map.get("mask_enabled", DEFAULT_PRESSURE_MASK_ENABLED))
+        effective_enabled = bool(requested_enabled and selected_name != DEFAULT_PRESSURE_MASK_NAME)
+        changed = (
+            bool(enabled_check.isChecked()) != effective_enabled
+            or str(name_combo.currentText()) != selected_name
+        )
+
+        check_signal_state = enabled_check.blockSignals(True) if hasattr(enabled_check, "blockSignals") else None
+        combo_signal_state = name_combo.blockSignals(True) if hasattr(name_combo, "blockSignals") else None
+        try:
+            enabled_check.setChecked(effective_enabled)
+            name_combo.setCurrentText(selected_name)
+        finally:
+            if check_signal_state is not None:
+                enabled_check.blockSignals(check_signal_state)
+            if combo_signal_state is not None:
+                name_combo.blockSignals(combo_signal_state)
         return changed
 
     def _settings_section(self, settings: dict, section_name: str) -> dict:
         section = settings.get(section_name)
         return section if isinstance(section, dict) else settings
+
+    def _peak_position_outer_offset_widget_name(self) -> str:
+        """Return the renamed control while supporting pre-rename harnesses."""
+
+        if hasattr(self, "pressure_peak_position_outer_offset_spin"):
+            return "pressure_peak_position_outer_offset_spin"
+        return "pressure_near_outer_peak_offset_spin"
 
     def _spin_float(self, widget_name: str, fallback: float) -> float:
         widget = getattr(self, widget_name, None)
@@ -1723,15 +2824,6 @@ class PressureMapPanelMixin:
         if widget is None or not hasattr(widget, "text"):
             return fallback
         return str(widget.text())
-
-    def _normalized_pressure_package_boundary_shape(self, value: object) -> str:
-        normalized = str(value).strip().lower()
-        if normalized not in PRESSURE_PACKAGE_BOUNDARY_SHAPES:
-            return DEFAULT_PRESSURE_PACKAGE_BOUNDARY_SHAPE
-        return normalized
-
-    def _pressure_boundary_shape_label(self, value: object) -> str:
-        return self._normalized_pressure_package_boundary_shape(value).title()
 
     def _set_spin_value(self, widget_name: str, settings: dict, key: str, value_type: type) -> bool:
         if key not in settings:
@@ -1906,6 +2998,9 @@ class PressureMapPanelMixin:
             arrow_base_width_px=float(self.shear_arrow_base_width_spin.value()),
         )
         self._update_pressure_map_from_latest()
+        # Shared unitless parameters (max length, width scaling, base width)
+        # propagate to the Force widgets too; gain/threshold stay Force-specific.
+        self._apply_force_arrow_settings()
         self.save_last_shear_settings()
 
     def on_pressure_map_settings_changed(self, _value: object | None = None) -> None:
@@ -1930,81 +3025,109 @@ class PressureMapPanelMixin:
                 "pressure_show_marker_check",
                 DEFAULT_PRESSURE_SHOW_MARKER,
             )
-            package_boundary_shape = self._normalized_pressure_package_boundary_shape(
-                self._combo_text(
-                    "pressure_package_boundary_shape_combo",
-                    DEFAULT_PRESSURE_PACKAGE_BOUNDARY_SHAPE,
-                )
-            )
             min_intensity, max_intensity, _unit = self._get_pressure_map_color_scale_limits()
             color_scale = self._combo_text("pressure_map_color_scale_combo", "Grayscale")
             mirror = self._check_bool(
                 "pressure_mirror_check",
                 DEFAULT_PRESSURE_MIRROR,
             )
-            if hasattr(self, "pressure_map_widget"):
-                self.pressure_map_widget.configure_markers(show_marker=show_marker)
-                self.pressure_map_widget.configure_package_boundary(boundary_shape=package_boundary_shape)
-                self.pressure_map_widget.configure_intensity(max_intensity=max_intensity)
-                self.pressure_map_widget.configure_noise_floor(
+            show_near_outer_boundary = self._check_bool(
+                "pressure_show_near_outer_boundary_check",
+                DEFAULT_PRESSURE_SHOW_NEAR_OUTER_BOUNDARY,
+            )
+            show_outer_boundary = self._check_bool(
+                "pressure_show_outer_boundary_check",
+                DEFAULT_PRESSURE_SHOW_OUTER_BOUNDARY,
+            )
+            show_mid_boundary = self._check_bool(
+                "pressure_show_mid_boundary_check",
+                DEFAULT_PRESSURE_SHOW_MID_BOUNDARY,
+            )
+            show_sensor_markers = self._check_bool(
+                "pressure_show_sensor_markers_check",
+                DEFAULT_PRESSURE_SHOW_SENSOR_MARKERS,
+            )
+            for widget in self._pressure_map_display_widgets():
+                # Force Display's dedicated render path always clears peak
+                # markers, while every other presentation setting is shared.
+                widget.configure_markers(
+                    show_marker=show_marker,
+                    show_sensor_markers=show_sensor_markers,
+                )
+                widget.configure_intensity(max_intensity=max_intensity)
+                widget.configure_noise_floor(
                     noise_floor=min_intensity
                 )
-                self.pressure_map_widget.configure_color_scale(color_scale=color_scale)
-                self.pressure_map_widget.configure_mirror(mirror=mirror)
+                widget.configure_color_scale(color_scale=color_scale)
+                widget.configure_mirror(mirror=mirror)
+                widget.configure_display_mode(
+                    display_mode=(
+                        PRESSURE_DISPLAY_MODE_SIGNED
+                        if self._combo_text("pressure_display_mode_combo", "Magnitude").lower() == "signed"
+                        else PRESSURE_DISPLAY_MODE_MAGNITUDE
+                    )
+                )
+                widget.configure_boundary_visibility(
+                    show_near_outer_boundary=show_near_outer_boundary,
+                    show_outer_boundary=show_outer_boundary,
+                    show_mid_boundary=show_mid_boundary,
+                )
             self.update_pressure_map_color_scale_legend()
 
             sensor_spacing_mm = self._spin_float(
                 "pressure_sensor_spacing_spin",
                 DEFAULT_PRESSURE_SENSOR_SPACING_MM,
             )
-            circle_diameter_mm = self._spin_float(
-                "pressure_circle_diameter_spin",
-                DEFAULT_CIRCLE_DIAMETER_MM,
+            package_center_spacing_mm = self._spin_float(
+                "pressure_package_center_spacing_spin",
+                DEFAULT_PRESSURE_PACKAGE_CENTER_SPACING_MM,
             )
-            show_negative = self._check_bool(
-                "pressure_show_negative_check",
-                DEFAULT_PRESSURE_SHOW_NEGATIVE,
+            outer_boundary_reach_mm = self._spin_float(
+                "pressure_outer_boundary_reach_spin",
+                DEFAULT_PRESSURE_OUTER_BOUNDARY_REACH_MM,
             )
             self.normal_force_calculator = NormalForceCalculator(sensor_spacing_mm=sensor_spacing_mm)
-            self.pressure_map_generator = PressureMapGenerator(
-                circle_diameter_mm=circle_diameter_mm,
+            self.pressure_map_geometry = PressureMapGeometry(
                 sensor_spacing_mm=sensor_spacing_mm,
-                grid_margin=self._spin_int("pressure_grid_margin_spin", DEFAULT_PRESSURE_GRID_MARGIN),
-                grid_resolution=self._spin_int(
-                    "pressure_grid_resolution_spin",
-                    DEFAULT_PRESSURE_GRID_RESOLUTION,
+                package_center_spacing_mm=package_center_spacing_mm,
+                outer_boundary_reach_mm=outer_boundary_reach_mm,
+                peak_position_outer_offset_mm=self._spin_float(
+                    self._peak_position_outer_offset_widget_name(),
+                    DEFAULT_PRESSURE_PEAK_POSITION_OUTER_OFFSET_MM,
                 ),
-                decay_rate=self._spin_float(
-                    "pressure_decay_rate_spin",
-                    DEFAULT_PRESSURE_DECAY_RATE,
+                pixels_per_mm=self._spin_float(
+                    "pressure_pixels_per_mm_spin",
+                    DEFAULT_PRESSURE_PIXELS_PER_MM,
                 ),
-                decay_ref_distance_mm=self._spin_float(
-                    "pressure_decay_ref_distance_spin",
-                    DEFAULT_PRESSURE_DECAY_REF_DISTANCE_MM,
-                ),
-                show_negative=show_negative,
+            )
+            self.pressure_map_generator = PressureMapGenerator(
+                geometry=self.pressure_map_geometry,
+                peak_gain_slope_per_mm=self._spin_float("pressure_peak_gain_slope_spin", DEFAULT_PRESSURE_PEAK_GAIN_SLOPE_PER_MM),
+                maximum_peak_gain=self._spin_float("pressure_maximum_peak_gain_spin", DEFAULT_PRESSURE_MAXIMUM_PEAK_GAIN),
+                natural_decay_reference_distance_mm=self._spin_float("pressure_natural_decay_reference_distance_spin", DEFAULT_PRESSURE_NATURAL_DECAY_REFERENCE_DISTANCE_MM),
+                decay_amplitude_reference=self._spin_float("pressure_decay_amplitude_reference_spin", DEFAULT_PRESSURE_DECAY_AMPLITUDE_REFERENCE),
+                minimum_decay_reach_mm=self._spin_float("pressure_minimum_decay_reach_spin", DEFAULT_PRESSURE_MINIMUM_DECAY_REACH_MM),
+                maximum_decay_reach_mm=self._spin_float("pressure_maximum_decay_reach_spin", DEFAULT_PRESSURE_MAXIMUM_DECAY_REACH_MM),
+                signal_activity_threshold=self._spin_float("pressure_signal_activity_threshold_spin", DEFAULT_PRESSURE_SIGNAL_ACTIVITY_THRESHOLD),
             )
             self.pressure_map_array_generator = PressureMapArrayGenerator(
-                circle_diameter_mm=circle_diameter_mm,
-                package_gap_mm=self._spin_float(
-                    "pressure_package_gap_spin",
-                    DEFAULT_PRESSURE_PACKAGE_GAP_MM,
-                ),
-                gap_contrast_gain=self._spin_float(
-                    "pressure_gap_contrast_gain_spin",
-                    DEFAULT_PRESSURE_GAP_CONTRAST_GAIN,
-                ),
-                gap_fade_width_fraction=self._spin_float(
-                    "pressure_gap_fade_width_spin",
-                    DEFAULT_PRESSURE_GAP_FADE_WIDTH_FRACTION,
-                ),
-                show_negative=show_negative,
+                geometry=self.pressure_map_geometry,
             )
+            self._rebuild_pressure_force_engine()
             self._update_pressure_map_from_latest()
             self.save_last_shear_settings()
         except Exception as exc:
             if hasattr(self, "log_status"):
                 self.log_status(f"ERROR updating Pressure Map settings: {exc}")
+
+    def _pressure_map_display_widgets(self) -> list[PressureMapWidget]:
+        return [
+            widget for widget in (
+                getattr(self, "pressure_map_widget", None),
+                getattr(self, "force_pressure_map_widget", None),
+                *getattr(self, "force_package_widgets", {}).values(),
+            ) if widget is not None
+        ]
 
     def on_signal_integration_reset_clicked(self) -> None:
         """Reset the integrated voltage preview to the latest display window.
@@ -2091,7 +3214,7 @@ class PressureMapPanelMixin:
             avg_sample_time_sec = getattr(self, "_cached_avg_sample_time_sec", 0.0)
             repeat_count = max(1, int(self.config.get("repeat", 1)))
             package_layout = self._get_signal_integration_package_layout()
-            if self._is_pressure_map_settings_tab_active():
+            if self._is_pressure_map_settings_visible():
                 self._refresh_pressure_package_gain_controls(package_layout)
             multi_package_force_mode = (
                 timeline_mode != "PZR" and self._is_multi_package_force_mode(package_layout)
@@ -2204,25 +3327,52 @@ class PressureMapPanelMixin:
         finally:
             self._signal_integration_updating_plot = False
 
+    def _pressure_map_dock_is_visible(self, dock_name: str, fallback: bool = False) -> bool:
+        """Return whether a dock's content is actually visible to the user."""
+
+        dock = getattr(self, dock_name, None)
+        if dock is None:
+            return fallback
+        visible_docks = getattr(self, "_pressure_map_visible_dock_names", None)
+        if visible_docks is not None:
+            return dock_name in visible_docks
+        content = dock.widget() if hasattr(dock, "widget") else None
+        return bool(content is not None and content.isVisible())
+
+    def _is_pressure_map_display_visible(self) -> bool:
+        return self._pressure_map_dock_is_visible("pressure_map_display_dock", fallback=True)
+
+    def _is_pressure_map_force_display_visible(self) -> bool:
+        return self._pressure_map_dock_is_visible("pressure_map_force_display_dock")
+
+    def _is_pressure_map_settings_visible(self) -> bool:
+        return self._pressure_map_dock_is_visible("pressure_map_settings_dock")
+
+    def _has_visible_pressure_map_display(self) -> bool:
+        return (
+            self._is_pressure_map_display_visible()
+            or self._is_pressure_map_force_display_visible()
+        )
+
+    def _has_visible_floating_pressure_map_display(self) -> bool:
+        return any(
+            bool(dock is not None and dock.isFloating() and self._pressure_map_dock_is_visible(name))
+            for name, dock in (
+                ("pressure_map_display_dock", getattr(self, "pressure_map_display_dock", None)),
+                ("pressure_map_force_display_dock", getattr(self, "pressure_map_force_display_dock", None)),
+            )
+        )
+
     def _should_refresh_signal_integration_plot(self) -> bool:
         outer_tab_visible = True
         if hasattr(self, "should_update_signal_integration_display"):
             outer_tab_visible = bool(self.should_update_signal_integration_display())
         elif hasattr(self, "get_current_visualization_tab_name"):
             outer_tab_visible = self.get_current_visualization_tab_name() == PRESSURE_MAP_TAB_NAME
-        return outer_tab_visible and self._is_pressure_map_display_tab_active()
-
-    def _is_pressure_map_display_tab_active(self) -> bool:
-        inner_tabs = getattr(self, "pressure_map_inner_tabs", None)
-        if inner_tabs is None:
-            return True
-        return inner_tabs.currentIndex() == getattr(self, "pressure_map_display_tab_index", 0)
-
-    def _is_pressure_map_settings_tab_active(self) -> bool:
-        inner_tabs = getattr(self, "pressure_map_inner_tabs", None)
-        if inner_tabs is None:
-            return False
-        return inner_tabs.currentIndex() == getattr(self, "pressure_map_settings_tab_index", 1)
+        return (
+            self._has_visible_pressure_map_display()
+            and (outer_tab_visible or self._has_visible_floating_pressure_map_display())
+        )
 
     def _should_refresh_pressure_map_display(self) -> bool:
         return self._should_refresh_signal_integration_plot()
@@ -2352,6 +3502,20 @@ class PressureMapPanelMixin:
             })
         return layout
 
+    def _get_force_display_grid_positions(self) -> dict[str, tuple[int, int] | None]:
+        """Return the configured physical array, independent of active inputs.
+
+        Acquisition selection decides which packages contribute samples; the
+        Force Display layout must instead remain the complete configured PZT
+        array so inactive packages render as zero-valued package fields.
+        """
+        if hasattr(self, "is_array_sensor_selection_mode") and self.is_array_sensor_selection_mode():
+            return dict(self._get_array_sensor_grid_positions())
+        return {
+            str(item["sensor_id"]): item.get("grid_position")
+            for item in self._get_signal_integration_package_layout()
+        }
+
     def _is_multi_package_force_mode(self, package_layout: list[dict[str, object]]) -> bool:
         if not (hasattr(self, "is_array_sensor_selection_mode") and self.is_array_sensor_selection_mode()):
             return False
@@ -2463,52 +3627,121 @@ class PressureMapPanelMixin:
             self._update_pressure_map_from_latest()
             return
 
-        calibrated_values = self._calibrate_signal_integration_values_for_shear(latest_values, package_id)
-        self._latest_shear_result = self.shear_detector.detect(calibrated_values)
-        self._update_pressure_map_from_latest()
+        # The package-display builder owns the complete package pipeline,
+        # including shear detection.  Reusing it avoids an otherwise unused
+        # preliminary single-package shear result.
+        if package_id is not None:
+            self._update_pressure_map_from_latest()
+            return
 
-    def _update_pressure_map_from_latest(self) -> None:
+        calibrated_values = self._calibrate_signal_integration_values_for_shear(latest_values, package_id)
+        shear_result = self.shear_detector.detect(calibrated_values)
+        self._update_pressure_map_from_latest(shear_result)
+
+    def _update_pressure_map_from_latest(
+        self,
+        pending_shear_result: ShearResult | None = None,
+    ) -> None:
         if not hasattr(self, "pressure_map_widget"):
             return
         if not self._should_refresh_pressure_map_display():
             return
-        if self._latest_shear_result is None:
-            self._latest_normal_force_result = None
-            self._latest_pressure_map_result = None
-            self.pressure_map_widget.update_display(None, None, None)
-            return
-
+        shear_result = (
+            pending_shear_result
+            if pending_shear_result is not None
+            else self._latest_shear_result
+        )
         try:
             package_displays = self._build_pressure_map_package_displays()
+            force_engine = getattr(self, "pressure_force_engine", None)
+            if force_engine is not None:
+                # The Jerk package grids above are the sole source of Force
+                # spatial shapes.  No force-side pressure-map generation.
+                force_engine.apply_jerk_shapes(package_displays)
+            force_display_visible = self._is_pressure_map_force_display_visible()
+            jerk_display_visible = self._is_pressure_map_display_visible()
+            if force_display_visible:
+                if package_displays:
+                    first_package = package_displays[0]
+                    self._latest_shear_result = first_package.shear_result
+                    self._latest_normal_force_result = first_package.normal_force_result
+                    self._latest_pressure_map_result = first_package.pressure_result
+                self._render_pressure_force_display()
+            if not jerk_display_visible:
+                return
             if len(package_displays) > 1:
                 first_package = package_displays[0]
-                self._latest_shear_result = first_package.shear_result
-                self._latest_normal_force_result = first_package.normal_force_result
-                self._latest_pressure_map_result = first_package.pressure_result
                 array_result = self._build_pressure_map_array_result(package_displays)
                 if array_result is not None:
                     self.pressure_map_widget.update_array_display(array_result, package_displays)
                 else:
                     self.pressure_map_widget.update_package_displays(package_displays)
+                # Commit the visible/live state only after all packages and
+                # the optional array field have been generated successfully.
+                self._latest_shear_result = first_package.shear_result
+                self._latest_normal_force_result = first_package.normal_force_result
+                self._latest_pressure_map_result = first_package.pressure_result
                 return
 
-            self._latest_normal_force_result = self.normal_force_calculator.compute(
-                self._latest_shear_result.residual,
+            if len(package_displays) == 1:
+                package = package_displays[0]
+                self.pressure_map_widget.update_display(
+                    package.normal_force_result,
+                    package.pressure_result,
+                    package.shear_result,
+                )
+                self._latest_shear_result = package.shear_result
+                self._latest_normal_force_result = package.normal_force_result
+                self._latest_pressure_map_result = package.pressure_result
+                return
+
+            if shear_result is None:
+                self._latest_normal_force_result = None
+                self._latest_pressure_map_result = None
+                self.pressure_map_widget.update_display(None, None, None)
+                return
+
+            normal_force_result = self.normal_force_calculator.compute(
+                shear_result.residual,
             )
-            self._latest_pressure_map_result = self.pressure_map_generator.generate(
-                self._latest_normal_force_result.normalized,
+            # The spatial map takes the post-shear residual, not the
+            # baseline-shifted normal-force values.  That common offset serves
+            # the numerical force/centroid calculation; as spatial anchors it
+            # can blank the sensor that was actually pressed and invent large
+            # values on quiet ones.
+            pressure_map_result = self.pressure_map_generator.generate(
+                shear_result.residual,
             )
             self.pressure_map_widget.update_display(
-                self._latest_normal_force_result,
-                self._latest_pressure_map_result,
-                self._latest_shear_result,
+                normal_force_result,
+                pressure_map_result,
+                shear_result,
             )
+            self._latest_shear_result = shear_result
+            self._latest_normal_force_result = normal_force_result
+            self._latest_pressure_map_result = pressure_map_result
         except Exception as exc:
-            self._latest_normal_force_result = None
-            self._latest_pressure_map_result = None
-            self.pressure_map_widget.update_display(None, None, None)
-            if hasattr(self, "log_status"):
-                self.log_status(f"ERROR updating Pressure Map visualization: {exc}")
+            # A single bad live frame must not erase the previous image,
+            # boundaries, arrows, or stable view range.  The next successful
+            # frame replaces it transactionally.
+            self._log_pressure_map_update_error(exc)
+
+    def _log_pressure_map_update_error(self, exc: Exception) -> None:
+        """Rate-limit repeated live pressure-map failures."""
+
+        if not hasattr(self, "log_status"):
+            return
+        message = str(exc)
+        now = time.monotonic()
+        previous_message = getattr(self, "_pressure_map_last_error_message", None)
+        previous_time = float(getattr(self, "_pressure_map_last_error_time", float("-inf")))
+        if message != previous_message or now - previous_time >= 5.0:
+            self.log_status(
+                f"ERROR updating Pressure Map visualization: {message}; "
+                "showing the previous valid frame"
+            )
+            self._pressure_map_last_error_message = message
+            self._pressure_map_last_error_time = now
 
     def _build_pressure_map_package_displays(self) -> list[PressureMapPackageDisplay]:
         values_by_package = getattr(self, "_latest_signal_integration_values_by_package", {})
@@ -2526,7 +3759,10 @@ class PressureMapPanelMixin:
             calibrated_values = self._calibrate_signal_integration_values_for_shear(package_values, str(sensor_id))
             shear_result = self.shear_detector.detect(calibrated_values)
             normal_force_result = self.normal_force_calculator.compute(shear_result.residual)
-            pressure_result = self.pressure_map_generator.generate(normal_force_result.normalized)
+            # Spatial anchors are the post-shear residual; see the single
+            # package path above for why the normal-force baseline shift must
+            # not reach the pressure map.
+            pressure_result = self.pressure_map_generator.generate(shear_result.residual)
             layout_item = layout_by_sensor_id.get(str(sensor_id).upper(), {})
             color_slot = int(layout_item.get("color_slot", fallback_index))
             package_displays.append(
@@ -2562,17 +3798,13 @@ class PressureMapPanelMixin:
                     grid_position=tuple(package.grid_position),
                     normal_force_result=package.normal_force_result,
                     pressure_result=package.pressure_result,
-                    calibrated_values=dict(calibrated_values),
                 )
             )
 
-        try:
-            array_result = self.pressure_map_array_generator.generate(array_packages)
-        except Exception as exc:
-            if hasattr(self, "log_status"):
-                self.log_status(f"Pressure Map array interpolation unavailable: {exc}")
-            return None
-        return array_result if array_result.adjacent_pairs else None
+        array_result = self.pressure_map_array_generator.generate(array_packages)
+        # Display routing must depend only on the configured layout. Active
+        # overlaps can legitimately appear and disappear with live signals.
+        return array_result if array_result.structural_pairs else None
 
     def _calibrate_signal_integration_values_for_shear(
         self,
@@ -2925,22 +4157,27 @@ class PressureMapPanelMixin:
             channel_data_2d = channel_data[:num_samples * repeat_count].reshape(-1, repeat_count)
             channel_times_2d = channel_times[:num_samples * repeat_count].reshape(-1, repeat_count)
 
+            # Only two distinct pens are ever used here, and neither depends on
+            # repeat_idx, so build them once instead of once per repeat per frame.
+            # setPen copies the pen, so sharing these prototypes is safe.
+            primary_pen = pg.mkPen(color=color, width=SIGNAL_INTEGRATION_PLOT_LINE_WIDTH)
+            repeat_pen = None
+            if repeat_count > 1:
+                lighter_color = tuple(
+                    int(component * SIGNAL_INTEGRATION_DIMMED_COLOR_FRACTION)
+                    for component in color
+                )
+                repeat_pen = pg.mkPen(
+                    color=lighter_color,
+                    width=SIGNAL_INTEGRATION_REPEAT_LINE_WIDTH,
+                    style=Qt.PenStyle.DashLine,
+                )
+
             for repeat_idx in range(repeat_count):
                 repeat_data = channel_data_2d[:, repeat_idx]
                 repeat_times = channel_times_2d[:, repeat_idx]
 
-                if repeat_idx == 0:
-                    pen = pg.mkPen(color=color, width=SIGNAL_INTEGRATION_PLOT_LINE_WIDTH)
-                else:
-                    lighter_color = tuple(
-                        int(component * SIGNAL_INTEGRATION_DIMMED_COLOR_FRACTION)
-                        for component in color
-                    )
-                    pen = pg.mkPen(
-                        color=lighter_color,
-                        width=SIGNAL_INTEGRATION_REPEAT_LINE_WIDTH,
-                        style=Qt.PenStyle.DashLine,
-                    )
+                pen = primary_pen if repeat_idx == 0 else repeat_pen
 
                 name = f"{spec['label']}.{repeat_idx}"
                 curve_key = ("signal_integration_repeat", spec["key"], repeat_idx)

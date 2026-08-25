@@ -19,6 +19,7 @@ from constants.force import FORCE_CALIBRATION_SAMPLES
 from constants.pzt_rs import PZT_RS_RS_UNITS_LABEL
 from data_processing.archive_writer import ArchiveWriterThread
 from data_processing.force_state import get_force_runtime_state
+from data_processing.adc_mux_timing import adc_mux_timing_log, calculate_adc_mux_timing_for_acquisition
 
 
 class CaptureLifecycleMixin:
@@ -43,6 +44,8 @@ class CaptureLifecycleMixin:
         self.plot_baselines = {}
         self.channel_plot_baselines = {}
         self.rosette_plot_baselines = {}
+        if hasattr(self, "reset_pressure_force_display_for_baseline_change"):
+            self.reset_pressure_force_display_for_baseline_change()
 
     def _reset_force_capture_state(self):
         """Reset force samples for a new capture lifecycle."""
@@ -67,7 +70,7 @@ class CaptureLifecycleMixin:
         """Reset capture timing fields, histories, and optional UI labels."""
         if hasattr(self, 'first_sweep_timestamp_us'):
             if log_timestamp_clear:
-                self.log_status(f"Clearing first_sweep_timestamp_us (was {self.first_sweep_timestamp_us} Âµs)")
+                self.log_status(f"Clearing first_sweep_timestamp_us (was {self.first_sweep_timestamp_us} µs)")
             delattr(self, 'first_sweep_timestamp_us')
         elif log_timestamp_clear:
             self.log_status("first_sweep_timestamp_us already cleared")
@@ -77,7 +80,7 @@ class CaptureLifecycleMixin:
         if reset_labels:
             self.per_channel_rate_label.setText("- Hz")
             self.total_rate_label.setText("- Hz")
-            self.between_samples_label.setText("- Âµs")
+            self.between_samples_label.setText("- µs")
             self.block_gap_label.setText("- ms")
 
     def _reset_signal_processing_state(self, *, reset_shear=False):
@@ -122,6 +125,8 @@ class CaptureLifecycleMixin:
         self.plot_baselines = {}
         self.channel_plot_baselines = {}
         self.rosette_plot_baselines = {}
+        if hasattr(self, "reset_pressure_force_display_for_baseline_change"):
+            self.reset_pressure_force_display_for_baseline_change()
 
         self.set_controls_enabled(False)
 
@@ -133,8 +138,17 @@ class CaptureLifecycleMixin:
 
         self._reset_capture_buffer_state()
         self._reset_signal_processing_state(reset_shear=False)
+        if hasattr(self, 'begin_pzt_ghost_capture'):
+            self.begin_pzt_ghost_capture()
+        if hasattr(self, 'set_pzt_ghost_controls_enabled'):
+            self.set_pzt_ghost_controls_enabled(False)
         self._reset_force_capture_state()
         self._reset_timing_measurements(reset_labels=True)
+        # Recalculate immediately before the run so metadata reflects the exact
+        # configured device and acquisition settings, not a stale widget value.
+        self.adc_mux_timing = calculate_adc_mux_timing_for_acquisition(
+            getattr(self, "current_mcu", None), self.config
+        )
 
         self.plot_widget.setMouseEnabled(x=False, y=False)
         self.plot_widget.setMenuEnabled(False)
@@ -152,24 +166,30 @@ class CaptureLifecycleMixin:
         timing_path = cache_dir / timing_name
 
         try:
-            archive_metadata = {
-                'metadata': {
-                    'channels': self.config.get('channels', []),
-                    'repeat': self.config.get('repeat', 1),
-                    'ground_pin': self.config.get('ground_pin'),
-                    'use_ground': self.config.get('use_ground'),
-                    'osr': self.config.get('osr'),
-                    'gain': self.config.get('gain'),
-                    'reference': self.config.get('reference'),
-                    'pzt_rs_rs_units': (
-                        PZT_RS_RS_UNITS_LABEL
-                        if hasattr(self, 'is_array_pzt_rs_mode') and self.is_array_pzt_rs_mode()
-                        else None
-                    ),
-                    'notes': self.notes_input.toPlainText() if hasattr(self, 'notes_input') else None,
-                    'start_time': datetime.now().isoformat()
-                }
+            capture_metadata = {
+                'channels': self.config.get('channels', []),
+                'repeat': self.config.get('repeat', 1),
+                'ground_pin': self.config.get('ground_pin'),
+                'use_ground': self.config.get('use_ground'),
+                'osr': self.config.get('osr'),
+                'gain': self.config.get('gain'),
+                'reference': self.config.get('reference'),
+                'pzt_rs_rs_units': (
+                    PZT_RS_RS_UNITS_LABEL
+                    if hasattr(self, 'is_array_pzt_rs_mode') and self.is_array_pzt_rs_mode()
+                    else None
+                ),
+                'notes': self.notes_input.toPlainText() if hasattr(self, 'notes_input') else None,
+                'start_time': datetime.now().isoformat()
             }
+            if hasattr(self, 'build_pzt_ghost_metadata'):
+                capture_metadata['pzt_ghost_removal'] = self.build_pzt_ghost_metadata()
+            timing_metadata = adc_mux_timing_log(self.adc_mux_timing)
+            if timing_metadata is not None:
+                capture_metadata['adc_mux_timing'] = timing_metadata
+                capture_metadata['pzt_mux_connected_time_s'] = self.adc_mux_timing.sensor_connected_s
+                capture_metadata['pzt_mux_connected_time_source'] = 'adc_mux_timing.t_connected_s'
+            archive_metadata = {'metadata': capture_metadata}
             self._archive_writer = ArchiveWriterThread(str(archive_path), archive_metadata)
             self._archive_writer.start()
             self._archive_path = str(archive_path)
@@ -263,10 +283,19 @@ class CaptureLifecycleMixin:
         if self.serial_thread:
             self.serial_thread.set_capturing(False)
 
+        # A short capture can end before the normal delayed baseline window.
+        # Use the same baseline capture method, then flush its temporary archive
+        # backlog as cleaned data before the writer is finalized.
+        if hasattr(self, 'finalize_pzt_ghost_calibration_at_capture_end'):
+            self.finalize_pzt_ghost_calibration_at_capture_end()
+        if getattr(self, '_archive_writer', None) and hasattr(self, 'pop_clean_pzt_ghost_archive_blocks'):
+            for pending_timestamps, pending_block in self.pop_clean_pzt_ghost_archive_blocks():
+                self._archive_writer.enqueue(pending_timestamps, pending_block)
+
         if timing.arduino_sample_times:
             avg_sample_time = sum(timing.arduino_sample_times) / len(timing.arduino_sample_times)
             total_rate = 1000000.0 / avg_sample_time if avg_sample_time > 0 else 0
-            self.log_status(f"Capture complete - Sample interval: {avg_sample_time:.2f} Âµs, Total rate: {total_rate:.2f} Hz")
+            self.log_status(f"Capture complete - Sample interval: {avg_sample_time:.2f} µs, Total rate: {total_rate:.2f} Hz")
 
         if timing.buffer_gap_times:
             avg_gap = sum(timing.buffer_gap_times) / len(timing.buffer_gap_times)
@@ -277,6 +306,8 @@ class CaptureLifecycleMixin:
         self.stop_btn.setStyleSheet("QPushButton { background-color: #CCCCCC; color: #666666; font-weight: bold; }")
         self.update_start_button_state()
         self.set_controls_enabled(True)
+        if hasattr(self, 'set_pzt_ghost_controls_enabled'):
+            self.set_pzt_ghost_controls_enabled(True)
 
         self.drain_serial_input(0.02)
 

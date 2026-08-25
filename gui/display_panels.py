@@ -20,6 +20,7 @@ from constants.ui import (
     FORCE_CALIBRATION_TAB_NAME,
     HEATMAP_TAB_NAME,
     PRESSURE_MAP_TAB_NAME,
+    PZT_DECAY_TAB_NAME,
     PZT_RS_PZT_TAB_NAME,
     ROSETTE_TAB_NAME,
     SENSOR_TAB_NAME,
@@ -39,6 +40,13 @@ from constants.plotting import (
     ROSETTE_MOVING_AVERAGE_MAX_SAMPLES,
     ROSETTE_MOVING_AVERAGE_MIN_SAMPLES,
 )
+from constants.pzt_ghost import (
+    PZT_GHOST_ATTENUATION_DECIMALS,
+    PZT_GHOST_ATTENUATION_MAX,
+    PZT_GHOST_ATTENUATION_MIN,
+    PZT_GHOST_ATTENUATION_STEP,
+    PZT_GHOST_DEFAULT_ATTENUATION,
+)
 from gui.custom_widgets import NonScrollableDoubleSpinBox as QDoubleSpinBox
 
 
@@ -56,41 +64,36 @@ class DisplayPanelsMixin:
         
         # Create time-series tab
         timeseries_tab = self.create_timeseries_tab()
-        self.visualization_tabs.addTab(timeseries_tab, TIME_SERIES_TAB_NAME)
-        self.timeseries_tab_index = 0
+        self.timeseries_tab_index = self.visualization_tabs.addTab(timeseries_tab, TIME_SERIES_TAB_NAME)
 
         rosette_tab = self.create_rosette_timeseries_tab()
-        self.visualization_tabs.addTab(rosette_tab, ROSETTE_TAB_NAME)
-        self.rosette_tab_index = 1
+        self.rosette_tab_index = self.visualization_tabs.addTab(rosette_tab, ROSETTE_TAB_NAME)
         self.visualization_tabs.setTabVisible(self.rosette_tab_index, False)
 
             # Create pressure map tab (from PressureMapPanelMixin)
         signal_integration_tab = self.create_signal_integration_tab()
-        self.visualization_tabs.addTab(signal_integration_tab, PRESSURE_MAP_TAB_NAME)
-        self.signal_integration_tab_index = 2
+        self.signal_integration_tab_index = self.visualization_tabs.addTab(signal_integration_tab, PRESSURE_MAP_TAB_NAME)
 
         heatmap_tab = self.create_heatmap_tab()
-        self.visualization_tabs.addTab(heatmap_tab, HEATMAP_TAB_NAME)
-        self.heatmap_tab_index = 3
+        self.heatmap_tab_index = self.visualization_tabs.addTab(heatmap_tab, HEATMAP_TAB_NAME)
 
         # Create force calibration tab (from ForceCalibrationPanelMixin)
         force_calib_tab = self.create_force_calibration_tab()
-        self.visualization_tabs.addTab(force_calib_tab, FORCE_CALIBRATION_TAB_NAME)
-        self.force_calibration_tab_index = 4
+        self.force_calibration_tab_index = self.visualization_tabs.addTab(force_calib_tab, FORCE_CALIBRATION_TAB_NAME)
 
         # Create spectrum tab (from SpectrumPanelMixin)
         spectrum_tab = self.create_spectrum_tab()
-        self.visualization_tabs.addTab(spectrum_tab, SPECTRUM_TAB_NAME)
-        self.spectrum_tab_index = 5
+        self.spectrum_tab_index = self.visualization_tabs.addTab(spectrum_tab, SPECTRUM_TAB_NAME)
 
         analysis_tab = self.create_analysis_tab()
-        self.visualization_tabs.addTab(analysis_tab, ANALYSIS_TAB_NAME)
-        self.analysis_tab_index = 6
+        self.analysis_tab_index = self.visualization_tabs.addTab(analysis_tab, ANALYSIS_TAB_NAME)
+
+        pzt_decay_tab = self.create_pzt_decay_tab()
+        self.pzt_decay_tab_index = self.visualization_tabs.addTab(pzt_decay_tab, PZT_DECAY_TAB_NAME)
 
         # Create sensor tab last (from SensorPanelMixin)
         sensor_tab = self.create_sensor_tab()
-        self.visualization_tabs.addTab(sensor_tab, SENSOR_TAB_NAME)
-        self.sensor_tab_index = 7
+        self.sensor_tab_index = self.visualization_tabs.addTab(sensor_tab, SENSOR_TAB_NAME)
         
         return self.visualization_tabs
     
@@ -528,12 +531,53 @@ class DisplayPanelsMixin:
         self.zero_signals_btn.clicked.connect(self.zero_plot_baselines)
         repeats_layout.addWidget(self.zero_signals_btn)
 
+        self.remove_ghost_check = QCheckBox("Remove Ghost")
+        self.remove_ghost_check.setChecked(False)
+        self.remove_ghost_check.setToolTip(
+            "Remove previous-channel MUX ghosting from Array PZT data using the existing baseline calibration"
+        )
+        self.remove_ghost_check.toggled.connect(self._on_pzt_ghost_controls_changed)
+        repeats_layout.addWidget(self.remove_ghost_check)
+
+        self.remove_ghost_attenuation_spin = QDoubleSpinBox()
+        self.remove_ghost_attenuation_spin.setRange(PZT_GHOST_ATTENUATION_MIN, PZT_GHOST_ATTENUATION_MAX)
+        self.remove_ghost_attenuation_spin.setDecimals(PZT_GHOST_ATTENUATION_DECIMALS)
+        self.remove_ghost_attenuation_spin.setSingleStep(PZT_GHOST_ATTENUATION_STEP)
+        self.remove_ghost_attenuation_spin.setValue(PZT_GHOST_DEFAULT_ATTENUATION)
+        self.remove_ghost_attenuation_spin.setPrefix("Ghost: ")
+        self.remove_ghost_attenuation_spin.setToolTip(
+            "Fraction of the previous PZT channel's net signal removed from the next channel"
+        )
+        self.remove_ghost_attenuation_spin.valueChanged.connect(self._on_pzt_ghost_controls_changed)
+        repeats_layout.addWidget(self.remove_ghost_attenuation_spin)
+
         repeats_layout.addStretch()
         repeats_group.setLayout(repeats_layout)
         main_layout.addWidget(repeats_group)
 
         group.setLayout(main_layout)
         return group
+
+    def _on_pzt_ghost_controls_changed(self, _value=None):
+        if not hasattr(self, 'set_pzt_ghost_removal_settings'):
+            return
+        self.set_pzt_ghost_removal_settings(
+            self.remove_ghost_check.isChecked(),
+            self.remove_ghost_attenuation_spin.value(),
+        )
+        # Toggling ghost removal changes whether buffered/incoming blocks are
+        # net-space or raw, which the accumulated Force Display state was
+        # built against.  Reset it exactly once per toggle, mirroring the
+        # Time Series baseline-change reset.
+        if hasattr(self, 'reset_pressure_force_display_for_baseline_change'):
+            self.reset_pressure_force_display_for_baseline_change()
+
+    def set_pzt_ghost_controls_enabled(self, enabled: bool):
+        """Keep canonical-data controls fixed for the duration of a capture."""
+        for widget_name in ('remove_ghost_check', 'remove_ghost_attenuation_spin'):
+            widget = getattr(self, widget_name, None)
+            if widget is not None:
+                widget.setEnabled(bool(enabled))
 
     def create_timing_section(self) -> QGroupBox:
         """Create timing measurement display section."""

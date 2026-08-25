@@ -10,9 +10,11 @@ import numpy as np
 from config.adc_config_state import ADCConfigurationState
 from constants.force import X_FORCE_SENSOR_TO_NEWTON, Z_FORCE_SENSOR_TO_NEWTON
 from constants.pzt_force import PZT_FORCE_DEFAULT_SETTINGS
+from data_processing.adc_mux_timing import calculate_adc_mux_timing_for_acquisition
 from data_processing.analysis_workbench import (
     AnalysisSourceSnapshot,
     _build_offline_stream_index_map,
+    _owner_analysis_timing_metadata,
     build_in_memory_snapshot,
     build_overlay_traces,
     estimate_analysis_pzt_force_calibration,
@@ -199,6 +201,24 @@ class AnalysisWorkbenchTests(unittest.TestCase):
 
         centered = np.asarray([-0.25, 0.25], dtype=np.float64)
         expected_second = (1e-9 / 600e-12) * (centered[1] - (np.exp(-0.030 / 1.0) * centered[0]))
+        np.testing.assert_allclose(force, [0.0, expected_second])
+
+    def test_calculate_pzt_force_corrects_new_charge_for_pre_sample_decay(self):
+        force = calculate_pzt_force_from_voltage(
+            np.asarray([1.0, 1.5], dtype=np.float64),
+            np.asarray([0.0, 0.320], dtype=np.float64),
+            capacitance_f=1e-9,
+            rleak_ohm=1e9,
+            d33_c_per_n=600e-12,
+            noise_threshold_v=0.1,
+            leak_dt_s=0.030,
+            pre_sample_decay_dt_s=20.80e-6,
+        )
+
+        centered = np.asarray([-0.25, 0.25], dtype=np.float64)
+        expected_second = (1e-9 / 600e-12) * np.exp(20.80e-6 / 1.0) * (
+            centered[1] - (np.exp(-0.030 / 1.0) * centered[0])
+        )
         np.testing.assert_allclose(force, [0.0, expected_second])
 
     def test_calculated_pzt_force_zeroes_after_bipolar_event(self):
@@ -392,6 +412,59 @@ class AnalysisWorkbenchTests(unittest.TestCase):
         self.assertAlmostEqual(leak_dt, 0.0305)
         self.assertIn("block_timing_csv", status)
 
+    def test_owner_timing_metadata_prefers_calculator_over_cached_average(self):
+        # A calculator-capable owner's physical t_connected must win even when a
+        # cached average sample time is also present (Part A of the natural-reset
+        # plan: the cached-average block used to overwrite the correct value).
+        owner = SimpleNamespace(
+            current_mcu="Array_PZT_PZR1.7",
+            config={"osr": 4, "gain": 1, "repeat": 4, "channels": [1], "use_ground": False, "buffer": 10},
+            _cached_avg_sample_time_sec=45e-6,
+        )
+        calculated = calculate_adc_mux_timing_for_acquisition(owner.current_mcu, owner.config)
+
+        result = _owner_analysis_timing_metadata(owner)
+
+        self.assertEqual(result["pzt_mux_connected_time_s"], calculated.sensor_connected_s)
+        self.assertEqual(result["pzt_mux_connected_time_source"], "adc_mux_timing.t_connected_s")
+
+    def test_owner_timing_metadata_falls_back_to_cached_average_when_unsupported(self):
+        owner = SimpleNamespace(
+            current_mcu="Unsupported.1",
+            config={},
+            _cached_avg_sample_time_sec=45e-6,
+        )
+
+        result = _owner_analysis_timing_metadata(owner)
+
+        self.assertEqual(result["pzt_mux_connected_time_s"], 45e-6)
+        self.assertEqual(result["pzt_mux_connected_time_source"], "_cached_avg_sample_time_sec")
+
+    def test_resolve_analysis_pzt_mux_leak_dt_uses_calculator_value_end_to_end(self):
+        owner = SimpleNamespace(
+            current_mcu="Array_PZT_PZR1.7",
+            config={"osr": 4, "gain": 1, "repeat": 4, "channels": [1], "use_ground": False, "buffer": 10},
+            _cached_avg_sample_time_sec=45e-6,
+        )
+        calculated = calculate_adc_mux_timing_for_acquisition(owner.current_mcu, owner.config)
+        timing_metadata = _owner_analysis_timing_metadata(owner)
+        snapshot = AnalysisSourceSnapshot(
+            data=np.asarray([[1], [2]], dtype=np.float32),
+            timestamps_s=np.asarray([0.0, 0.1], dtype=np.float64),
+            channel_labels=["PZT6_C"],
+            metadata={
+                "configuration": {"channels": [1], "repeat_count": 1},
+                "timing": timing_metadata,
+            },
+            source_id="unit",
+            sample_rate_hz=10.0,
+        )
+
+        leak_dt, status = resolve_analysis_pzt_mux_leak_dt_s(snapshot, {"enabled": True, "mux_timing_mode": "auto"})
+
+        self.assertAlmostEqual(leak_dt, calculated.sensor_connected_s)
+        self.assertIn("adc_mux_timing.t_connected_s", status)
+
     def test_pzt_capacitance_units_convert_to_farads(self):
         self.assertAlmostEqual(pzt_capacitance_to_farads(10.0, "pF"), 10e-12)
         self.assertAlmostEqual(pzt_capacitance_to_farads(2.0, "nF"), 2e-9)
@@ -399,6 +472,8 @@ class AnalysisWorkbenchTests(unittest.TestCase):
 
     def test_pzt_force_settings_helper_uses_shared_defaults(self):
         self.assertEqual(PZT_FORCE_DEFAULT_SETTINGS["capacitance_value"], 150.0)
+        self.assertEqual(PZT_FORCE_DEFAULT_SETTINGS["center_capacitance_value"], 150.0)
+        self.assertEqual(PZT_FORCE_DEFAULT_SETTINGS["outer_capacitance_value"], 150.0)
         self.assertEqual(PZT_FORCE_DEFAULT_SETTINGS["capacitance_unit"], "pF")
         self.assertEqual(PZT_FORCE_DEFAULT_SETTINGS["rleak_ohm"], 1_000_000.0)
         self.assertEqual(PZT_FORCE_DEFAULT_SETTINGS["mux_timing_mode"], "auto")
@@ -409,6 +484,75 @@ class AnalysisWorkbenchTests(unittest.TestCase):
         )
 
         self.assertEqual(force.shape, (2,))
+
+    def test_pzt_force_settings_selects_center_or_outer_capacitance(self):
+        settings = {
+            "center_capacitance_value": 2.0,
+            "outer_capacitance_value": 1.0,
+            "capacitance_unit": "nF",
+            "rleak_ohm": 1e12,
+            "d33_pc_per_n": 600.0,
+            "noise_threshold_v": 0.0,
+        }
+        voltage = np.asarray([0.0, 0.1], dtype=np.float64)
+        timestamps = np.asarray([0.0, 0.001], dtype=np.float64)
+
+        center_force = calculate_pzt_force_from_settings(
+            voltage, timestamps, settings, sensor_position="C", vmid_v=0.0
+        )
+        outer_force = calculate_pzt_force_from_settings(
+            voltage, timestamps, settings, sensor_position="L", vmid_v=0.0
+        )
+
+        self.assertAlmostEqual(center_force[-1], outer_force[-1] * 2.0, places=12)
+
+    def test_analysis_force_traces_assign_center_and_outer_capacitances_by_label(self):
+        snapshot = AnalysisSourceSnapshot(
+            data=np.asarray([[0, 0], [200, 200]], dtype=np.float32),
+            timestamps_s=np.asarray([0.0, 0.01], dtype=np.float64),
+            channel_labels=["PZT6_C", "PZT6_L"],
+            metadata={"configuration": {"channels": [1, 2], "repeat_count": 1}},
+            source_id="unit",
+            sample_rate_hz=200.0,
+        )
+        prepared = prepare_analysis_data(
+            snapshot,
+            visible_labels=["PZT6_C", "PZT6_L"],
+            vref_voltage=3.3,
+            pzt_force_settings={
+                "enabled": True,
+                "center_capacitance_value": 2.0,
+                "outer_capacitance_value": 1.0,
+                "capacitance_unit": "nF",
+                "rleak_ohm": 1e12,
+                "d33_pc_per_n": 600.0,
+                "noise_threshold_v": 0.0,
+                "mux_timing_mode": "continuous",
+            },
+        )
+
+        center_force, outer_force = (trace.y[-1] for trace in prepared.force_traces)
+        np.testing.assert_allclose(center_force, outer_force * 2.0, rtol=1e-5)
+
+    def test_pzt_force_settings_legacy_capacitance_applies_to_both_positions(self):
+        settings = {
+            "capacitance_value": 1.0,
+            "capacitance_unit": "nF",
+            "rleak_ohm": 1e12,
+            "d33_pc_per_n": 600.0,
+            "noise_threshold_v": 0.0,
+        }
+        voltage = np.asarray([0.0, 0.1], dtype=np.float64)
+        timestamps = np.asarray([0.0, 0.001], dtype=np.float64)
+
+        center_force = calculate_pzt_force_from_settings(
+            voltage, timestamps, settings, sensor_position="C", vmid_v=0.0
+        )
+        outer_force = calculate_pzt_force_from_settings(
+            voltage, timestamps, settings, sensor_position="R", vmid_v=0.0
+        )
+
+        np.testing.assert_allclose(center_force, outer_force)
 
     def test_load_exported_csv_snapshot_accepts_matching_metadata_column_count(self):
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -1,393 +1,551 @@
-"""Array-level pressure-map generation for adjacent sensor packages."""
+"""World-space package-candidate generation and superposition.
+
+Each package keeps its own signed candidate field until every contributing
+support has been evaluated.  Overlapping packages then superpose: a package
+field is a physical measurement in its own right, so the presence of a
+neighbour must never attenuate or crop it.
+"""
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from itertools import count
 
 import numpy as np
 
 from constants.pressure_map import (
-    DEFAULT_PRESSURE_GAP_CONTRAST_GAIN,
-    DEFAULT_PRESSURE_GAP_FADE_WIDTH_FRACTION,
-    DEFAULT_PRESSURE_PACKAGE_GAP_MM,
-    PRESSURE_ARRAY_GRID_PADDING_GAP_FRACTION,
-    PRESSURE_ARRAY_GRID_PADDING_MIN_CELLS,
-    PRESSURE_GAP_MIN_FADE_HALF_WIDTH_EXTENT_FRACTION,
-    PRESSURE_GRID_MARGIN_SIDE_COUNT,
+    ACTIVE_BOTTOM,
+    ACTIVE_CENTER,
+    ACTIVE_LEFT,
+    ACTIVE_RIGHT,
+    ACTIVE_TOP,
+    DEFAULT_PRESSURE_OUTER_BOUNDARY_REACH_MM,
+    DEFAULT_PRESSURE_PACKAGE_CENTER_SPACING_MM,
+    DEFAULT_PRESSURE_PIXELS_PER_MM,
+    DEFAULT_PRESSURE_SENSOR_SPACING_MM,
 )
-from constants.shear import (
-    DEFAULT_CIRCLE_DIAMETER_MM,
-    SHEAR_POSITION_BOTTOM,
-    SHEAR_POSITION_CENTER,
-    SHEAR_POSITION_LEFT,
-    SHEAR_POSITION_RIGHT,
-    SHEAR_POSITION_TOP,
-    SHEAR_ZERO_VALUE,
-)
+from constants.shear import SHEAR_ZERO_VALUE
 from data_processing.normal_force_calculator import NormalForceResult
-from data_processing.pressure_map_generator import PressureMapResult
+from data_processing.pressure_map_generator import (
+    PRESSURE_QUADRANT_MODE_ISOLATED_OUTER_PEAKED,
+    PressureMapResult,
+    evaluate_pressure_map_result_at,
+)
+from data_processing.pressure_map_geometry import PressureMapGeometry
+
+
+PRESSURE_ARRAY_GEOMETRY_EPSILON = 1e-9
+PRESSURE_ARRAY_BLEND_EPSILON = 1e-12
+_FRAME_IDS = count(1)
+
+
+def overlap_bounds_to_slice(
+    overlap: tuple[float, float, float, float],
+    x_coordinates_mm: np.ndarray,
+    y_coordinates_mm: np.ndarray,
+) -> tuple[slice, slice]:
+    """Convert world overlap bounds to the minimally enclosing raster slice."""
+
+    x0, x1, y0, y1 = overlap
+    x_start = int(np.searchsorted(x_coordinates_mm, x0, side="left"))
+    x_end = int(np.searchsorted(x_coordinates_mm, x1, side="right"))
+    y_start = int(np.searchsorted(y_coordinates_mm, y0, side="left"))
+    y_end = int(np.searchsorted(y_coordinates_mm, y1, side="right"))
+    return slice(y_start, y_end), slice(x_start, x_end)
 
 
 @dataclass(frozen=True, slots=True)
 class PressureMapArrayPackage:
-    """Package input for array-level pressure interpolation."""
+    """One complete package positioned in the physical array layout."""
 
     sensor_id: str
     grid_position: tuple[int, int]
     normal_force_result: NormalForceResult
     pressure_result: PressureMapResult
-    calibrated_values: Mapping[str, float]
+
+
+@dataclass(frozen=True, slots=True)
+class PressureMapArrayForcePackage:
+    """A positioned, already-accumulated local raster for Force Display."""
+
+    sensor_id: str
+    grid_position: tuple[int, int]
+    force_grid_n: np.ndarray
+    x_coordinates_mm: np.ndarray
+    y_coordinates_mm: np.ndarray
 
 
 @dataclass(frozen=True, slots=True)
 class PressureMapArrayResult:
-    """Single pressure image containing packages and adjacent gap pressure."""
+    """Combined array field plus its source-package geometry."""
 
     pressure_grid: np.ndarray
+    magnitude_pressure_grid: np.ndarray
     x_coordinates_mm: np.ndarray
     y_coordinates_mm: np.ndarray
     x_grid_mm: np.ndarray
     y_grid_mm: np.ndarray
     package_centers: dict[str, tuple[float, float]]
     package_results: dict[str, PressureMapResult]
-    adjacent_pairs: tuple[tuple[str, str], ...]
+    structural_pairs: tuple[tuple[str, str], ...]
+    active_overlap_pairs: tuple[tuple[str, str], ...]
+    cell_size_x_mm: float
+    cell_size_y_mm: float
     cell_size_mm: float
     total_extent_mm: float
+    candidate_support_bounds_mm: dict[str, tuple[float, float, float, float]]
+    package_center_spacing_mm: float
+    outer_boundary_reach_mm: float
+    actual_pixels_per_mm: float
+    facing_sensor_gap_mm: float
+    mid_boundary_half_width_mm: float
+    outer_boundary_half_width_mm: float
+    frame_id: int
+    diagnostics: dict[str, object] | None = None
+
+    @property
+    def adjacent_pairs(self) -> tuple[tuple[str, str], ...]:
+        """Compatibility alias for stable direct/diagonal grid adjacency."""
+        return self.structural_pairs
+
+    @property
+    def overlap_pairs(self) -> tuple[tuple[str, str], ...]:
+        """Compatibility alias for signal-dependent active overlap pairs."""
+        return self.active_overlap_pairs
 
 
 @dataclass(frozen=True, slots=True)
-class _AdjacentPair:
-    first: PressureMapArrayPackage
-    second: PressureMapArrayPackage
-    first_facing_sensor: str
-    second_facing_sensor: str
-    axis: str
+class _PackageCandidate:
+    package: PressureMapArrayPackage
+    center: tuple[float, float]
+    support_bounds_mm: tuple[float, float, float, float]
+    values: np.ndarray
+    support_mask: np.ndarray
+    support_confidence: np.ndarray
+    activity_confidence: float
+    local_present: np.ndarray
 
 
 class PressureMapArrayGenerator:
-    """Build one world-space pressure surface for adjacent package arrays.
-
-    The generator keeps package-local pressure maps intact, places them into a
-    physical array coordinate system, then fills horizontal/vertical gaps
-    between adjacent packages with a center-aware interpolation surface.
-    ``gap_contrast_gain`` controls how far a true inter-package peak may rise
-    above the stronger facing sensor, while ``gap_fade_width_fraction`` controls
-    lateral spread as a fraction of the package footprint diameter.
-    """
+    """Superpose fixed-support package candidates in a shared world coordinate system."""
 
     def __init__(
         self,
         *,
-        circle_diameter_mm: float = DEFAULT_CIRCLE_DIAMETER_MM,
-        package_gap_mm: float = DEFAULT_PRESSURE_PACKAGE_GAP_MM,
-        gap_contrast_gain: float = DEFAULT_PRESSURE_GAP_CONTRAST_GAIN,
-        gap_fade_width_fraction: float = DEFAULT_PRESSURE_GAP_FADE_WIDTH_FRACTION,
-        show_negative: bool = False,
+        sensor_spacing_mm: float = DEFAULT_PRESSURE_SENSOR_SPACING_MM,
+        package_center_spacing_mm: float = DEFAULT_PRESSURE_PACKAGE_CENTER_SPACING_MM,
+        outer_boundary_reach_mm: float = DEFAULT_PRESSURE_OUTER_BOUNDARY_REACH_MM,
+        pixels_per_mm: float = DEFAULT_PRESSURE_PIXELS_PER_MM,
+        geometry: PressureMapGeometry | None = None,
+        debug: bool = False,
     ) -> None:
-        """Create an array pressure-map generator.
-
-        Args:
-            circle_diameter_mm: Package pressure-footprint diameter.
-            package_gap_mm: Physical edge-to-edge gap between adjacent packages.
-            gap_contrast_gain: Extra peak-height gain for facing-sensor-dominant
-                gap pressure. A value of zero disables extrapolated overshoot.
-            gap_fade_width_fraction: Lateral half-width of gap pressure as a
-                fraction of ``circle_diameter_mm``.
-            show_negative: Whether negative release values may remain visible.
-
-        Raises:
-            ValueError: If the package footprint diameter is not positive.
-        """
-        self.circle_diameter_mm = float(circle_diameter_mm)
-        self.package_gap_mm = max(0.0, float(package_gap_mm))
-        self.package_center_spacing_mm = self.circle_diameter_mm + self.package_gap_mm
-        self.gap_contrast_gain = max(0.0, float(gap_contrast_gain))
-        self.gap_fade_width_fraction = max(0.0, float(gap_fade_width_fraction))
-        self.show_negative = bool(show_negative)
-        if self.circle_diameter_mm <= SHEAR_ZERO_VALUE:
-            raise ValueError("circle_diameter_mm must be positive")
+        if geometry is not None:
+            conflicting_scalars = (
+                (sensor_spacing_mm, DEFAULT_PRESSURE_SENSOR_SPACING_MM, geometry.sensor_spacing_mm),
+                (package_center_spacing_mm, DEFAULT_PRESSURE_PACKAGE_CENTER_SPACING_MM, geometry.package_center_spacing_mm),
+                (outer_boundary_reach_mm, DEFAULT_PRESSURE_OUTER_BOUNDARY_REACH_MM, geometry.outer_boundary_reach_mm),
+                (pixels_per_mm, DEFAULT_PRESSURE_PIXELS_PER_MM, geometry.pixels_per_mm),
+            )
+            if any(
+                not np.isclose(value, default) and not np.isclose(value, geometry_value)
+                for value, default, geometry_value in conflicting_scalars
+            ):
+                raise ValueError("scalar pressure-map geometry conflicts with supplied geometry")
+        self.geometry = geometry or PressureMapGeometry(
+            sensor_spacing_mm=float(sensor_spacing_mm),
+            package_center_spacing_mm=float(package_center_spacing_mm),
+            outer_boundary_reach_mm=float(outer_boundary_reach_mm),
+            pixels_per_mm=float(pixels_per_mm),
+        )
+        self.sensor_spacing_mm = self.geometry.sensor_spacing_mm
+        self.package_center_spacing_mm = self.geometry.package_center_spacing_mm
+        self.outer_boundary_reach_mm = self.geometry.outer_boundary_reach_mm
+        self.pixels_per_mm = self.geometry.pixels_per_mm
+        self.actual_pixels_per_mm = self.geometry.actual_pixels_per_mm
+        self.cell_size_mm = self.geometry.aligned_cell_size_mm
+        self.facing_sensor_gap_mm = self.geometry.facing_sensor_gap_mm
+        self.mid_boundary_half_width_mm = self.geometry.mid_boundary_half_width_mm
+        self.outer_boundary_half_width_mm = self.geometry.outer_boundary_half_width_mm
+        self.debug = bool(debug)
+        if self.sensor_spacing_mm <= SHEAR_ZERO_VALUE:
+            raise ValueError("sensor_spacing_mm must be positive")
+        if self.package_center_spacing_mm <= 2.0 * self.sensor_spacing_mm:
+            raise ValueError("package_center_spacing_mm must exceed twice sensor_spacing_mm")
+        if self.outer_boundary_reach_mm <= SHEAR_ZERO_VALUE:
+            raise ValueError("outer_boundary_reach_mm must be positive")
 
     def generate(self, packages: Sequence[PressureMapArrayPackage]) -> PressureMapArrayResult:
-        """Generate one combined pressure grid for positioned packages.
+        """Evaluate all package candidates first, then superpose them."""
 
-        Args:
-            packages: Complete package results with grid positions and
-                calibrated T/R/L/C/B values.
-
-        Returns:
-            Combined array pressure grid and metadata for rendering overlays.
-
-        Raises:
-            ValueError: If no positioned packages are supplied or package
-                pressure grids do not expose a positive cell size.
-        """
-        complete_packages = [
-            package
-            for package in packages
-            if package.grid_position is not None and package.pressure_result is not None
-        ]
+        complete_packages = sorted(
+            (package for package in packages if package.grid_position is not None and package.pressure_result is not None),
+            key=lambda package: (package.grid_position[0], package.grid_position[1], str(package.sensor_id)),
+        )
         if not complete_packages:
             raise ValueError("at least one positioned package is required")
+        sensor_ids = [str(package.sensor_id) for package in complete_packages]
+        positions = [package.grid_position for package in complete_packages]
+        if len(sensor_ids) != len(set(sensor_ids)):
+            raise ValueError("duplicate sensor_id values are not permitted")
+        if len(positions) != len(set(positions)):
+            raise ValueError("duplicate grid_position values are not permitted")
+        for package in complete_packages:
+            if not np.isfinite(package.pressure_result.pressure_grid).all():
+                raise ValueError("package pressure data must be finite")
+            if not self._geometry_matches(package.pressure_result):
+                raise ValueError("package pressure results use incompatible geometry")
 
         centers = self._package_centers(complete_packages)
-        cell_size_mm = self._cell_size_mm(complete_packages)
-        x_coordinates, y_coordinates = self._array_coordinates(complete_packages, centers, cell_size_mm)
+        support_bounds = self._candidate_support_bounds(complete_packages, centers)
+        x_coordinates, y_coordinates = self._array_coordinates(complete_packages, centers, support_bounds)
         x_grid, y_grid = np.meshgrid(x_coordinates, y_coordinates)
-        pressure_grid = np.zeros_like(x_grid, dtype=np.float64)
-
-        for package in complete_packages:
-            self._paste_package_grid(pressure_grid, x_grid, y_grid, centers[package.sensor_id], package.pressure_result)
-
-        adjacent_pairs = self._adjacent_pairs(complete_packages)
-        for pair in adjacent_pairs:
-            self._apply_pair_gap_pressure(pressure_grid, x_grid, y_grid, centers, pair)
+        candidates = tuple(
+            self._evaluate_candidate(package, centers[package.sensor_id], support_bounds[package.sensor_id], x_grid, y_grid)
+            for package in complete_packages
+        )
+        structural_candidate_pairs = self._eligible_neighbor_pairs(candidates)
+        structural_pairs = tuple(
+            (first.package.sensor_id, second.package.sensor_id)
+            for first, second in structural_candidate_pairs
+        )
+        pressure_grid, magnitude_pressure_grid = self._superpose_candidates(candidates, x_grid)
+        active_overlap_pairs = self._active_overlap_pairs(
+            structural_candidate_pairs, x_coordinates, y_coordinates
+        )
+        array_support_mask = np.logical_or.reduce(
+            tuple(candidate.support_mask for candidate in candidates)
+        )
+        # Preserve the local support contract after composition too.
+        pressure_grid[~array_support_mask] = 0.0
+        magnitude_pressure_grid[~array_support_mask] = 0.0
+        diagnostics = None
+        if self.debug:
+            diagnostics = {
+                "support_confidence": {
+                    candidate.package.sensor_id: candidate.support_confidence.copy()
+                    for candidate in candidates
+                },
+                "candidate_fields": {
+                    candidate.package.sensor_id: candidate.values.copy()
+                    for candidate in candidates
+                },
+                "local_presence": {
+                    candidate.package.sensor_id: candidate.local_present.copy()
+                    for candidate in candidates
+                },
+                "structural_pairs": structural_pairs,
+                "active_overlap_pairs": active_overlap_pairs,
+                # Compatibility diagnostic name; these are structural,
+                # signal-independent neighbor pairs.
+                "eligible_neighbor_pairs": structural_pairs,
+                "array_support_mask": array_support_mask.copy(),
+                "final_array_field": pressure_grid.copy(),
+                "final_magnitude_array_field": magnitude_pressure_grid.copy(),
+            }
 
         return PressureMapArrayResult(
             pressure_grid=pressure_grid,
+            magnitude_pressure_grid=magnitude_pressure_grid,
             x_coordinates_mm=x_coordinates,
             y_coordinates_mm=y_coordinates,
             x_grid_mm=x_grid,
             y_grid_mm=y_grid,
             package_centers=dict(centers),
             package_results={package.sensor_id: package.pressure_result for package in complete_packages},
-            adjacent_pairs=tuple((pair.first.sensor_id, pair.second.sensor_id) for pair in adjacent_pairs),
-            cell_size_mm=cell_size_mm,
+            structural_pairs=structural_pairs,
+            active_overlap_pairs=active_overlap_pairs,
+            cell_size_x_mm=float(x_coordinates[1] - x_coordinates[0]),
+            cell_size_y_mm=float(y_coordinates[1] - y_coordinates[0]),
+            # Compatibility scalar; callers that need physical integration
+            # must use the exact per-axis metadata above.
+            cell_size_mm=float(min(x_coordinates[1] - x_coordinates[0], y_coordinates[1] - y_coordinates[0])),
             total_extent_mm=float(max(x_coordinates[-1] - x_coordinates[0], y_coordinates[-1] - y_coordinates[0])),
+            candidate_support_bounds_mm=dict(support_bounds),
+            package_center_spacing_mm=self.package_center_spacing_mm,
+            outer_boundary_reach_mm=self.outer_boundary_reach_mm,
+            actual_pixels_per_mm=self.actual_pixels_per_mm,
+            facing_sensor_gap_mm=self.facing_sensor_gap_mm,
+            mid_boundary_half_width_mm=self.mid_boundary_half_width_mm,
+            outer_boundary_half_width_mm=self.outer_boundary_half_width_mm,
+            frame_id=next(_FRAME_IDS),
+            diagnostics=diagnostics,
         )
 
-    def _package_centers(
-        self,
-        packages: Sequence[PressureMapArrayPackage],
-    ) -> dict[str, tuple[float, float]]:
+    def _package_centers(self, packages: Sequence[PressureMapArrayPackage]) -> dict[str, tuple[float, float]]:
         rows = [package.grid_position[0] for package in packages]
         cols = [package.grid_position[1] for package in packages]
         row_midpoint = (min(rows) + max(rows)) / 2.0
         col_midpoint = (min(cols) + max(cols)) / 2.0
-        centers: dict[str, tuple[float, float]] = {}
-        for package in packages:
-            row, col = package.grid_position
-            centers[package.sensor_id] = (
-                (float(col) - col_midpoint) * self.package_center_spacing_mm,
-                (row_midpoint - float(row)) * self.package_center_spacing_mm,
+        return {
+            package.sensor_id: (
+                (float(package.grid_position[1]) - col_midpoint) * self.package_center_spacing_mm,
+                (row_midpoint - float(package.grid_position[0])) * self.package_center_spacing_mm,
             )
-        return centers
-
-    def _cell_size_mm(self, packages: Sequence[PressureMapArrayPackage]) -> float:
-        cell_sizes = [
-            float(package.pressure_result.cell_size_mm)
             for package in packages
-            if float(package.pressure_result.cell_size_mm) > SHEAR_ZERO_VALUE
-        ]
-        if not cell_sizes:
-            raise ValueError("package pressure results must provide a positive cell size")
-        return float(min(cell_sizes))
+        }
 
-    def _array_coordinates(
-        self,
-        packages: Sequence[PressureMapArrayPackage],
-        centers: Mapping[str, tuple[float, float]],
-        cell_size_mm: float,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        min_x = float("inf")
-        max_x = float("-inf")
-        min_y = float("inf")
-        max_y = float("-inf")
-        for package in packages:
-            center_x, center_y = centers[package.sensor_id]
-            half_extent = float(package.pressure_result.total_extent_mm) / PRESSURE_GRID_MARGIN_SIDE_COUNT
-            min_x = min(min_x, center_x - half_extent)
-            max_x = max(max_x, center_x + half_extent)
-            min_y = min(min_y, center_y - half_extent)
-            max_y = max(max_y, center_y + half_extent)
-
-        padding = (
-            max(
-                cell_size_mm * PRESSURE_ARRAY_GRID_PADDING_MIN_CELLS,
-                self.package_gap_mm * PRESSURE_ARRAY_GRID_PADDING_GAP_FRACTION,
+    def _geometry_matches(self, result: PressureMapResult) -> bool:
+        return all(
+            np.isclose(actual, expected, rtol=0.0, atol=PRESSURE_ARRAY_GEOMETRY_EPSILON)
+            for actual, expected in (
+                (result.sensor_spacing_mm, self.geometry.sensor_spacing_mm),
+                (result.package_center_spacing_mm, self.geometry.package_center_spacing_mm),
+                (result.outer_boundary_reach_mm, self.geometry.outer_boundary_reach_mm),
+                (result.peak_position_outer_offset_mm, self.geometry.peak_position_outer_offset_mm),
+                (result.pixels_per_mm, self.geometry.pixels_per_mm),
             )
-            + cell_size_mm
         )
-        min_x -= padding
-        max_x += padding
-        min_y -= padding
-        max_y += padding
 
-        x_count = max(2, int(np.ceil((max_x - min_x) / cell_size_mm)) + 1)
-        y_count = max(2, int(np.ceil((max_y - min_y) / cell_size_mm)) + 1)
-        x_coordinates = min_x + (np.arange(x_count, dtype=np.float64) * cell_size_mm)
-        y_coordinates = min_y + (np.arange(y_count, dtype=np.float64) * cell_size_mm)
-        return x_coordinates, y_coordinates
-
-    def _paste_package_grid(
+    def compose_force_grids(
         self,
-        pressure_grid: np.ndarray,
-        x_grid: np.ndarray,
-        y_grid: np.ndarray,
-        center: tuple[float, float],
-        pressure_result: PressureMapResult,
-    ) -> None:
-        center_x, center_y = center
-        local_x = x_grid - center_x
-        local_y = y_grid - center_y
-        x_coords = pressure_result.x_coordinates_mm
-        y_coords = pressure_result.y_coordinates_mm
-        mask = (
-            (local_x >= float(x_coords[0]))
-            & (local_x <= float(x_coords[-1]))
-            & (local_y >= float(y_coords[0]))
-            & (local_y <= float(y_coords[-1]))
-        )
-        if not np.any(mask):
-            return
+        packages: Sequence[PressureMapArrayForcePackage],
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, dict[str, tuple[float, float]]]:
+        """Compose static Force Display package fields on the shared array grid.
 
-        x_indices = np.searchsorted(x_coords, local_x[mask], side="left")
-        y_indices = np.searchsorted(y_coords, local_y[mask], side="left")
-        x_indices = np.clip(x_indices, 0, len(x_coords) - 1)
-        y_indices = np.clip(y_indices, 0, len(y_coords) - 1)
-        package_values = pressure_result.pressure_grid[y_indices, x_indices]
-        current_values = pressure_grid[mask]
-        pressure_grid[mask] = self._dominant_values(current_values, package_values)
+        Unlike ``generate``, this consumes the authoritative accumulated local
+        rasters.  Every configured package participates in geometry/centres;
+        zero-valued packages do not dilute an active neighbour in an overlap.
+        """
+        complete = sorted(packages, key=lambda item: (item.grid_position, item.sensor_id))
+        if not complete:
+            raise ValueError("at least one positioned force package is required")
+        ids = [item.sensor_id for item in complete]
+        positions = [item.grid_position for item in complete]
+        if len(ids) != len(set(ids)) or len(positions) != len(set(positions)):
+            raise ValueError("force array packages require unique ids and grid positions")
+        # Reuse the established configured-layout centre and world-grid rules.
+        centers = self._package_centers(complete)
+        support = {item.sensor_id: self.geometry.support_bounds_mm for item in complete}
+        x_values, y_values = self._array_coordinates(complete, centers, support)
+        x_grid, y_grid = np.meshgrid(x_values, y_values)
+        combined = np.zeros_like(x_grid, dtype=np.float64)
+        for package in complete:
+            local_grid = np.asarray(package.force_grid_n, dtype=np.float64)
+            local_x = np.asarray(package.x_coordinates_mm, dtype=np.float64)
+            local_y = np.asarray(package.y_coordinates_mm, dtype=np.float64)
+            if local_grid.shape != (local_y.size, local_x.size):
+                raise ValueError("force package grid and coordinate shapes do not match")
+            center_x, center_y = centers[package.sensor_id]
+            local_world_x = x_grid - center_x
+            local_world_y = y_grid - center_y
+            ix = np.rint((local_world_x - local_x[0]) / (local_x[1] - local_x[0])).astype(int)
+            iy = np.rint((local_world_y - local_y[0]) / (local_y[1] - local_y[0])).astype(int)
+            valid = (
+                (ix >= 0) & (ix < local_x.size) & (iy >= 0) & (iy < local_y.size)
+            )
+            values = np.zeros_like(x_grid, dtype=np.float64)
+            values[valid] = local_grid[iy[valid], ix[valid]]
+            # Use the same superposition rule as the Jerk array compositor so
+            # both displays combine overlapping packages identically.
+            confidence = self._support_confidence(local_world_x, local_world_y)
+            confidence[~valid] = 0.0
+            combined += confidence * values
+        return combined, np.abs(combined), x_values, y_values, dict(centers)
 
-    def _adjacent_pairs(self, packages: Sequence[PressureMapArrayPackage]) -> tuple[_AdjacentPair, ...]:
-        by_position = {package.grid_position: package for package in packages}
-        pairs: list[_AdjacentPair] = []
+    def _candidate_support_bounds(self, packages: Sequence[PressureMapArrayPackage], centers: Mapping[str, tuple[float, float]]) -> dict[str, tuple[float, float, float, float]]:
+        """Return the same local Outer-Boundary support square for every package."""
+
+        _ = centers
+        half_width = self.outer_boundary_half_width_mm
+        bounds = (-half_width, half_width, -half_width, half_width)
+        result: dict[str, tuple[float, float, float, float]] = {}
         for package in packages:
-            row, col = package.grid_position
-            right = by_position.get((row, col + 1))
-            if right is not None:
-                pairs.append(_AdjacentPair(package, right, SHEAR_POSITION_RIGHT, SHEAR_POSITION_LEFT, "x"))
-            lower = by_position.get((row + 1, col))
-            if lower is not None:
-                pairs.append(_AdjacentPair(package, lower, SHEAR_POSITION_BOTTOM, SHEAR_POSITION_TOP, "y"))
+            self._validate_peak_inside_support(package.pressure_result, bounds)
+            result[package.sensor_id] = bounds
+        return result
+
+    def _validate_peak_inside_support(self, pressure_result: PressureMapResult, bounds: tuple[float, float, float, float]) -> None:
+        """Reject a geometry that would put an inferred outer peak past support."""
+
+        for plane in pressure_result.quadrant_planes:
+            if plane.mode != PRESSURE_QUADRANT_MODE_ISOLATED_OUTER_PEAKED or plane.peak_point is None:
+                continue
+            peak_x, peak_y = plane.peak_point
+            if peak_x > 0.0:
+                available = bounds[1]
+                required = peak_x
+            elif peak_x < 0.0:
+                available = -bounds[0]
+                required = -peak_x
+            elif peak_y > 0.0:
+                available = bounds[3]
+                required = peak_y
+            else:
+                available = -bounds[2]
+                required = -peak_y
+            if required >= available - PRESSURE_ARRAY_GEOMETRY_EPSILON:
+                raise ValueError("peak_position_outer_offset_mm must remain inside the applicable outer support")
+
+    def _array_coordinates(self, packages: Sequence[PressureMapArrayPackage], centers: Mapping[str, tuple[float, float]], support_bounds: Mapping[str, tuple[float, float, float, float]]) -> tuple[np.ndarray, np.ndarray]:
+        min_x = min(centers[package.sensor_id][0] + support_bounds[package.sensor_id][0] for package in packages)
+        max_x = max(centers[package.sensor_id][0] + support_bounds[package.sensor_id][1] for package in packages)
+        min_y = min(centers[package.sensor_id][1] + support_bounds[package.sensor_id][2] for package in packages)
+        max_y = max(centers[package.sensor_id][1] + support_bounds[package.sensor_id][3] for package in packages)
+        cell_size = self.cell_size_mm
+        x_start, x_end = int(round(min_x / cell_size)), int(round(max_x / cell_size))
+        y_start, y_end = int(round(min_y / cell_size)), int(round(max_y / cell_size))
+        x_count, y_count = x_end - x_start + 1, y_end - y_start + 1
+        max_side = 4097
+        if x_count > max_side or y_count > max_side or x_count * y_count > 16_000_000:
+            raise ValueError("geometry-aligned pressure-map array grid exceeds the safety cap")
+        return (
+            np.arange(x_start, x_end + 1, dtype=np.float64) * cell_size,
+            np.arange(y_start, y_end + 1, dtype=np.float64) * cell_size,
+        )
+
+    def _evaluate_candidate(self, package: PressureMapArrayPackage, center: tuple[float, float], support_bounds_mm: tuple[float, float, float, float], x_grid_mm: np.ndarray, y_grid_mm: np.ndarray) -> _PackageCandidate:
+        local_x = x_grid_mm - center[0]
+        local_y = y_grid_mm - center[1]
+        left, right, bottom, top = support_bounds_mm
+        support_mask = (local_x > left) & (local_x < right) & (local_y > bottom) & (local_y < top)
+        values = np.zeros_like(x_grid_mm, dtype=np.float64)
+        if np.any(support_mask):
+            values[support_mask] = evaluate_pressure_map_result_at(
+                package.pressure_result,
+                local_x[support_mask],
+                local_y[support_mask],
+                support_bounds_mm=support_bounds_mm,
+            )
+        values[~support_mask] = 0.0
+        support_confidence = self._support_confidence(local_x, local_y)
+        support_confidence[~support_mask] = 0.0
+        local_present = support_mask & (np.abs(values) > PRESSURE_ARRAY_BLEND_EPSILON)
+        return _PackageCandidate(
+            package,
+            center,
+            support_bounds_mm,
+            values,
+            support_mask,
+            support_confidence,
+            package.pressure_result.package_activity_confidence,
+            local_present,
+        )
+
+    def _support_confidence(self, local_x: np.ndarray, local_y: np.ndarray) -> np.ndarray:
+        """Continuous support participation, independent of pressure values."""
+
+        radius = np.maximum(np.abs(local_x), np.abs(local_y))
+        mid = self.mid_boundary_half_width_mm
+        outer = self.outer_boundary_half_width_mm
+        confidence = np.zeros_like(radius, dtype=np.float64)
+        inside_mid = radius <= mid
+        transition = (radius > mid) & (radius < outer)
+        confidence[inside_mid] = 1.0
+        if np.any(transition):
+            t = (radius[transition] - mid) / (outer - mid)
+            confidence[transition] = 1.0 - (3.0 * t ** 2) + (2.0 * t ** 3)
+        return confidence
+
+    def _superpose_candidates(
+        self,
+        candidates: Sequence[_PackageCandidate],
+        x_grid_mm: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Add every independent package field on the shared world raster.
+
+        Each candidate is faded out by its own support confidence, so it
+        contributes nothing at its Outer Boundary and the sum is continuous.
+        That fade depends only on distance from the package centre, never on a
+        neighbour, so no package can attenuate, crop, or reshape another's
+        measured field.
+
+        Superposition produces one field, so magnitude is that field's
+        magnitude.  Accumulating ``sum |v|`` instead would double-count every
+        package that measured the same press and roughly double the reading
+        wherever two supports overlap, which is also inconsistent with the
+        single-package display taking ``abs`` of its own grid.
+        """
+
+        pressure_grid = np.zeros_like(x_grid_mm, dtype=np.float64)
+        for candidate in candidates:
+            pressure_grid += candidate.support_confidence * candidate.values
+        return pressure_grid, np.abs(pressure_grid)
+
+    def _active_overlap_pairs(
+        self,
+        structural_candidate_pairs: Sequence[tuple[_PackageCandidate, _PackageCandidate]],
+        x_coordinates_mm: np.ndarray,
+        y_coordinates_mm: np.ndarray,
+    ) -> tuple[tuple[str, str], ...]:
+        """Report structural neighbours that currently share a live overlap.
+
+        Superposition needs no pair enumeration; this remains as display and
+        diagnostic metadata describing where two packages actually meet.
+        """
+
+        active: list[tuple[str, str]] = []
+        for first, second in structural_candidate_pairs:
+            if not self._pair_is_sensor_relevant(first, second):
+                continue
+            overlap = self._support_overlap(first, second)
+            if overlap is None:
+                continue
+            y_slice, x_slice = overlap_bounds_to_slice(
+                overlap, x_coordinates_mm, y_coordinates_mm
+            )
+            region = np.s_[y_slice, x_slice]
+            if first.local_present[region].size == 0:
+                continue
+            if np.any(first.local_present[region] | second.local_present[region]):
+                active.append((first.package.sensor_id, second.package.sensor_id))
+        return tuple(active)
+
+    def _eligible_neighbor_pairs(
+        self, candidates: Sequence[_PackageCandidate]
+    ) -> tuple[tuple[_PackageCandidate, _PackageCandidate], ...]:
+        """Enumerate only direct/diagonal grid neighbors in linear time."""
+
+        by_position = {candidate.package.grid_position: candidate for candidate in candidates}
+        pairs: list[tuple[_PackageCandidate, _PackageCandidate]] = []
+        # These four offsets cover each undirected eight-neighbor pair once.
+        for first in candidates:
+            row, col = first.package.grid_position
+            for row_delta, col_delta in ((0, 1), (1, -1), (1, 0), (1, 1)):
+                second = by_position.get((row + row_delta, col + col_delta))
+                if second is not None:
+                    pairs.append((first, second))
         return tuple(pairs)
 
-    def _apply_pair_gap_pressure(
-        self,
-        pressure_grid: np.ndarray,
-        x_grid: np.ndarray,
-        y_grid: np.ndarray,
-        centers: Mapping[str, tuple[float, float]],
-        pair: _AdjacentPair,
-    ) -> None:
-        first_center = centers[pair.first.sensor_id]
-        second_center = centers[pair.second.sensor_id]
-        first_sensor = self._sensor_world_position(first_center, pair.first.pressure_result, pair.first_facing_sensor)
-        second_sensor = self._sensor_world_position(second_center, pair.second.pressure_result, pair.second_facing_sensor)
-        axis_values = x_grid if pair.axis == "x" else y_grid
-        lateral_values = y_grid if pair.axis == "x" else x_grid
-        start_axis = first_sensor[0] if pair.axis == "x" else first_sensor[1]
-        end_axis = second_sensor[0] if pair.axis == "x" else second_sensor[1]
-        start_lateral = first_sensor[1] if pair.axis == "x" else first_sensor[0]
-        end_lateral = second_sensor[1] if pair.axis == "x" else second_sensor[0]
-        axis_min = min(start_axis, end_axis)
-        axis_max = max(start_axis, end_axis)
-        if axis_max - axis_min <= SHEAR_ZERO_VALUE:
-            return
+    def _pair_is_sensor_relevant(
+        self, first: _PackageCandidate, second: _PackageCandidate
+    ) -> bool:
+        """Cheap bitmask prefilter before evaluating an overlap slice."""
 
-        lateral_center = (start_lateral + end_lateral) / 2.0
-        fade_half_width = max(
-            float(pair.first.pressure_result.total_extent_mm) * PRESSURE_GAP_MIN_FADE_HALF_WIDTH_EXTENT_FRACTION,
-            self.circle_diameter_mm * self.gap_fade_width_fraction,
+        first_row, first_col = first.package.grid_position
+        second_row, second_col = second.package.grid_position
+        row_delta = second_row - first_row
+        col_delta = second_col - first_col
+        first_facing = 0
+        second_facing = 0
+        if col_delta > 0:
+            first_facing |= ACTIVE_RIGHT
+            second_facing |= ACTIVE_LEFT
+        elif col_delta < 0:
+            first_facing |= ACTIVE_LEFT
+            second_facing |= ACTIVE_RIGHT
+        if row_delta > 0:
+            first_facing |= ACTIVE_BOTTOM
+            second_facing |= ACTIVE_TOP
+        elif row_delta < 0:
+            first_facing |= ACTIVE_TOP
+            second_facing |= ACTIVE_BOTTOM
+        first_mask = first.package.pressure_result.active_sensor_mask
+        second_mask = second.package.pressure_result.active_sensor_mask
+        return bool(
+            (first_mask & (ACTIVE_CENTER | first_facing))
+            or (second_mask & (ACTIVE_CENTER | second_facing))
         )
-        mask = (axis_values >= axis_min) & (axis_values <= axis_max)
-        lateral_fade = np.clip(1.0 - (np.abs(lateral_values - lateral_center) / fade_half_width), 0.0, 1.0)
-        mask &= lateral_fade > 0.0
-        if not np.any(mask):
-            return
 
-        first_value = float(pair.first.calibrated_values.get(pair.first_facing_sensor, 0.0))
-        second_value = float(pair.second.calibrated_values.get(pair.second_facing_sensor, 0.0))
-        first_center_value = float(pair.first.calibrated_values.get(SHEAR_POSITION_CENTER, 0.0))
-        second_center_value = float(pair.second.calibrated_values.get(SHEAR_POSITION_CENTER, 0.0))
-        axial_fraction = np.clip((axis_values[mask] - axis_min) / (axis_max - axis_min), 0.0, 1.0)
-        if start_axis > end_axis:
-            axial_fraction = 1.0 - axial_fraction
-
-        axial_values = self._gap_axial_values(
-            axial_fraction,
-            first_value,
-            second_value,
-            first_center_value,
-            second_center_value,
-        )
-        gap_values = self._apply_negative_policy(axial_values * lateral_fade[mask])
-        current_values = pressure_grid[mask]
-        pressure_grid[mask] = self._dominant_values(current_values, gap_values)
-
-    def _sensor_world_position(
-        self,
-        center: tuple[float, float],
-        pressure_result: PressureMapResult,
-        sensor: str,
-    ) -> tuple[float, float]:
-        local_x, local_y = pressure_result.sensor_positions.get(sensor, (0.0, 0.0))
-        return (center[0] + float(local_x), center[1] + float(local_y))
-
-    def _gap_axial_values(
-        self,
-        fraction: np.ndarray,
-        first_value: float,
-        second_value: float,
-        first_center_value: float,
-        second_center_value: float,
-    ) -> np.ndarray:
-        first_mag = abs(first_value)
-        second_mag = abs(second_value)
-        first_center_mag = abs(first_center_value)
-        second_center_mag = abs(second_center_value)
-        if max(first_mag, second_mag, first_center_mag, second_center_mag) <= SHEAR_ZERO_VALUE:
-            return np.zeros_like(fraction, dtype=np.float64)
-
-        first_center_dominates = first_center_mag > first_mag and first_center_mag > second_mag
-        second_center_dominates = second_center_mag > second_mag and second_center_mag > first_mag
-        if first_center_dominates and first_center_mag >= second_center_mag:
-            return self._monotonic_between(fraction, first_value, second_value)
-        if second_center_dominates and second_center_mag > first_center_mag:
-            return self._monotonic_between(fraction, first_value, second_value)
-
-        if self._opposite_signs(first_value, second_value):
-            return self._monotonic_between(fraction, first_value, second_value)
-
-        denominator = first_mag + second_mag
-        peak_fraction = 0.5 if denominator <= SHEAR_ZERO_VALUE else second_mag / denominator
-        peak_value = self._gap_peak_value(first_value, second_value)
-        if peak_fraction <= SHEAR_ZERO_VALUE:
-            before_peak = np.full_like(fraction, peak_value, dtype=np.float64)
-        else:
-            before_peak = first_value + (
-                (peak_value - first_value) * np.clip(fraction / peak_fraction, 0.0, 1.0)
-            )
-
-        if peak_fraction >= 1.0:
-            after_peak = np.full_like(fraction, peak_value, dtype=np.float64)
-        else:
-            after_peak = peak_value + (
-                (second_value - peak_value)
-                * np.clip((fraction - peak_fraction) / (1.0 - peak_fraction), 0.0, 1.0)
-            )
-        return np.where(fraction <= peak_fraction, before_peak, after_peak)
-
-    def _gap_peak_value(self, first_value: float, second_value: float) -> float:
-        dominant = first_value if abs(first_value) >= abs(second_value) else second_value
-        contrast = abs(first_value - second_value) * self.gap_contrast_gain
-        if dominant < SHEAR_ZERO_VALUE:
-            return dominant - contrast
-        return dominant + contrast
-
-    def _monotonic_between(self, fraction: np.ndarray, first_value: float, second_value: float) -> np.ndarray:
-        return first_value + ((second_value - first_value) * fraction)
-
-    def _opposite_signs(self, first_value: float, second_value: float) -> bool:
-        return (first_value < SHEAR_ZERO_VALUE < second_value) or (second_value < SHEAR_ZERO_VALUE < first_value)
-
-    def _apply_negative_policy(self, values: np.ndarray) -> np.ndarray:
-        if self.show_negative:
-            return values
-        return np.maximum(values, SHEAR_ZERO_VALUE)
-
-    def _dominant_values(self, current_values: np.ndarray, candidate_values: np.ndarray) -> np.ndarray:
-        candidates = self._apply_negative_policy(np.asarray(candidate_values, dtype=np.float64))
-        current = np.asarray(current_values, dtype=np.float64)
-        use_candidate = np.abs(candidates) > np.abs(current)
-        return np.where(use_candidate, candidates, current)
+    def _support_overlap(self, first: _PackageCandidate, second: _PackageCandidate) -> tuple[float, float, float, float] | None:
+        first_center_x, first_center_y = first.center
+        second_center_x, second_center_y = second.center
+        first_left, first_right, first_bottom, first_top = first.support_bounds_mm
+        second_left, second_right, second_bottom, second_top = second.support_bounds_mm
+        x0 = max(first_center_x + first_left, second_center_x + second_left)
+        x1 = min(first_center_x + first_right, second_center_x + second_right)
+        y0 = max(first_center_y + first_bottom, second_center_y + second_bottom)
+        y1 = min(first_center_y + first_top, second_center_y + second_top)
+        if x1 - x0 <= PRESSURE_ARRAY_GEOMETRY_EPSILON or y1 - y0 <= PRESSURE_ARRAY_GEOMETRY_EPSILON:
+            return None
+        return (x0, x1, y0, y1)

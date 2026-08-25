@@ -47,7 +47,12 @@ from constants.plotting import (
     PLOT_COLORS,
     PLOT_EXPORT_WIDTH,
 )
+from constants.ui import SPECTRUM_CHANNELS_PER_PACKAGE
 from file_operations.settings_persistence import load_settings_payload, save_settings_payload
+
+
+# numpy renamed trapz -> trapezoid; resolve once instead of probing per channel.
+_INTEGRATE_TRAPEZOID = getattr(np, "trapezoid", None) or getattr(np, "trapz")
 
 
 class SpectrumPanelMixin:
@@ -98,6 +103,17 @@ class SpectrumPanelMixin:
         self.spectrum_remove_dc_check.setChecked(bool(settings.get('remove_dc', True)))
         self.spectrum_snap_peak_check.setChecked(bool(settings.get('snap_to_peak', False)))
         self.on_spectrum_update_rate_changed(self.spectrum_update_rate_spin.value())
+
+        # Restore the package only if it is still among the selected sensors.
+        saved_package = settings.get('selected_package')
+        if saved_package and hasattr(self, 'spectrum_package_combo'):
+            available = [
+                self.spectrum_package_combo.itemText(i)
+                for i in range(self.spectrum_package_combo.count())
+            ]
+            if saved_package in available:
+                self.spectrum_package_combo.setCurrentText(saved_package)
+                self.spectrum_selected_package = saved_package
 
         filter_settings = settings.get('filter_settings')
         if filter_settings and hasattr(self, 'filter_master_check'):
@@ -346,15 +362,26 @@ class SpectrumPanelMixin:
         control_layout.addWidget(self.spectrum_save_png_btn, 5, 3)
 
         channel_toggle_layout = QHBoxLayout()
+        self.spectrum_package_label = QLabel('Package:')
+        channel_toggle_layout.addWidget(self.spectrum_package_label)
+        self.spectrum_package_combo = QComboBox()
+        self.spectrum_package_combo.setToolTip(
+            'Sensor package shown in the spectrum. One package at a time keeps the '
+            'display readable and the redraw cost flat.'
+        )
+        self.spectrum_package_combo.currentTextChanged.connect(self._on_spectrum_package_changed)
+        channel_toggle_layout.addWidget(self.spectrum_package_combo)
+
         channel_toggle_layout.addWidget(QLabel('Channels:'))
         self.spectrum_channel_checks = []
-        for index in range(5):
-            check = QCheckBox(f'Ch{index + 1}')
+        for index in range(SPECTRUM_CHANNELS_PER_PACKAGE):
+            check = QCheckBox(f'Ch_{index}')
             check.setChecked(True)
             self.spectrum_channel_checks.append(check)
             channel_toggle_layout.addWidget(check)
         channel_toggle_layout.addStretch()
         control_layout.addLayout(channel_toggle_layout, 5, 4, 1, 4)
+        self.refresh_spectrum_package_options()
 
         root_layout.addWidget(control_group)
 
@@ -528,8 +555,8 @@ class SpectrumPanelMixin:
         plot_layout.addWidget(self.spectrum_global_info_label)
 
         self.spectrum_channel_stats = []
-        for i in range(5):
-            label = QLabel(f'Ch{i + 1}: peak -, band RMS -, noise floor -')
+        for i in range(SPECTRUM_CHANNELS_PER_PACKAGE):
+            label = QLabel(f'Ch_{i}: peak -, band RMS -, noise floor -')
             label.setStyleSheet('font-family: monospace;')
             self.spectrum_channel_stats.append(label)
             plot_layout.addWidget(label)
@@ -554,6 +581,62 @@ class SpectrumPanelMixin:
         elif text == '0-10000':
             self.spectrum_fmin_spin.setValue(0.0)
             self.spectrum_fmax_spin.setValue(10000.0)
+
+    def refresh_spectrum_package_options(self):
+        """Repopulate the package combo, preserving the current choice if it survives.
+
+        Hidden outside array sensor-selection mode, where the spectrum falls back
+        to plain ADC channels and there are no packages to choose between.
+        """
+        combo = getattr(self, 'spectrum_package_combo', None)
+        if combo is None:
+            return
+
+        try:
+            packages = self.get_spectrum_available_packages()
+        except Exception:
+            packages = []
+
+        label = getattr(self, 'spectrum_package_label', None)
+        if label is not None:
+            label.setVisible(bool(packages))
+        combo.setVisible(bool(packages))
+
+        current = combo.currentText()
+        if [combo.itemText(i) for i in range(combo.count())] == packages:
+            return
+
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItems(packages)
+        if packages:
+            combo.setCurrentText(current if current in packages else packages[0])
+        combo.blockSignals(False)
+
+        self.spectrum_selected_package = combo.currentText() if packages else None
+        self._refresh_spectrum_channel_labels()
+
+    def _on_spectrum_package_changed(self, package_id):
+        self.spectrum_selected_package = package_id or None
+        self._refresh_spectrum_channel_labels()
+        self.reset_spectrum_averaging()
+        if hasattr(self, 'save_last_spectrum_settings'):
+            self.save_last_spectrum_settings()
+
+    def _refresh_spectrum_channel_labels(self):
+        """Name the channel checkboxes after the channels actually being shown."""
+        checks = getattr(self, 'spectrum_channel_checks', None)
+        if not checks:
+            return
+
+        try:
+            specs, package_id = self._resolve_spectrum_channel_specs()
+            labels = [self._spectrum_channel_label(spec, package_id) for spec in specs]
+        except Exception:
+            labels = []
+
+        for index, check in enumerate(checks):
+            check.setText(labels[index] if index < len(labels) else f'Ch_{index}')
 
     def _on_spectrum_mode_changed(self, mode_text):
         welch_mode = mode_text == 'Welch PSD'
@@ -816,6 +899,7 @@ class SpectrumPanelMixin:
             'update_rate_hz': int(self.spectrum_update_rate_spin.value()),
             'remove_dc': bool(self.spectrum_remove_dc_check.isChecked()),
             'snap_to_peak': bool(self.spectrum_snap_peak_check.isChecked()),
+            'selected_package': getattr(self, 'spectrum_selected_package', None),
             'filter_settings': self.get_filter_settings_from_ui(),
         }
 
@@ -872,6 +956,15 @@ class SpectrumPanelMixin:
         band_f1 = min(settings['band_f1'], settings['band_f2'])
         band_f2 = max(settings['band_f1'], settings['band_f2'])
 
+        # These depend only on freqs_show and the band bounds, all fixed for the
+        # whole pass, so build them once rather than once per channel.
+        peak_mask = freqs_show > 0.0
+        has_peak_bins = bool(np.any(peak_mask))
+        peak_freqs = freqs_show[peak_mask]
+        band_mask = (freqs_show >= band_f1) & (freqs_show <= band_f2)
+        has_band_bins = bool(np.any(band_mask))
+        band_freqs = freqs_show[band_mask]
+
         visible_curve_count = 0
         per_channel_info = []
 
@@ -902,24 +995,23 @@ class SpectrumPanelMixin:
             })
 
             # Stats on displayed range, ignoring DC bin for peak
-            peak_mask = freqs_show > 0.0
-            if np.any(peak_mask):
-                peak_idx = np.argmax(y_plot[peak_mask])
-                peak_freq = float(freqs_show[peak_mask][peak_idx])
-                peak_mag = float(y_plot[peak_mask][peak_idx])
+            if has_peak_bins:
+                peak_values = y_plot[peak_mask]
+                peak_idx = np.argmax(peak_values)
+                peak_freq = float(peak_freqs[peak_idx])
+                peak_mag = float(peak_values[peak_idx])
             else:
                 peak_freq = 0.0
                 peak_mag = 0.0
 
-            band_mask = (freqs_show >= band_f1) & (freqs_show <= band_f2)
-            if np.any(band_mask):
+            if has_band_bins:
+                band_linear = display_linear[band_mask]
                 if mode == 'welch':
-                    integrate_trapezoid = np.trapezoid if hasattr(np, 'trapezoid') else np.lib.function_base.trapz
-                    band_power = float(integrate_trapezoid(display_linear[band_mask], freqs_show[band_mask]))
+                    band_power = float(_INTEGRATE_TRAPEZOID(band_linear, band_freqs))
                     band_rms = float(np.sqrt(max(band_power, 0.0)))
                 else:
-                    band_rms = float(np.sqrt(np.mean(display_linear[band_mask] ** 2)))
-                noise_floor_linear = float(np.median(display_linear[band_mask]))
+                    band_rms = float(np.sqrt(np.mean(band_linear ** 2)))
+                noise_floor_linear = float(np.median(band_linear))
                 noise_floor_display = float(np.median(y_plot[band_mask]))
             else:
                 band_rms = 0.0
@@ -963,8 +1055,8 @@ class SpectrumPanelMixin:
                 f"band RMS {info['band_rms']:.5f} | noise floor {info['noise_floor_display']:.3f}"
             )
 
-        for idx in range(len(per_channel_info), 5):
-            self.spectrum_channel_stats[idx].setText(f"Ch{idx + 1}: -")
+        for idx in range(len(per_channel_info), SPECTRUM_CHANNELS_PER_PACKAGE):
+            self.spectrum_channel_stats[idx].setText(f"Ch_{idx}: -")
 
         if visible_curve_count == 0:
             self.show_spectrum_status('All channel traces are hidden.')

@@ -13,15 +13,62 @@ diagnostics, but the force threshold uses the same method for every channel:
 a high-percentile absolute deviation from Vmid. This behaves better for
 ADC-quantized quiet windows where MAD can jump between zero and a large value
 for visually similar traces. When no explicit midpoint is supplied, the
-calculator falls back to the full-trace median. Samples whose centered voltage
-is below the selected threshold are set to zero before integration.
+calculator falls back to the full-trace median. Before any event has started,
+samples whose centered voltage is below the selected threshold are treated as
+zero; once an event starts, sub-threshold samples integrate their raw voltage
+(see the reset discussion below).
 
 For each sample, the leakage decay over the elapsed time is:
 ``alpha = exp(-dt / (Rleak * Cpzt))``. The generated charge increment is then
-estimated as ``dQ = Cpzt * (v[n] - alpha * v[n-1])`` and converted to a force
-increment with ``dF = dQ / d33``. The returned force trace is the accumulated
-sum of those increments. After a positive/negative bipolar event returns below
-the noise threshold, the accumulator is reset to reduce drift.
+estimated as ``dQ = Cpzt * beta * (v[n] - alpha * v[n-1])``, where ``beta``
+optionally corrects charge that decays between physical MUX connection and the
+effective ADC sample. The returned force trace is the accumulated sum of those
+increments.
+
+Reset is a natural event state machine, not a threshold-crossing trigger.
+Once a sample crosses the noise threshold, an "event" starts and every
+subsequent sample integrates its raw (non-thresholded) voltage, including
+samples that dip back inside the noise band, so a slow release is never
+clipped mid-decay. A polarity reversal during an event simply integrates the
+force back down; it never zeroes the accumulator by itself. The accumulator
+is zeroed by a **natural zero**: once the event's own peak force has been
+reached, the force declining back inside a band around zero (proportional to
+that peak, with an absolute floor) ends the event and zeroes it. A natural
+zero frequently fires while the voltage is still mid-transient (a slow press
+followed by a fast release spike burns through the accumulator in a fraction
+of the time the voltage takes to settle), so the concluded event's own
+release tail can still be running when the accumulator is already zero. A
+**re-arm gate** (``rearm_pending``) opens at that instant and suppresses
+every following sample - no new event may start, nothing integrates - until
+voltage genuinely returns inside the noise band; only then can the next
+threshold crossing start a fresh event, exactly like a first press. Without
+this gate, that leftover transient would integrate as a spurious event of
+its own, opposite in sign to the one that just concluded.
+
+Going quiet (below the noise threshold) is *not* the same as being released:
+a real PZT voltage decays toward baseline even while a press stays
+physically held, carrying no held-force information after roughly one wall
+time constant, so a channel can go quiet mid-hold with the accumulator still
+sitting near its peak. A continuous quiet run lasting ``quiet_hold_clear_s``
+only concludes the event - zeroing the residual - if it has declined to
+within ``quiet_hold_release_fraction`` of the event's own peak (or the peak
+never cleared ``force_zero_min_event_peak_n`` to begin with, i.e. there was
+nothing substantial to distinguish "declined" from "held"). Otherwise the
+event is left open: still hysteresis-integrating, so a real release signal
+whenever it arrives keeps cancelling the *same* accumulator - matching the
+sensor's own charge instead of jumping to zero and starting a fresh event
+from nothing. Event bookkeeping (peak force) is cleared whenever the event
+does end, so a noise tail can never pair with the next press's onset. A
+separate **stuck-force fail-safe** is the eventual backstop for whatever the
+quiet-hold reset leaves open (whether never concluded because still "held",
+or concluded but retained because it never declined enough): once a channel
+has stayed continuously quiet for a configurable hold time, its residual
+decays toward zero, snapping to exact zero inside the floor band; a zero
+time constant selects an instant hard reset. Because the floor is an
+absolute magnitude while the decay is proportional to the current value, a
+small residual crosses it (and fully resolves) much sooner than a large one
+- so a quick tap fades quickly while a genuinely abandoned held press takes
+longer, all without ever discarding a still-arriving release signal.
 
 All low-level calculation inputs use SI units:
 
@@ -59,14 +106,326 @@ class PztQuietBaselineEstimate:
     sample_count: int
 
 
+@dataclass(frozen=True, slots=True)
+class PztForceStepResult:
+    """One exactly-once update of a live, baseline-centred PZT channel."""
+
+    delta_force_n: float
+    accumulated_force_n: float
+    centered_voltage_v: float
+    active: bool
+    reset_occurred: bool
+    natural_zero_occurred: bool = False
+    fallback_reset_occurred: bool = False
+    event_ended: bool = False
+    reset_recommended: bool = False
+    stuck_decay_active: bool = False
+    rearm_gate_active: bool = False
+
+
+@dataclass(slots=True)
+class PztForceChannelIntegrator:
+    """Stateful counterpart of :func:`calculate_pzt_force_from_voltage`.
+
+    ``process_centered_sample`` deliberately accepts voltage after the
+    application's shared time-series median-baseline stage.  It must therefore
+    never estimate or subtract another midpoint.
+    """
+
+    capacitance_f: float
+    rleak_ohm: float
+    d33_c_per_n: float
+    noise_threshold_v: float
+    off_mux_rleak_ohm: float | None = None
+    # When False (the live package engine, `pressure_force_display.py`), the
+    # integrator still runs the full event/stuck machinery and reports its
+    # conditions, but never zeroes its own accumulator; the caller decides
+    # when to apply a coherent reset across several channels.
+    self_reset_enabled: bool = True
+    force_zero_band_fraction: float = PZT_FORCE_DEFAULT_SETTINGS["force_zero_band_fraction"]
+    force_zero_band_min_n: float = PZT_FORCE_DEFAULT_SETTINGS["force_zero_band_min_n"]
+    force_zero_min_event_peak_n: float = PZT_FORCE_DEFAULT_SETTINGS["force_zero_min_event_peak_n"]
+    quiet_hold_release_fraction: float = PZT_FORCE_DEFAULT_SETTINGS["quiet_hold_release_fraction"]
+    quiet_hold_clear_s: float = PZT_FORCE_DEFAULT_SETTINGS["quiet_hold_clear_s"]
+    stuck_force_failsafe_enabled: bool = PZT_FORCE_DEFAULT_SETTINGS["stuck_force_failsafe_enabled"]
+    stuck_force_quiet_hold_s: float = PZT_FORCE_DEFAULT_SETTINGS["stuck_force_quiet_hold_s"]
+    stuck_force_decay_tau_s: float = PZT_FORCE_DEFAULT_SETTINGS["stuck_force_decay_tau_s"]
+    previous_centered_voltage_v: float = 0.0
+    previous_timestamp_s: float | None = None
+    accumulated_force_n: float = 0.0
+    active: bool = False
+    initialized: bool = False
+    # Per-event state (see module docstring for the natural-reset design).
+    event_active: bool = False
+    event_peak_force_n: float = 0.0
+    quiet_since_s: float | None = None
+    # Set when a natural zero ends an event; suppresses the rest of that
+    # release transient (still supra-threshold) from starting a new event or
+    # integrating, until voltage genuinely returns inside the noise band.
+    rearm_pending: bool = False
+
+    def __post_init__(self) -> None:
+        validate_pzt_force_settings(
+            self.capacitance_f, self.rleak_ohm, self.d33_c_per_n
+        )
+        if not np.isfinite(self.noise_threshold_v):
+            raise ValueError("PZT force noise threshold must be finite")
+        if self.off_mux_rleak_ohm is not None and (
+            not np.isfinite(self.off_mux_rleak_ohm) or self.off_mux_rleak_ohm <= 0.0
+        ):
+            raise ValueError("off-MUX leak resistance must be greater than zero")
+        for name in (
+            "force_zero_band_fraction", "force_zero_band_min_n",
+            "force_zero_min_event_peak_n", "quiet_hold_release_fraction",
+            "quiet_hold_clear_s", "stuck_force_quiet_hold_s", "stuck_force_decay_tau_s",
+        ):
+            value = float(getattr(self, name))
+            if not np.isfinite(value) or value < 0.0:
+                raise ValueError(f"PZT force {name} must be finite and non-negative")
+        # stuck_force_quiet_hold_s must be at least quiet_hold_clear_s so the
+        # fail-safe never engages before the event it depends on has ended.
+        self.stuck_force_quiet_hold_s = max(
+            float(self.stuck_force_quiet_hold_s), float(self.quiet_hold_clear_s)
+        )
+
+    def reset(self) -> None:
+        """Clear physical state without changing the validated parameters."""
+        self.previous_centered_voltage_v = 0.0
+        self.previous_timestamp_s = None
+        self.accumulated_force_n = 0.0
+        self.active = False
+        self.initialized = False
+        self.event_active = False
+        self.event_peak_force_n = 0.0
+        self.quiet_since_s = None
+        self.rearm_pending = False
+
+    def decay_toward_zero(self, dt_s: float, tau_s: float) -> bool:
+        """Multiply the accumulator toward zero; snap to exact 0 inside the floor.
+
+        ``tau_s <= 0`` selects an instant hard reset. Returns whether the
+        accumulator is (now) within the ``force_zero_band_min_n`` floor.
+        """
+        tau = float(tau_s)
+        if tau <= 0.0:
+            self.accumulated_force_n = 0.0
+        else:
+            self.accumulated_force_n *= float(np.exp(-float(dt_s) / tau))
+        if abs(self.accumulated_force_n) <= self.force_zero_band_min_n:
+            self.accumulated_force_n = 0.0
+            return True
+        return False
+
+    def process_centered_sample(
+        self,
+        centered_voltage_v: float,
+        timestamp_s: float,
+        *,
+        leak_dt_s: float | None = None,
+        pre_sample_decay_dt_s: float | None = None,
+    ) -> PztForceStepResult:
+        """Process one new sample and return its force-state transition.
+
+        The first sample establishes the previous voltage/timestamp and has no
+        charge interval to integrate.  Subsequent calls require a strictly
+        increasing timestamp, which prevents accidental integration across a
+        restart or unordered ring-buffer snapshot.
+        """
+        voltage = float(centered_voltage_v)
+        timestamp = float(timestamp_s)
+        if not np.isfinite(voltage) or not np.isfinite(timestamp):
+            raise ValueError("PZT force samples and timestamps must be finite")
+        threshold = abs(float(self.noise_threshold_v))
+        is_active_sample = _polarity(voltage, threshold) != 0
+        self.active = is_active_sample
+
+        if not self.initialized:
+            active_voltage = voltage if is_active_sample else 0.0
+            self.previous_centered_voltage_v = active_voltage
+            self.previous_timestamp_s = timestamp
+            if is_active_sample:
+                self.event_active = True
+                self.event_peak_force_n = 0.0
+                self.quiet_since_s = None
+            else:
+                self.quiet_since_s = timestamp
+            self.initialized = True
+            return PztForceStepResult(0.0, 0.0, active_voltage, is_active_sample, False)
+
+        previous_timestamp = self.previous_timestamp_s
+        assert previous_timestamp is not None
+        wall_dt = timestamp - previous_timestamp
+        if not np.isfinite(wall_dt) or wall_dt <= 0.0:
+            raise ValueError("PZT force timestamps must be strictly increasing")
+        leak_dt = wall_dt if leak_dt_s is None else float(leak_dt_s)
+        if not np.isfinite(leak_dt):
+            raise ValueError("PZT force leak_dt_s must be finite")
+        leak_dt = min(max(leak_dt, 0.0), wall_dt)
+        pre_sample_dt = 0.0 if pre_sample_decay_dt_s is None else float(pre_sample_decay_dt_s)
+        if not np.isfinite(pre_sample_dt) or pre_sample_dt < 0.0:
+            raise ValueError("PZT force pre_sample_decay_dt_s must be finite and non-negative")
+
+        if self.rearm_pending:
+            # The event already concluded via a natural zero while this
+            # release transient was still supra-threshold; suppress the
+            # remainder of that transient (no new event, no integration)
+            # until voltage genuinely returns inside the noise band.
+            if not is_active_sample:
+                self.rearm_pending = False
+                if self.quiet_since_s is None:
+                    self.quiet_since_s = timestamp
+            self.previous_centered_voltage_v = 0.0
+            self.previous_timestamp_s = timestamp
+            return PztForceStepResult(
+                0.0, self.accumulated_force_n, 0.0, is_active_sample, False,
+                rearm_gate_active=True,
+            )
+
+        # Hysteresis: while an event is active, integrate the raw centered
+        # voltage (never zero a mid-event sample inside the noise band) so a
+        # slow release is not clipped. This only applies for up to
+        # quiet_hold_clear_s of continuous quiet: a real PZT transient
+        # settles far faster than that, so a channel still sub-threshold
+        # after the full hold is not "mid-transition" - it is quiet, and its
+        # raw voltage is measurement noise around a DC offset, not signal.
+        # Integrating that noise indefinitely (while the event stays open
+        # awaiting a possible late release, see the quiet-hold branch below)
+        # would otherwise accumulate unbounded drift, since the residual and
+        # its own peak grow together and the event never looks "declined".
+        # Outside that window (or outside any event), sub-threshold samples
+        # are treated as exactly zero.
+        if is_active_sample:
+            if not self.event_active:
+                self.event_active = True
+                self.event_peak_force_n = 0.0
+            self.quiet_since_s = None
+        elif not self.event_active and self.quiet_since_s is None:
+            self.quiet_since_s = timestamp
+        hysteresis_active = self.event_active and (
+            self.quiet_since_s is None
+            or (timestamp - self.quiet_since_s) < self.quiet_hold_clear_s
+        )
+        sample_voltage = voltage if (is_active_sample or hysteresis_active) else 0.0
+
+        tau_on = float(self.rleak_ohm) * float(self.capacitance_f)
+        decay_exponent = leak_dt / tau_on
+        if self.off_mux_rleak_ohm is not None:
+            tau_off = float(self.off_mux_rleak_ohm) * float(self.capacitance_f)
+            decay_exponent += max(wall_dt - leak_dt, 0.0) / tau_off
+        alpha = float(np.exp(-decay_exponent))
+        correction = float(np.exp(pre_sample_dt / tau_on))
+        prior_force = self.accumulated_force_n
+        self.accumulated_force_n += (
+            float(self.capacitance_f) / float(self.d33_c_per_n)
+        ) * correction * (sample_voltage - alpha * self.previous_centered_voltage_v)
+
+        natural_zero_occurred = False
+        fallback_reset_occurred = False
+        event_ended = False
+        reset_occurred = False
+        stuck_decay_active = False
+
+        if self.event_active:
+            self.event_peak_force_n = max(self.event_peak_force_n, abs(self.accumulated_force_n))
+            if not is_active_sample and self.quiet_since_s is None:
+                self.quiet_since_s = timestamp
+
+            if self.event_peak_force_n >= self.force_zero_min_event_peak_n:
+                band = max(
+                    self.force_zero_band_fraction * self.event_peak_force_n,
+                    self.force_zero_band_min_n,
+                )
+                if abs(self.accumulated_force_n) <= band:
+                    natural_zero_occurred = True
+                    event_ended = True
+
+            if not event_ended and self.quiet_since_s is not None:
+                if (timestamp - self.quiet_since_s) >= self.quiet_hold_clear_s:
+                    # A real PZT voltage decays toward baseline even while a
+                    # press stays physically held (it carries no held-force
+                    # information after roughly one wall time constant), so
+                    # "gone quiet" alone does not mean "released" - a channel
+                    # can go quiet mid-hold with the accumulated force still
+                    # sitting near its peak. Only conclude the event here if
+                    # the residual has genuinely declined; a small blip that
+                    # never built up much force (peak below the min-event
+                    # gate) is released unconditionally since there is
+                    # nothing meaningful left to distinguish "declined" from
+                    # "held" for it. Otherwise, leave the event open (still
+                    # hysteresis-integrating) so a real release signal keeps
+                    # cancelling the same accumulator instead of starting a
+                    # fresh event from zero; the stuck-force fail-safe below
+                    # is the eventual backstop if no release ever arrives.
+                    if self.event_peak_force_n < self.force_zero_min_event_peak_n or (
+                        abs(self.accumulated_force_n)
+                        <= self.quiet_hold_release_fraction * self.event_peak_force_n
+                    ):
+                        event_ended = True
+                        fallback_reset_occurred = True
+
+            if event_ended:
+                if self.self_reset_enabled and (natural_zero_occurred or fallback_reset_occurred):
+                    self.accumulated_force_n = 0.0
+                    reset_occurred = True
+                # Clear event bookkeeping so a tail crossing can never pair
+                # with the next press's onset; the continuous quiet run
+                # (quiet_since_s) is retained for the stuck-force fail-safe.
+                self.event_active = False
+                self.event_peak_force_n = 0.0
+                if natural_zero_occurred:
+                    # The rest of this release transient may still be
+                    # supra-threshold; suppress it (both self-reset modes)
+                    # so it cannot integrate as a spurious opposite-sign
+                    # event - see `rearm_pending` above.
+                    self.rearm_pending = True
+
+        reset_recommended = natural_zero_occurred or fallback_reset_occurred
+
+        if (
+            self.self_reset_enabled
+            and self.stuck_force_failsafe_enabled
+            # Deliberately not gated on `event_active`: a held press that
+            # never declines enough to conclude via the ordinary path above
+            # (see the comment there) still needs an eventual backstop, and
+            # `quiet_since_s` already reflects the current continuous quiet
+            # run regardless of whether the event was formally ended.
+            and self.quiet_since_s is not None
+            and (timestamp - self.quiet_since_s) >= self.stuck_force_quiet_hold_s
+            and self.accumulated_force_n != 0.0
+        ):
+            stuck_decay_active = True
+            if self.decay_toward_zero(wall_dt, self.stuck_force_decay_tau_s):
+                reset_occurred = True
+
+        # No event => baseline reference is 0: a stale sub-threshold prev
+        # voltage must never seed a spurious increment on the next quiet
+        # sample (`0 - alpha * v_prev`).
+        self.previous_centered_voltage_v = 0.0 if event_ended else sample_voltage
+        self.previous_timestamp_s = timestamp
+        return PztForceStepResult(
+            self.accumulated_force_n - prior_force,
+            self.accumulated_force_n,
+            sample_voltage,
+            is_active_sample,
+            reset_occurred,
+            natural_zero_occurred,
+            fallback_reset_occurred,
+            event_ended,
+            reset_recommended,
+            stuck_decay_active,
+        )
+
+
 def calculate_pzt_force_from_settings(
     voltage_v,
     time_s,
     settings: Mapping[str, object] | None = None,
     *,
+    sensor_position: str | None = None,
     vmid_v: float | None = None,
     noise_threshold_v: float | None = None,
     leak_dt_s=None,
+    pre_sample_decay_dt_s=None,
 ) -> np.ndarray:
     """Calculate PZT force from voltage using persisted/UI-style settings.
 
@@ -80,7 +439,8 @@ def calculate_pzt_force_from_settings(
         ``voltage_v`` and strictly increasing.
     settings:
         Optional mapping with the keys from ``PZT_FORCE_DEFAULT_SETTINGS``:
-        ``capacitance_value``, ``capacitance_unit``, ``rleak_ohm``,
+        ``center_capacitance_value``, ``outer_capacitance_value``,
+        ``capacitance_unit``, ``rleak_ohm``,
         ``d33_pc_per_n``, and ``noise_threshold_v``. Missing keys are filled
         from the shared defaults.
     vmid_v:
@@ -89,15 +449,19 @@ def calculate_pzt_force_from_settings(
     noise_threshold_v:
         Optional explicit centered voltage threshold. When omitted, the value
         from ``settings`` is used.
+    sensor_position:
+        Logical sensor position in its PZT package. ``"C"`` selects the
+        center capacitance; every other position selects the outer value.
 
     Returns
     -------
     np.ndarray
         Reconstructed force samples in newtons.
     """
-    resolved = {**PZT_FORCE_DEFAULT_SETTINGS, **dict(settings or {})}
+    supplied = dict(settings or {})
+    resolved = {**PZT_FORCE_DEFAULT_SETTINGS, **supplied}
     capacitance_f = pzt_capacitance_to_farads(
-        float(resolved["capacitance_value"]),
+        pzt_capacitance_value_for_position(supplied, sensor_position),
         str(resolved["capacitance_unit"]),
     )
     d33_c_per_n = float(resolved["d33_pc_per_n"]) * PZT_FORCE_PIC_COULOMB_TO_COULOMB
@@ -110,10 +474,41 @@ def calculate_pzt_force_from_settings(
         noise_threshold_v=float(noise_threshold_v if noise_threshold_v is not None else resolved["noise_threshold_v"]),
         vmid_v=vmid_v,
         leak_dt_s=leak_dt_s,
+        pre_sample_decay_dt_s=pre_sample_decay_dt_s,
         off_mux_rleak_ohm=_optional_positive_float(resolved.get("off_mux_rleak_ohm"))
         if bool(resolved.get("off_mux_leak_enabled", False))
         else None,
+        force_zero_band_fraction=float(resolved["force_zero_band_fraction"]),
+        force_zero_band_min_n=float(resolved["force_zero_band_min_n"]),
+        force_zero_min_event_peak_n=float(resolved["force_zero_min_event_peak_n"]),
+        quiet_hold_release_fraction=float(resolved["quiet_hold_release_fraction"]),
+        quiet_hold_clear_s=float(resolved["quiet_hold_clear_s"]),
+        stuck_force_failsafe_enabled=bool(resolved["stuck_force_failsafe_enabled"]),
+        stuck_force_quiet_hold_s=float(resolved["stuck_force_quiet_hold_s"]),
+        stuck_force_decay_tau_s=float(resolved["stuck_force_decay_tau_s"]),
     )
+
+
+def pzt_capacitance_value_for_position(
+    settings: Mapping[str, object] | None,
+    sensor_position: str | None,
+) -> float:
+    """Return the capacitance configured for one PZT package position.
+
+    ``C`` uses ``center_capacitance_value`` and all other positions use
+    ``outer_capacitance_value``. A settings mapping saved before this split
+    has only ``capacitance_value``; that value remains the fallback for both.
+    """
+    supplied = dict(settings or {})
+    legacy_value = supplied.get(
+        "capacitance_value", PZT_FORCE_DEFAULT_SETTINGS["capacitance_value"]
+    )
+    key = (
+        "center_capacitance_value"
+        if str(sensor_position or "").strip().upper() == "C"
+        else "outer_capacitance_value"
+    )
+    return float(supplied.get(key, legacy_value))
 
 
 def estimate_pzt_quiet_baseline(
@@ -198,6 +593,8 @@ def validate_pzt_force_settings(capacitance_f: float, rleak_ohm: float, d33_c_pe
     ValueError
         If capacitance, leak resistance, or d33 is not strictly positive.
     """
+    if not all(np.isfinite(value) for value in (capacitance_f, rleak_ohm, d33_c_per_n)):
+        raise ValueError("PZT force parameters must be finite")
     if capacitance_f <= 0.0:
         raise ValueError("PZT capacitance must be greater than zero")
     if rleak_ohm <= 0.0:
@@ -216,7 +613,16 @@ def calculate_pzt_force_from_voltage(
     noise_threshold_v: float,
     vmid_v: float | None = None,
     leak_dt_s=None,
+    pre_sample_decay_dt_s=None,
     off_mux_rleak_ohm: float | None = None,
+    force_zero_band_fraction: float = PZT_FORCE_DEFAULT_SETTINGS["force_zero_band_fraction"],
+    force_zero_band_min_n: float = PZT_FORCE_DEFAULT_SETTINGS["force_zero_band_min_n"],
+    force_zero_min_event_peak_n: float = PZT_FORCE_DEFAULT_SETTINGS["force_zero_min_event_peak_n"],
+    quiet_hold_release_fraction: float = PZT_FORCE_DEFAULT_SETTINGS["quiet_hold_release_fraction"],
+    quiet_hold_clear_s: float = PZT_FORCE_DEFAULT_SETTINGS["quiet_hold_clear_s"],
+    stuck_force_failsafe_enabled: bool = PZT_FORCE_DEFAULT_SETTINGS["stuck_force_failsafe_enabled"],
+    stuck_force_quiet_hold_s: float = PZT_FORCE_DEFAULT_SETTINGS["stuck_force_quiet_hold_s"],
+    stuck_force_decay_tau_s: float = PZT_FORCE_DEFAULT_SETTINGS["stuck_force_decay_tau_s"],
 ) -> np.ndarray:
     """Reconstruct force from centered PZT voltage dynamics.
 
@@ -226,10 +632,12 @@ def calculate_pzt_force_from_voltage(
     charge to force using ``d33``.
 
     Before integration, the signal midpoint is estimated using the median of
-    ``voltage_v``. Samples whose centered absolute voltage is below
-    ``noise_threshold_v`` are set to zero and therefore do not contribute to
-    the integrated force. After a bipolar event returns below threshold, the
-    force accumulator is reset to reduce drift.
+    ``voltage_v``. Before any event has started, samples whose centered
+    absolute voltage is below ``noise_threshold_v`` are treated as zero; once
+    an event starts, sub-threshold samples integrate their raw voltage
+    (hysteresis). The accumulator is reset by the natural-zero/fallback/
+    stuck-force-fail-safe machinery documented on
+    :class:`PztForceChannelIntegrator`.
 
     Parameters
     ----------
@@ -250,6 +658,10 @@ def calculate_pzt_force_from_voltage(
         modeled continuously over the elapsed timestamp delta for backward
         compatibility. A scalar applies to every interval; an array may either
         match ``time_s`` length or the interval count ``len(time_s) - 1``.
+    pre_sample_decay_dt_s:
+        Optional physical MUX-connection-to-effective-sample decay in seconds.
+        This independently corrects newly accumulated charge before the ADC
+        sample; it does not replace the previous-sample leakage interval.
 
     Returns
     -------
@@ -273,54 +685,43 @@ def calculate_pzt_force_from_voltage(
     if voltage.size > 1 and not np.all(np.diff(times) > 0.0):
         raise ValueError("PZT force timestamps must be strictly increasing")
     leak_intervals = _normalize_leak_intervals(leak_dt_s, voltage.size)
+    pre_sample_intervals = _normalize_leak_intervals(pre_sample_decay_dt_s, voltage.size)
+    if pre_sample_intervals is not None and np.any(pre_sample_intervals < 0.0):
+        raise ValueError("PZT force pre_sample_decay_dt_s must not be negative")
 
     v_mid = float(np.median(voltage) if vmid_v is None else vmid_v)
-    active_centered = voltage - v_mid
+    centered_voltage = voltage - v_mid
     threshold = abs(float(noise_threshold_v))
-    active_centered[np.abs(active_centered) < threshold] = 0.0
-    tau = float(rleak_ohm) * float(capacitance_f)
-    tau_off = None
-    if off_mux_rleak_ohm is not None:
-        off_mux_rleak = float(off_mux_rleak_ohm)
-        if off_mux_rleak <= 0.0:
-            raise ValueError("off-MUX leak resistance must be greater than zero")
-        tau_off = off_mux_rleak * float(capacitance_f)
-    scale = float(capacitance_f) / float(d33_c_per_n)
-    force = np.zeros_like(active_centered, dtype=np.float64)
-    accumulator = 0.0
-    event_polarity = 0
-    saw_opposite_pair = False
-
-    previous_v = float(active_centered[0])
-    current_polarity = _polarity(previous_v, threshold)
-    if current_polarity:
-        event_polarity = current_polarity
-
-    for index in range(1, active_centered.size):
-        dt = float(times[index] - times[index - 1])
-        if dt <= 0.0:
-            raise ValueError("PZT force timestamps must be strictly increasing")
-        leak_dt = dt if leak_intervals is None else float(leak_intervals[index - 1])
-        leak_dt = min(max(leak_dt, 0.0), dt)
-        decay_exponent = leak_dt / tau
-        if tau_off is not None:
-            decay_exponent += max(dt - leak_dt, 0.0) / tau_off
-        alpha = float(np.exp(-decay_exponent))
-        current_v = float(active_centered[index])
-        accumulator += scale * (current_v - (alpha * previous_v))
-
-        current_polarity = _polarity(current_v, threshold)
-        if current_polarity:
-            if event_polarity and current_polarity != event_polarity:
-                saw_opposite_pair = True
-            event_polarity = current_polarity
-        elif saw_opposite_pair and abs(current_v) < threshold:
-            accumulator = 0.0
-            event_polarity = 0
-            saw_opposite_pair = False
-
-        force[index] = accumulator
-        previous_v = current_v
+    force = np.zeros_like(centered_voltage, dtype=np.float64)
+    integrator = PztForceChannelIntegrator(
+        capacitance_f=float(capacitance_f),
+        rleak_ohm=float(rleak_ohm),
+        d33_c_per_n=float(d33_c_per_n),
+        noise_threshold_v=threshold,
+        off_mux_rleak_ohm=off_mux_rleak_ohm,
+        force_zero_band_fraction=float(force_zero_band_fraction),
+        force_zero_band_min_n=float(force_zero_band_min_n),
+        force_zero_min_event_peak_n=float(force_zero_min_event_peak_n),
+        quiet_hold_release_fraction=float(quiet_hold_release_fraction),
+        quiet_hold_clear_s=float(quiet_hold_clear_s),
+        stuck_force_failsafe_enabled=bool(stuck_force_failsafe_enabled),
+        stuck_force_quiet_hold_s=float(stuck_force_quiet_hold_s),
+        stuck_force_decay_tau_s=float(stuck_force_decay_tau_s),
+    )
+    # The live integrator is the single implementation of the RC equation.
+    # Supplying pre-centred samples here preserves the public batch API while
+    # avoiding a second baseline calculation in the streaming caller.
+    integrator.process_centered_sample(float(centered_voltage[0]), float(times[0]))
+    for index in range(1, centered_voltage.size):
+        step = integrator.process_centered_sample(
+            float(centered_voltage[index]),
+            float(times[index]),
+            leak_dt_s=None if leak_intervals is None else float(leak_intervals[index - 1]),
+            pre_sample_decay_dt_s=(
+                None if pre_sample_intervals is None else float(pre_sample_intervals[index - 1])
+            ),
+        )
+        force[index] = step.accumulated_force_n
 
     return force
 

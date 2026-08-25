@@ -85,6 +85,8 @@ class MCUDetectorMixin:
         # Re-arm one-time defaults when MCU identity changes.
         if previous_mcu != self.current_mcu:
             self._array_pzt_pzr1_defaults_applied = False
+            if hasattr(self, 'config') and hasattr(self, 'refresh_adc_mux_timing'):
+                self.refresh_adc_mux_timing()
     
     def detect_mcu(self):
         """Detect MCU type by sending 'mcu' and waiting on routed ADC text lines."""

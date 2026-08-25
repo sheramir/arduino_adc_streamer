@@ -36,25 +36,45 @@ class ADCSessionController:
     # Lifecycle
     # ------------------------------------------------------------------
 
-    def connect(self, port_name: str):
-        self.serial_port = serial.Serial(
+    def connect(self, port_name: str, *, thread_wait_ms: int = 250):
+        port = serial.Serial(
             port=port_name,
             baudrate=BAUD_RATE,
             timeout=SERIAL_TIMEOUT,
             rtscts=True,
         )
 
-        time.sleep(ARDUINO_RESET_DELAY)
-        self.serial_port.reset_input_buffer()
-        self.serial_port.reset_output_buffer()
-        time.sleep(0.1)
+        thread = None
+        try:
+            time.sleep(ARDUINO_RESET_DELAY)
+            port.reset_input_buffer()
+            port.reset_output_buffer()
+            time.sleep(0.1)
 
-        self.clear_line_waiters()
-        self.serial_thread = SerialReaderThread(self.serial_port)
-        self.serial_thread.data_received.connect(self.on_text_line)
-        self.serial_thread.binary_sweep_received.connect(self.on_binary_sweep)
-        self.serial_thread.error_occurred.connect(self.on_error)
-        self.serial_thread.start()
+            self.clear_line_waiters()
+            thread = SerialReaderThread(port)
+            thread.data_received.connect(self.on_text_line)
+            thread.binary_sweep_received.connect(self.on_binary_sweep)
+            thread.error_occurred.connect(self.on_error)
+            thread.start()
+        except Exception:
+            # Leave no open port or running thread behind: a leaked port stays
+            # locked by the OS and blocks every later reconnect attempt.
+            try:
+                if thread is not None:
+                    thread.stop()
+                    thread.wait(thread_wait_ms)
+            except Exception:
+                pass
+            try:
+                if port.is_open:
+                    port.close()
+            except Exception:
+                pass
+            raise
+
+        self.serial_port = port
+        self.serial_thread = thread
         return self.serial_port, self.serial_thread
 
     def disconnect(self, *, thread_wait_ms: int = 250):

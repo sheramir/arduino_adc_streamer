@@ -1,14 +1,14 @@
 # PCB1.7_SPI
 
-Firmware pair for PCB hardware revision v1.7: a Teensy 4.0/4.1 SPI master (`Teensy_SPI_Master_Array_PZT_PZR1.7_DRDY.ino`) paired with an XIAO MG24 SPI slave (`MG24_Dual_MUX_SPI_Slave1.7_DRDY.ino`). This is the current/recommended revision for new PZT/RS array hardware. It carries forward PCB1.5's DRDY-synchronized streaming and adds a combined `mode PZT_RS*` that interleaves each selected 5-channel PZT sensor with its two held Rosette/RS resistance values into one binary stream; `mcu*` reports `# Array_PZT_PZR1.7` (note the `.7` suffix, distinct from PCB1.0/1.5's `# Array_PZT_PZR1`).
+Firmware pair for PCB hardware revision v1.7: a Teensy 4.0/4.1 SPI master (`Teensy_SPI_Master_Array_PZT_PZR1.7_DRDY.ino`) paired with the current XIAO MG24 SPI slave (`MG24_Dual_MUX_SPI_Slave1.7b.ino`). This is the current/recommended revision for new PZT/RS array hardware. It carries forward PCB1.5's DRDY-synchronized streaming and adds a combined `mode PZT_RS*` that interleaves each selected 5-channel PZT sensor with its two held Rosette/RS resistance values into one binary stream; `mcu*` reports `# Array_PZT_PZR1.7` (note the `.7` suffix, distinct from PCB1.0/1.5's `# Array_PZT_PZR1`). The earlier `MG24_Dual_MUX_SPI_Slave1.7_DRDY.ino` remains in this folder as the previous baseline.
 
 **Architecture note:** the `PZT_RS` combined mode is implemented entirely on the Teensy side. The MG24 slave sketch in this folder is functionally and protocol-identical to PCB1.5's MG24 slave (same command codes, same DRDY behavior, same pure dual-MUX ADC streaming) — it has no awareness of RS/Rosette values, `pztmuxes`, or `rschannels`. The Teensy measures RS/Rosette resistance itself via the same 555-timer circuitry used in PZR mode, then splices the held RS values into the PZT block fetched from MG24 before forwarding it to the host (`pzt_buildCombinedBlock`).
 
 ## Files
 
-### MG24_Dual_MUX_SPI_Slave1.7_DRDY.ino
+### MG24_Dual_MUX_SPI_Slave1.7b.ino
 
-XIAO MG24 SPI slave driving two ADG1206 (16:1) MUXes in parallel (MUX1 on D1, MUX2 on D2), with active-HIGH DRDY on D7 — functionally identical to the PCB1.5 MG24 slave (same fast-GPIO MUX switching, ground-park behavior, and command set). It performs pure PZT dual-MUX ADC acquisition only; it has no RS/Rosette logic and is unaware of the host's `PZT_RS` mode.
+Current XIAO MG24 SPI slave driving two ADG1206 (16:1) MUXes in parallel (MUX1 on D1, MUX2 on D2), with active-HIGH DRDY on D7. It performs pure PZT dual-MUX ADC acquisition only; it has no RS/Rosette logic and is unaware of the host's `PZT_RS` mode. Its SPI command framing, ACKs, binary block layout, and DRDY behavior are compatible with the prior PCB1.7 DRDY sketch.
 
 - `drdyWrite(asserted)` — drives the DRDY output pin HIGH/LOW.
 - `spiCallback(handle, status, count)` — SPIDRV transfer-done callback; records status and sets `xferDone`.
@@ -39,6 +39,17 @@ XIAO MG24 SPI slave driving two ADG1206 (16:1) MUXes in parallel (MUX1 on D1, MU
 - `processCommand(frame)` — dispatches a received command frame to the matching handler and returns the response length.
 - `setup()` — initializes MUX/ADC/DRDY pins, attaches the CS interrupt, configures SPIDRV, and pre-arms the first command receive.
 - `loop()` — prefetches the next block, services SPI transfer completion, and dispatches to `processCommand` or advances the streaming pipeline.
+
+#### MG24 1.7b changes
+
+`MG24_Dual_MUX_SPI_Slave1.7b.ino` is the recommended MG24 sketch for this folder. Compared with `MG24_Dual_MUX_SPI_Slave1.7_DRDY.ino`, it:
+
+- Raises the IADC source-clock target from 10 MHz to 20 MHz and the ADC-clock target from 5 MHz to 10 MHz for faster acquisition.
+- Uses `iadcWarmupKeepWarm` for repeated low-latency conversions.
+- Configures the scan FIFO data-valid level as `iadcFifoCfgDvl2` and uses the raw FIFO-data pull API when flushing stale results. These are initialization/hot-path refinements; the active acquisition path still polls and reads the same D1/D2 scan pair.
+- Reinitializes the IADC on `run` when either configuration changed or the peripheral is not ready (`g_configDirty || !g_iadcReady`).
+
+No host serial command, ACK layout, DRDY signaling, or binary sample/trailer format changed in 1.7b.
 
 ### Teensy_SPI_Master_Array_PZT_PZR1.7_DRDY.ino
 
@@ -155,4 +166,4 @@ Identical DRDY wiring and behavior to PCB1.5: MG24 asserts DRDY (D7, active-HIGH
 
 ## Teensy/MG24 Pairing
 
-Flash both boards with the matching PCB1.7 pair: `Teensy_SPI_Master_Array_PZT_PZR1.7_DRDY.ino` on the Teensy and `MG24_Dual_MUX_SPI_Slave1.7_DRDY.ino` on the MG24. Do not mix a Teensy sketch from this folder with an MG24 sketch from `PCB1.0_SPI/` or `PCB1.5_SPI/` (or vice versa). Note that the MG24 sketch in this folder is protocol-compatible with PCB1.5's MG24 slave (same command codes/DRDY behavior), but pairing should still stay within-folder per the top-level README's pairing notes, since the `PZT_RS` repacking logic on the Teensy depends on the exact physical-channel/`pztmuxes` bookkeeping introduced alongside this MG24 sketch version.
+Flash both boards with the matching current PCB1.7 pair: `Teensy_SPI_Master_Array_PZT_PZR1.7_DRDY.ino` on the Teensy and `MG24_Dual_MUX_SPI_Slave1.7b.ino` on the MG24. Do not mix a Teensy sketch from this folder with an MG24 sketch from `PCB1.0_SPI/` or `PCB1.5_SPI/` (or vice versa). The 1.7b MG24 sketch remains protocol-compatible with PCB1.5 and the earlier PCB1.7 DRDY slave (same command codes, DRDY behavior, and binary payload), but pairing should still stay within-folder per the top-level README's pairing notes, since the `PZT_RS` repacking logic on the Teensy depends on the exact physical-channel/`pztmuxes` bookkeeping introduced alongside this MG24 sketch version.

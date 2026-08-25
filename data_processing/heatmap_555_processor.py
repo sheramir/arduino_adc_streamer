@@ -17,6 +17,7 @@ from constants.heatmap import (
     R_HEATMAP_COP_SMOOTH_ALPHA,
     MAX_SENSOR_PACKAGES,
 )
+from data_processing.circular_buffer import recent_window_slices, take_recent
 from data_processing.heatmap_signal_processing import (
     heatmap_sensor_label_order,
     resolve_heatmap_blob_sigmas,
@@ -108,16 +109,12 @@ class Heatmap555ProcessorMixin:
             if take_count <= 0:
                 return np.empty((0, self.samples_per_sweep), dtype=np.float32), current_sweep_count
 
-            write_pos = current_write_index % self.MAX_SWEEPS_BUFFER
-            start_pos = (write_pos - take_count) % self.MAX_SWEEPS_BUFFER
-
-            if start_pos < write_pos:
-                data = self.raw_data_buffer[start_pos:write_pos, :].copy()
-            else:
-                data = np.concatenate([
-                    self.raw_data_buffer[start_pos:, :],
-                    self.raw_data_buffer[:write_pos, :]
-                ])
+            data = take_recent(
+                self.raw_data_buffer,
+                recent_window_slices(
+                    available, current_write_index, take_count, self.MAX_SWEEPS_BUFFER
+                ),
+            )
 
         return data, current_sweep_count
 
@@ -206,7 +203,7 @@ class Heatmap555ProcessorMixin:
 
         package_count = min(len(unique_channels) // required_channels, MAX_SENSOR_PACKAGES)
         package_results = []
-        display_sensor_order = ['T', 'B', 'R', 'L', 'C']
+        display_sensor_order = self._threshold_label_order()
 
         for package_index in range(package_count):
             package_channels = unique_channels[
@@ -265,26 +262,30 @@ class Heatmap555ProcessorMixin:
                 configured_mask = ~np.isnan(configured_baselines)
                 state['baseline_values'][configured_mask] = configured_baselines[configured_mask]
 
+            # These do not change while stepping through the sweep rows below,
+            # so build them once instead of once per row.
+            baseline_values = state['baseline_values']
+            baseline_abs = np.maximum(np.abs(baseline_values), 1e-9)
+            effective_thresholds = global_noise_threshold + per_sensor_thresholds
+            column_targets = [
+                (col_idx, sensor_index[channel_to_sensor.get(channel)])
+                for col_idx, channel in enumerate(package_channels)
+                if channel_to_sensor.get(channel) in sensor_index
+            ]
+
             batch_magnitudes = []
             for row_idx in range(package_matrix.shape[0]):
                 current_values = np.array(state['prev_values'], copy=True)
-                for col_idx, channel in enumerate(package_channels):
-                    label = channel_to_sensor.get(channel)
-                    if label not in sensor_index:
-                        continue
-                    current_values[sensor_index[label]] = float(package_matrix[row_idx, col_idx])
+                for col_idx, target_idx in column_targets:
+                    current_values[target_idx] = float(package_matrix[row_idx, col_idx])
 
-                deltas = current_values - state['baseline_values']
+                deltas = current_values - baseline_values
 
                 # Normalize channel response to relative change (%), so channels
                 # with different absolute ranges contribute comparably.
-                baseline_abs = np.maximum(np.abs(state['baseline_values']), 1e-9)
                 relative_percent = (100.0 * deltas) / baseline_abs
-                state['last_deltas'] = relative_percent
 
-                magnitudes = np.abs(relative_percent)
-                magnitudes = magnitudes * per_sensor_gains
-                effective_thresholds = global_noise_threshold + per_sensor_thresholds
+                magnitudes = np.abs(relative_percent) * per_sensor_gains
                 weights_now = np.where(magnitudes >= effective_thresholds, magnitudes, 0.0)
                 batch_magnitudes.append(weights_now)
 
@@ -293,6 +294,9 @@ class Heatmap555ProcessorMixin:
 
             if not batch_magnitudes:
                 continue
+
+            # Only the final row's value survived the per-row assignment before.
+            state['last_deltas'] = relative_percent
 
             weights = np.mean(np.vstack(batch_magnitudes), axis=0) * calibration
             state['last_weights'] = weights

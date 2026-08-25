@@ -35,6 +35,21 @@ class ADCConnectionWorkflowTests(unittest.TestCase):
         self.assertEqual(session.connected_ports, ["COM7"])
         self.assertEqual(session.detect_timeouts, [1.5])
 
+    def test_failed_mcu_detection_disconnects_the_session(self):
+        workflow = ADCConnectionWorkflow()
+        session = FakeSession()
+
+        def failing_detect(timeout):
+            raise RuntimeError("no response")
+
+        session.detect_mcu = failing_detect
+
+        with self.assertRaises(RuntimeError):
+            workflow.connect(session, "COM7", mcu_detection_timeout=1.5)
+
+        self.assertEqual(session.connected_ports, ["COM7"])
+        self.assertEqual(session.disconnect_calls, 1)
+
     def test_disconnect_collects_session_warnings(self):
         workflow = ADCConnectionWorkflow()
         session = FakeSession(warnings=["Serial thread shutdown timed out"])

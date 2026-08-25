@@ -8,7 +8,7 @@ Desktop GUI and firmware workspace for streaming ADC data from MG24 and Teensy b
 - Shared live filtering for time-series and spectrum views
 - Spectrum tab with FFT and Welch PSD modes
 - Heatmap tab using the promoted legacy PZT/PZR heatmap calculation path, with per-package display plus array-wide point tracking
-- Pressure Map tab with per-package shear/normal visualization, array adjacent-package interpolation, package-boundary shape controls, gap tuning, selectable color schemes, and a presentation-ready voltage/unit legend
+- Pressure Map tab with per-package shear/normal visualization, candidate-field overlap blending, configurable package-support geometry, visual-only boundary overlays, selectable color schemes, and a presentation-ready voltage/unit legend
 - Force-sensor overlay with timestamp alignment against ADC capture timing
 - Editable sensor library with both 5-channel layouts and 3x3 array layouts
 - Archive-backed capture flow with full-view reload for captures larger than RAM
@@ -102,7 +102,6 @@ Main application entry point. Defines `ADCStreamerGUI`, a `QMainWindow` subclass
 - `ADCStreamerGUI.closeEvent(event)` — persists spectrum/heatmap/shear settings, disconnects serial ports, and shuts down background workers on window close.
 - `ADCStreamerGUI.on_visualization_tab_changed(index)` — starts/stops spectrum updates and triggers the relevant plot refresh when the active visualization tab changes.
 - `ADCStreamerGUI.get_current_visualization_tab_name()` — returns the title of the currently active visualization tab.
-- `ADCStreamerGUI.is_live_visualization_only_tab()` — returns `False`; placeholder hook for tabs that should skip default time-series capture.
 - `ADCStreamerGUI.should_store_capture_data()` — returns whether captured data should be persisted/archived.
 - `ADCStreamerGUI.should_update_live_timeseries_display()` — returns whether the active tab is one of the live time-series/PZT-RS/Rosette tabs.
 - `ADCStreamerGUI.should_update_signal_integration_display()` — returns whether the Pressure Map tab is active.
@@ -121,6 +120,7 @@ Despite the `.c` extension, this is not compiled code — it's a scratch file of
 - [docs/user/ARRAY_CONFIGURATION_GUIDE.md](docs/user/ARRAY_CONFIGURATION_GUIDE.md): configuring bundled and custom sensor layouts
 - [docs/user/HEATMAP_README.md](docs/user/HEATMAP_README.md): current heatmap modes, array point tracking, geometry controls, and saved settings behavior
 - [Specs/PRESSURE_MAP_TAB_SPEC.md](Specs/PRESSURE_MAP_TAB_SPEC.md): Pressure Map controls, color-scale legend behavior, and acceptance criteria
+- [Specs/PRESSURE_MAP_REFACTOR_SPEC.md](Specs/PRESSURE_MAP_REFACTOR_SPEC.md): Current inferred-field geometry, shaping, overlap, and display-mode contract
 - [docs/history/FORCE_SENSOR_REFACTOR_PLAN.md](docs/history/FORCE_SENSOR_REFACTOR_PLAN.md): future force-path cleanup roadmap
 
 ## Testing

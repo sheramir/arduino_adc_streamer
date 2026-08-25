@@ -10,7 +10,7 @@ from pathlib import Path
 
 import numpy as np
 
-from constants.pzt_rs import get_pzt_rs_ohms_per_wire_unit
+from constants.pzt_rs import extract_archive_rs_units, get_pzt_rs_ohms_per_wire_unit
 from data_processing.force_state import get_force_runtime_state
 
 
@@ -127,12 +127,7 @@ class ArchiveLoaderMixin:
                 if first_line.strip():
                     try:
                         metadata = json.loads(first_line)
-                        if isinstance(metadata, dict):
-                            archive_rs_units = (
-                                metadata.get('metadata', {}).get('pzt_rs_rs_units')
-                                if isinstance(metadata.get('metadata'), dict)
-                                else metadata.get('pzt_rs_rs_units')
-                            )
+                        archive_rs_units = extract_archive_rs_units(metadata)
                     except json.JSONDecodeError:
                         pass
                 
@@ -154,9 +149,9 @@ class ArchiveLoaderMixin:
                                 sweeps.append(sweep_data)
                                 archive_timestamps.append(None)
 
-                            # Unknown format: skip
+                            # Unknown format: skip without recording a timestamp,
+                            # so archive_timestamps stays aligned with sweeps.
                             else:
-                                archive_timestamps.append(None)
                                 unknown_archive_entries += 1
                                 continue
                         except json.JSONDecodeError:
@@ -180,7 +175,7 @@ class ArchiveLoaderMixin:
                     sidecar_base_us = None
                     with open(self._block_timing_path, 'r', encoding='utf-8', newline='') as f:
                         reader = csv.reader(f)
-                        header = next(reader, None)  # Skip header row
+                        next(reader, None)  # Skip header row
 
                         # The CSV columns are: sample_count, samples_per_sweep, sweeps_in_block,
                         # avg_dt_us, block_start_us, block_end_us, mcu_gap_us

@@ -77,13 +77,8 @@ against the request, independent of any GUI widget state.
 
 ### buffer_utils.py
 
-Buffer-sizing helpers that compute how many ADC sweeps can be packed per serial block given baud
-rate, USB packet size, and a target latency, and that clamp user-entered buffer sizes to what the
-firmware buffer can hold.
+Buffer-sizing helper that clamps user-entered buffer sizes to what the firmware buffer can hold.
 
-- `calculate_optimal_sweeps_per_block(channel_count, repeat_count, baud_rate=BAUD_RATE, target_latency=TARGET_LATENCY_SEC, max_candidates=5)`
-  — search and score candidate sweeps-per-block values by USB packet efficiency, latency
-  utilization, and block size; return the top candidates.
 - `validate_and_limit_sweeps_per_block(sweeps_per_block, channel_count, repeat_count)` — clamp a
   requested sweeps-per-block value to the maximum the firmware sample buffer can hold.
 

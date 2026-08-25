@@ -18,10 +18,11 @@ from config.config_view_state import (
     build_start_ready_state,
     build_start_unavailable_state,
 )
-from config.config_snapshot import build_adc_configuration_snapshot
+from config.config_snapshot import VREF_LABEL_TO_COMMAND, build_adc_configuration_snapshot
 from config.mcu_profile import resolve_mcu_profile
-from constants.serial import MAX_SAMPLES_BUFFER
+from constants.serial import DEFAULT_CONFIG_BUFFER_SIZE, MAX_SAMPLES_BUFFER
 from constants.defaults_555 import (
+    ANALYZER555_BUFFER_SIZE_MAX,
     ANALYZER555_DEFAULT_CF_UNIT,
     ANALYZER555_DEFAULT_CF_VALUE,
     ANALYZER555_DEFAULT_CF_FARADS,
@@ -29,7 +30,12 @@ from constants.defaults_555 import (
     ANALYZER555_DEFAULT_RK_OHMS,
     ANALYZER555_DEFAULT_RXMAX_OHMS,
 )
-from constants.pzt_rs import PZT_RS_RS_OHMS_PER_WIRE_UNIT
+from constants.pzt_rs import (
+    PZT_RS_FIRST_RS_SLOT,
+    PZT_RS_OUTPUTS_PER_SENSOR,
+    PZT_RS_RS_OHMS_PER_WIRE_UNIT,
+    PZT_RS_RS_VALUES_PER_SENSOR,
+)
 from constants.ui import MAX_PLOT_COLUMNS
 from config.buffer_utils import validate_and_limit_sweeps_per_block
 
@@ -505,7 +511,7 @@ class ConfigurationMixin:
                 group for group in self.get_array_selected_sensor_groups()
                 if str(group.get('sensor_id', '')).startswith("PZT")
             ])
-            return sensor_count * 7 * max(1, int(repeat_count))
+            return sensor_count * PZT_RS_OUTPUTS_PER_SENSOR * max(1, int(repeat_count))
         physical_channels = list(channels or [])
         if self.is_array_pzt1_mode() and self.is_array_sensor_selection_mode():
             physical_channels = self.get_channels_for_arduino_command()
@@ -563,6 +569,11 @@ class ConfigurationMixin:
         selection_source = str(self.config.get('channel_selection_source', 'manual')).lower()
         selected_array_sensors = self.config.get('selected_array_sensors', [])
 
+        # Each of these rebuilds a full MCU profile dataclass, and nothing below
+        # changes the MCU or the selected array mode, so resolve them once.
+        is_pzt_rs = self.is_array_pzt_rs_mode()
+        is_pzt1 = self.is_array_pzt1_mode()
+
         if self.is_array_mcu_mode() and selection_source == 'array' and selected_array_sensors:
             sensor_groups = self.get_array_selected_sensor_groups()
             channel_sensor_map = self.get_active_channel_sensor_map() if hasattr(self, 'get_active_channel_sensor_map') else ["T", "R", "C", "L", "B"]
@@ -572,7 +583,7 @@ class ConfigurationMixin:
             pzt_sensor_index = 0
             for group in sensor_groups:
                 sensor_id = group['sensor_id']
-                if self.is_array_pzt_rs_mode() and not str(sensor_id).startswith("PZT"):
+                if is_pzt_rs and not str(sensor_id).startswith("PZT"):
                     continue
                 mux_num = int(group.get('mux', 1))
                 sensor_channels = list(group.get('channels', []))
@@ -581,11 +592,11 @@ class ConfigurationMixin:
                 for local_idx, channel in enumerate(sensor_channels):
                     sample_indices = []
                     if local_idx < len(seq_positions):
-                        if self.is_array_pzt_rs_mode():
-                            base_idx = pzt_sensor_index * repeat_count * 7
+                        if is_pzt_rs:
+                            base_idx = pzt_sensor_index * repeat_count * PZT_RS_OUTPUTS_PER_SENSOR
                             for repeat_idx in range(repeat_count):
-                                sample_indices.append(base_idx + (repeat_idx * 7) + local_idx)
-                        elif self.is_array_pzt1_mode():
+                                sample_indices.append(base_idx + (repeat_idx * PZT_RS_OUTPUTS_PER_SENSOR) + local_idx)
+                        elif is_pzt1:
                             unique_idx = unique_channel_positions.get(channel)
                             if unique_idx is not None:
                                 mux_index = max(0, min(1, mux_num - 1))
@@ -598,7 +609,7 @@ class ConfigurationMixin:
                             sample_indices.extend(range(base_idx, base_idx + repeat_count))
 
                     placement = str(channel_sensor_map[local_idx]) if local_idx < len(channel_sensor_map) else f"C{local_idx + 1}"
-                    key = ('sensor', sensor_id, placement, channel, mux_num) if self.is_array_pzt1_mode() else ('sensor', sensor_id, placement, channel)
+                    key = ('sensor', sensor_id, placement, channel, mux_num) if is_pzt1 else ('sensor', sensor_id, placement, channel)
                     specs.append({
                         'key': key,
                         'label': f"{sensor_id}_{placement}",
@@ -607,13 +618,13 @@ class ConfigurationMixin:
                     })
                     color_slot += 1
 
-                if self.is_array_pzt_rs_mode():
+                if is_pzt_rs:
                     pzt_sensor_index += 1
 
             if specs:
                 return specs
 
-        if self.is_array_pzt_rs_mode():
+        if is_pzt_rs:
             for display_order, channel in enumerate(channels):
                 base_idx = display_order * repeat_count
                 sample_indices = list(range(base_idx, base_idx + repeat_count))
@@ -625,7 +636,7 @@ class ConfigurationMixin:
                 })
             return specs
 
-        if self.is_array_pzt1_mode():
+        if is_pzt1:
             for mux_index in range(2):
                 mux_number = mux_index + 1
                 for display_order, channel in enumerate(unique_channels):
@@ -681,29 +692,32 @@ class ConfigurationMixin:
         selected_array_sensors = self.config.get('selected_array_sensors', [])
         if self.is_array_mcu_mode() and selection_source == 'array' and selected_array_sensors:
             sensor_groups = self.get_array_selected_sensor_groups()
+            # Loop-invariant: the active sensor configuration cannot change while
+            # iterating the groups, so look it up once.
+            active_config = self.get_active_sensor_configuration() if hasattr(self, 'get_active_sensor_configuration') else {}
+            mux_mapping = active_config.get('mux_mapping', {}) if isinstance(active_config, dict) else {}
+            if not isinstance(mux_mapping, dict):
+                mux_mapping = {}
+
             color_slot = 0
             pzt_sensor_index = 0
             for group in sensor_groups:
                 sensor_id = str(group.get('sensor_id', ''))
                 if not sensor_id.startswith("PZT"):
                     continue
-                mapping = {}
-                active_config = self.get_active_sensor_configuration() if hasattr(self, 'get_active_sensor_configuration') else {}
-                mux_mapping = active_config.get('mux_mapping', {}) if isinstance(active_config, dict) else {}
-                if isinstance(mux_mapping, dict):
-                    mapping = mux_mapping.get(sensor_id, {})
+                mapping = mux_mapping.get(sensor_id, {})
                 rs_channels = list(mapping.get('rs_channels', [])) if isinstance(mapping, dict) else []
 
                 # Generate one spec per RS wire (always 2 per PZT sensor).
                 # When rs_channels is empty the ADC input pin is unconfigured; use -1 as
                 # a placeholder so RS data at the fixed slot positions 5 and 6 within the
                 # 7-sample-per-sensor block is still plotted.
-                for rs_idx in range(2):
+                for rs_idx in range(PZT_RS_RS_VALUES_PER_SENSOR):
                     rs_channel = rs_channels[rs_idx] if rs_idx < len(rs_channels) else -1
                     sample_indices = []
-                    base_idx = pzt_sensor_index * repeat_count * 7
+                    base_idx = pzt_sensor_index * repeat_count * PZT_RS_OUTPUTS_PER_SENSOR
                     for repeat_idx in range(repeat_count):
-                        sample_indices.append(base_idx + (repeat_idx * 7) + 5 + rs_idx)
+                        sample_indices.append(base_idx + (repeat_idx * PZT_RS_OUTPUTS_PER_SENSOR) + PZT_RS_FIRST_RS_SLOT + rs_idx)
 
                     specs.append({
                         'key': ('rs', sensor_id, int(rs_idx) + 1, int(rs_channel)),
@@ -722,11 +736,11 @@ class ConfigurationMixin:
             for seq_idx, seq_channel in enumerate(list(channels or [])):
                 if seq_channel != channel:
                     continue
-                base_idx = seq_idx * repeat_count * 7
+                base_idx = seq_idx * repeat_count * PZT_RS_OUTPUTS_PER_SENSOR
                 for repeat_idx in range(repeat_count):
                     sample_indices.extend([
-                        base_idx + (repeat_idx * 7) + 5,
-                        base_idx + (repeat_idx * 7) + 6,
+                        base_idx + (repeat_idx * PZT_RS_OUTPUTS_PER_SENSOR) + PZT_RS_FIRST_RS_SLOT,
+                        base_idx + (repeat_idx * PZT_RS_OUTPUTS_PER_SENSOR) + PZT_RS_FIRST_RS_SLOT + 1,
                     ])
 
             specs.append({
@@ -782,14 +796,20 @@ class ConfigurationMixin:
     # ========================================================================
     # Configuration Event Handlers (on_*_changed methods)
     # ========================================================================
+
+    def refresh_adc_mux_timing(self):
+        """Refresh supported device timing from the current plain acquisition state."""
+        from data_processing.adc_mux_timing import calculate_adc_mux_timing_for_acquisition
+
+        self.adc_mux_timing = calculate_adc_mux_timing_for_acquisition(
+            getattr(self, "current_mcu", None),
+            self.config,
+        )
+        return self.adc_mux_timing
     
     def on_vref_changed(self, text: str):
         """Handle voltage reference change."""
-        vref_map = {
-            "1.2V (Internal)": "1.2",
-            "3.3V (VDD)": "vdd"
-        }
-        vref_cmd = vref_map.get(text, "vdd")
+        vref_cmd = VREF_LABEL_TO_COMMAND.get(text, "vdd")
         self.config['reference'] = vref_cmd
         self.config_is_valid = False
         self.update_start_button_state()
@@ -798,6 +818,7 @@ class ConfigurationMixin:
         """Handle OSR (oversampling ratio) change."""
         if text.strip():  # Only update if text is not empty
             self.config['osr'] = int(text)
+            self.refresh_adc_mux_timing()
             self.config_is_valid = False
             self.update_start_button_state()
     
@@ -805,6 +826,7 @@ class ConfigurationMixin:
         """Handle gain change."""
         gain_value = int(text.replace('×', ''))
         self.config['gain'] = gain_value
+        self.refresh_adc_mux_timing()
         self.config_is_valid = False
         self.update_start_button_state()
 
@@ -898,12 +920,14 @@ class ConfigurationMixin:
         """Handle use ground checkbox change."""
         use_ground = state == Qt.CheckState.Checked.value
         self.config['use_ground'] = use_ground
+        self.refresh_adc_mux_timing()
         self.config_is_valid = False
         self.update_start_button_state()
 
     def on_repeat_changed(self, value: int):
         """Handle repeat count change."""
         self.config['repeat'] = value
+        self.refresh_adc_mux_timing()
         self.config_is_valid = False
         self.update_start_button_state()
     
@@ -985,7 +1009,8 @@ class ConfigurationMixin:
         )
 
         snapshot.apply_to_config(self.config)
-        buffer_size = int(self.buffer_spin.value()) if hasattr(self, 'buffer_spin') else 128
+        self.refresh_adc_mux_timing()
+        buffer_size = int(self.buffer_spin.value()) if hasattr(self, 'buffer_spin') else DEFAULT_CONFIG_BUFFER_SIZE
 
         return ADCConfigurationRequest(
             current_mcu=self.current_mcu,
@@ -1023,9 +1048,9 @@ class ConfigurationMixin:
         normalized_buffer_size = int(result.normalized_buffer_size)
         current_buffer_size = int(self.buffer_spin.value()) if hasattr(self, 'buffer_spin') else normalized_buffer_size
         if normalized_buffer_size != current_buffer_size:
-            if getattr(self, 'device_mode', 'adc') == '555' and current_buffer_size > 256:
+            if getattr(self, 'device_mode', 'adc') == '555' and current_buffer_size > ANALYZER555_BUFFER_SIZE_MAX:
                 self.log_status(f"555 mode buffer limited from {current_buffer_size} to {normalized_buffer_size}")
-            elif normalized_buffer_size == 128 and current_buffer_size <= 0:
+            elif normalized_buffer_size == DEFAULT_CONFIG_BUFFER_SIZE and current_buffer_size <= 0:
                 self.log_status(f"Invalid buffer size, using default value: {normalized_buffer_size}")
             else:
                 self.log_status(f"Buffer size limited to {normalized_buffer_size} sweeps (Arduino buffer capacity)")
@@ -1320,6 +1345,8 @@ class ConfigurationMixin:
         self._add_force_channel_checkboxes(start_index=len(display_specs))
         if hasattr(self, "update_pressure_map_timeline_controls"):
             self.update_pressure_map_timeline_controls()
+        if hasattr(self, "refresh_spectrum_package_options"):
+            self.refresh_spectrum_package_options()
         self.update_rosette_channel_list()
 
     def update_rosette_channel_list(self):

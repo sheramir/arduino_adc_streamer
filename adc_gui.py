@@ -82,6 +82,7 @@ from gui import (
     SensorPanelMixin,
     SpectrumPanelMixin,
     StatusLoggingMixin,
+    PztDecayPanelMixin,
 )
 from data_processing import (
     DataProcessorMixin,
@@ -110,6 +111,7 @@ class ADCStreamerGUI(
     AnalysisPanelMixin,         # Offline Analysis tab
     ForceCalibrationPanelMixin, # Force Calibration tab and controls
     SpectrumPanelMixin,         # Spectrum panel UI
+    PztDecayPanelMixin,         # PZT decay characterization tab
     ConfigurationMixin,         # Configuration management
     DataProcessorMixin,         # Data processing
     SpectrumProcessorMixin,     # Spectrum processing
@@ -139,6 +141,7 @@ class ADCStreamerGUI(
         self.init_force_calibration_state()
         self._init_spectrum_state()
         self._init_analysis_state()
+        self.init_pzt_decay_state()
         self._init_timers()
 
         # Build user interface
@@ -178,6 +181,7 @@ class ADCStreamerGUI(
         self.samples_per_sweep = 0
         self.buffer_lock = threading.Lock()
         self._init_filter_state()
+        self._init_pzt_ghost_removal_state()
         self._reset_capture_buffer_state()
         
         self.is_capturing = False
@@ -204,6 +208,7 @@ class ADCStreamerGUI(
 
     def _init_timing_state(self):
         """Initialize timing measurement state."""
+        self.adc_mux_timing = None
         self._reset_timing_measurements(reset_labels=False)
 
     def _init_config_state(self):
@@ -233,8 +238,6 @@ class ADCStreamerGUI(
         self._adc_curves = {}
         self._rosette_curves = {}
         self.rosette_plot_baselines = {}
-        self._adc_curve_names = {}
-        self._adc_curve_legend_added = {}
         self._force_x_curve = None
         self._force_z_curve = None
         self._rosette_force_x_curve = None
@@ -385,6 +388,7 @@ class ADCStreamerGUI(
         self.save_last_spectrum_settings()
         self.save_last_heatmap_settings()
         self.save_last_shear_settings()
+        self.save_pressure_map_workspace_layout()
         self.save_last_analysis_settings()
 
         if self.serial_port and self.serial_port.is_open:
@@ -443,13 +447,12 @@ class ADCStreamerGUI(
             return ""
         return self.visualization_tabs.tabText(current_index)
 
-    def is_live_visualization_only_tab(self) -> bool:
-        """Return True when current tab should avoid time-series capture by default."""
-        return False
-
     def should_store_capture_data(self) -> bool:
         """Return True when capture should persist/archive time-series data."""
-        return bool(self.is_capturing)
+        # A decay-characterization run has exclusive hardware ownership, but
+        # its samples are written by PztDecayExporter rather than the normal
+        # capture archive.  This keeps it out of normal-capture history.
+        return bool(self.is_capturing) and not bool(getattr(self, "pzt_decay_active", False))
 
     def should_update_live_timeseries_display(self) -> bool:
         """Return True when live ADC/force plot redraws should run."""
@@ -469,9 +472,13 @@ class ADCStreamerGUI(
 
     def trigger_signal_integration_update(self):
         """Queue a pressure-map refresh outside the ADC block handler."""
-        if not self.should_update_signal_integration_display():
+        workspace_display_visible = bool(
+            hasattr(self, "_has_visible_pressure_map_display")
+            and self._has_visible_pressure_map_display()
+        )
+        if not self.should_update_signal_integration_display() and not workspace_display_visible:
             return
-        if hasattr(self, "_is_pressure_map_display_tab_active") and not self._is_pressure_map_display_tab_active():
+        if hasattr(self, "_has_visible_pressure_map_display") and not workspace_display_visible:
             return
         if getattr(self, "_signal_integration_updating_plot", False):
             return

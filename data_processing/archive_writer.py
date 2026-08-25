@@ -10,7 +10,7 @@ Usage::
     writer.start()
 
     # From ingestion thread (non-blocking):
-    writer.enqueue(sweep_timestamps_sec_1d, block_uint16_2d)
+    writer.enqueue(sweep_timestamps_sec_1d, block_samples_2d)
 
     # When capture stops (blocks until queue is drained):
     writer.stop()
@@ -28,8 +28,8 @@ class ArchiveWriterThread(threading.Thread):
     Each enqueued item is a ``(sweep_timestamps_sec, block_array)`` tuple where:
     - ``sweep_timestamps_sec`` is a 1-D numpy array of per-sweep timestamps (float).
     - ``block_array`` is a 2-D numpy array of shape ``(sweeps, samples)`` whose
-      ``dtype`` should be ``uint16`` so that ``row.tolist()`` yields integer values
-      matching the original binary protocol format.
+      ``dtype`` may be ``uint16`` for unprocessed captures or ``float32`` when a
+      host-side processing stage makes cleaned samples canonical.
 
     GIL note: ``json.dumps()`` is pure-Python and holds the GIL. During live
     capture, the thread sleeps briefly after each queue item so the main/GUI

@@ -12,6 +12,7 @@ from data_processing.force_calibration_state import (
     build_default_force_calibration_state,
     get_calibration_rows_for_family,
 )
+from gui.force_calibration_panel import ForceCalibrationPanelMixin
 
 
 class TestForceCalibrationState(unittest.TestCase):
@@ -102,6 +103,50 @@ class TestForceCalibrationLiveMapping(unittest.TestCase):
         center = normalized[4]
         total = sum(normalized[:5])
         return top, bottom, left, right, center, total
+
+
+class _LiveReadingHarness(ForceCalibrationPanelMixin):
+    """Minimal host for the live-reading path, without Qt widgets."""
+
+    def __init__(self):
+        self.force_calibration_state = build_default_force_calibration_state()
+        self.force_calibration_state.is_capturing = True
+        self.force_calibration_state.active_row_index = 0
+        self.rows = [CalibrationRow(sensor_family="PZT", sensor_number=1)]
+        self.table_refresh_count = 0
+
+    def _get_force_calibration_rows_for_current_family(self):
+        return self.rows
+
+    def _on_force_calib_table_refresh(self):
+        self.table_refresh_count += 1
+
+
+class TestForceCalibrationLiveRoundTrip(unittest.TestCase):
+    def test_live_reading_records_left_and_right_from_source_order(self):
+        harness = _LiveReadingHarness()
+
+        # Incoming values follow _FORCE_CALIBRATION_SENSOR_ORDER: T, B, R, L, C
+        harness.update_force_calibration_live_reading([10.0, 20.0, 30.0, 40.0, 50.0])
+
+        row = harness.rows[0]
+        self.assertEqual(row.sensor_top, 10.0)
+        self.assertEqual(row.sensor_bottom, 20.0)
+        self.assertEqual(row.sensor_right, 30.0)
+        self.assertEqual(row.sensor_left, 40.0)
+        self.assertEqual(row.sensor_center, 50.0)
+        self.assertEqual(row.sensor_total, 150.0)
+
+    def test_live_reading_round_trip_is_stable_across_updates(self):
+        harness = _LiveReadingHarness()
+
+        harness.update_force_calibration_live_reading([1.0, 2.0, 3.0, 4.0, 5.0])
+        harness.update_force_calibration_live_reading([1.0, 2.0, 3.0, 4.0, 5.0])
+
+        row = harness.rows[0]
+        self.assertEqual(row.sensor_right, 3.0)
+        self.assertEqual(row.sensor_left, 4.0)
+        self.assertEqual(harness.table_refresh_count, 2)
 
 
 if __name__ == "__main__":

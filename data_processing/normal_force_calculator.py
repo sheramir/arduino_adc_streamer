@@ -169,11 +169,15 @@ class NormalForceCalculator:
         return SHEAR_FORCE_TYPE_NONE
 
     def _baseline_offset(self, residual: Mapping[str, float], force_type: str) -> float:
+        # The shift exists to remove a common outer lift, never to add one.
+        # An unclamped extremum of the opposite sign blanks the sensor that
+        # carries the real response and raises every quiet sensor to its
+        # magnitude, which then inverts the centroid as well.
         outer_values = [residual[position] for position in SHEAR_OUTER_SENSOR_POSITIONS]
         if force_type == SHEAR_FORCE_TYPE_COMPRESSION:
-            return min(outer_values)
+            return max(SHEAR_ZERO_VALUE, min(outer_values))
         if force_type == SHEAR_FORCE_TYPE_TENSION:
-            return max(outer_values)
+            return min(SHEAR_ZERO_VALUE, max(outer_values))
         return SHEAR_ZERO_VALUE
 
     def _axis_position(self, positive_value: float, negative_value: float, center_value: float) -> float:

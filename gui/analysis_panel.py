@@ -15,12 +15,13 @@ from pathlib import Path
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import QEvent, Qt, QTimer
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QFileDialog,
+    QFrame,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -57,8 +58,7 @@ from file_operations.export_metadata import build_analysis_export_metadata
 from file_operations.settings_persistence import load_settings_payload, save_settings_payload
 
 
-ANALYSIS_CHANNEL_CHECK_COLUMNS = 2
-ANALYSIS_FORCE_CHECK_COLUMNS = 1
+ANALYSIS_CHECKBOX_MIN_COLUMN_WIDTH = 130
 
 
 class AnalysisPanelMixin:
@@ -72,9 +72,9 @@ class AnalysisPanelMixin:
             "filter_enabled": False,
             "marker_enabled": True,
             "overlays": {
-                "shear": False,
-                "normal": False,
-                "integration": False,
+                "shear": True,
+                "normal": True,
+                "integration": True,
             },
             "pzt_force": {**PZT_FORCE_DEFAULT_SETTINGS, "channel_calibration": {}},
             "visible_labels": {},
@@ -159,9 +159,12 @@ class AnalysisPanelMixin:
     def create_analysis_tab(self) -> QWidget:
         tab = QWidget()
         root = QVBoxLayout(tab)
+        root.setContentsMargins(4, 2, 4, 4)
+        root.setSpacing(2)
 
         self.analysis_disabled_label = QLabel("")
         self.analysis_disabled_label.setStyleSheet("QLabel { color: #9C27B0; font-weight: bold; }")
+        self.analysis_disabled_label.setVisible(False)
         root.addWidget(self.analysis_disabled_label)
 
         self.analysis_inner_tabs = QTabWidget()
@@ -183,85 +186,94 @@ class AnalysisPanelMixin:
         settings_scroll.setWidget(settings_content)
         self.analysis_inner_tabs.addTab(settings_scroll, "Settings")
 
-        controls = QGroupBox("Analysis Controls")
-        controls_layout = QGridLayout(controls)
+        controls = QGroupBox("")
+        controls.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+        controls_root = QVBoxLayout(controls)
+        controls_layout = QGridLayout()
+        controls_root.addLayout(controls_layout)
 
         controls_layout.addWidget(QLabel("Source:"), 0, 0)
         self.analysis_source_combo = QComboBox()
         self.analysis_source_combo.addItems(["In-memory cache", "CSV plus JSON"])
         self.analysis_source_combo.currentIndexChanged.connect(self.on_analysis_source_changed)
-        self.analysis_source_combo.setMaximumWidth(190)
+        self.analysis_source_combo.setMaximumWidth(160)
         controls_layout.addWidget(self.analysis_source_combo, 0, 1, alignment=Qt.AlignmentFlag.AlignLeft)
 
-        self.analysis_load_memory_btn = QPushButton("Load Latest")
-        self.analysis_load_memory_btn.clicked.connect(self.load_analysis_source)
-        self.analysis_load_memory_btn.setMaximumWidth(170)
-        controls_layout.addWidget(self.analysis_load_memory_btn, 0, 2, alignment=Qt.AlignmentFlag.AlignLeft)
+        self.analysis_load_btn = QPushButton("Load")
+        self.analysis_load_btn.setToolTip("Load the latest in-memory capture, or the selected CSV plus its auto-detected metadata JSON")
+        self.analysis_load_btn.clicked.connect(self.load_analysis_source)
+        self.analysis_load_btn.setMaximumWidth(90)
+        controls_layout.addWidget(self.analysis_load_btn, 0, 2, alignment=Qt.AlignmentFlag.AlignLeft)
 
-        controls_layout.addWidget(QLabel("X Axis:"), 0, 3)
+        self.analysis_csv_path_edit = QLineEdit()
+        self.analysis_csv_path_edit.setPlaceholderText("CSV file (matching *_metadata.json is auto-detected)")
+        self.analysis_csv_path_edit.setReadOnly(True)
+        self.analysis_csv_path_edit.setMinimumWidth(120)
+        self.analysis_csv_path_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        controls_layout.addWidget(self.analysis_csv_path_edit, 0, 3)
+
+        self.analysis_browse_csv_btn = QPushButton("Browse")
+        self.analysis_browse_csv_btn.clicked.connect(self.on_analysis_browse_csv)
+        self.analysis_browse_csv_btn.setMaximumWidth(90)
+        controls_layout.addWidget(self.analysis_browse_csv_btn, 0, 4, alignment=Qt.AlignmentFlag.AlignLeft)
+
+        controls_layout.addWidget(QLabel("X Axis:"), 0, 5)
         self.analysis_axis_combo = QComboBox()
-        self.analysis_axis_combo.addItems(["Time ms", "Sample index"])
+        self.analysis_axis_combo.addItems(["Time s", "Sample index"])
         self.analysis_axis_combo.currentIndexChanged.connect(self.on_analysis_settings_changed)
-        self.analysis_axis_combo.setMaximumWidth(180)
-        controls_layout.addWidget(self.analysis_axis_combo, 0, 4, alignment=Qt.AlignmentFlag.AlignLeft)
-
-        controls_layout.addWidget(QLabel("Zoom:"), 1, 0)
-        self.analysis_zoom_combo = QComboBox()
-        self.analysis_zoom_combo.addItems(["X only", "Y only", "X and Y"])
-        self.analysis_zoom_combo.currentIndexChanged.connect(self.on_analysis_zoom_changed)
-        self.analysis_zoom_combo.setMaximumWidth(180)
-        controls_layout.addWidget(self.analysis_zoom_combo, 1, 1, alignment=Qt.AlignmentFlag.AlignLeft)
+        self.analysis_axis_combo.setMaximumWidth(120)
+        controls_layout.addWidget(self.analysis_axis_combo, 0, 6, alignment=Qt.AlignmentFlag.AlignLeft)
 
         self.analysis_reset_view_btn = QPushButton("Reset View")
         self.analysis_reset_view_btn.clicked.connect(self.reset_analysis_view)
-        self.analysis_reset_view_btn.setMaximumWidth(170)
-        controls_layout.addWidget(self.analysis_reset_view_btn, 1, 2, alignment=Qt.AlignmentFlag.AlignLeft)
-
-        self.analysis_csv_path_edit = QLineEdit()
-        self.analysis_csv_path_edit.setPlaceholderText("CSV file")
-        self.analysis_csv_path_edit.setMinimumWidth(120)
-        self.analysis_csv_path_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        controls_layout.addWidget(self.analysis_csv_path_edit, 2, 0, 1, 5)
-        self.analysis_browse_csv_btn = QPushButton("Browse CSV")
-        self.analysis_browse_csv_btn.clicked.connect(self.on_analysis_browse_csv)
-        self.analysis_browse_csv_btn.setMaximumWidth(150)
-        controls_layout.addWidget(self.analysis_browse_csv_btn, 2, 5, alignment=Qt.AlignmentFlag.AlignLeft)
-
-        self.analysis_metadata_path_edit = QLineEdit()
-        self.analysis_metadata_path_edit.setPlaceholderText("Metadata JSON file")
-        self.analysis_metadata_path_edit.setMinimumWidth(120)
-        self.analysis_metadata_path_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        controls_layout.addWidget(self.analysis_metadata_path_edit, 3, 0, 1, 5)
-        self.analysis_browse_metadata_btn = QPushButton("Browse JSON")
-        self.analysis_browse_metadata_btn.clicked.connect(self.on_analysis_browse_metadata)
-        self.analysis_browse_metadata_btn.setMaximumWidth(150)
-        controls_layout.addWidget(self.analysis_browse_metadata_btn, 3, 5, alignment=Qt.AlignmentFlag.AlignLeft)
-        self.analysis_load_file_btn = QPushButton("Load CSV + JSON")
-        self.analysis_load_file_btn.setToolTip("Reload the selected CSV and metadata JSON files")
-        self.analysis_load_file_btn.clicked.connect(self.load_analysis_source)
-        self.analysis_load_file_btn.setMaximumWidth(170)
-        controls_layout.addWidget(self.analysis_load_file_btn, 3, 6, alignment=Qt.AlignmentFlag.AlignLeft)
+        self.analysis_reset_view_btn.setMaximumWidth(110)
+        controls_layout.addWidget(self.analysis_reset_view_btn, 0, 7, alignment=Qt.AlignmentFlag.AlignLeft)
+        controls_layout.setColumnStretch(3, 1)
 
         self.analysis_filter_check = QCheckBox("Spectrum filter")
         self.analysis_filter_check.stateChanged.connect(self.on_analysis_settings_changed)
-        controls_layout.addWidget(self.analysis_filter_check, 4, 0)
+        controls_layout.addWidget(self.analysis_filter_check, 1, 0)
         self.analysis_shear_check = QCheckBox("Shear")
         self.analysis_shear_check.stateChanged.connect(self.on_analysis_settings_changed)
-        controls_layout.addWidget(self.analysis_shear_check, 4, 1)
+        controls_layout.addWidget(self.analysis_shear_check, 1, 1)
         self.analysis_normal_check = QCheckBox("Normal pressure")
         self.analysis_normal_check.stateChanged.connect(self.on_analysis_settings_changed)
-        controls_layout.addWidget(self.analysis_normal_check, 4, 2)
+        controls_layout.addWidget(self.analysis_normal_check, 1, 2)
         self.analysis_integration_check = QCheckBox("Integration")
         self.analysis_integration_check.stateChanged.connect(self.on_analysis_settings_changed)
-        controls_layout.addWidget(self.analysis_integration_check, 4, 3)
+        controls_layout.addWidget(self.analysis_integration_check, 1, 3)
         self.analysis_pzt_force_check = QCheckBox("Calculate PZT Force")
         self.analysis_pzt_force_check.stateChanged.connect(self.on_analysis_settings_changed)
-        controls_layout.addWidget(self.analysis_pzt_force_check, 4, 4)
+        controls_layout.addWidget(self.analysis_pzt_force_check, 1, 4, 1, 2)
         self.analysis_marker_check = QCheckBox("Marker")
         self.analysis_marker_check.setChecked(True)
         self.analysis_marker_check.stateChanged.connect(self.on_analysis_marker_toggled)
-        controls_layout.addWidget(self.analysis_marker_check, 4, 5)
-        controls_layout.setColumnStretch(4, 1)
+        controls_layout.addWidget(self.analysis_marker_check, 1, 6, 1, 2)
+
+        channel_row = QHBoxLayout()
+        self.analysis_select_all_btn = QPushButton("All")
+        self.analysis_select_all_btn.clicked.connect(lambda: self.set_all_analysis_channels(True))
+        self.analysis_select_all_btn.setMaximumWidth(60)
+        channel_row.addWidget(self.analysis_select_all_btn)
+        self.analysis_select_none_btn = QPushButton("None")
+        self.analysis_select_none_btn.clicked.connect(lambda: self.set_all_analysis_channels(False))
+        self.analysis_select_none_btn.setMaximumWidth(60)
+        channel_row.addWidget(self.analysis_select_none_btn)
+
+        self.analysis_channel_container = QWidget()
+        self.analysis_channel_layout = QGridLayout(self.analysis_channel_container)
+        self.analysis_channel_layout.setContentsMargins(4, 2, 4, 2)
+        self.analysis_channel_layout.setSpacing(5)
+        channel_scroll = QScrollArea()
+        channel_scroll.setWidget(self.analysis_channel_container)
+        channel_scroll.setWidgetResizable(True)
+        channel_scroll.setFixedHeight(40)
+        channel_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        channel_scroll.viewport().installEventFilter(self)
+        self._analysis_checkbox_scroll = channel_scroll
+        channel_row.addWidget(channel_scroll, stretch=1)
+        controls_root.addLayout(channel_row)
+
         display_root.addWidget(controls)
 
         pzt_force_group = QGroupBox("PZT Force Settings")
@@ -478,6 +490,17 @@ class AnalysisPanelMixin:
 
         settings_root.addWidget(pzt_force_group)
 
+        zoom_group = QGroupBox("Zoom")
+        zoom_layout = QHBoxLayout(zoom_group)
+        zoom_layout.addWidget(QLabel("Mouse zoom axis:"))
+        self.analysis_zoom_combo = QComboBox()
+        self.analysis_zoom_combo.addItems(["X only", "Y only", "X and Y"])
+        self.analysis_zoom_combo.currentIndexChanged.connect(self.on_analysis_zoom_changed)
+        self.analysis_zoom_combo.setMaximumWidth(180)
+        zoom_layout.addWidget(self.analysis_zoom_combo)
+        zoom_layout.addStretch()
+        settings_root.addWidget(zoom_group)
+
         image_export_group = QGroupBox("Analysis Image Export")
         image_export_layout = QGridLayout(image_export_group)
         self.analysis_save_raw_image_check = QCheckBox("Raw signals")
@@ -495,41 +518,8 @@ class AnalysisPanelMixin:
         self.analysis_save_images_btn = QPushButton("Save Selected Images")
         self.analysis_save_images_btn.clicked.connect(self.save_analysis_plot_images)
         image_export_layout.addWidget(self.analysis_save_images_btn, 1, 0, 1, 4)
-        display_root.addWidget(image_export_group)
+        settings_root.addWidget(image_export_group)
         settings_root.addStretch()
-
-        channel_group = QGroupBox("Display Channels")
-        channel_layout = QVBoxLayout(channel_group)
-        self.analysis_channel_container = QWidget()
-        self.analysis_channel_layout = QGridLayout(self.analysis_channel_container)
-        self.analysis_channel_layout.setSpacing(5)
-        channel_scroll = QScrollArea()
-        channel_scroll.setWidget(self.analysis_channel_container)
-        channel_scroll.setWidgetResizable(True)
-        channel_scroll.setMaximumHeight(95)
-        channel_layout.addWidget(channel_scroll)
-        channel_buttons = QHBoxLayout()
-        self.analysis_select_all_btn = QPushButton("All")
-        self.analysis_select_all_btn.clicked.connect(lambda: self.set_all_analysis_channels(True))
-        channel_buttons.addWidget(self.analysis_select_all_btn)
-        self.analysis_select_none_btn = QPushButton("None")
-        self.analysis_select_none_btn.clicked.connect(lambda: self.set_all_analysis_channels(False))
-        channel_buttons.addWidget(self.analysis_select_none_btn)
-        channel_buttons.addStretch()
-        channel_layout.addLayout(channel_buttons)
-        display_root.addWidget(channel_group)
-
-        force_group = QGroupBox("Display Force Traces")
-        force_layout = QVBoxLayout(force_group)
-        self.analysis_force_container = QWidget()
-        self.analysis_force_layout = QGridLayout(self.analysis_force_container)
-        self.analysis_force_layout.setSpacing(5)
-        force_scroll = QScrollArea()
-        force_scroll.setWidget(self.analysis_force_container)
-        force_scroll.setWidgetResizable(True)
-        force_scroll.setMaximumHeight(75)
-        force_layout.addWidget(force_scroll)
-        display_root.addWidget(force_group)
 
         self.analysis_plot_splitter = QSplitter(Qt.Orientation.Vertical)
         self.analysis_signal_plot = pg.PlotWidget()
@@ -657,30 +647,18 @@ class AnalysisPanelMixin:
             self._update_analysis_pzt_mux_timing_controls()
             self._update_analysis_pzt_baseline_results()
             self.analysis_csv_path_edit.setText(str(state.get("csv_path", "")))
-            self.analysis_metadata_path_edit.setText(str(state.get("metadata_path", "")))
             self.on_analysis_zoom_changed()
         finally:
             self._analysis_settings_loading = False
 
     def on_analysis_source_changed(self):
-        if not self._analysis_has_in_memory_capture() and self.analysis_source_combo.currentIndex() == 0:
-            self.analysis_source_combo.setCurrentIndex(1)
-            return
-
         csv_mode = self.analysis_source_combo.currentIndex() == 1
         self.analysis_state["source_mode"] = "csv_json" if csv_mode else "in_memory"
-        for widget in (
-            self.analysis_csv_path_edit,
-            self.analysis_browse_csv_btn,
-            self.analysis_metadata_path_edit,
-            self.analysis_browse_metadata_btn,
-            self.analysis_load_file_btn,
-        ):
-            widget.setEnabled(csv_mode and not bool(getattr(self, "is_capturing", False)))
-        self.analysis_load_memory_btn.setEnabled(
-            not csv_mode
-            and self._analysis_has_in_memory_capture()
-            and not bool(getattr(self, "is_capturing", False))
+        capturing = bool(getattr(self, "is_capturing", False))
+        for widget in (self.analysis_csv_path_edit, self.analysis_browse_csv_btn):
+            widget.setEnabled(csv_mode and not capturing)
+        self.analysis_load_btn.setEnabled(
+            not capturing and (csv_mode or self._analysis_has_in_memory_capture())
         )
         self.save_last_analysis_settings()
 
@@ -730,47 +708,34 @@ class AnalysisPanelMixin:
             text = "Auto uses live timing, sidecar avg_dt_us, or metadata timing."
         self.analysis_pzt_mux_timing_status.setText(text)
 
+    @staticmethod
+    def _analysis_metadata_path_for_csv(csv_path: str) -> str:
+        """Convention: `<csv_stem>_metadata.json` next to the CSV."""
+        candidate = Path(csv_path).with_name(Path(csv_path).stem + "_metadata.json")
+        return str(candidate) if candidate.exists() else ""
+
     def on_analysis_browse_csv(self):
         path, _ = QFileDialog.getOpenFileName(
             self,
             "Open Analysis CSV",
-            self._analysis_file_dialog_start_dir("csv"),
+            self._analysis_file_dialog_start_dir(),
             "CSV Files (*.csv);;All Files (*)",
         )
         if not path:
             return
         self.analysis_csv_path_edit.setText(path)
-        candidate = Path(path).with_name(Path(path).stem + "_metadata.json")
-        if candidate.exists() and not self.analysis_metadata_path_edit.text().strip():
-            self.analysis_metadata_path_edit.setText(str(candidate))
-        self._load_analysis_file_source_when_ready()
+        metadata_path = self._analysis_metadata_path_for_csv(path)
+        self.analysis_state["metadata_path"] = metadata_path
+        if not metadata_path:
+            self._set_analysis_status_text(
+                f"Analysis: no matching *_metadata.json found next to {Path(path).name}."
+            )
 
-    def on_analysis_browse_metadata(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Open Analysis Metadata",
-            self._analysis_file_dialog_start_dir("metadata"),
-            "JSON Files (*.json);;All Files (*)",
+    def _analysis_file_dialog_start_dir(self) -> str:
+        candidates = (
+            self.analysis_csv_path_edit.text().strip(),
+            str(self.analysis_state.get("csv_path", "")),
         )
-        if path:
-            self.analysis_metadata_path_edit.setText(path)
-            self._load_analysis_file_source_when_ready()
-
-    def _analysis_file_dialog_start_dir(self, kind: str) -> str:
-        if kind == "metadata":
-            candidates = (
-                self.analysis_metadata_path_edit.text().strip(),
-                str(self.analysis_state.get("metadata_path", "")),
-                self.analysis_csv_path_edit.text().strip(),
-                str(self.analysis_state.get("csv_path", "")),
-            )
-        else:
-            candidates = (
-                self.analysis_csv_path_edit.text().strip(),
-                str(self.analysis_state.get("csv_path", "")),
-                self.analysis_metadata_path_edit.text().strip(),
-                str(self.analysis_state.get("metadata_path", "")),
-            )
         for candidate in candidates:
             if not candidate:
                 continue
@@ -789,30 +754,25 @@ class AnalysisPanelMixin:
                     return str(export_path)
         return str(Path.cwd())
 
-    def _load_analysis_file_source_when_ready(self):
-        csv_path = Path(self.analysis_csv_path_edit.text().strip())
-        metadata_path = Path(self.analysis_metadata_path_edit.text().strip())
-        if not csv_path.exists():
-            self._set_analysis_status_text("Analysis: choose a CSV file to load.")
-            return
-        if not metadata_path.exists():
-            self._set_analysis_status_text("Analysis: choose the matching metadata JSON file.")
-            return
-        self.analysis_source_combo.setCurrentIndex(1)
-        self.load_analysis_source()
-
     def load_analysis_source(self):
         if getattr(self, "is_capturing", False):
             self.update_analysis_availability()
             return
         try:
             if self.analysis_source_combo.currentIndex() == 1:
-                self.analysis_state["csv_path"] = self.analysis_csv_path_edit.text().strip()
-                self.analysis_state["metadata_path"] = self.analysis_metadata_path_edit.text().strip()
-                self.analysis_snapshot = load_exported_csv_snapshot(
-                    self.analysis_state["csv_path"],
-                    self.analysis_state["metadata_path"],
-                )
+                csv_path = self.analysis_csv_path_edit.text().strip()
+                if not csv_path:
+                    self._set_analysis_status_text("Analysis: browse to a CSV file first.")
+                    return
+                metadata_path = self._analysis_metadata_path_for_csv(csv_path)
+                if not metadata_path:
+                    self._set_analysis_status_text(
+                        f"Analysis: no matching *_metadata.json found next to {Path(csv_path).name}."
+                    )
+                    return
+                self.analysis_state["csv_path"] = csv_path
+                self.analysis_state["metadata_path"] = metadata_path
+                self.analysis_snapshot = load_exported_csv_snapshot(csv_path, metadata_path)
             else:
                 buffer_overflowed = (
                     hasattr(self, '_capture_exceeds_memory_buffer')
@@ -843,26 +803,43 @@ class AnalysisPanelMixin:
             QMessageBox.warning(self, "Analysis Load Failed", str(exc))
 
     def _rebuild_analysis_channel_checks(self):
-        while self.analysis_channel_layout.count():
-            item = self.analysis_channel_layout.takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                widget.deleteLater()
+        for check in self.analysis_channel_checks.values():
+            check.deleteLater()
         self.analysis_channel_checks = {}
         snapshot = self.analysis_snapshot
-        if snapshot is None:
-            return
-        saved_visibility = self.analysis_state.get("visible_labels", {})
-        for index, label in enumerate(snapshot.channel_labels):
-            check = QCheckBox(label)
-            check.setChecked(bool(saved_visibility.get(label, True)))
-            check.stateChanged.connect(self.on_analysis_settings_changed)
-            self.analysis_channel_checks[label] = check
-            self.analysis_channel_layout.addWidget(
-                check,
-                index // ANALYSIS_CHANNEL_CHECK_COLUMNS,
-                index % ANALYSIS_CHANNEL_CHECK_COLUMNS,
-            )
+        if snapshot is not None:
+            saved_visibility = self.analysis_state.get("visible_labels", {})
+            for label in snapshot.channel_labels:
+                check = QCheckBox(label)
+                check.setChecked(bool(saved_visibility.get(label, True)))
+                check.stateChanged.connect(self.on_analysis_settings_changed)
+                self.analysis_channel_checks[label] = check
+        self._relayout_analysis_checkboxes()
+
+    def _analysis_checkbox_column_count(self) -> int:
+        width = self.analysis_channel_container.width() or self._analysis_checkbox_scroll.viewport().width()
+        return max(1, int(width) // ANALYSIS_CHECKBOX_MIN_COLUMN_WIDTH)
+
+    def _relayout_analysis_checkboxes(self):
+        """Re-flow channel then force checkboxes into as few rows as fit the container width."""
+        layout = self.analysis_channel_layout
+        while layout.count():
+            layout.takeAt(0)
+        columns = self._analysis_checkbox_column_count()
+        checks = list(self.analysis_channel_checks.values()) + list(self.analysis_force_checks.values())
+        for index, check in enumerate(checks):
+            layout.addWidget(check, index // columns, index % columns)
+
+    def eventFilter(self, obj, event):
+        checkbox_scroll = getattr(self, "_analysis_checkbox_scroll", None)
+        is_checkbox_resize = (
+            checkbox_scroll is not None
+            and obj is checkbox_scroll.viewport()
+            and event.type() == QEvent.Type.Resize
+        )
+        if is_checkbox_resize:
+            self._relayout_analysis_checkboxes()
+        return False
 
     def set_all_analysis_channels(self, checked: bool):
         for check in self.analysis_channel_checks.values():
@@ -1039,6 +1016,49 @@ class AnalysisPanelMixin:
         curve.setVisible(visible)
         return curve
 
+    ANALYSIS_STARTUP_EXCLUDE_SECONDS = 5.0
+
+    def _analysis_startup_exclude_threshold_x(self, prepared: AnalysisPreparedData) -> float:
+        """X value marking the end of the startup window (shear needs a warm-up baseline)."""
+        if prepared.x_units == "s":
+            return self.ANALYSIS_STARTUP_EXCLUDE_SECONDS
+        snapshot = self.analysis_snapshot
+        sample_rate_hz = float(snapshot.sample_rate_hz) if snapshot is not None else 0.0
+        if sample_rate_hz > 0:
+            return self.ANALYSIS_STARTUP_EXCLUDE_SECONDS * sample_rate_hz
+        return 0.0
+
+    @staticmethod
+    def _analysis_y_bounds_excluding_startup(traces, threshold_x: float) -> tuple[float, float] | None:
+        """Min/max y across traces, preferring samples at or past threshold_x."""
+        y_min = None
+        y_max = None
+        for trace in traces:
+            if trace.x.size == 0 or trace.y.size == 0:
+                continue
+            mask = trace.x >= threshold_x
+            y = trace.y[mask] if np.any(mask) else trace.y
+            if y.size == 0:
+                continue
+            trace_min = float(np.min(y))
+            trace_max = float(np.max(y))
+            y_min = trace_min if y_min is None else min(y_min, trace_min)
+            y_max = trace_max if y_max is None else max(y_max, trace_max)
+        return None if y_min is None else (y_min, y_max)
+
+    def _auto_range_analysis_plot(self, plot, traces, threshold_x: float):
+        """Auto-fit X normally; auto-fit Y from data at/after the startup window."""
+        plot.enableAutoRange(axis=pg.ViewBox.XAxis)
+        bounds = self._analysis_y_bounds_excluding_startup(traces, threshold_x)
+        if bounds is None:
+            plot.enableAutoRange(axis=pg.ViewBox.YAxis)
+            return
+        y_min, y_max = bounds
+        if y_min == y_max:
+            pad = abs(y_min) * 0.05 or 0.5
+            y_min, y_max = y_min - pad, y_max + pad
+        plot.setYRange(y_min, y_max, padding=0.05)
+
     @staticmethod
     def _hide_stale_analysis_curves(store, desired):
         """Hide curves whose key is no longer present in the prepared data."""
@@ -1133,14 +1153,15 @@ class AnalysisPanelMixin:
         self.analysis_force_plot.setLabel("bottom", prepared.x_label, units=prepared.x_units)
         self.analysis_force_plot.setLabel("left", "Force", units="N")
         if auto_range:
-            if desired_signal:
-                self.analysis_signal_plot.enableAutoRange()
-            if desired_integration:
-                self.analysis_integration_plot.enableAutoRange()
-            if desired_derived:
-                self.analysis_derived_plot.enableAutoRange()
-            if desired_force:
-                self.analysis_force_plot.enableAutoRange()
+            startup_threshold_x = self._analysis_startup_exclude_threshold_x(prepared)
+            for plot, traces, desired in (
+                (self.analysis_signal_plot, prepared.traces, desired_signal),
+                (self.analysis_integration_plot, integration_traces, desired_integration),
+                (self.analysis_derived_plot, derived_traces, desired_derived),
+                (self.analysis_force_plot, prepared.force_traces, desired_force),
+            ):
+                if desired:
+                    self._auto_range_analysis_plot(plot, traces, startup_threshold_x)
         else:
             for key, plot in (
                 ("signal", self.analysis_signal_plot),
@@ -1244,23 +1265,16 @@ class AnalysisPanelMixin:
         desired = [trace.label for trace in force_traces]
         if existing == set(desired):
             return
-        while self.analysis_force_layout.count():
-            item = self.analysis_force_layout.takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                widget.deleteLater()
         saved_visibility = self.analysis_state.get("visible_force_labels", {})
+        for check in self.analysis_force_checks.values():
+            check.deleteLater()
         self.analysis_force_checks = {}
-        for index, label in enumerate(desired):
+        for label in desired:
             check = QCheckBox(label)
             check.setChecked(bool(saved_visibility.get(label, True)))
             check.stateChanged.connect(self.on_analysis_settings_changed)
             self.analysis_force_checks[label] = check
-            self.analysis_force_layout.addWidget(
-                check,
-                index // ANALYSIS_FORCE_CHECK_COLUMNS,
-                index % ANALYSIS_FORCE_CHECK_COLUMNS,
-            )
+        self._relayout_analysis_checkboxes()
 
     def export_analysis_csv(self):
         if self.analysis_prepared is None:
@@ -1424,11 +1438,10 @@ class AnalysisPanelMixin:
         capturing = bool(getattr(self, "is_capturing", False))
         has_memory = self._analysis_has_in_memory_capture()
         self.analysis_disabled_label.setText("Analysis is disabled during active acquisition." if capturing else "")
+        self.analysis_disabled_label.setVisible(capturing)
 
         self._set_analysis_source_item_enabled(0, has_memory and not capturing)
         self._set_analysis_source_item_enabled(1, not capturing)
-        if not capturing and not has_memory and self.analysis_source_combo.currentIndex() == 0:
-            self.analysis_source_combo.setCurrentIndex(1)
 
         for widget in (
             self.analysis_source_combo,

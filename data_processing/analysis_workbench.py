@@ -542,8 +542,8 @@ def build_trace_x_axis(snapshot: AnalysisSourceSnapshot, axis_mode: str) -> tupl
 
     timestamps = _normalize_timestamps(snapshot.timestamps_s, sweeps)
     offsets = _sample_offsets_s(snapshot)
-    x = (timestamps.reshape(-1, 1) + offsets.reshape(1, -1)) * 1000.0
-    return x, "Time", "ms"
+    x = timestamps.reshape(-1, 1) + offsets.reshape(1, -1)
+    return x, "Time", "s"
 
 
 def build_trace_time_axis_seconds(snapshot: AnalysisSourceSnapshot) -> np.ndarray:
@@ -559,14 +559,14 @@ def build_force_traces(snapshot: AnalysisSourceSnapshot, axis_mode: str) -> list
     if axis_mode == "samples":
         x = np.arange(count, dtype=np.float64)
     elif snapshot.force_timestamps_s.size >= count:
-        x = snapshot.force_timestamps_s[:count].astype(np.float64) * 1000.0
+        x = snapshot.force_timestamps_s[:count].astype(np.float64)
     else:
         x = np.linspace(
             float(snapshot.timestamps_s[0] if snapshot.timestamps_s.size else 0.0),
             float(snapshot.timestamps_s[-1] if snapshot.timestamps_s.size else max(count - 1, 0)),
             count,
             dtype=np.float64,
-        ) * 1000.0
+        )
 
     traces: list[AnalysisTrace] = []
     if snapshot.force_x_n.size:

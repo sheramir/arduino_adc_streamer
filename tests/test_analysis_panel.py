@@ -180,7 +180,6 @@ class AnalysisPanelHarness(AnalysisPanelMixin):
         self.analysis_pzt_quiet_hold_spin = DummySpin(float(PZT_FORCE_DEFAULT_SETTINGS["quiet_hold_clear_s"]))
         self.analysis_pzt_baseline_results = DummyTextWidget()
         self.analysis_csv_path_edit = DummyTextWidget()
-        self.analysis_metadata_path_edit = DummyTextWidget()
 
     def _get_last_analysis_settings_path(self):
         return self._settings_path

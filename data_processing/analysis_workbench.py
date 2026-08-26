@@ -10,6 +10,7 @@ live acquisition buffers or filter runtime.
 from __future__ import annotations
 
 import csv
+import heapq
 import json
 from dataclasses import dataclass, field
 from dataclasses import asdict, is_dataclass
@@ -634,6 +635,63 @@ def filter_offline_data(snapshot: AnalysisSourceSnapshot, filter_settings: dict)
     return engine.filter_block(runtime, np.asarray(snapshot.data, dtype=np.float32).copy())
 
 
+def _expanding_median(values: np.ndarray) -> np.ndarray:
+    """Causal (past-only) running median, one output per input sample.
+
+    Uses a two-heap running-median so the whole series is O(n log n) rather
+    than the O(n^2) cost of recomputing ``np.median`` at every index.
+    """
+    lower: list[float] = []  # max-heap, stored negated
+    upper: list[float] = []  # min-heap
+    out = np.empty(len(values), dtype=np.float64)
+
+    for i, value in enumerate(values):
+        value = float(value)
+        if lower and value <= -lower[0]:
+            heapq.heappush(lower, -value)
+        else:
+            heapq.heappush(upper, value)
+
+        if len(lower) > len(upper) + 1:
+            heapq.heappush(upper, -heapq.heappop(lower))
+        elif len(upper) > len(lower):
+            heapq.heappush(lower, -heapq.heappop(upper))
+
+        out[i] = -lower[0] if len(lower) > len(upper) else (-lower[0] + upper[0]) / 2.0
+
+    return out
+
+
+def integrate_voltage_series_causal_median(
+    voltage_by_key: Mapping,
+    *,
+    integration_window_samples: int,
+) -> dict:
+    """Shear/normal integration path: causal median baseline removal + a
+    moving rectangular sum, mirroring the calibration notebook's shear
+    pipeline (``_causal_median_baseline`` in ``calibration_utils.py``)
+    instead of the HPF-based ``SignalIntegrator`` used for the generic
+    "Integration" overlay trace.
+    """
+    window = max(1, int(integration_window_samples))
+    result: dict = {}
+    for key, raw_values in voltage_by_key.items():
+        raw = np.asarray(raw_values, dtype=np.float64).reshape(-1)
+        if raw.size == 0:
+            result[key] = np.empty(0, dtype=np.float64)
+            continue
+
+        baseline = _expanding_median(raw)
+        centered = raw - baseline
+
+        cumsum = np.concatenate([[0.0], np.cumsum(centered)])
+        end_idx = np.arange(len(centered))
+        start_idx = np.maximum(0, end_idx - window + 1)
+        result[key] = cumsum[end_idx + 1] - cumsum[start_idx]
+
+    return result
+
+
 def build_overlay_traces(
     snapshot: AnalysisSourceSnapshot,
     data: np.ndarray,
@@ -689,12 +747,13 @@ def build_overlay_traces(
     if not all(position in volts_by_position for position in SHEAR_SENSOR_POSITIONS):
         return overlays
 
-    integrated = integrate_voltage_series(
+    # Shear/normal use a causal median baseline (matching the calibration
+    # notebook's shear pipeline) rather than the HPF-based SignalIntegrator
+    # used for the generic "Integration" overlay trace below — a Butterworth
+    # high-pass filter here washed out the slow shear response.
+    integrated = integrate_voltage_series_causal_median(
         volts_by_position,
-        sample_rate_hz=_overlay_sample_rate_hz(snapshot),
         integration_window_samples=integration_window_samples,
-        hpf_cutoff_hz=hpf_cutoff_hz,
-        channel_map=list(SHEAR_SENSOR_POSITIONS),
     )
     shear_detector = ShearDetector()
     normal_calculator = NormalForceCalculator()

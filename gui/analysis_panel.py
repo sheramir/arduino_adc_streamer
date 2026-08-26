@@ -1060,11 +1060,11 @@ class AnalysisPanelMixin:
         plot.setYRange(y_min, y_max, padding=0.05)
 
     @staticmethod
-    def _hide_stale_analysis_curves(store, desired):
-        """Hide curves whose key is no longer present in the prepared data."""
-        for key, curve in store.items():
-            if key not in desired:
-                curve.setVisible(False)
+    def _hide_stale_analysis_curves(plot, store, desired):
+        """Remove curves (and their legend entries) whose key is no longer present in the prepared data."""
+        stale_keys = [key for key in store if key not in desired]
+        for key in stale_keys:
+            plot.removeItem(store.pop(key))
 
     def _render_analysis_prepared(self, auto_range: bool = False):
         prepared = self.analysis_prepared
@@ -1127,10 +1127,12 @@ class AnalysisPanelMixin:
                 visible=force_check.isChecked() if force_check is not None else True,
             )
 
-        self._hide_stale_analysis_curves(self.analysis_signal_curves, desired_signal)
-        self._hide_stale_analysis_curves(self.analysis_integration_curves, desired_integration)
-        self._hide_stale_analysis_curves(self.analysis_derived_curves, desired_derived)
-        self._hide_stale_analysis_curves(self.analysis_force_curves, desired_force)
+        self._hide_stale_analysis_curves(self.analysis_signal_plot, self.analysis_signal_curves, desired_signal)
+        self._hide_stale_analysis_curves(
+            self.analysis_integration_plot, self.analysis_integration_curves, desired_integration
+        )
+        self._hide_stale_analysis_curves(self.analysis_derived_plot, self.analysis_derived_curves, desired_derived)
+        self._hide_stale_analysis_curves(self.analysis_force_plot, self.analysis_force_curves, desired_force)
 
         visible_force = any(
             self.analysis_force_checks.get(trace.label).isChecked()
@@ -1144,14 +1146,22 @@ class AnalysisPanelMixin:
             show_force=visible_force,
         )
 
-        self.analysis_signal_plot.setLabel("bottom", prepared.x_label, units=prepared.x_units)
         self.analysis_signal_plot.setLabel("left", "Signals", units="V")
-        self.analysis_integration_plot.setLabel("bottom", prepared.x_label, units=prepared.x_units)
         self.analysis_integration_plot.setLabel("left", "Integrated", units="V samples")
-        self.analysis_derived_plot.setLabel("bottom", prepared.x_label, units=prepared.x_units)
         self.analysis_derived_plot.setLabel("left", "Shear / Normal", units="V")
-        self.analysis_force_plot.setLabel("bottom", prepared.x_label, units=prepared.x_units)
         self.analysis_force_plot.setLabel("left", "Force", units="N")
+        stacked_plots = (
+            (self.analysis_signal_plot, bool(desired_signal)),
+            (self.analysis_integration_plot, bool(desired_integration)),
+            (self.analysis_derived_plot, bool(desired_derived)),
+            (self.analysis_force_plot, bool(desired_force)),
+        )
+        bottom_plot = next((plot for plot, visible in reversed(stacked_plots) if visible), None)
+        for plot, _visible in stacked_plots:
+            if plot is bottom_plot:
+                plot.setLabel("bottom", prepared.x_label, units=prepared.x_units)
+            else:
+                plot.setLabel("bottom", "")
         if auto_range:
             startup_threshold_x = self._analysis_startup_exclude_threshold_x(prepared)
             for plot, traces, desired in (

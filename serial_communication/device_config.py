@@ -23,12 +23,17 @@ def load_device_config() -> dict:
         return {"auto_connect": True, "adc_devices": [], "force_devices": []}
 
 
-def find_device_port(device_list: list[dict]) -> tuple[str | None, dict | None]:
+def find_device_port(
+    device_list: list[dict], *, exclude_port: str | None = None
+) -> tuple[str | None, dict | None]:
     """Scan *device_list* entries against live COM ports.
 
     Matches on VID + PID. If a device entry has a non-null ``serial_number``
-    it must match exactly. Returns ``(port_device, matched_entry)`` for the
-    first hit, or ``(None, None)`` if nothing found.
+    it must match exactly. ``exclude_port`` skips a port already claimed by
+    another live connection (e.g. the Force port, when auto-connecting ADC),
+    so a VID/PID mismatch elsewhere never leaves ADC and Force sharing one
+    physical port. Returns ``(port_device, matched_entry)`` for the first
+    hit, or ``(None, None)`` if nothing found.
     """
     ports = list(serial.tools.list_ports.comports())
     for dev in device_list:
@@ -39,6 +44,8 @@ def find_device_port(device_list: list[dict]) -> tuple[str | None, dict | None]:
             continue
         want_sn = dev.get("serial_number")
         for p in ports:
+            if exclude_port is not None and p.device == exclude_port:
+                continue
             if p.vid != want_vid or p.pid != want_pid:
                 continue
             if want_sn is not None and p.serial_number != want_sn:
@@ -47,13 +54,20 @@ def find_device_port(device_list: list[dict]) -> tuple[str | None, dict | None]:
     return None, None
 
 
-def find_adc_port() -> tuple[str | None, dict | None]:
+def connected_port_name(serial_port) -> str | None:
+    """Device name (e.g. "COM16") of a live serial.Serial-like port, or None if not open."""
+    if serial_port is not None and getattr(serial_port, "is_open", False):
+        return getattr(serial_port, "port", None) or getattr(serial_port, "name", None)
+    return None
+
+
+def find_adc_port(*, exclude_port: str | None = None) -> tuple[str | None, dict | None]:
     """Return the first matching ADC device port from config."""
     cfg = load_device_config()
-    return find_device_port(cfg.get("adc_devices", []))
+    return find_device_port(cfg.get("adc_devices", []), exclude_port=exclude_port)
 
 
-def find_force_port() -> tuple[str | None, dict | None]:
+def find_force_port(*, exclude_port: str | None = None) -> tuple[str | None, dict | None]:
     """Return the first matching Force device port from config."""
     cfg = load_device_config()
-    return find_device_port(cfg.get("force_devices", []))
+    return find_device_port(cfg.get("force_devices", []), exclude_port=exclude_port)

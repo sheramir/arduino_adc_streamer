@@ -6,10 +6,11 @@ Owns the ADC serial port transport, reader thread wiring, and routed text waits.
 
 from __future__ import annotations
 
+import threading
 import time
 
 import serial
-from PyQt6.QtCore import QCoreApplication
+from PyQt6.QtCore import QCoreApplication, QThread
 
 from constants.serial import (
     ARDUINO_RESET_DELAY,
@@ -31,6 +32,10 @@ class ADCSessionController:
         self.serial_port = None
         self.serial_thread = None
         self._adc_line_waiters = []
+        # connect() and detect_mcu() may now run on a background connect
+        # worker while text lines still arrive via a GUI-thread Qt signal
+        # queued connection, so waiter-list access must be thread-safe.
+        self._waiters_lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -105,7 +110,8 @@ class ADCSessionController:
     # ------------------------------------------------------------------
 
     def clear_line_waiters(self):
-        self._adc_line_waiters = []
+        with self._waiters_lock:
+            self._adc_line_waiters = []
 
     def handle_text_line(self, line: str) -> bool:
         """Route ADC text lines to any pending waiters.
@@ -113,33 +119,42 @@ class ADCSessionController:
         Returns True when a waiter consumes the line and it should not continue
         through the normal parser/log path.
         """
-        waiters = list(self._adc_line_waiters)
-        if not waiters:
-            return False
+        with self._waiters_lock:
+            waiters = list(self._adc_line_waiters)
+            if not waiters:
+                return False
 
-        consumed = False
-        remaining = []
-        for waiter in waiters:
-            matcher = waiter.get("matcher")
-            if matcher is not None and matcher(line):
-                waiter["matched_line"] = line
-                if waiter.get("consume", False):
-                    consumed = True
-                continue
-            remaining.append(waiter)
+            consumed = False
+            remaining = []
+            for waiter in waiters:
+                matcher = waiter.get("matcher")
+                if matcher is not None and matcher(line):
+                    waiter["matched_line"] = line
+                    if waiter.get("consume", False):
+                        consumed = True
+                    continue
+                remaining.append(waiter)
 
-        self._adc_line_waiters = remaining
-        return consumed
+            self._adc_line_waiters = remaining
+            return consumed
 
     def wait_for_line(self, matcher, timeout: float, *, consume: bool = False, send_action=None):
-        """Wait for a routed ADC text line while keeping Qt responsive."""
+        """Wait for a routed ADC text line.
+
+        Pumps the Qt event loop only when called from the GUI thread; a
+        background connect worker just polls, since the GUI thread's own
+        event loop delivers the queued text-line signal independently.
+        """
         waiter = {
             "matcher": matcher,
             "consume": consume,
             "matched_line": None,
         }
-        self._adc_line_waiters.append(waiter)
+        with self._waiters_lock:
+            self._adc_line_waiters.append(waiter)
         deadline = time.time() + timeout
+        app = QCoreApplication.instance()
+        on_gui_thread = app is not None and QThread.currentThread() is app.thread()
 
         try:
             if send_action is not None:
@@ -147,12 +162,14 @@ class ADCSessionController:
             while time.time() < deadline:
                 if waiter["matched_line"] is not None:
                     return waiter["matched_line"]
-                QCoreApplication.processEvents()
+                if on_gui_thread:
+                    QCoreApplication.processEvents()
                 time.sleep(0.01)
             return None
         finally:
-            if waiter in self._adc_line_waiters:
-                self._adc_line_waiters.remove(waiter)
+            with self._waiters_lock:
+                if waiter in self._adc_line_waiters:
+                    self._adc_line_waiters.remove(waiter)
 
     # ------------------------------------------------------------------
     # Commands

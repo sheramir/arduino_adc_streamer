@@ -1,5 +1,17 @@
 """UI and window layout constants."""
 
+from enum import Enum
+
+
+class AnalysisLoadState(Enum):
+    """Lifecycle of the Analysis tab's background render."""
+
+    IDLE = "idle"
+    LOADING = "loading"
+    READY = "ready"
+    ERROR = "error"
+
+
 # UI Update Timing
 FORCE_PLOT_DEBOUNCE_MS = 100
 CONFIG_CHECK_INTERVAL = 100

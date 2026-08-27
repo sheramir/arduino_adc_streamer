@@ -31,6 +31,14 @@ def build_force_connected_view_state() -> ForceConnectionViewState:
     )
 
 
+def build_force_connecting_view_state() -> ForceConnectionViewState:
+    return ForceConnectionViewState(
+        connect_button_text="Connecting Force...",
+        port_selection_enabled=False,
+        reset_button_enabled=False,
+    )
+
+
 def build_force_disconnected_view_state() -> ForceConnectionViewState:
     return ForceConnectionViewState(
         connect_button_text="Auto-connect Force",

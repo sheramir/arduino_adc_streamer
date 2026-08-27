@@ -44,10 +44,10 @@ class ADCConnectionStateTests(unittest.TestCase):
         connected = build_connected_view_state()
         disconnected = build_disconnected_view_state()
 
-        self.assertEqual(connected.connect_button_text, "Disconnect")
+        self.assertEqual(connected.connect_button_text, "Disconnect ADC")
         self.assertTrue(connected.configure_enabled)
         self.assertFalse(connected.port_selection_enabled)
-        self.assertEqual(disconnected.connect_button_text, "Connect")
+        self.assertEqual(disconnected.connect_button_text, "Auto-connect ADC")
         self.assertFalse(disconnected.configure_enabled)
         self.assertTrue(disconnected.port_selection_enabled)
 

@@ -14,10 +14,9 @@ from constants.force import (
 from data_processing.force_state import get_force_runtime_state
 from serial_communication.force_connection_state import (
     ForceConnectionState,
-    build_force_connected_view_state,
     build_force_disconnected_view_state,
 )
-from serial_communication.device_config import find_force_port
+from serial_communication.device_config import connected_port_name, find_force_port
 from serial_communication.force_session import ForceSessionController
 
 
@@ -81,16 +80,12 @@ class ForceSerialMixin:
 
     def _auto_connect_force(self):
         """Try to connect to the first matching Force device from adc_devices.json silently."""
-        force_state = getattr(self, "force_conn_state", ForceConnectionState.DISCONNECTED)
-        if force_state != ForceConnectionState.DISCONNECTED:
-            return
-
-        port, dev = find_force_port()
+        exclude_port = connected_port_name(getattr(self, "serial_port", None))
+        port, dev = find_force_port(exclude_port=exclude_port)
         if port is None:
             self.log_status("[Auto-connect Force] No configured Force device found — connect manually")
             return
 
-        self.force_conn_state = ForceConnectionState.CONNECTING
         sn = dev.get("serial_number") or "any S/N"
         self.log_status(f"[Auto-connect Force] Found {dev['name']} on {port} (S/N: {sn}) — connecting…")
 
@@ -100,36 +95,14 @@ class ForceSerialMixin:
                 self.force_port_combo.setCurrentIndex(i)
                 break
 
-        try:
-            state = get_force_runtime_state(self)
-            if getattr(self, "force_session", None) is None:
-                self.force_session = self._build_force_session()
-
-            state.raw_samples_seen = 0
-            state.recent_raw_samples.clear()
-            state.selected_port_text = f"{port} - {dev['name']}"
-            outcome = self.force_connection_workflow.connect(self.force_session, port)
-            self._sync_force_transport_state()
-
-            self.force_conn_state = ForceConnectionState.CONNECTED
-            self.log_status(f"[Auto-connect Force] Connected to {dev['name']} on {port} at {FORCE_SENSOR_BAUD_RATE} baud")
-            self.log_status(f"Calibrating force sensors (collecting {FORCE_CALIBRATION_SAMPLES} samples)…")
-            QTimer.singleShot(3000, self._warn_if_no_force_data_received)
-
-            if outcome.should_start_calibration:
-                self.calibrate_force_sensors()
-
-            self._apply_force_connection_view_state(build_force_connected_view_state())
-            self.enable_force_calibration_start_stop(True)
-
-            if self.config.get("channels"):
-                self.update_channel_list()
-
-        except Exception as e:
-            self.force_conn_state = ForceConnectionState.DISCONNECTED
-            self._sync_force_transport_state()
-            self._apply_force_connection_view_state(build_force_disconnected_view_state())
-            self.log_status(f"[Auto-connect Force] Failed on {port}: {e}")
+        self._start_force_connect(
+            port,
+            selected_port_text=f"{port} - {dev['name']}",
+            on_connected=lambda _outcome: self.log_status(
+                f"[Auto-connect Force] Connected to {dev['name']} on {port} at {FORCE_SENSOR_BAUD_RATE} baud"
+            ),
+            on_failed=lambda message: self.log_status(f"[Auto-connect Force] Failed on {port}: {message}"),
+        )
 
     def connect_force_serial(self):
         """Connect to the force sensor serial port."""
@@ -140,39 +113,56 @@ class ForceSerialMixin:
         port_text = self.force_port_combo.currentText()
         port_name = port_text.split(" - ")[0]
 
-        try:
-            state = get_force_runtime_state(self)
-            if getattr(self, "force_session", None) is None:
-                self.force_session = self._build_force_session()
+        self._start_force_connect(
+            port_name,
+            selected_port_text=port_text,
+            on_connected=lambda _outcome: self.log_status(
+                f"Connected to force sensor on {port_text} at {FORCE_SENSOR_BAUD_RATE} baud"
+            ),
+            on_failed=lambda message: self._on_manual_force_connect_failed(message),
+        )
 
-            state.raw_samples_seen = 0
-            state.recent_raw_samples.clear()
-            state.selected_port_text = port_text
-            outcome = self.force_connection_workflow.connect(self.force_session, port_name)
-            self._sync_force_transport_state()
+    def _on_manual_force_connect_failed(self, message: str):
+        self.log_status(f"ERROR: Failed to connect to force sensor - {message}")
+        QMessageBox.critical(self, "Force Connection Error", f"Failed to connect:\n{message}")
 
-            self.force_conn_state = ForceConnectionState.CONNECTED
-            self.log_status(f"Connected to force sensor on {port_text} at {FORCE_SENSOR_BAUD_RATE} baud")
-            self.log_status(f"Calibrating force sensors (collecting {FORCE_CALIBRATION_SAMPLES} samples)...")
-            QTimer.singleShot(3000, self._warn_if_no_force_data_received)
-            
-            # Start calibration
-            if outcome.should_start_calibration:
-                self.calibrate_force_sensors()
+    def _start_force_connect(self, port_name: str, *, selected_port_text: str, on_connected, on_failed):
+        """Kick off a background Force connect so the sensor startup delay never blocks the GUI."""
+        state = get_force_runtime_state(self)
+        if getattr(self, "force_session", None) is None:
+            self.force_session = self._build_force_session()
 
-            self._apply_force_connection_view_state(build_force_connected_view_state())
-            self.enable_force_calibration_start_stop(True)
-            
-            # Update channel list to add force checkboxes
-            if self.config['channels']:  # Only if ADC is already configured
-                self.update_channel_list()
+        state.raw_samples_seen = 0
+        state.recent_raw_samples.clear()
+        state.selected_port_text = selected_port_text
 
-        except Exception as e:
-            self.force_conn_state = ForceConnectionState.DISCONNECTED
-            self._sync_force_transport_state()
-            self._apply_force_connection_view_state(build_force_disconnected_view_state())
-            self.log_status(f"ERROR: Failed to connect to force sensor - {e}")
-            QMessageBox.critical(self, "Force Connection Error", f"Failed to connect:\n{e}")
+        self._force_connect_on_connected = on_connected
+        self._force_connect_on_failed = on_failed
+        self._force_connect_controller.start(self.force_session, port_name)
+
+    def _on_force_connect_success(self, outcome):
+        self._sync_force_transport_state()
+        self.log_status(f"Calibrating force sensors (collecting {FORCE_CALIBRATION_SAMPLES} samples)…")
+        QTimer.singleShot(3000, self._warn_if_no_force_data_received)
+
+        if outcome.should_start_calibration:
+            self.calibrate_force_sensors()
+
+        self.enable_force_calibration_start_stop(True)
+        if self.config.get("channels"):
+            self.update_channel_list()
+
+        self._force_connect_on_connected(outcome)
+
+    def _on_force_connect_failure(self, message: str):
+        self._sync_force_transport_state()
+        self._force_connect_on_failed(message)
+
+    def shutdown_force_connect_worker(self):
+        worker = getattr(self, "force_connect_worker", None)
+        if worker is not None:
+            worker.stop()
+            worker.wait(1500)
 
     def _handle_force_reader_error(self, message: str):
         """Handle force-reader errors and transition to a clean disconnected state."""

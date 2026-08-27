@@ -94,6 +94,18 @@ def build_connected_view_state() -> ADCConnectionViewState:
     )
 
 
+def build_connecting_view_state() -> ADCConnectionViewState:
+    return ADCConnectionViewState(
+        connect_button_text="Connecting ADC...",
+        configure_enabled=False,
+        configure_style=None,
+        start_enabled=False,
+        stop_enabled=False,
+        status_message="Connecting...",
+        port_selection_enabled=False,
+    )
+
+
 def build_disconnected_view_state() -> ADCConnectionViewState:
     return ADCConnectionViewState(
         connect_button_text="Auto-connect ADC",

@@ -14,10 +14,13 @@ from gui.analysis_panel import AnalysisPanelMixin
 
 class FakePlot:
     def __init__(self):
-        self.visible = None
+        self.visible = True
 
     def setVisible(self, visible):
         self.visible = bool(visible)
+
+    def isVisible(self):
+        return bool(self.visible)
 
 
 class FakeSplitter:
@@ -53,8 +56,8 @@ class AnalysisPlotVisibilityTests(unittest.TestCase):
         self.assertFalse(self.harness.analysis_integration_plot.visible)
         self.assertFalse(self.harness.analysis_derived_plot.visible)
         self.assertFalse(self.harness.analysis_force_plot.visible)
-        self.assertEqual(self.harness.analysis_plot_splitter.minimum_height, 360)
-        self.assertEqual(self.harness.analysis_plot_splitter.sizes, [360, 0, 0, 0])
+        self.assertEqual(self.harness.analysis_plot_splitter.minimum_height, 250)
+        self.assertEqual(self.harness.analysis_plot_splitter.sizes, [250, 0, 0, 0])
 
     def test_shows_each_available_requested_plot(self):
         self.harness._update_analysis_plot_visibility(
@@ -67,8 +70,8 @@ class AnalysisPlotVisibilityTests(unittest.TestCase):
         self.assertTrue(self.harness.analysis_integration_plot.visible)
         self.assertTrue(self.harness.analysis_derived_plot.visible)
         self.assertTrue(self.harness.analysis_force_plot.visible)
-        self.assertEqual(self.harness.analysis_plot_splitter.minimum_height, 1160)
-        self.assertEqual(self.harness.analysis_plot_splitter.sizes, [360, 260, 240, 300])
+        self.assertEqual(self.harness.analysis_plot_splitter.minimum_height, 750)
+        self.assertEqual(self.harness.analysis_plot_splitter.sizes, [250, 200, 200, 100])
 
 
 class DummySpin:

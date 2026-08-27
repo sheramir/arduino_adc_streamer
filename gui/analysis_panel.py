@@ -45,6 +45,8 @@ from constants.pzt_force import (
     PZT_FORCE_DEFAULT_SETTINGS,
     PZT_FORCE_MUX_TIMING_MODES,
 )
+from constants.ui import AnalysisLoadState
+from data_processing.analysis_compute_worker import AnalysisComputeWorker
 from data_processing.analysis_workbench import (
     AnalysisPreparedData,
     AnalysisSourceSnapshot,
@@ -85,6 +87,13 @@ class AnalysisPanelMixin:
         self._analysis_settings_loading = False
         self.analysis_snapshot: AnalysisSourceSnapshot | None = None
         self.analysis_prepared: AnalysisPreparedData | None = None
+        self._analysis_load_state = AnalysisLoadState.IDLE
+        self._analysis_generation = 0
+        self._analysis_loaded_status = ""
+        self.analysis_compute_worker = AnalysisComputeWorker()
+        self.analysis_compute_worker.result_ready.connect(self._on_analysis_compute_result)
+        self.analysis_compute_worker.error_occurred.connect(self._on_analysis_compute_error)
+        self.analysis_compute_worker.start()
         self.analysis_channel_checks: dict[str, QCheckBox] = {}
         self.analysis_signal_curves = {}
         self.analysis_force_curves = {}
@@ -100,6 +109,12 @@ class AnalysisPanelMixin:
         self._analysis_marker_timer.setSingleShot(True)
         self._analysis_pending_marker_x = None
         self._analysis_saved_view_ranges: dict[str, tuple[list[float], list[float]]] = {}
+
+    def shutdown_analysis_worker(self):
+        worker = getattr(self, "analysis_compute_worker", None)
+        if worker is not None:
+            worker.stop()
+            worker.wait(1500)
 
     def _get_last_analysis_settings_path(self):
         return Path.home() / ".adc_streamer" / "analysis" / "last_used_analysis_settings.json"
@@ -785,16 +800,13 @@ class AnalysisPanelMixin:
                     self.analysis_snapshot = build_in_memory_snapshot(self)
             self._rebuild_analysis_channel_checks()
             self._analysis_pending_auto_range = True
-            self.refresh_analysis_plot()
-            self._set_analysis_status_text(
+            self._analysis_loaded_status = (
                 f"Analysis loaded: {self.analysis_snapshot.sweep_count} sweeps, "
                 f"{self.analysis_snapshot.samples_per_sweep} signal columns"
             )
+            self.refresh_analysis_plot()
             if hasattr(self, "log_status"):
-                self.log_status(
-                    f"Analysis loaded: {self.analysis_snapshot.sweep_count} sweeps, "
-                    f"{self.analysis_snapshot.samples_per_sweep} signal columns"
-                )
+                self.log_status(self._analysis_loaded_status)
             self.save_last_analysis_settings()
         except Exception as exc:
             self._set_analysis_status_text(f"Analysis load failed: {exc}")
@@ -978,21 +990,41 @@ class AnalysisPanelMixin:
             if check.isChecked()
         ]
         filter_settings = self.get_filter_settings_from_ui() if hasattr(self, "get_filter_settings_from_ui") else {}
-        self.analysis_prepared = prepare_analysis_data(
-            snapshot,
-            axis_mode=self.analysis_state.get("axis_mode", "time_ms"),
-            visible_labels=visible_labels,
-            filter_enabled=bool(self.analysis_filter_check.isChecked()),
-            filter_settings=filter_settings,
-            overlay_flags=self.analysis_state.get("overlays", {}),
-            vref_voltage=self.get_vref_voltage() if hasattr(self, "get_vref_voltage") else 3.3,
-            integration_window_samples=int(getattr(self, "signal_integration_window_samples", 1) or 1),
-            hpf_cutoff_hz=float(getattr(self, "signal_integration_hpf_cutoff_hz", 0.0) or 0.0),
-            pzt_force_settings=self.analysis_state.get("pzt_force", {}),
-        )
-        self._sync_analysis_force_trace_checks(self.analysis_prepared.force_traces)
-        self._render_analysis_prepared(auto_range=getattr(self, "_analysis_pending_auto_range", False))
+        self._analysis_generation += 1
+        self._analysis_load_state = AnalysisLoadState.LOADING
+        self._set_analysis_status_text("Analysis: preparing plot...")
+        self.analysis_compute_worker.submit({
+            "generation": self._analysis_generation,
+            "snapshot": snapshot,
+            "axis_mode": self.analysis_state.get("axis_mode", "time_ms"),
+            "visible_labels": visible_labels,
+            "filter_enabled": bool(self.analysis_filter_check.isChecked()),
+            "filter_settings": filter_settings,
+            "overlay_flags": self.analysis_state.get("overlays", {}),
+            "vref_voltage": self.get_vref_voltage() if hasattr(self, "get_vref_voltage") else 3.3,
+            "integration_window_samples": int(getattr(self, "signal_integration_window_samples", 1) or 1),
+            "hpf_cutoff_hz": float(getattr(self, "signal_integration_hpf_cutoff_hz", 0.0) or 0.0),
+            "pzt_force_settings": self.analysis_state.get("pzt_force", {}),
+            "auto_range": getattr(self, "_analysis_pending_auto_range", False),
+        })
         self._analysis_pending_auto_range = False
+
+    def _on_analysis_compute_result(self, payload: dict):
+        if int(payload.get("generation", -1)) != self._analysis_generation:
+            return
+        self.analysis_prepared = payload["prepared"]
+        self._analysis_load_state = AnalysisLoadState.READY
+        self._sync_analysis_force_trace_checks(self.analysis_prepared.force_traces)
+        self._render_analysis_prepared(auto_range=bool(payload.get("auto_range", False)))
+        self._set_analysis_status_text(self._analysis_loaded_status or "Analysis: plot ready.")
+
+    def _on_analysis_compute_error(self, generation: int, message: str):
+        if int(generation) != self._analysis_generation:
+            return
+        self._analysis_load_state = AnalysisLoadState.ERROR
+        self._set_analysis_status_text(f"Analysis prepare failed: {message}")
+        if hasattr(self, "log_status"):
+            self.log_status(f"Analysis prepare failed: {message}")
 
     def _apply_analysis_curve_pen(self, group, key, curve, color):
         """Reassign the curve pen only when its colour actually changed."""

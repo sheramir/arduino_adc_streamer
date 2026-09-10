@@ -163,7 +163,7 @@ def build_snapshot_from_archive(owner) -> AnalysisSourceSnapshot:
     Falls back to the in-memory ring buffer if the archive is unavailable or empty.
     Caller must ensure capture is stopped before calling.
     """
-    if hasattr(owner, '_finalize_archive_if_active'):   
+    if hasattr(owner, '_finalize_archive_if_active'):
         owner._finalize_archive_if_active()
 
     sweeps = timestamps = None

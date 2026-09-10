@@ -1229,6 +1229,15 @@ class PressureMapPanelMixin:
         else:
             worker.swap_engine(new_engine)
 
+    def shutdown_force_worker(self) -> None:
+        """Stop the background force integrator before its Qt owner is destroyed."""
+        worker = getattr(self, "_force_worker", None)
+        if worker is None:
+            return
+        worker.stop()
+        worker.wait()
+        self._force_worker = None
+
     def reset_pressure_force_display(self) -> None:
         self._rebuild_pressure_force_engine()
         self._render_pressure_force_display()

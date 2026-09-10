@@ -17,7 +17,9 @@ from data_processing.analysis_workbench import (
     _owner_analysis_timing_metadata,
     build_in_memory_snapshot,
     build_overlay_traces,
+    build_snapshot_from_archive,
     estimate_analysis_pzt_force_calibration,
+    integrate_voltage_series_causal_median,
     load_exported_csv_snapshot,
     prepare_analysis_data,
     reorder_circular_capture,
@@ -59,6 +61,65 @@ class OfflineStreamIndexMapTests(unittest.TestCase):
 
 
 class AnalysisWorkbenchTests(unittest.TestCase):
+    def _archive_owner(self, archive_sweeps, archive_timestamps):
+        owner = SimpleNamespace(
+            buffer_lock=threading.Lock(),
+            raw_data_buffer=np.asarray([[1, 2], [3, 4]], dtype=np.float32),
+            sweep_timestamps_buffer=np.asarray([0.0, 0.01], dtype=np.float64),
+            sweep_count=2,
+            buffer_write_index=2,
+            MAX_SWEEPS_BUFFER=2,
+            config=ADCConfigurationState(channels=[1, 2], repeat=1, sample_rate=200),
+            force_state=SimpleNamespace(data=[]),
+            finalize_calls=0,
+        )
+        owner.get_display_channel_specs = lambda: [
+            {"label": "CH1", "sample_indices": [0]},
+            {"label": "CH2", "sample_indices": [1]},
+        ]
+        owner.get_rosette_display_channel_specs = lambda: []
+
+        def finalize():
+            owner.finalize_calls += 1
+
+        owner._finalize_archive_if_active = finalize
+        owner.load_archive_data = lambda: (archive_sweeps, archive_timestamps)
+        return owner
+
+    def test_build_snapshot_from_archive_uses_complete_archive(self):
+        owner = self._archive_owner(
+            [[10, 11], [20, 21], [30, 31]],
+            [0.0, 0.01, 0.02],
+        )
+
+        snapshot = build_snapshot_from_archive(owner)
+
+        self.assertEqual(owner.finalize_calls, 1)
+        self.assertEqual(snapshot.source_id, "archive")
+        self.assertEqual(snapshot.metadata["source"], "archive")
+        np.testing.assert_array_equal(
+            snapshot.data,
+            np.asarray([[10, 11], [20, 21], [30, 31]], dtype=np.float32),
+        )
+        np.testing.assert_allclose(snapshot.timestamps_s, [0.0, 0.01, 0.02])
+
+    def test_build_snapshot_from_archive_falls_back_to_ring_buffer(self):
+        owner = self._archive_owner([], [])
+
+        snapshot = build_snapshot_from_archive(owner)
+
+        self.assertEqual(owner.finalize_calls, 1)
+        self.assertEqual(snapshot.source_id, "in_memory")
+        np.testing.assert_array_equal(snapshot.data, owner.raw_data_buffer)
+
+    def test_causal_median_integration_matches_expanding_baseline(self):
+        result = integrate_voltage_series_causal_median(
+            {"C": np.asarray([0.0, 0.0, 10.0, 10.0])},
+            integration_window_samples=2,
+        )
+
+        np.testing.assert_allclose(result["C"], [0.0, 0.0, 10.0, 15.0])
+
     def test_reorder_circular_capture_returns_oldest_to_newest(self):
         data = np.asarray(
             [

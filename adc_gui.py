@@ -444,6 +444,7 @@ class ADCStreamerGUI(
 
         self.shutdown_filter_worker()
         self.shutdown_spectrum_worker()
+        self.shutdown_force_worker()
         self.shutdown_analysis_worker()
         self.shutdown_adc_connect_worker()
         self.shutdown_force_connect_worker()

@@ -38,6 +38,7 @@ class FakeSplitter:
 class AnalysisPlotVisibilityTests(unittest.TestCase):
     def setUp(self):
         self.harness = AnalysisPanelMixin()
+        self.addCleanup(self.harness.shutdown_analysis_worker)
         self.harness.analysis_signal_plot = FakePlot()
         self.harness.analysis_integration_plot = FakePlot()
         self.harness.analysis_derived_plot = FakePlot()
@@ -204,6 +205,7 @@ class AnalysisPztForceEventTunablesRoundTripTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             settings_path = Path(temp_dir) / "last_used_analysis_settings.json"
             harness = AnalysisPanelHarness(settings_path)
+            self.addCleanup(harness.shutdown_analysis_worker)
 
             harness.analysis_pzt_zero_floor_spin.setValue(0.05)
             harness.analysis_pzt_zero_band_fraction_spin.setValue(0.2)
@@ -222,6 +224,7 @@ class AnalysisPztForceEventTunablesRoundTripTests(unittest.TestCase):
             self.assertEqual(saved_pzt_force["quiet_hold_clear_s"], 0.3)
 
             restored = AnalysisPanelHarness(settings_path)
+            self.addCleanup(restored.shutdown_analysis_worker)
             restored.load_last_analysis_settings()
 
             self.assertEqual(restored.analysis_pzt_zero_floor_spin.value(), 0.05)
@@ -247,6 +250,7 @@ class AnalysisPztForceEventTunablesRoundTripTests(unittest.TestCase):
             settings_path.write_text(json.dumps(legacy_payload), encoding="utf-8")
 
             harness = AnalysisPanelHarness(settings_path)
+            self.addCleanup(harness.shutdown_analysis_worker)
             harness.analysis_pzt_zero_floor_spin.setValue(0.999)  # must not survive the load
 
             harness.load_last_analysis_settings()

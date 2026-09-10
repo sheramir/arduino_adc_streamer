@@ -5,15 +5,10 @@ from __future__ import annotations
 import queue
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING
-
 import numpy as np
-from PyQt6.QtCore import QThread, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QThread, pyqtSignal
 
 from data_processing.pressure_force_display import PressureForceDisplayEngine
-
-if TYPE_CHECKING:
-    pass
 
 
 class WorkerState(Enum):
@@ -75,6 +70,8 @@ class ForceBlockWorker(QThread):
 
     def enqueue_batch(self, batch: ForceBlockBatch) -> int:
         """Enqueue a batch; return number of sweeps dropped from the old batch."""
+        if self._state is WorkerState.STOPPING:
+            return int(batch.sweeps.shape[0])
         try:
             self._queue.put_nowait(batch)
             return 0
@@ -94,6 +91,8 @@ class ForceBlockWorker(QThread):
 
     def send_reset(self) -> None:
         """Drain queue and enqueue a RESET sentinel."""
+        if self._state is WorkerState.STOPPING:
+            return
         self._drain_queue()
         try:
             self._queue.put_nowait(_RESET_SENTINEL)
@@ -102,6 +101,8 @@ class ForceBlockWorker(QThread):
 
     def swap_engine(self, new_engine: PressureForceDisplayEngine) -> None:
         """Replace the engine atomically: drain, then enqueue an engine object."""
+        if self._state is WorkerState.STOPPING:
+            return
         self._drain_queue()
         try:
             self._queue.put_nowait(new_engine)
@@ -110,12 +111,24 @@ class ForceBlockWorker(QThread):
 
     def set_state(self, state: WorkerState) -> None:
         """Change operational state.  PAUSED drains the queue; RUNNING → reset."""
+        if state is WorkerState.STOPPING:
+            self.stop()
+            return
         was_paused = self._state is WorkerState.PAUSED
         self._state = state
         if state is WorkerState.PAUSED:
             self._drain_queue()
         elif state is WorkerState.RUNNING and was_paused:
-            self._engine.reset()
+            self.send_reset()
+
+    def stop(self) -> None:
+        """Request shutdown and wake the worker if it is waiting for work."""
+        self._state = WorkerState.STOPPING
+        self._drain_queue()
+        try:
+            self._queue.put_nowait(_STOP_SENTINEL)
+        except queue.Full:
+            pass
 
     def drain_synchronous(self) -> None:
         """Test-only: process everything in the queue on the calling thread."""
@@ -131,17 +144,21 @@ class ForceBlockWorker(QThread):
     # ------------------------------------------------------------------
 
     def run(self) -> None:
-        while self._state is not WorkerState.STOPPING:
+        while True:
+            if self._state is WorkerState.STOPPING:
+                return
             try:
                 item = self._queue.get(timeout=0.05)
             except queue.Empty:
                 continue
+            if item is _STOP_SENTINEL or self._state is WorkerState.STOPPING:
+                return
             if self._state is WorkerState.PAUSED:
                 continue
             self._handle_item(item)
 
     def _handle_item(self, item: object) -> None:
-        if item is _RESET_SENTINEL or item is _STOP_SENTINEL:
+        if item is _RESET_SENTINEL:
             self._engine.reset()
             return
         if isinstance(item, PressureForceDisplayEngine):

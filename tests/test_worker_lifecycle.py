@@ -1,5 +1,6 @@
 import os
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import numpy as np
@@ -9,6 +10,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PyQt6.QtTest import QSignalSpy
 from PyQt6.QtWidgets import QApplication
 
+from adc_gui import ADCStreamerGUI
 from data_processing.analysis_compute_worker import AnalysisComputeWorker
 from data_processing.force_block_worker import ForceBlockBatch, ForceBlockWorker
 from serial_communication.serial_connect_worker import SerialConnectWorker
@@ -163,6 +165,33 @@ class WorkerLifecycleTests(unittest.TestCase):
         self.assertEqual(failed_spy[0][0], "no device")
         worker.stop()
         self.assertTrue(worker.wait(2000))
+
+    def test_main_window_close_shuts_down_all_workers(self):
+        calls = []
+        owner = SimpleNamespace(
+            serial_port=None,
+            force_serial_port=None,
+        )
+        for method_name in (
+            "save_last_spectrum_settings",
+            "save_last_heatmap_settings",
+            "save_last_shear_settings",
+            "save_pressure_map_workspace_layout",
+            "save_last_analysis_settings",
+            "shutdown_filter_worker",
+            "shutdown_spectrum_worker",
+            "shutdown_force_worker",
+            "shutdown_analysis_worker",
+            "shutdown_adc_connect_worker",
+            "shutdown_force_connect_worker",
+        ):
+            setattr(owner, method_name, lambda name=method_name: calls.append(name))
+        event = SimpleNamespace(accept=lambda: calls.append("accept"))
+
+        ADCStreamerGUI.closeEvent(owner, event)
+
+        self.assertIn("shutdown_force_worker", calls)
+        self.assertEqual(calls[-1], "accept")
 
 
 if __name__ == "__main__":

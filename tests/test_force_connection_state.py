@@ -17,7 +17,7 @@ class ForceConnectionStateTests(unittest.TestCase):
         self.assertEqual(connected.connect_button_text, "Disconnect Force")
         self.assertFalse(connected.port_selection_enabled)
         self.assertTrue(connected.reset_button_enabled)
-        self.assertEqual(disconnected.connect_button_text, "Connect Force")
+        self.assertEqual(disconnected.connect_button_text, "Auto-connect Force")
         self.assertTrue(disconnected.port_selection_enabled)
         self.assertFalse(disconnected.reset_button_enabled)
 

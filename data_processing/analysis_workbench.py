@@ -10,6 +10,7 @@ live acquisition buffers or filter runtime.
 from __future__ import annotations
 
 import csv
+import heapq
 import json
 from dataclasses import dataclass, field
 from dataclasses import asdict, is_dataclass
@@ -153,6 +154,51 @@ def build_in_memory_snapshot(owner) -> AnalysisSourceSnapshot:
         force_z_n=_force_values(owner, "z"),
         source_id="in_memory",
         sample_rate_hz=_owner_sample_rate_hz(owner, data, timestamps),
+    )
+
+
+def build_snapshot_from_archive(owner) -> AnalysisSourceSnapshot:
+    """Build an analysis snapshot from the persisted archive when the ring buffer has overflowed.
+
+    Falls back to the in-memory ring buffer if the archive is unavailable or empty.
+    Caller must ensure capture is stopped before calling.
+    """
+    if hasattr(owner, '_finalize_archive_if_active'):   
+        owner._finalize_archive_if_active()
+
+    sweeps = timestamps = None
+    if hasattr(owner, 'load_archive_data'):
+        sweeps, timestamps = owner.load_archive_data()
+
+    if not sweeps or not timestamps:
+        return build_in_memory_snapshot(owner)
+
+    owner_config = getattr(owner, "config", {}) or {}
+    data = np.asarray(sweeps, dtype=np.float32)
+    ts = np.asarray(timestamps, dtype=np.float64)
+
+    channel_labels, channel_indices = _build_in_memory_channel_labels(
+        owner,
+        data.shape[1],
+        fallback_channels=_config_get(owner_config, "channels", []),
+        fallback_repeat=int(_config_get(owner_config, "repeat", 1) or 1),
+    )
+    metadata = {
+        "configuration": _config_to_dict(owner_config),
+        "source": "archive",
+        "timing": _owner_analysis_timing_metadata(owner),
+    }
+    return AnalysisSourceSnapshot(
+        data=data,
+        timestamps_s=_normalize_timestamps(ts, data.shape[0]),
+        channel_labels=channel_labels,
+        channel_indices=channel_indices,
+        metadata=metadata,
+        force_timestamps_s=_force_times(owner),
+        force_x_n=_force_values(owner, "x"),
+        force_z_n=_force_values(owner, "z"),
+        source_id="archive",
+        sample_rate_hz=_owner_sample_rate_hz(owner, data, ts),
     )
 
 
@@ -496,8 +542,8 @@ def build_trace_x_axis(snapshot: AnalysisSourceSnapshot, axis_mode: str) -> tupl
 
     timestamps = _normalize_timestamps(snapshot.timestamps_s, sweeps)
     offsets = _sample_offsets_s(snapshot)
-    x = (timestamps.reshape(-1, 1) + offsets.reshape(1, -1)) * 1000.0
-    return x, "Time", "ms"
+    x = timestamps.reshape(-1, 1) + offsets.reshape(1, -1)
+    return x, "Time", "s"
 
 
 def build_trace_time_axis_seconds(snapshot: AnalysisSourceSnapshot) -> np.ndarray:
@@ -513,14 +559,14 @@ def build_force_traces(snapshot: AnalysisSourceSnapshot, axis_mode: str) -> list
     if axis_mode == "samples":
         x = np.arange(count, dtype=np.float64)
     elif snapshot.force_timestamps_s.size >= count:
-        x = snapshot.force_timestamps_s[:count].astype(np.float64) * 1000.0
+        x = snapshot.force_timestamps_s[:count].astype(np.float64)
     else:
         x = np.linspace(
             float(snapshot.timestamps_s[0] if snapshot.timestamps_s.size else 0.0),
             float(snapshot.timestamps_s[-1] if snapshot.timestamps_s.size else max(count - 1, 0)),
             count,
             dtype=np.float64,
-        ) * 1000.0
+        )
 
     traces: list[AnalysisTrace] = []
     if snapshot.force_x_n.size:
@@ -589,6 +635,63 @@ def filter_offline_data(snapshot: AnalysisSourceSnapshot, filter_settings: dict)
     return engine.filter_block(runtime, np.asarray(snapshot.data, dtype=np.float32).copy())
 
 
+def _expanding_median(values: np.ndarray) -> np.ndarray:
+    """Causal (past-only) running median, one output per input sample.
+
+    Uses a two-heap running-median so the whole series is O(n log n) rather
+    than the O(n^2) cost of recomputing ``np.median`` at every index.
+    """
+    lower: list[float] = []  # max-heap, stored negated
+    upper: list[float] = []  # min-heap
+    out = np.empty(len(values), dtype=np.float64)
+
+    for i, value in enumerate(values):
+        value = float(value)
+        if lower and value <= -lower[0]:
+            heapq.heappush(lower, -value)
+        else:
+            heapq.heappush(upper, value)
+
+        if len(lower) > len(upper) + 1:
+            heapq.heappush(upper, -heapq.heappop(lower))
+        elif len(upper) > len(lower):
+            heapq.heappush(lower, -heapq.heappop(upper))
+
+        out[i] = -lower[0] if len(lower) > len(upper) else (-lower[0] + upper[0]) / 2.0
+
+    return out
+
+
+def integrate_voltage_series_causal_median(
+    voltage_by_key: Mapping,
+    *,
+    integration_window_samples: int,
+) -> dict:
+    """Shear/normal integration path: causal median baseline removal + a
+    moving rectangular sum, mirroring the calibration notebook's shear
+    pipeline (``_causal_median_baseline`` in ``calibration_utils.py``)
+    instead of the HPF-based ``SignalIntegrator`` used for the generic
+    "Integration" overlay trace.
+    """
+    window = max(1, int(integration_window_samples))
+    result: dict = {}
+    for key, raw_values in voltage_by_key.items():
+        raw = np.asarray(raw_values, dtype=np.float64).reshape(-1)
+        if raw.size == 0:
+            result[key] = np.empty(0, dtype=np.float64)
+            continue
+
+        baseline = _expanding_median(raw)
+        centered = raw - baseline
+
+        cumsum = np.concatenate([[0.0], np.cumsum(centered)])
+        end_idx = np.arange(len(centered))
+        start_idx = np.maximum(0, end_idx - window + 1)
+        result[key] = cumsum[end_idx + 1] - cumsum[start_idx]
+
+    return result
+
+
 def build_overlay_traces(
     snapshot: AnalysisSourceSnapshot,
     data: np.ndarray,
@@ -644,12 +747,13 @@ def build_overlay_traces(
     if not all(position in volts_by_position for position in SHEAR_SENSOR_POSITIONS):
         return overlays
 
-    integrated = integrate_voltage_series(
+    # Shear/normal use a causal median baseline (matching the calibration
+    # notebook's shear pipeline) rather than the HPF-based SignalIntegrator
+    # used for the generic "Integration" overlay trace below — a Butterworth
+    # high-pass filter here washed out the slow shear response.
+    integrated = integrate_voltage_series_causal_median(
         volts_by_position,
-        sample_rate_hz=_overlay_sample_rate_hz(snapshot),
         integration_window_samples=integration_window_samples,
-        hpf_cutoff_hz=hpf_cutoff_hz,
-        channel_map=list(SHEAR_SENSOR_POSITIONS),
     )
     shear_detector = ShearDetector()
     normal_calculator = NormalForceCalculator()

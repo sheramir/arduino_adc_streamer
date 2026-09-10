@@ -58,9 +58,22 @@ from constants.heatmap import HEATMAP_FPS
 # Import mixin modules
 from serial_communication import ADCSerialMixin, ForceSerialMixin
 from serial_communication.adc_connection_state import (
+    ADCConnectionState,
+    build_connected_view_state,
+    build_connecting_view_state,
     build_default_arduino_status,
     build_default_last_sent_config,
+    build_disconnected_view_state,
 )
+from serial_communication.force_connection_state import (
+    ForceConnectionState,
+    build_force_connected_view_state,
+    build_force_connecting_view_state,
+    build_force_disconnected_view_state,
+)
+from serial_communication.device_config import load_device_config
+from serial_communication.serial_connect_worker import SerialConnectWorker
+from serial_communication.serial_connect_controller import SerialConnectController
 from serial_communication.adc_connection_workflow import ADCConnectionWorkflow
 from serial_communication.force_connection_workflow import ForceConnectionWorkflow
 from serial_communication.serial_threads import SerialReaderThread
@@ -154,6 +167,12 @@ class ADCStreamerGUI(
         self.update_port_list()
         self._log_startup_message()
 
+        # Auto-connect on startup (configurable via adc_devices.json)
+        cfg = load_device_config()
+        if cfg.get("auto_connect", True):
+            QTimer.singleShot(300, self._auto_connect_adc)
+            QTimer.singleShot(600, self._auto_connect_force)
+
     def _init_serial_state(self):
         """Initialize serial connection state."""
         self.serial_port: Optional[serial.Serial] = None
@@ -161,6 +180,25 @@ class ADCStreamerGUI(
         self.current_mcu: Optional[str] = None
         self.adc_session = None
         self.adc_connection_workflow = ADCConnectionWorkflow()
+        self.adc_conn_state = ADCConnectionState.DISCONNECTED
+        self.adc_connect_worker = SerialConnectWorker(self.adc_connection_workflow)
+        self.adc_connect_worker.start()
+        self._adc_connect_controller = SerialConnectController(
+            worker=self.adc_connect_worker,
+            get_state=lambda: self.adc_conn_state,
+            set_state=lambda state: setattr(self, "adc_conn_state", state),
+            disconnected_state=ADCConnectionState.DISCONNECTED,
+            connecting_state=ADCConnectionState.CONNECTING,
+            connected_state=ADCConnectionState.CONNECTED,
+            apply_view_state=self._apply_adc_connection_view_state,
+            connecting_view_state=build_connecting_view_state,
+            connected_view_state=build_connected_view_state,
+            disconnected_view_state=build_disconnected_view_state,
+            on_success=self._on_adc_connect_success,
+            on_failure=self._on_adc_connect_failure,
+        )
+        self._adc_connect_on_connected = lambda outcome: None
+        self._adc_connect_on_failed = lambda message: None
 
     def _init_data_buffers(self):
         """Initialize data storage buffers."""
@@ -194,6 +232,25 @@ class ADCStreamerGUI(
         self.force_serial_port: Optional[serial.Serial] = None
         self.force_serial_thread: Optional[QThread] = None
         self.force_state = build_default_force_runtime_state()
+        self.force_conn_state = ForceConnectionState.DISCONNECTED
+        self.force_connect_worker = SerialConnectWorker(self.force_connection_workflow)
+        self.force_connect_worker.start()
+        self._force_connect_controller = SerialConnectController(
+            worker=self.force_connect_worker,
+            get_state=lambda: self.force_conn_state,
+            set_state=lambda state: setattr(self, "force_conn_state", state),
+            disconnected_state=ForceConnectionState.DISCONNECTED,
+            connecting_state=ForceConnectionState.CONNECTING,
+            connected_state=ForceConnectionState.CONNECTED,
+            apply_view_state=self._apply_force_connection_view_state,
+            connecting_view_state=build_force_connecting_view_state,
+            connected_view_state=build_force_connected_view_state,
+            disconnected_view_state=build_force_disconnected_view_state,
+            on_success=self._on_force_connect_success,
+            on_failure=self._on_force_connect_failure,
+        )
+        self._force_connect_on_connected = lambda outcome: None
+        self._force_connect_on_failed = lambda message: None
 
     def _init_timing_state(self):
         """Initialize timing measurement state."""
@@ -387,6 +444,9 @@ class ADCStreamerGUI(
 
         self.shutdown_filter_worker()
         self.shutdown_spectrum_worker()
+        self.shutdown_analysis_worker()
+        self.shutdown_adc_connect_worker()
+        self.shutdown_force_connect_worker()
 
         event.accept()
     

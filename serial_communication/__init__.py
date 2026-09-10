@@ -6,6 +6,7 @@ Handles all serial communication with ADC and force sensors.
 
 from .serial_threads import SerialReaderThread, ForceReaderThread
 from .adc_connection_state import (
+    ADCConnectionState,
     ADCConnectionViewState,
     ArduinoStatus,
     LastSentConfig,
@@ -25,6 +26,7 @@ from .force_connection_workflow import (
     ForceDisconnectOutcome,
 )
 from .force_connection_state import (
+    ForceConnectionState,
     ForceConnectionViewState,
     build_force_connected_view_state,
     build_force_disconnected_view_state,
@@ -38,6 +40,7 @@ from .serial_parser import SerialParserMixin
 __all__ = [
     'SerialReaderThread',
     'ForceReaderThread',
+    'ADCConnectionState',
     'ADCConnectionViewState',
     'ArduinoStatus',
     'LastSentConfig',
@@ -47,6 +50,7 @@ __all__ = [
     'ForceConnectOutcome',
     'ForceConnectionWorkflow',
     'ForceDisconnectOutcome',
+    'ForceConnectionState',
     'ForceConnectionViewState',
     'build_connected_view_state',
     'build_default_arduino_status',

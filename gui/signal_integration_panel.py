@@ -25,7 +25,7 @@ from typing import Hashable
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtCore import QByteArray, QSettings, Qt, QTimer
+from PyQt6.QtCore import QByteArray, QSettings, Qt, QTimer, pyqtSlot
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -218,6 +218,7 @@ from data_processing.pressure_map_array_generator import (
     PressureMapArrayPackage,
 )
 from data_processing.pressure_map_geometry import PressureMapGeometry
+from data_processing.force_block_worker import ForceBlockBatch, ForceBlockWorker, ForceRenderResult, WorkerState
 from data_processing.pressure_force_display import PressureForceDisplayEngine
 from data_processing.pzt_decay import PztDecayTimingContext
 from data_processing.shear_detector import ShearDetector, ShearResult
@@ -539,12 +540,20 @@ class PressureMapPanelMixin:
         # Acquisition can deliver blocks much faster than Qt can rasterize a
         # pressure field.  Keep physical integration synchronous/exact, but
         # coalesce the expensive array paint to a responsive 10 Hz.
-        self.force_display_update_timer = QTimer()
-        self.force_display_update_timer.setSingleShot(True)
-        self.force_display_update_timer.timeout.connect(self._render_pressure_force_display)
         self.pressure_force_engine: PressureForceDisplayEngine | None = None
         self._pressure_force_last_processed_sweep_count = 0
         self._pressure_force_last_error = ""
+        self._force_sweep_accumulator: list = []
+        self._force_accumulator_first_sweep_id: int = 0
+        self._force_drop_count: int = 0
+        self._force_drop_window_start: float = time.monotonic()
+        self._force_drops_per_sec: float = 0.0
+        self._force_last_dispatch_time: float = 0.0
+        self._force_last_print_time: float = 0.0
+        self._latest_jerk_package_displays: list = []
+        self._jerk_updates_since_dispatch: int = 0
+        self._force_worker: ForceBlockWorker | None = None
+        self._force_last_result: ForceRenderResult | None = None
         settings_layout.addWidget(self._create_shear_visualization_settings_group())
         settings_layout.addWidget(self._create_pzt_force_settings_group())
         settings_layout.addWidget(self._create_pressure_map_settings_group())
@@ -685,6 +694,11 @@ class PressureMapPanelMixin:
             visible_docks.discard(dock_name)
         self._pressure_map_visible_dock_names = visible_docks
 
+        self._update_force_worker_state_from_dock_visibility()
+
+        if dock_name == "pressure_map_settings_dock" and visible:
+            self._refresh_force_drop_rate_label()
+
         if self._is_pressure_map_settings_visible():
             self._refresh_pressure_package_gain_controls(
                 getattr(self, "_latest_signal_integration_package_layout", None)
@@ -696,6 +710,10 @@ class PressureMapPanelMixin:
                 return
 
         if self._is_pressure_map_force_display_visible():
+            # Force integration was paused while hidden; reset so the display
+            # starts from the current moment rather than showing a stale integral.
+            if dock_name == "pressure_map_force_display_dock" and visible:
+                self._rebuild_pressure_force_engine()
             # Force consumes the shared Jerk shapes even while Jerk itself is
             # hidden.  Build them before rendering the force raster.
             if self._should_refresh_signal_integration_plot():
@@ -707,6 +725,25 @@ class PressureMapPanelMixin:
                 self.trigger_signal_integration_update()
             elif hasattr(self, "update_signal_integration_plot"):
                 self.update_signal_integration_plot()
+
+    def _update_force_worker_state_from_dock_visibility(self) -> None:
+        """Pause the worker when the force dock is hidden; resume when visible."""
+        worker = getattr(self, "_force_worker", None)
+        if worker is None:
+            return
+        force_dock = getattr(self, "pressure_map_force_display_dock", None)
+        is_floating = force_dock is not None and force_dock.isFloating()
+        if self._is_pressure_map_force_display_visible() or is_floating:
+            worker.set_state(WorkerState.RUNNING)
+        else:
+            worker.set_state(WorkerState.PAUSED)
+
+    def _refresh_force_drop_rate_label(self) -> None:
+        """Update the drop-rate label once when the settings panel opens."""
+        label = getattr(self, "force_drop_rate_label", None)
+        if label is None:
+            return
+        label.setText(f"Dropped force data: {self._force_drops_per_sec:.1f} /sec")
 
     def update_pressure_map_timeline_controls(self) -> None:
         """Keep Pressure Map timeline selectors aligned with the active MCU mode."""
@@ -1033,6 +1070,30 @@ class PressureMapPanelMixin:
         self.force_display_reset_btn = QPushButton("Reset Force Display")
         self.force_display_reset_btn.clicked.connect(self.reset_pressure_force_display)
         layout.addWidget(self.force_display_reset_btn, 2, 3, 1, 2)
+
+        layout.addWidget(QLabel("Force refresh:"), 7, 0)
+        self.force_refresh_rate_spin = QSpinBox()
+        self.force_refresh_rate_spin.setRange(1, 60)
+        self.force_refresh_rate_spin.setValue(20)
+        self.force_refresh_rate_spin.setSuffix(" Hz")
+        self.force_refresh_rate_spin.setToolTip(
+            "Rate at which accumulated sweeps are dispatched to the force worker. "
+            "Lower values reduce CPU load; higher values reduce latency."
+        )
+        layout.addWidget(self.force_refresh_rate_spin, 7, 1)
+        self.force_refresh_rate_spin.valueChanged.connect(self._on_force_refresh_rate_changed)
+
+        self.force_drop_rate_label = QLabel("Dropped force data: 0 /sec")
+        self.force_drop_rate_label.setToolTip(
+            "Number of sweep batches dropped per second because the force worker "
+            "could not keep up.  Non-zero values mean the refresh rate is too high."
+        )
+        layout.addWidget(self.force_drop_rate_label, 7, 2, 1, 2)
+        self.force_drop_rate_refresh_btn = QPushButton("Update")
+        self.force_drop_rate_refresh_btn.setToolTip("Read the latest dropped force data rate.")
+        self.force_drop_rate_refresh_btn.clicked.connect(self._refresh_force_drop_rate_label)
+        layout.addWidget(self.force_drop_rate_refresh_btn, 7, 4)
+
         for widget in (
             self.force_pzt_center_capacitance_spin, self.force_pzt_outer_capacitance_spin,
             self.force_pzt_capacitance_unit_combo,
@@ -1050,6 +1111,12 @@ class PressureMapPanelMixin:
         self.force_arrow_gain_spin.valueChanged.connect(self.on_force_display_settings_changed)
         self.force_arrow_threshold_spin.valueChanged.connect(self.on_force_display_settings_changed)
         return group
+
+    def _on_force_refresh_rate_changed(self, _value: int = 0) -> None:
+        """Reset drop counters when refresh rate changes."""
+        self._force_drop_count = 0
+        self._force_drops_per_sec = 0.0
+        self._force_drop_window_start = time.monotonic()
 
     def _pzt_force_settings(self) -> dict[str, object]:
         return {
@@ -1125,7 +1192,7 @@ class PressureMapPanelMixin:
         ):
             if widget is not None:
                 widget.configure_arrow(**arrow_kwargs)
-        self._queue_pressure_force_display_render()
+        self._render_pressure_force_display()
 
     def _force_display_noise_floor_n(self) -> float:
         """Return the physical PZT threshold expressed only as a display floor."""
@@ -1145,14 +1212,22 @@ class PressureMapPanelMixin:
     def _rebuild_pressure_force_engine(self) -> None:
         if not hasattr(self, "pressure_map_geometry"):
             return
-        self.pressure_force_engine = PressureForceDisplayEngine(
+        new_engine = PressureForceDisplayEngine(
             geometry=self.pressure_map_geometry,
             settings=self._pzt_force_settings(),
             normal_force_calculator=self.normal_force_calculator,
             shear_detector=self.shear_detector,
             pressure_map_array_generator=self.pressure_map_array_generator,
         )
+        self.pressure_force_engine = new_engine
         self._pressure_force_last_processed_sweep_count = int(getattr(self, "sweep_count", 0))
+        worker = getattr(self, "_force_worker", None)
+        if worker is None:
+            self._force_worker = ForceBlockWorker(new_engine)
+            self._force_worker.result_ready.connect(lambda r: self._on_force_result_ready(r))
+            self._force_worker.start()
+        else:
+            worker.swap_engine(new_engine)
 
     def reset_pressure_force_display(self) -> None:
         self._rebuild_pressure_force_engine()
@@ -1179,77 +1254,128 @@ class PressureMapPanelMixin:
         first_sweep_id: int,
         avg_sample_time_us: float,
     ) -> None:
-        """Consume an acquisition block once, before any Jerk-only filters.
+        """Accumulate an acquisition block and dispatch to the force worker.
 
+        Baseline validation and package resolution run synchronously on the
+        GUI thread every call.  Actual sample integration runs in the worker.
         The raw values are centred with the same ``plot_baselines`` values used
         by Time Series.  No HPF, DC removal, or moving sum is applied here.
         """
-        engine = getattr(self, "pressure_force_engine", None)
-        if engine is None or not hasattr(self, "get_display_channel_specs"):
+        worker = getattr(self, "_force_worker", None)
+        if worker is None or not hasattr(self, "get_display_channel_specs"):
+            return
+        if not self._is_pressure_map_force_display_visible():
             return
         block = np.asarray(block_samples_array, dtype=np.float64)
         times = np.asarray(sweep_timestamps_sec, dtype=np.float64).reshape(-1)
         if block.ndim != 2 or block.shape[0] != times.size:
             return
+        complete_packages = self._resolve_force_complete_packages(block)
+        if not complete_packages:
+            return
+        if self._force_block_baseline_missing(complete_packages):
+            return
+        self._force_block_accumulate_and_dispatch(
+            block, times, first_sweep_id, avg_sample_time_us, complete_packages
+        )
+
+    def _resolve_force_complete_packages(self, block: np.ndarray) -> dict:
+        """Return packages that have all five shear positions covered."""
         specs_by_package: dict[str, dict[str, dict]] = {}
         for spec_index, spec in enumerate(self.get_display_channel_specs()):
             position = self._get_shear_position_for_display_spec(spec, spec_index)
-            sample_indices = [int(index) for index in spec.get("sample_indices", []) if 0 <= int(index) < block.shape[1]]
+            sample_indices = [
+                int(index) for index in spec.get("sample_indices", [])
+                if 0 <= int(index) < block.shape[1]
+            ]
             if position not in SHEAR_SENSOR_POSITIONS or not sample_indices:
                 continue
-            package_id = self._get_signal_integration_package_id_for_display_spec(spec, spec_index)
+            package_id = self._get_signal_integration_package_id_for_display_spec(
+                spec, spec_index
+            )
             specs_by_package.setdefault(package_id, {})[position] = spec
-        complete_packages = {
-            package_id: positions for package_id, positions in specs_by_package.items()
+        return {
+            package_id: positions
+            for package_id, positions in specs_by_package.items()
             if all(position in positions for position in SHEAR_SENSOR_POSITIONS)
         }
-        if not complete_packages:
-            return
-        # Force Display is a consumer of the Time Series baseline, never a
-        # baseline producer.  This prevents a live force event from silently
-        # re-zeroing itself.  The shared baseline is captured once by Time
-        # Series startup or explicitly through its Zero Signals button.
+
+    def _force_block_baseline_missing(self, complete_packages: dict) -> bool:
+        """Return True (and update waiting state) when baselines are absent."""
         baselines = getattr(self, "plot_baselines", {})
         required_specs = [
             spec for positions in complete_packages.values() for spec in positions.values()
         ]
-        if any(spec.get("key") not in baselines for spec in required_specs):
-            # An accumulated Force history is invalid without the baseline it
-            # was integrated against.  Reset once per transition so stale
-            # values never persist behind the waiting status.
-            if not getattr(self, "_pressure_force_waiting_for_baseline", False):
-                self._pressure_force_waiting_for_baseline = True
-                self.reset_pressure_force_display_for_baseline_change()
-            if self._is_pressure_map_force_display_visible() and hasattr(self, "force_display_status_label"):
-                self.force_display_status_label.setText(
-                    "Waiting for Time Series baseline — open Time Series or press Zero Signals"
-                )
+        if not any(spec.get("key") not in baselines for spec in required_specs):
+            self._pressure_force_waiting_for_baseline = False
+            return False
+        # An accumulated Force history is invalid without the baseline it was
+        # integrated against.  Reset once per transition so stale values never
+        # persist behind the waiting status.
+        if not getattr(self, "_pressure_force_waiting_for_baseline", False):
+            self._pressure_force_waiting_for_baseline = True
+            self.reset_pressure_force_display_for_baseline_change()
+        if self._is_pressure_map_force_display_visible() and hasattr(self, "force_display_status_label"):
+            self.force_display_status_label.setText(
+                "Waiting for Time Series baseline — open Time Series or press Zero Signals"
+            )
+        return True
+
+    def _force_block_accumulate_and_dispatch(
+        self,
+        block: np.ndarray,
+        times: np.ndarray,
+        first_sweep_id: int,
+        avg_sample_time_us: float,
+        complete_packages: dict,
+    ) -> None:
+        """Append block to accumulator; dispatch batch when the rate gate opens."""
+        if not hasattr(self, "_force_sweep_accumulator"):
+            self._force_sweep_accumulator = []
+            self._force_accumulator_first_sweep_id = 0
+            self._force_drop_count = 0
+            self._force_drop_window_start = time.monotonic()
+            self._force_drops_per_sec = 0.0
+            self._force_last_dispatch_time = 0.0
+            self._force_last_print_time = 0.0
+            self._latest_jerk_package_displays = []
+            self._jerk_updates_since_dispatch = 0
+        accumulator = self._force_sweep_accumulator
+        if not accumulator:
+            self._force_accumulator_first_sweep_id = first_sweep_id
+        for row in range(block.shape[0]):
+            accumulator.append((block[row], float(times[row])))
+
+        refresh_hz = self._force_refresh_rate_hz()
+        now = time.monotonic()
+        gate_open = (now - self._force_last_dispatch_time) >= 1.0 / refresh_hz
+        if not gate_open:
             return
-        self._pressure_force_waiting_for_baseline = False
+        self._force_last_dispatch_time = now
+        self._force_dispatch_accumulated(avg_sample_time_us, complete_packages)
+        self._force_update_drop_window(now)
+        self._force_maybe_print_drop_warning(now)
+
+    def _force_dispatch_accumulated(
+        self, avg_sample_time_us: float, complete_packages: dict
+    ) -> None:
+        """Build a ForceBlockBatch from the accumulator and enqueue it."""
+        accumulator = self._force_sweep_accumulator
+        if not accumulator:
+            return
+        sweeps_list = [row for row, _t in accumulator]
+        timestamps_list = [t for _row, t in accumulator]
+        sweeps = np.array(sweeps_list, dtype=np.float64)
+        timestamps = np.array(timestamps_list, dtype=np.float64)
+        self._force_sweep_accumulator = []
+
         dt_s = max(0.0, float(avg_sample_time_us) / 1_000_000.0)
-        mux_timing = getattr(self, "adc_mux_timing", None)
         voltage_scale = float(self.get_vref_voltage()) / float((2 ** IADC_RESOLUTION_BITS) - 1)
-        # PZT ghost removal writes net-space (already baseline-centred) data
-        # into blocks/buffers; ``plot_baselines`` are raw-equivalent medians
-        # captured against the reconstructed signal.  Subtracting them again
-        # here would double-subtract, mirroring the gate Time Series applies
-        # in ``adc_plotting.py``.
         ghost_net_centered = bool(
             getattr(self, "is_pzt_ghost_block_net_centered", lambda: False)()
         )
-        grid_positions = self._get_force_display_grid_positions()
-        repeat_slots = min(
-            len(spec["sample_indices"])
-            for positions in complete_packages.values()
-            for spec in positions.values()
-        )
-        # Only the sign of a flipped-mount sensor (e.g. a reverse-polarity
-        # center channel) is a physical fact; the magnitude of
-        # ``_pressure_package_sensor_gains`` is Jerk visualization tuning and
-        # is deliberately never applied here (Cpzt/d33 remain the Force
-        # Display's Newton calibration). A ±1 factor is safe for the
-        # natural-reset machinery: it multiplies the uncalibrated accumulator
-        # and every reset threshold there is magnitude-based.
+        # Only the sign of a flipped-mount sensor crosses over; magnitude
+        # stays with the Jerk visualization path (see old inline comment).
         channel_calibration = {
             package_id: {
                 position: math.copysign(1.0, gain) if gain != 0.0 else 1.0
@@ -1257,118 +1383,71 @@ class PressureMapPanelMixin:
             }
             for package_id in complete_packages
         }
-        for row_index, sweep in enumerate(block):
-            for repeat_index in range(repeat_slots):
-                package_voltages: dict[str, dict[str, float]] = {}
-                package_times: dict[str, dict[str, float]] = {}
-                package_leak_times: dict[str, dict[str, float]] = {}
-                package_pre_sample_times: dict[str, dict[str, float]] = {}
-                for package_id, positions in complete_packages.items():
-                    values: dict[str, float] = {}
-                    channel_times: dict[str, float] = {}
-                    channel_leak_times: dict[str, float] = {}
-                    pre_sample_times: dict[str, float] = {}
-                    for position, spec in positions.items():
-                        sample_index = int(spec["sample_indices"][repeat_index])
-                        baseline = 0.0 if ghost_net_centered else float(
-                            getattr(self, "plot_baselines", {}).get(spec.get("key"), 0.0)
-                        )
-                        # This is the shared baseline-centred ADC stream.  The
-                        # force engine receives volts before every Jerk transform.
-                        centered_counts = float(sweep[sample_index]) - baseline
-                        value = centered_counts * voltage_scale
-                        # Force uses the same configured physical polarity as
-                        # Jerk before PZT charge/force reconstruction.
-                        values[position] = float(self._apply_signal_integration_sensor_polarity(
-                            np.asarray([value], dtype=np.float64)
-                        )[0])
-                        channel_times[position] = float(times[row_index]) + float(sample_index) * dt_s
-                        if mux_timing is not None:
-                            key = spec.get("key")
-                            adc_input = key[4] if isinstance(key, tuple) and len(key) >= 5 else None
-                            try:
-                                adc_input = int(adc_input)
-                                if adc_input in (1, 2):
-                                    timing_context = PztDecayTimingContext.from_adc_mux_timing(
-                                        mux_timing, adc_input
-                                    )
-                                    # The measured sweep timestamp anchors the
-                                    # burst.  The shared MUX model supplies the
-                                    # precise effective offset within it.
-                                    first_index = int(spec["sample_indices"][0])
-                                    channel_times[position] = (
-                                        float(times[row_index]) + float(first_index) * dt_s
-                                        + timing_context.observation_offset_s(repeat_index)
-                                        - timing_context.observation_offset_s(0)
-                                    )
-                                    previous_repeat = (
-                                        repeat_slots - 1 if repeat_index == 0 else repeat_index - 1
-                                    )
-                                    channel_leak_times[position] = (
-                                        timing_context.connected_exposure_between(
-                                            previous_repeat, repeat_index
-                                        )
-                                    )
-                                    pre_sample_times[position] = float(
-                                        mux_timing.decay_before_effective_sample_s(
-                                            adc_input=adc_input, repeat_index=repeat_index
-                                        )
-                                    )
-                            except (TypeError, ValueError, AttributeError):
-                                pass
-                    package_voltages[package_id] = values
-                    package_times[package_id] = channel_times
-                    package_leak_times[package_id] = channel_leak_times
-                    package_pre_sample_times[package_id] = pre_sample_times
-                try:
-                    engine.process_sample(
-                        (int(first_sweep_id) + row_index, repeat_index),
-                        package_voltages,
-                        package_times,
-                        grid_positions=grid_positions,
-                        observations_per_sweep=repeat_slots,
-                        # The shared timing model provides connected exposure
-                        # between consecutive effective samples.  The low-level
-                        # integrator derives remaining wall time as off-MUX
-                        # exposure when that physical model is enabled.
-                        leak_dt_s=package_leak_times,
-                        pre_sample_decay_dt_s=package_pre_sample_times,
-                        # Sign-only mount polarity from
-                        # ``_pressure_package_sensor_gains``; see
-                        # ``channel_calibration`` above for why only the sign
-                        # crosses over from the Jerk/shear visualization path.
-                        channel_calibration=channel_calibration,
-                    )
-                except ValueError as exc:
-                    # A capture restart/buffer discontinuity must not bridge an
-                    # unknown interval.  Reset and continue from the next block.
-                    self._rebuild_pressure_force_engine()
-                    message = f"Force Display reset: {exc}"
-                    if message != getattr(self, "_pressure_force_last_error", "") and hasattr(self, "log_status"):
-                        self.log_status(message)
-                        self._pressure_force_last_error = message
-                    return
-        self._pressure_force_last_processed_sweep_count = int(first_sweep_id) + block.shape[0]
-        self._queue_pressure_force_display_render()
+        repeat_slots = min(
+            len(spec["sample_indices"])
+            for positions in complete_packages.values()
+            for spec in positions.values()
+        )
+        multiplier = SENSOR_POLARITY_NORMAL_MULTIPLIER
+        if hasattr(self, "is_active_sensor_reverse_polarity") and self.is_active_sensor_reverse_polarity():
+            multiplier = SENSOR_POLARITY_REVERSED_MULTIPLIER
+        batch = ForceBlockBatch(
+            sweeps=sweeps,
+            timestamps=timestamps,
+            first_sweep_id=self._force_accumulator_first_sweep_id,
+            dt_s=dt_s,
+            voltage_scale=voltage_scale,
+            ghost_net_centered=ghost_net_centered,
+            repeat_slots=repeat_slots,
+            complete_packages=complete_packages,
+            baselines=dict(getattr(self, "plot_baselines", {})),
+            polarity_multiplier=float(multiplier),
+            mux_timing=getattr(self, "adc_mux_timing", None),
+            jerk_shapes=list(self._latest_jerk_package_displays),
+            dropped_sweeps_before=0,
+            grid_positions=self._get_force_display_grid_positions(),
+            channel_calibration=channel_calibration,
+        )
+        missed_jerk = max(0, self._jerk_updates_since_dispatch - 1)
+        self._jerk_updates_since_dispatch = 0
+        dropped = self._force_worker.enqueue_batch(batch)
+        self._force_drop_count += dropped + missed_jerk
 
-    def _queue_pressure_force_display_render(self) -> None:
-        """Coalesce force-map paints without delaying sample integration."""
+    def _force_update_drop_window(self, now: float) -> None:
+        """Update the per-second drop rate counter every 1.0 s."""
+        elapsed = now - self._force_drop_window_start
+        if elapsed >= 1.0:
+            self._force_drops_per_sec = self._force_drop_count / elapsed
+            self._force_drop_count = 0
+            self._force_drop_window_start = now
+
+    def _force_maybe_print_drop_warning(self, now: float) -> None:
+        """Print a stdout warning every 300 s when drops are high."""
+        if now - self._force_last_print_time >= 300.0:
+            if self._force_drops_per_sec > 1.0:
+                print(
+                    f"WARNING: Force worker dropping {self._force_drops_per_sec:.1f} sweeps/sec; "
+                    "consider reducing force refresh rate or display load."
+                )
+            self._force_last_print_time = now
+
+    def _force_refresh_rate_hz(self) -> float:
+        """Return the configured force refresh rate (default 20 Hz)."""
+        return self._spin_float("force_refresh_rate_spin", 20.0)
+
+    def _on_force_result_ready(self, result: ForceRenderResult) -> None:
+        """Receive a completed force render result from the background worker."""
+        self._force_last_result = result
         if not self._is_pressure_map_force_display_visible():
             return
-        timer = getattr(self, "force_display_update_timer", None)
-        if timer is None:
-            self._render_pressure_force_display()
-            return
-        if not timer.isActive():
-            timer.start(100)
+        self._render_pressure_force_display()
 
     def _render_pressure_force_display(self) -> None:
-        engine = getattr(self, "pressure_force_engine", None)
-        if engine is None or not hasattr(self, "force_pressure_map_widget"):
+        """Paint the last received force result onto the force widgets."""
+        result = getattr(self, "_force_last_result", None)
+        if result is None or not hasattr(self, "force_pressure_map_widget"):
             return
-        grid_positions = self._get_force_display_grid_positions()
-        engine.configure_layout(grid_positions)
-        results = engine.package_results()
+        results = result.package_results
         if not results:
             self.force_pressure_map_widget.update_force_display(None)
             return
@@ -1378,7 +1457,7 @@ class PressureMapPanelMixin:
             "Force Display reset",
         }:
             status.setText("")
-        array_result = engine.array_result()
+        array_result = result.array_result
         # A positioned package layout is always a complete, static Force
         # array.  Zero packages remain visible as zero fields rather than
         # being dropped when they have no current force increment.
@@ -3653,11 +3732,10 @@ class PressureMapPanelMixin:
         )
         try:
             package_displays = self._build_pressure_map_package_displays()
-            force_engine = getattr(self, "pressure_force_engine", None)
-            if force_engine is not None:
-                # The Jerk package grids above are the sole source of Force
-                # spatial shapes.  No force-side pressure-map generation.
-                force_engine.apply_jerk_shapes(package_displays)
+            # Store Jerk shapes for the force worker; it reads them at
+            # dispatch time rather than having the GUI thread call apply_jerk_shapes.
+            self._latest_jerk_package_displays = package_displays
+            self._jerk_updates_since_dispatch = getattr(self, "_jerk_updates_since_dispatch", 0) + 1
             force_display_visible = self._is_pressure_map_force_display_visible()
             jerk_display_visible = self._is_pressure_map_display_visible()
             if force_display_visible:
@@ -3744,6 +3822,8 @@ class PressureMapPanelMixin:
             self._pressure_map_last_error_time = now
 
     def _build_pressure_map_package_displays(self) -> list[PressureMapPackageDisplay]:
+        if not getattr(self, "plot_baselines", {}):
+            return []
         values_by_package = getattr(self, "_latest_signal_integration_values_by_package", {})
         layout_by_sensor_id = {
             str(item.get("sensor_id", "")).upper(): item

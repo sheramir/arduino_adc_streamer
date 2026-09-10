@@ -211,7 +211,14 @@ class ADCPlottingMixin:
             curve.setVisible(False)
 
     def _clear_all_plot_curves(self):
-        """Remove and discard every live time-series curve from its plot."""
+        """Zero out and remove every live curve from all plot widgets.
+
+        Call this as the single point of curve teardown — on clear-data,
+        reset, or any other path that needs to discard rendered data.
+        Clears pyqtgraph's internal arrays first (setData) so that any
+        pending viewRangeChanged callbacks see empty data instead of the
+        previously-rendered (potentially millions-of-points) arrays.
+        """
         for curve in self._adc_curves.values():
             curve.setData([], [])
             self.plot_widget.removeItem(curve)

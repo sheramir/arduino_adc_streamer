@@ -21,10 +21,11 @@ from constants.serial import (
     MCU_DETECTION_TIMEOUT_SEC,
 )
 from serial_communication.adc_connection_state import (
-    build_connected_view_state,
+    ADCConnectionState,
     build_default_last_sent_config,
     build_disconnected_view_state,
 )
+from serial_communication.device_config import connected_port_name, find_adc_port, load_device_config
 from serial_communication.adc_session import ADCSessionController
 
 
@@ -89,6 +90,44 @@ class ADCSerialMixin:
         else:
             self.disconnect_serial()
 
+    def _toggle_adc_connection(self):
+        """Main button handler: auto-connect when disconnected, disconnect when connected."""
+        if self.adc_conn_state == ADCConnectionState.CONNECTED:
+            self.disconnect_serial()
+        elif self.adc_conn_state == ADCConnectionState.DISCONNECTED:
+            self._auto_connect_adc()
+
+    def _show_adc_connect_menu(self):
+        adc_state = getattr(self, "adc_conn_state", ADCConnectionState.DISCONNECTED)
+        if adc_state != ADCConnectionState.DISCONNECTED:
+            return
+        btn = self._adc_arrow_btn
+        pos = btn.mapToGlobal(btn.rect().bottomLeft())
+        self._adc_connect_menu.exec(pos)
+
+    def _auto_connect_adc(self):
+        """Try to connect to the first matching ADC device from adc_devices.json silently."""
+        exclude_port = connected_port_name(getattr(self, "force_serial_port", None))
+        port, dev = find_adc_port(exclude_port=exclude_port)
+        if port is None:
+            self.log_status("[Auto-connect ADC] No configured ADC device found — connect manually")
+            return
+
+        sn = dev.get("serial_number") or "any S/N"
+        self.log_status(f"[Auto-connect ADC] Found {dev['name']} on {port} (S/N: {sn}) — connecting…")
+
+        # Pre-select the port in the combo so the UI stays coherent
+        for i in range(self.port_combo.count()):
+            if self.port_combo.itemText(i).startswith(port):
+                self.port_combo.setCurrentIndex(i)
+                break
+
+        self._start_adc_connect(
+            port,
+            on_connected=lambda _outcome: self.log_status(f"[Auto-connect ADC] Connected to {dev['name']} on {port}"),
+            on_failed=lambda message: self.log_status(f"[Auto-connect ADC] Failed on {port}: {message}"),
+        )
+
     def connect_serial(self):
         """Connect to the selected serial port."""
         if self.port_combo.currentText() == "No ports found":
@@ -98,30 +137,49 @@ class ADCSerialMixin:
         port_text = self.port_combo.currentText()
         port_name = port_text.split(" - ")[0]
 
-        try:
-            if getattr(self, "adc_session", None) is None:
-                self.adc_session = self._build_adc_session()
+        self._start_adc_connect(
+            port_name,
+            on_connected=lambda _outcome: self.log_status(f"Connected to {port_name}"),
+            on_failed=lambda message: self._on_manual_adc_connect_failed(message),
+        )
 
-            outcome = self.adc_connection_workflow.connect(
-                self.adc_session,
-                port_name,
-                mcu_detection_timeout=MCU_DETECTION_TIMEOUT_SEC,
-            )
-            self._sync_adc_transport_state()
-            if outcome.mcu_name:
-                self._apply_mcu_state(build_detected_mcu_state(outcome.mcu_name))
-            else:
-                self._apply_mcu_state(build_unknown_mcu_state())
+    def _on_manual_adc_connect_failed(self, message: str):
+        self.log_status(f"ERROR: Failed to connect - {message}")
+        QMessageBox.critical(self, "Connection Error", f"Failed to connect:\n{message}")
 
-            self.log_status(f"Connected to {port_name}")
-            self._apply_adc_connection_view_state(build_connected_view_state())
-            
-            # Update GUI based on detected MCU
-            self.update_gui_for_mcu()
+    def _start_adc_connect(self, port_name: str, *, on_connected, on_failed):
+        """Kick off a background ADC connect so port-open/MCU-handshake never blocks the GUI."""
+        if getattr(self, "adc_session", None) is None:
+            self.adc_session = self._build_adc_session()
 
-        except Exception as e:
-            self.log_status(f"ERROR: Failed to connect - {e}")
-            QMessageBox.critical(self, "Connection Error", f"Failed to connect:\n{e}")
+        self._adc_connect_on_connected = on_connected
+        self._adc_connect_on_failed = on_failed
+        self._adc_connect_controller.start(
+            self.adc_session,
+            port_name,
+            mcu_detection_timeout=MCU_DETECTION_TIMEOUT_SEC,
+        )
+
+    def _on_adc_connect_success(self, outcome):
+        self._sync_adc_transport_state()
+
+        if outcome.mcu_name:
+            self._apply_mcu_state(build_detected_mcu_state(outcome.mcu_name))
+        else:
+            self._apply_mcu_state(build_unknown_mcu_state())
+
+        self.update_gui_for_mcu()
+        self._adc_connect_on_connected(outcome)
+
+    def _on_adc_connect_failure(self, message: str):
+        self._sync_adc_transport_state()
+        self._adc_connect_on_failed(message)
+
+    def shutdown_adc_connect_worker(self):
+        worker = getattr(self, "adc_connect_worker", None)
+        if worker is not None:
+            worker.stop()
+            worker.wait(1500)
 
     def _build_adc_session(self):
         return ADCSessionController(
@@ -175,6 +233,7 @@ class ADCSerialMixin:
             # Reset config validity
             self.config_is_valid = False
             
+            self.adc_conn_state = ADCConnectionState.DISCONNECTED
             self.log_status("Disconnected")
             self._apply_adc_connection_view_state(build_disconnected_view_state())
         finally:

@@ -11,6 +11,7 @@ This folder contains the firmware variants used by the desktop ADC Streamer GUI.
 - `PCB1.5_SPI/`: Teensy+MG24 SPI array firmware for PCB v1.5 (DRDY-enabled path)
 - `PCB1.7_SPI/`: Teensy+MG24 SPI array firmware for PCB v1.7 (DRDY + combined PZT/RS mode)
 - `PCB1.7_with_libraries/`: library-backed PCB v1.7 sketches with the same `PZT_RS` protocol behavior
+- `PCB_TestBoard_7953/`: modular Teensy 4.1 master for four ADS7953 ADCs on two SPI buses
 
 ## Current Sketch Map
 
@@ -23,7 +24,9 @@ This folder contains the firmware variants used by the desktop ADC Streamer GUI.
 | Teensy + MG24 SPI (PCB1.0) | Mixed PZT/PZR array pair | `PCB1.0_SPI/Teensy_SPI_Master_Array_PZT_PZR1.ino` + `PCB1.0_SPI/MG24_Dual_MUX_SPI_Slave.ino` | Legacy board revision v1.0 | `# Array_PZT_PZR1` |
 | Teensy + MG24 SPI (PCB1.5) | Mixed PZT/PZR array pair with DRDY | `PCB1.5_SPI/Teensy_SPI_Master_Array_PZT_PZR1.5_DRDY.ino` + `PCB1.5_SPI/MG24_Dual_MUX_SPI_Slave1.5_DRDY.ino` | Current board revision v1.5, DRDY-synchronized streaming | `# Array_PZT_PZR1` |
 | Teensy + MG24 SPI (PCB1.7) | Mixed PZT/PZR/RS array pair with DRDY and combined mode | `PCB1.7_SPI/Teensy_SPI_Master_Array_PZT_PZR1.7_DRDY.ino` + `PCB1.7_SPI/MG24_Dual_MUX_SPI_Slave1.7_DRDY.ino` | PCB v1.7 with `PZT_RS` combined stream (`PZT_CH1`...`PZT_CH5`,`RS1_hold`,`RS2_hold`) per selected PZT sensor | `# Array_PZT_PZR1.7` |
-| Teensy + MG24 SPI (PCB1.7 library-backed) | Library-backed PCB v1.7 pair with DRDY and combined mode | `PCB1.7_with_libraries/Teensy/Teensy_SPI_Master_Array_PZT_PZR1.7_DRDY_Modular.ino` + `PCB1.7_with_libraries/MG24/MG24_Dual_MUX_SPI_Slave1.7_DRDY_Modular.ino` | PCB v1.7 with the same `PZT_RS` behavior packaged as sketch-local libraries | `# Array_PZT_PZR1.7` |
+| Teensy + MG24 SPI (PCB1.7 library-backed) | Library-backed PCB v1.7 pair with DRDY and combined mode | `PCB1.7_with_libraries/Teensy/Teensy.ino` + `PCB1.7_with_libraries/MG24/MG24.ino` | PCB v1.7 with the same `PZT_RS` behavior packaged as sketch-local libraries | `# Array_PZT_PZR1.7` |
+| Teensy 4.1 + ADS7953 test board | Four ADS7953 ADCs on two SPI buses | `PCB_TestBoard_7953/PCB_TestBoard_7953.ino` | Two sensor arrays, four interleaved ADC lanes; optional future 555/PZR module | `# PCB_TestBoard_7953` |
+| PCB TestBoard 7953 | Four-ADC, two-array Teensy 4.1 master | `PCB_TestBoard_7953/PCB_TestBoard_7953.ino` | New PCB bring-up with ADC1..ADC4 interleaved per requested channel | `# PCB_TestBoard_7953` |
 
 ## Which Sketch Should You Flash
 
@@ -33,6 +36,7 @@ This folder contains the firmware variants used by the desktop ADC Streamer GUI.
 - Use `Teensy/Teensy555_streamer/` when the GUI is being used in 555 / displacement mode.
 - Use `PCB1.7_SPI/` for PCB v1.7 hardware, including the combined `PZT_RS` mode (recommended for v1.7).
 - Use `PCB1.7_with_libraries/` when you want the PCB v1.7 pair in the library-backed sketch layout.
+- Use `PCB_TestBoard_7953/` for the Teensy 4.1 test board with four ADS7953 ADCs.
 - Use `PCB1.5_SPI/` for PCB v1.5 dual-board array hardware.
 - Use `PCB1.0_SPI/` only for legacy PCB v1.0 hardware.
 
@@ -224,6 +228,9 @@ Notes on sample payload meaning:
 
 - For the standard ADC streamer sketches (MG24, Teensy, PCB SPI array sketches), each `uint16` sample is a raw ADC reading.
 - For `Teensy/Teensy555_streamer/`, each `uint16` sample is instead an `Rx` resistance value in ohms (rounded and clamped to `0..65535`), not a raw ADC reading.
+- For `PCB_TestBoard_7953`, every requested channel emits four raw 12-bit
+  samples in `ADC1,ADC2,ADC3,ADC4` order. ADC1/2 are sensor array 1 and ADC3/4
+  are sensor array 2.
 - The legacy `legacy/MG24/ADC_Streamer_binary_buffer/` sketch uses a shorter trailer (`avg_dt_us` only, no `block_start_us`/`block_end_us`); see `legacy/MG24/ADC_Streamer_binary_buffer/README.md` for details.
 
 ### PCB1.7 `PZT_RS` Combined Payload

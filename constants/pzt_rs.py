@@ -4,7 +4,7 @@ from __future__ import annotations
 
 
 # PZT_RS payload layout. Source of truth is the firmware:
-# Arduino_Sketches/PCB1.7_with_libraries/Teensy/libraries/PztRsController.h
+# Arduino_Sketches/PCB1.7_with_libraries/Teensy/src/PztRsController.h
 # (kChannelsPerSensor, kRsValuesPerSensor, kOutputsPerSensor). These must stay
 # in sync with it; tests/test_pzt_rs_wire_contract.py asserts that they do.
 PZT_RS_CHANNELS_PER_SENSOR = 5

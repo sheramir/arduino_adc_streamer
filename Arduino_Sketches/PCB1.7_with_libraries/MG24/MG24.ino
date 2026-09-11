@@ -9,9 +9,9 @@
 
 #include "BoardConfig.h"
 
-#include "libraries/Mg24AdcMux.h"
-#include "libraries/Mg24CommandEngine.h"
-#include "libraries/Mg24SpiSlaveTransport.h"
+#include "src/Mg24AdcMux.h"
+#include "src/Mg24CommandEngine.h"
+#include "src/Mg24SpiSlaveTransport.h"
 
 static mg24_adc_mux::Runtime g_adc;
 static mg24_cmd::Runtime g_cmd;

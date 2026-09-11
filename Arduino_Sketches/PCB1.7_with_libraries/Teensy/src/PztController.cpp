@@ -43,7 +43,7 @@ static const uint16_t kMaxRepeat = 100;
 static const uint8_t kMuxChMax = 15;
 static const uint8_t kMaxPhysicalChannels = 16;
 static const uint8_t kMaxLogicalSlots = 32;
-static const uint32_t kMaxPairs = 8000UL;
+static const uint32_t kMaxPairs = 6000UL;
 static const uint32_t kMaxBlockBytes = static_cast<uint32_t>(kAckFrameLen) + kMaxPairs * 4UL + kBlockTrailerLen;
 
 static const uint8_t kCmdSetChannels = 0x01;

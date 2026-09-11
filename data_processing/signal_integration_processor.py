@@ -44,7 +44,6 @@ from constants.pressure_map import (
     SIGNAL_INTEGRATION_MAX_TOTAL_POINTS_TO_DISPLAY,
     SIGNAL_INTEGRATION_PLOT_UPDATE_INTERVAL_SEC,
     SIGNAL_INTEGRATION_POSITION_ORDER,
-    SIGNAL_INTEGRATION_PZT1_MUX_COUNT,
 )
 from data_processing.signal_integrator import SignalIntegrator
 
@@ -455,15 +454,16 @@ class SignalIntegrationProcessorMixin:
                 int(channel): position
                 for position, channel in enumerate(unique_channels)
             }
-            mux_index = max(0, int(group.get("mux", 1)) - 1)
+            lane_count = max(1, int(self.get_effective_channel_multiplier()))
+            mux_index = min(lane_count - 1, max(0, int(group.get("mux", 1)) - 1))
 
             for local_index, channel in enumerate(package_channels[:SIGNAL_INTEGRATION_CHANNEL_COUNT]):
                 unique_position = unique_channel_positions.get(channel)
                 if unique_position is None:
                     continue
-                base_index = unique_position * repeat_count * SIGNAL_INTEGRATION_PZT1_MUX_COUNT
+                base_index = unique_position * repeat_count * lane_count
                 indices = [
-                    base_index + (repeat_index * SIGNAL_INTEGRATION_PZT1_MUX_COUNT) + mux_index
+                    base_index + (repeat_index * lane_count) + mux_index
                     for repeat_index in range(repeat_count)
                 ]
                 sample_indices_by_channel[local_index] = [

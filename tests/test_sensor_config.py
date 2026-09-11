@@ -126,6 +126,16 @@ def test_mux_mapping_allows_duplicate_rs_channels():
     assert normalized["PZT1"]["rs_channels"] == [14, 14]
 
 
+def test_mux_mapping_accepts_all_four_testboard_adc_lanes():
+    normalized = normalize_mux_mapping({
+        "PZT1": {"mux": 1, "channels": [0, 1, 2, 3, 4]},
+        "PZT2": {"mux": 4, "channels": [0, 1, 2, 3, 4]},
+    })
+
+    assert normalized["PZT1"]["mux"] == 1
+    assert normalized["PZT2"]["mux"] == 4
+
+
 class ChannelUtilsTests(unittest.TestCase):
     def test_unique_channels_in_order_preserves_first_occurrence_unittest(self):
         self.assertEqual(unique_channels_in_order([4, 2, 4, 1, 2, 3, 1]), [4, 2, 1, 3])

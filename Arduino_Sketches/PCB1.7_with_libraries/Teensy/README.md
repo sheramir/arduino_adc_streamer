@@ -2,28 +2,35 @@
 
 Main sketch:
 
-- `Teensy_SPI_Master_Array_PZT_PZR1.7_DRDY_Modular.ino` — a 2-function wrapper: `setup()` calls `pcb17_firmware::setupFirmware()` and `loop()` calls `pcb17_firmware::loopFirmware()`. All actual setup/loop logic lives in `libraries/Pcb17Firmware.cpp`.
+- `Teensy.ino` — the Arduino-required folder-matching primary sketch and a
+  2-function wrapper: `setup()` calls `pcb17_firmware::setupFirmware()` and
+  `loop()` calls `pcb17_firmware::loopFirmware()`. All actual setup/loop logic
+  lives in `src/Pcb17Firmware.cpp`.
 
 Board config:
 
 - `BoardConfig.h` records the PCB1.7 pinout and 555 defaults: PZT SPI CS/DRDY pins (`kPztCsPin`=10, `kPztDrdyPin`=0) and bitrate, separate PZR and RS 555-timer ICP/MUX pin sets (both with MUX-enable pins, unlike PCB1.5 where PZR has no enable pin), `kDefault555Mode` (default `TIMER555_RS`), and derived `kTimer555*` constants plus `initTimer555Pins()`. Values match `PCB1.5_with_Libraries/Teensy/BoardConfig.h` except PZR/RS now both have MUX-enable pins (7 and 8) since PZR and RS MUXes must be independently disabled/enabled when switching to/from `PZT_RS` mode.
 
-Firmware libraries (see `libraries/README.md` for full API details):
+Firmware libraries (see `src/README.md` for full API details):
 
-- `libraries/Pcb17Firmware.h`
-- `libraries/Pcb17Firmware.cpp`
-- `libraries/SharedProtocol.h`
-- `libraries/SharedProtocol.cpp`
-- `libraries/SerialLineParser.h`
-- `libraries/SerialLineParser.cpp`
-- `libraries/SpiMasterLink.h`
-- `libraries/SpiMasterLink.cpp`
-- `libraries/PztController.h`
-- `libraries/PztController.cpp`
-- `libraries/PztRsController.h`
-- `libraries/PztRsController.cpp`
-- `libraries/PzrController.h`
-- `libraries/PzrController.cpp`
+- `src/Pcb17Firmware.h`
+- `src/Pcb17Firmware.cpp`
+- `src/SharedProtocol.h`
+- `src/SharedProtocol.cpp`
+- `src/SerialLineParser.h`
+- `src/SerialLineParser.cpp`
+- `src/SpiMasterLink.h`
+- `src/SpiMasterLink.cpp`
+- `src/PztController.h`
+- `src/PztController.cpp`
+- `src/PztRsController.h`
+- `src/PztRsController.cpp`
+- `src/PzrController.h`
+- `src/PzrController.cpp`
+
+The `src/` name is required for recursive sketch-local compilation in current
+Arduino IDE/CLI releases. The old `libraries/` layout exposed the headers but
+did not reliably compile or link the `.cpp` implementations.
 
 `Pcb17Firmware.cpp` is intentionally thin. It owns serial command dispatch,
 mode switching, setup, and loop orchestration. The hardware-specific behavior is

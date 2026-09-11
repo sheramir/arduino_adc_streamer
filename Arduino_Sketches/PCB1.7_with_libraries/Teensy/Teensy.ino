@@ -1,4 +1,4 @@
-#include "libraries/Pcb17Firmware.h"
+#include "src/Pcb17Firmware.h"
 
 void setup() {
   pcb17_firmware::setupFirmware();

@@ -6,12 +6,13 @@ from data_processing.pzt_ghost_removal import PztGhostRemovalMixin
 
 
 class PztGhostHarness(PztGhostRemovalMixin):
-    def __init__(self, *, pzt_rs=False, channels=None, repeat=1):
+    def __init__(self, *, pzt_rs=False, channels=None, repeat=1, lane_count=2):
         self.config = {
             'channels': list(channels or [0, 1, 2]),
             'repeat': repeat,
         }
         self._pzt_rs = pzt_rs
+        self._lane_count = lane_count
         self._init_pzt_ghost_removal_state()
         self.set_pzt_ghost_removal_settings(True, 0.5)
 
@@ -23,6 +24,9 @@ class PztGhostHarness(PztGhostRemovalMixin):
 
     def get_channels_for_arduino_command(self):
         return self.config['channels']
+
+    def get_effective_channel_multiplier(self):
+        return self._lane_count
 
     def get_array_selected_sensor_groups(self):
         if not self._pzt_rs:
@@ -48,6 +52,16 @@ class PztGhostRemovalTests(unittest.TestCase):
         # MUX 1: [10, 20, 30] -> [10, 15, 20]
         # MUX 2: [5, 7, 9] -> [5, 4.5, 5.5]
         np.testing.assert_allclose(cleaned, [[10, 5, 15, 4.5, 20, 5.5]])
+
+    def test_four_adc_lanes_are_cleaned_as_independent_sequences(self):
+        harness = PztGhostHarness(channels=[0, 1], lane_count=4)
+        harness._pzt_ghost_baselines = np.full(8, 100.0, dtype=np.float32)
+        harness._pzt_ghost_noise = np.zeros(8, dtype=np.float32)
+
+        raw = np.array([[110, 120, 130, 140, 120, 140, 160, 180]], dtype=np.float32)
+        cleaned = harness.prepare_pzt_ghost_block(raw)
+
+        np.testing.assert_allclose(cleaned, [[10, 20, 30, 40, 15, 30, 45, 60]])
 
     def test_first_signal_of_each_mux_sequence_has_no_ghost_subtraction(self):
         harness = PztGhostHarness(channels=[0, 1])

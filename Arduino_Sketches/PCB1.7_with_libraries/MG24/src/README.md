@@ -2,7 +2,7 @@
 
 Sketch-local libraries used by the PCB1.7 modular MG24 SPI-slave sketch. They implement the MG24 side of the Teensy/MG24 SPI array protocol: protocol framing constants, dual-channel ADC/MUX acquisition, command interpretation, and the SPIDRV transport state machine (command RX, response TX, DRDY signaling, and prefetch-aware streaming).
 
-These files are identical to `PCB1.5_with_Libraries/MG24/libraries/` with one exception: `Mg24AdcMux.cpp` uses `kMuxSettleUs = 20` (vs. `3` on PCB1.5) for the analog MUX settle delay before each ADC read.
+These files are derived from `PCB1.5_with_Libraries/MG24/libraries/` with one exception: `Mg24AdcMux.cpp` uses `kMuxSettleUs = 20` (vs. `3` on PCB1.5) for the analog MUX settle delay before each ADC read. They live under `src/` so current Arduino builders compile them recursively as part of this self-contained sketch.
 
 ## Files
 

@@ -7,7 +7,9 @@ namespace mg24_proto {
 static const uint8_t kCmdFrameLen = 20;
 static const uint8_t kAckFrameLen = 4;
 static const uint8_t kBlockTrailerLen = 10;
-static const uint32_t kMaxPairs = 8000UL;
+// 6000 keeps the double TX buffers, DMA RX sink, core globals, and runtime
+// stack within the XIAO MG24 RAM budget on Silicon Labs core 4.0.0.
+static const uint32_t kMaxPairs = 6000UL;
 static const uint32_t kMaxResponseBytes = kAckFrameLen + kMaxPairs * 4UL + kBlockTrailerLen;
 
 static const uint8_t kCmdSetChannels = 0x01;

@@ -3,8 +3,8 @@
 #include <Arduino.h>
 #include <sl_gpio.h>
 
-#include "libraries/Mg24AdcMux.h"
-#include "libraries/Mg24SpiSlaveTransport.h"
+#include "src/Mg24AdcMux.h"
+#include "src/Mg24SpiSlaveTransport.h"
 
 namespace board_config {
 

@@ -23,7 +23,7 @@ FIRMWARE_HEADER = (
     / "Arduino_Sketches"
     / "PCB1.7_with_libraries"
     / "Teensy"
-    / "libraries"
+    / "src"
     / "PztRsController.h"
 )
 

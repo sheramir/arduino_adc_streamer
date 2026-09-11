@@ -44,6 +44,8 @@ from config.sensor_config import (
 )
 from constants.sensor_config import (
     DEFAULT_SENSOR_REVERSE_POLARITY,
+    SENSOR_CONFIG_MUX_MAX,
+    SENSOR_CONFIG_MUX_MIN,
     SENSOR_CONFIG_REVERSE_POLARITY_KEY,
     SENSOR_REVERSE_POLARITY_LABEL,
 )
@@ -565,8 +567,10 @@ class SensorPanelMixin:
                 channels = [int(c.strip()) for c in channels_str.split(",") if c.strip()]
                 rs_channels = [int(c.strip()) for c in rs_channels_str.split(",") if c.strip()]
 
-                if mux_num not in (1, 2):
-                    raise ValueError("MUX must be 1 or 2")
+                if not SENSOR_CONFIG_MUX_MIN <= mux_num <= SENSOR_CONFIG_MUX_MAX:
+                    raise ValueError(
+                        f"MUX/ADC lane must be {SENSOR_CONFIG_MUX_MIN}-{SENSOR_CONFIG_MUX_MAX}"
+                    )
                 if not channels:
                     raise ValueError("At least one channel is required")
                 if len(channels) > ARRAY_CELL_CHANNELS_MAX:

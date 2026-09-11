@@ -384,7 +384,10 @@ class ConfigurationMixin:
         """Return how many physical samples each requested channel produces."""
         if self.is_array_pzt_rs_mode():
             return 1
-        return 2 if self.is_array_pzt1_mode() else 1
+        return resolve_mcu_profile(
+            self.current_mcu,
+            selected_array_mode=self.get_selected_array_operation_mode(),
+        ).adc_lane_count
 
     def is_array_sensor_selection_mode(self) -> bool:
         """Return True when active channel selection comes from Array sensor IDs."""
@@ -599,10 +602,11 @@ class ConfigurationMixin:
                         elif is_pzt1:
                             unique_idx = unique_channel_positions.get(channel)
                             if unique_idx is not None:
-                                mux_index = max(0, min(1, mux_num - 1))
-                                base_idx = unique_idx * repeat_count * 2
+                                lane_count = self.get_effective_channel_multiplier()
+                                mux_index = max(0, min(lane_count - 1, mux_num - 1))
+                                base_idx = unique_idx * repeat_count * lane_count
                                 for repeat_idx in range(repeat_count):
-                                    sample_indices.append(base_idx + (repeat_idx * 2) + mux_index)
+                                    sample_indices.append(base_idx + (repeat_idx * lane_count) + mux_index)
                         else:
                             seq_idx = int(seq_positions[local_idx])
                             base_idx = seq_idx * repeat_count
@@ -637,16 +641,17 @@ class ConfigurationMixin:
             return specs
 
         if is_pzt1:
-            for mux_index in range(2):
+            lane_count = self.get_effective_channel_multiplier()
+            for mux_index in range(lane_count):
                 mux_number = mux_index + 1
                 for display_order, channel in enumerate(unique_channels):
                     sample_indices = []
                     for seq_idx, seq_channel in enumerate(channels):
                         if seq_channel != channel:
                             continue
-                        base_idx = seq_idx * repeat_count * 2
+                        base_idx = seq_idx * repeat_count * lane_count
                         for repeat_idx in range(repeat_count):
-                            sample_indices.append(base_idx + (repeat_idx * 2) + mux_index)
+                            sample_indices.append(base_idx + (repeat_idx * lane_count) + mux_index)
 
                     specs.append({
                         'key': ('mux', mux_number, channel),

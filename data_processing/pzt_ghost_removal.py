@@ -97,11 +97,15 @@ class PztGhostRemovalMixin:
             else:
                 channels = list(self.config.get('channels', []))
             channel_count = len(channels)
+            lane_count = max(1, int(
+                self.get_effective_channel_multiplier()
+                if hasattr(self, 'get_effective_channel_multiplier') else 2
+            ))
             groups = []
-            for mux_index in range(2):
+            for mux_index in range(lane_count):
                 for repeat_index in range(repeat_count):
                     columns = [
-                        sequence_index * repeat_count * 2 + repeat_index * 2 + mux_index
+                        sequence_index * repeat_count * lane_count + repeat_index * lane_count + mux_index
                         for sequence_index in range(channel_count)
                     ]
                     columns = [column for column in columns if column < width]

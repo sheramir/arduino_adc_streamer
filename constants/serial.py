@@ -22,7 +22,7 @@ DEFAULT_BUFFER_SIZE = 1
 # Fallback sweeps-per-block used when a configuration request carries no usable
 # buffer size. Distinct from DEFAULT_BUFFER_SIZE, which seeds the UI spin box.
 DEFAULT_CONFIG_BUFFER_SIZE = 128
-ARRAY_PZT_MAX_MUX_PAIRS_PER_BLOCK = 8000
+ARRAY_PZT_MAX_MUX_PAIRS_PER_BLOCK = 6000
 ARRAY_PZT_RS_MAX_SWEEPS_PER_BLOCK = 64
 
 # UI Control Ranges and Defaults (serial-adjacent controls)

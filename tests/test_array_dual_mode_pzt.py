@@ -303,6 +303,26 @@ class ArrayDualModePZTTests(unittest.TestCase):
         self.assertTrue(harness.is_array_pzt_rs_mode())
         self.assertEqual(harness.get_supported_array_operation_modes(), ("PZT", "PZR", "PZT_RS"))
 
+    def test_7953_four_lane_sensor_mapping_uses_adc3_and_adc4_columns(self):
+        harness = DualModePZTHarness()
+        harness.current_mcu = "PCB_TestBoard_7953"
+        harness.config["channels"] = [0, 1, 2, 3, 4, 0, 1, 2, 3, 4]
+        harness.config["selected_array_sensors"] = ["PZT1", "PZT2"]
+        harness.get_active_sensor_configuration = lambda: {
+            "mux_mapping": {
+                "PZT1": {"mux": 3, "channels": [0, 1, 2, 3, 4]},
+                "PZT2": {"mux": 4, "channels": [0, 1, 2, 3, 4]},
+            }
+        }
+
+        self.assertEqual(harness.get_effective_channel_multiplier(), 4)
+        self.assertEqual(harness.get_channels_for_arduino_command(), [0, 1, 2, 3, 4])
+        self.assertEqual(harness.get_effective_samples_per_sweep(), 20)
+
+        specs = harness.get_display_channel_specs()
+        self.assertEqual([spec["sample_indices"] for spec in specs[:5]], [[2], [6], [10], [14], [18]])
+        self.assertEqual([spec["sample_indices"] for spec in specs[5:]], [[3], [7], [11], [15], [19]])
+
 
 if __name__ == "__main__":
     unittest.main()

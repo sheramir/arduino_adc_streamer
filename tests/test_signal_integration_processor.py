@@ -66,6 +66,20 @@ class SignalIntegrationProcessorTests(unittest.TestCase):
         self.assertEqual(SIGNAL_INTEGRATION_PLOT_UPDATE_FPS, 30.0)
         self.assertAlmostEqual(SIGNAL_INTEGRATION_PLOT_UPDATE_INTERVAL_SEC, 1.0 / 30.0)
 
+    def test_four_lane_array_group_uses_selected_adc_lane(self):
+        harness = SignalIntegrationProcessorHarness()
+        harness.is_array_pzt1_mode = lambda: True
+        harness.get_effective_channel_multiplier = lambda: 4
+
+        indices = harness._build_signal_integration_sample_indices(
+            {"mux": 4, "channels": [1], "positions": [0]},
+            [1],
+            repeat_count=2,
+            samples_per_sweep=8,
+        )
+
+        self.assertEqual(indices, {0: [3, 7]})
+
     def _process_block(
         self,
         harness,

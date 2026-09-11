@@ -146,8 +146,8 @@ static const uint16_t WARMUP_SWEEPS      = 48;
 // ── Buffer sizing ─────────────────────────────────────────────────────
 // Maximum number of (MUX1, MUX2) pairs in one streaming block.
 // Each pair = 4 bytes.  Total TX buffer = 4 (hdr) + pairs×4 + 10 (trl).
-// 8000 pairs → ~32 kB.  Reduce if you need to conserve RAM.
-static const uint32_t MAX_PAIRS          = 8000UL;
+// 6000 pairs -> ~24 kB plus runtime headroom on current Silicon Labs cores.
+static const uint32_t MAX_PAIRS          = 6000UL;
 
 // ── Protocol limits ───────────────────────────────────────────────────
 static const uint8_t  CMD_FRAME_LEN      = 20;  // fixed command frame size (bytes)

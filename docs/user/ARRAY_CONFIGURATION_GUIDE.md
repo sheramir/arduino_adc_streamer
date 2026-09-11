@@ -17,7 +17,8 @@ The current editor in the Sensor tab uses:
 - sensor IDs in canonical form such as `PZT1` or `PZR2`
 - optional legacy input such as `PZT_1`, which is normalized when saved
 - `1..5` logical channels per sensor
-- MUX IDs `1..2`
+- MUX/ADC lane IDs `1..4` (`1..2` on the PCB1.x MG24 boards;
+  `1..4` on `PCB_TestBoard_7953`)
 - physical channel indices `0..15`
 
 ## What Array Layouts Affect
@@ -109,7 +110,9 @@ This means the physical stream can contain shared or de-duplicated channels, whi
 
 - Every populated cell must be a valid `PZTn` or `PZRn` sensor ID.
 - Every sensor in the grid must have a MUX mapping.
-- MUX values must stay within `1..2`.
+- MUX/ADC lane values must stay within `1..4`. Use only `1..2` for the
+  PCB1.x MG24 firmware. On `PCB_TestBoard_7953`, lanes `1,2` are sensor array
+  1 and lanes `3,4` are sensor array 2.
 - Physical channels must stay within `0..15`.
 - `channels_per_sensor` must stay within `1..5`.
 

@@ -142,7 +142,7 @@ static const uint8_t  PZT_MAX_SENSOR_SLOTS       = 6;
 static const uint8_t  PZT_RS_VALUES_PER_SENSOR   = 2;
 static const uint8_t  PZT_RS_OUTPUTS_PER_SENSOR  =
     PZT_CHANNELS_PER_SENSOR + PZT_RS_VALUES_PER_SENSOR;
-static const uint32_t PZT_MAX_PAIRS              = 8000UL;
+static const uint32_t PZT_MAX_PAIRS              = 6000UL;
 
 static const uint32_t PZT_MAX_BLOCK_BYTES =
     (uint32_t)PZT_ACK_FRAME_LEN + PZT_MAX_PAIRS * 4UL + PZT_BLOCK_TRAILER_LEN;

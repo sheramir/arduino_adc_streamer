@@ -1,6 +1,6 @@
 # Teensy Libraries
 
-Sketch-local libraries used by the PCB1.5 modular Teensy master sketch. They implement the Teensy side of the Teensy/MG24 SPI array protocol: host-facing serial command framing, the SPI master link to the MG24 ADC slave, blocking PZT acquisition orchestration, and PZR/555 resistance-timing acquisition. PZT_RS combined mode does not exist in this PCB1.5 library set (see `PCB1.7_with_libraries/Teensy/libraries/` for that).
+Sketch-local libraries used by the PCB1.5 modular Teensy master sketch. They implement the Teensy side of the Teensy/MG24 SPI array protocol: host-facing serial command framing, the SPI master link to the MG24 ADC slave, blocking PZT acquisition orchestration, and PZR/555 resistance-timing acquisition. PZT_RS combined mode does not exist in this PCB1.5 library set (see `PCB1.7_with_libraries/Teensy/src/` for that).
 
 ## Files
 

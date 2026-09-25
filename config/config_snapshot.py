@@ -31,6 +31,8 @@ class ADCConfigurationSnapshot:
     samp_speed: str
     sample_rate: int
     array_operation_mode: str
+    testboard_array_selection: str
+    testboard_scan_order: str
     rb_ohms: float
     rk_ohms: float
     cf_farads: float
@@ -48,6 +50,8 @@ class ADCConfigurationSnapshot:
             "samp_speed": self.samp_speed,
             "sample_rate": self.sample_rate,
             "array_operation_mode": self.array_operation_mode,
+            "testboard_array_selection": self.testboard_array_selection,
+            "testboard_scan_order": self.testboard_scan_order,
             "rb_ohms": self.rb_ohms,
             "rk_ohms": self.rk_ohms,
             "cf_farads": self.cf_farads,
@@ -93,6 +97,10 @@ def build_adc_configuration_snapshot(
     sample_rate_value: int | None,
     current_array_operation_mode: str,
     array_operation_mode: str | None,
+    current_testboard_array_selection: str = "both",
+    testboard_array_selection: str | None = None,
+    current_testboard_scan_order: str = "interleaved",
+    testboard_scan_order: str | None = None,
     current_rb_ohms: float,
     rb_value: float | None,
     current_rk_ohms: float,
@@ -116,6 +124,16 @@ def build_adc_configuration_snapshot(
         samp_speed=str(samp_speed_label if samp_speed_label is not None else current_samp_speed),
         sample_rate=int(sample_rate_value if sample_rate_value is not None else current_sample_rate),
         array_operation_mode=str(array_operation_mode if array_operation_mode is not None else current_array_operation_mode),
+        testboard_array_selection=str(
+            testboard_array_selection
+            if testboard_array_selection is not None
+            else current_testboard_array_selection
+        ),
+        testboard_scan_order=str(
+            testboard_scan_order
+            if testboard_scan_order is not None
+            else current_testboard_scan_order
+        ),
         rb_ohms=float(rb_value if rb_value is not None else current_rb_ohms),
         rk_ohms=float(rk_value if rk_value is not None else current_rk_ohms),
         cf_farads=float(cf_farads),

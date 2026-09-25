@@ -47,6 +47,10 @@ class ConfigSnapshotTests(unittest.TestCase):
             sample_rate_value=1234,
             current_array_operation_mode="PZT",
             array_operation_mode="PZR",
+            current_testboard_array_selection="both",
+            testboard_array_selection="2",
+            current_testboard_scan_order="interleaved",
+            testboard_scan_order="adc",
             current_rb_ohms=1000.0,
             rb_value=1100.0,
             current_rk_ohms=2000.0,
@@ -63,6 +67,8 @@ class ConfigSnapshotTests(unittest.TestCase):
         self.assertTrue(snapshot.use_ground)
         self.assertEqual(snapshot.ground_pin, 3)
         self.assertEqual(snapshot.array_operation_mode, "PZR")
+        self.assertEqual(snapshot.testboard_array_selection, "2")
+        self.assertEqual(snapshot.testboard_scan_order, "adc")
         self.assertEqual(snapshot.as_config_updates()["rxmax_ohms"], 5500.0)
 
 

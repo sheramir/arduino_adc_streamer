@@ -20,6 +20,10 @@ class MCUViewState:
     yaxis_units_value: str | None
     buffer_size_max: int
     show_charge_discharge_labels: bool
+    show_testboard_scan_controls: bool
+    show_manual_channels: bool
+    show_repeat_buffer_controls: bool
+    show_adc_config_section: bool
     osr_visible: bool
     osr_label_text: str
     osr_options: tuple[str, ...]
@@ -39,6 +43,10 @@ def build_mcu_view_state(profile) -> MCUViewState:
         yaxis_units_value=profile.yaxis_units_value,
         buffer_size_max=profile.buffer_size_max,
         show_charge_discharge_labels=profile.show_charge_discharge_labels,
+        show_testboard_scan_controls=profile.show_testboard_scan_controls,
+        show_manual_channels=profile.show_manual_channels,
+        show_repeat_buffer_controls=profile.show_repeat_buffer_controls,
+        show_adc_config_section=profile.show_adc_config_section,
         osr_visible=profile.osr_visible,
         osr_label_text=profile.osr_label_text,
         osr_options=tuple(profile.osr_options),

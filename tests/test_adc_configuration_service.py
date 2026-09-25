@@ -159,6 +159,52 @@ class ADCConfigurationServiceTests(unittest.TestCase):
         self.assertEqual(result.arduino_status.channels, [1, 2])
         self.assertIn("Configuration matches: [1, 2]", result.messages)
 
+    def test_7953_sends_sparse_routes_scan_order_array_selection_and_vmid(self):
+        commands = []
+
+        def send_command(command, expected):
+            commands.append((command, expected))
+            responses = {
+                "array both": (True, "both"),
+                "scanorder array": (True, "array"),
+                "adcchannels 1:0,2:10,3:0,4:10": (True, "1:0,2:10,3:0,4:10"),
+                "vmid 15": (True, "15"),
+            }
+            return responses[command]
+
+        service = ADCConfigurationService(send_command)
+        request = build_request(
+            current_mcu="PCB_TestBoard_7953",
+            channels=[0, 10],
+            channels_to_send=[0, 10],
+            use_ground=True,
+            ground_pin=15,
+            is_array_mcu=True,
+            is_array_pzt_pzr_mode=False,
+            is_array_sensor_selection_mode=True,
+            effective_channel_multiplier=4,
+            testboard_array_selection="both",
+            testboard_scan_order="array",
+            testboard_adc_routes=[(1, 0), (2, 10), (3, 0), (4, 10)],
+            is_testboard_7953=True,
+        )
+
+        result = service.send_config_with_verification(request)
+
+        self.assertTrue(result.success)
+        self.assertEqual(
+            [command for command, _expected in commands],
+            [
+                "array both",
+                "scanorder array", "adcchannels 1:0,2:10,3:0,4:10",
+                "vmid 15",
+            ],
+        )
+        self.assertTrue(result.arduino_status.use_ground)
+        self.assertEqual(result.arduino_status.repeat, 1)
+        self.assertEqual(result.arduino_status.buffer, 1)
+        self.assertEqual(result.normalized_buffer_size, 1)
+
     def test_array_pzt_buffer_is_limited_by_mux_pair_capacity(self):
         commands = []
         expected_sweeps = ARRAY_PZT_MAX_MUX_PAIRS_PER_BLOCK // 10

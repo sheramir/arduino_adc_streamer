@@ -80,7 +80,18 @@ def test_7953_sketch_contract_has_requested_pins_identity_and_order():
         assert f"{name} = {value}" in config
 
     assert 'kMcuName[] = "PCB_TestBoard_7953"' in config
-    assert "channel -> repeat -> ADC1,ADC2,ADC3,ADC4" in firmware
+    for command in ("adcchannels", "scanorder", "array", "vmid"):
+        assert command in firmware
+    pzt_controller = (sketch / "src" / "PztController.cpp").read_text(encoding="utf-8")
+    assert 'command == "repeat"' not in pzt_controller
+    assert 'command == "buffer"' not in pzt_controller
+    assert "repeat_" not in pzt_controller
+    assert "buffer_sweeps_" not in pzt_controller
+    for scan_order in ("SCAN_INTERLEAVED", "SCAN_ARRAY", "SCAN_ADC"):
+        assert scan_order in firmware
+    assert "parkAdc(route.adc)" in firmware
+    assert "parkSelectedAdcs()" in firmware
+    assert "Do not flush binary traffic" in firmware
     assert "kBlockMagic1 = 0xAA" in firmware
     assert "kBlockMagic2 = 0x55" in firmware
     assert "class AdcDevice" in firmware

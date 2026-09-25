@@ -7,9 +7,9 @@
 #include "ApiProtocol.h"
 
 namespace {
-static uint16_t g_pzr_samples[testboard_config::kMaxBlockSamples];
+static uint16_t g_pzr_samples[testboard_config::kMaxChannelSequence];
 static uint8_t g_pzr_wire[
-    4 + testboard_config::kMaxBlockSamples * sizeof(uint16_t) + api_protocol::kTrailerBytes];
+    4 + testboard_config::kMaxChannelSequence * sizeof(uint16_t) + api_protocol::kTrailerBytes];
 static constexpr float kLn2 = 0.69314718056f;
 }
 
@@ -77,30 +77,6 @@ bool PzrController::setPositiveFloat(const String &arguments, float &target, boo
 bool PzrController::handleCommand(const String &command, const String &arguments) {
   if (!available() || running_) return false;
   if (command == "channels") return setChannels(arguments);
-  if (command == "repeat") {
-    const int value = arguments.toInt();
-    if (value < 1 || value > 255) return false;
-    const uint8_t previous = repeat_;
-    repeat_ = static_cast<uint8_t>(value);
-    if (static_cast<uint32_t>(channel_count_) * repeat_ * buffer_sweeps_ >
-        testboard_config::kMaxBlockSamples) {
-      repeat_ = previous;
-      return false;
-    }
-    return true;
-  }
-  if (command == "buffer") {
-    const int value = arguments.toInt();
-    if (value < 1 || value > 255) return false;
-    const uint8_t previous = buffer_sweeps_;
-    buffer_sweeps_ = static_cast<uint8_t>(value);
-    if (static_cast<uint32_t>(channel_count_) * repeat_ * buffer_sweeps_ >
-        testboard_config::kMaxBlockSamples) {
-      buffer_sweeps_ = previous;
-      return false;
-    }
-    return true;
-  }
   if (command == "rb") return setPositiveFloat(arguments, rb_ohm_, false);
   if (command == "rk") return setPositiveFloat(arguments, rk_ohm_, false);
   if (command == "cf") return setPositiveFloat(arguments, cf_f_, true);
@@ -111,8 +87,7 @@ bool PzrController::handleCommand(const String &command, const String &arguments
     return value == "0" || value == "false" || value == "off" || ascii_;
   }
   if (command == "run") {
-    const uint32_t samples = static_cast<uint32_t>(channel_count_) * repeat_ * buffer_sweeps_;
-    if (!samples || samples > testboard_config::kMaxBlockSamples) return false;
+    if (!channel_count_) return false;
     timed_run_ = arguments.length() > 0;
     run_duration_ms_ = timed_run_ ? static_cast<uint32_t>(arguments.toInt()) : 0;
     if (timed_run_ && !run_duration_ms_) return false;
@@ -158,13 +133,9 @@ bool PzrController::measureResistance(uint8_t channel, uint16_t &sample) {
 bool PzrController::emitBlock() {
   const uint32_t started = micros();
   uint16_t index = 0;
-  for (uint8_t sweep = 0; sweep < buffer_sweeps_; ++sweep) {
-    for (uint8_t channel = 0; channel < channel_count_; ++channel) {
-      for (uint8_t repeat = 0; repeat < repeat_; ++repeat) {
-        measureResistance(channels_[channel], g_pzr_samples[index]);
-        ++index;
-      }
-    }
+  for (uint8_t channel = 0; channel < channel_count_; ++channel) {
+    measureResistance(channels_[channel], g_pzr_samples[index]);
+    ++index;
   }
   const uint32_t ended = micros();
   if (ascii_) {

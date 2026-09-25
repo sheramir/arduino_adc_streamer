@@ -65,11 +65,14 @@ Desktop GUI and firmware workspace for streaming ADC data from MG24 and Teensy b
 - `Arduino_Sketches/Teensy/`: Teensy ADC and 555-resistance sketches
 - `Arduino_Sketches/PCB1.7_SPI/`: active monolithic Teensy + MG24 array pair
 - `Arduino_Sketches/PCB1.7_with_libraries/`: equivalent self-contained modular pair
-- `Arduino_Sketches/PCB_TestBoard_7953/`: modular Teensy 4.1 + four-ADS7953 test-board firmware
+- `Arduino_Sketches/PCB_TestBoard_7953/`: modular Teensy 4.1 + four-ADS7953
+  test-board firmware with fixed board-profile routing, physical-array/PZT
+  selection, selectable scan order, one-sweep frames, and post-read Vmid parking
 
 ### Configuration And Data
 
 - `sensors_library/sensor_configurations.json`: bundled starter sensor library shipped with the repo
+- `config/testboard_7953_board.py`: fixed Array/ADC/PZT/input wiring for the ADS7953 test board
 - `~/.adc_streamer/sensors/sensor_configurations.json`: user-edited sensor library persisted by the GUI
 - `~/.adc_streamer/spectrum/`: last-used spectrum settings
 

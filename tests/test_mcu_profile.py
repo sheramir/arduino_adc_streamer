@@ -65,12 +65,15 @@ class MCUProfileTests(unittest.TestCase):
         profile = resolve_mcu_profile("PCB_TestBoard_7953", selected_array_mode="PZT")
 
         self.assertTrue(profile.is_array_mcu)
-        self.assertTrue(profile.is_array_dual)
+        self.assertFalse(profile.is_array_dual)
         self.assertTrue(profile.is_array_pzt1)
         self.assertEqual(profile.adc_lane_count, 4)
-        self.assertEqual(profile.array_operation_modes, ("PZT", "PZR"))
+        self.assertEqual(profile.array_operation_modes, ("PZT",))
         self.assertFalse(profile.supports_pzt_rs)
         self.assertFalse(profile.is_teensy)
+        self.assertFalse(profile.show_manual_channels)
+        self.assertFalse(profile.show_repeat_buffer_controls)
+        self.assertFalse(profile.show_adc_config_section)
 
 
 if __name__ == "__main__":

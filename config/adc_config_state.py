@@ -23,6 +23,8 @@ class ADCConfigurationState:
     channel_selection_source: str = "none"
     selected_array_sensors: list[str] = field(default_factory=list)
     array_operation_mode: str = "PZT"
+    testboard_array_selection: str = "both"
+    testboard_scan_order: str = "interleaved"
     repeat: int = 1
     ground_pin: int = -1
     use_ground: bool = False

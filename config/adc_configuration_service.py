@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from config.channel_utils import unique_channels_in_order
+from config.testboard_scan import format_testboard_routes
 from config.buffer_utils import validate_and_limit_sweeps_per_block
 from constants.serial import INTER_COMMAND_DELAY
 from constants.serial import ARRAY_PZT_MAX_MUX_PAIRS_PER_BLOCK
@@ -52,6 +53,10 @@ class ADCConfigurationRequest:
     is_array_pzt_pzr_mode: bool
     is_array_sensor_selection_mode: bool
     effective_channel_multiplier: int
+    testboard_array_selection: str = "both"
+    testboard_scan_order: str = "interleaved"
+    testboard_adc_routes: list[tuple[int, int]] = field(default_factory=list)
+    is_testboard_7953: bool = False
 
 
 @dataclass(slots=True)
@@ -133,7 +138,7 @@ class ADCConfigurationService:
         arduino_status = build_default_arduino_status()
 
         resolved_device_mode = request.device_mode
-        if request.is_array_pzt_pzr_mode:
+        if request.is_array_pzt_pzr_mode and not request.is_testboard_7953:
             selected_mode = (request.array_operation_mode or "PZT").strip().upper()
             resolved_device_mode = "555" if selected_mode == "PZR" else "adc"
             success, received = self._send_command_and_wait_ack(f"mode {selected_mode}", selected_mode)
@@ -187,16 +192,17 @@ class ADCConfigurationService:
         elif request.is_array_mcu:
             arduino_status.reference = "vdd"
 
-        success, received = self._send_command_and_wait_ack(f"osr {request.osr}", str(request.osr))
-        if success and received is not None:
-            arduino_status.osr = int(received)
-        elif success:
-            arduino_status.osr = int(request.osr)
-        else:
-            all_success = False
-        time.sleep(INTER_COMMAND_DELAY)
+        if not request.is_testboard_7953:
+            success, received = self._send_command_and_wait_ack(f"osr {request.osr}", str(request.osr))
+            if success and received is not None:
+                arduino_status.osr = int(received)
+            elif success:
+                arduino_status.osr = int(request.osr)
+            else:
+                all_success = False
+            time.sleep(INTER_COMMAND_DELAY)
 
-        if not is_teensy:
+        if not is_teensy and not request.is_testboard_7953:
             success, received = self._send_command_and_wait_ack(f"gain {request.gain}", str(request.gain))
             if success and received is not None:
                 arduino_status.gain = int(received)
@@ -223,14 +229,45 @@ class ADCConfigurationService:
             time.sleep(INTER_COMMAND_DELAY)
 
         channels_text = ",".join(str(channel) for channel in request.channels_to_send)
-        if channels_text:
-            success, received = self._send_command_and_wait_ack(f"channels {channels_text}", channels_text)
-            if success:
-                echoed = received or channels_text
-                arduino_status.channels = [int(value.strip()) for value in echoed.split(",") if value.strip()]
+        if request.is_testboard_7953:
+            for command_name, value in (
+                ("array", request.testboard_array_selection),
+                ("scanorder", request.testboard_scan_order),
+            ):
+                success, received = self._send_command_and_wait_ack(
+                    f"{command_name} {value}", value
+                )
+                if success:
+                    messages.append(f"Set TestBoard {command_name}: {received or value}")
+                else:
+                    messages.append(f"TestBoard config command failed: {command_name} {value}")
+                    all_success = False
+                time.sleep(INTER_COMMAND_DELAY)
+
+            routes_text = format_testboard_routes(request.testboard_adc_routes)
+            if routes_text:
+                success, received = self._send_command_and_wait_ack(
+                    f"adcchannels {routes_text}", routes_text
+                )
+                if success:
+                    messages.append(f"Set TestBoard ADC routes: {received or routes_text}")
+                    arduino_status.channels = unique_channels_in_order(request.channels_to_send)
+                else:
+                    messages.append(f"TestBoard config command failed: adcchannels {routes_text}")
+                    all_success = False
             else:
+                messages.append("TestBoard config command failed: no ADC routes selected")
                 all_success = False
-        time.sleep(INTER_COMMAND_DELAY)
+            time.sleep(INTER_COMMAND_DELAY)
+        else:
+            if channels_text:
+                success, received = self._send_command_and_wait_ack(f"channels {channels_text}", channels_text)
+                if success:
+                    echoed = received or channels_text
+                    arduino_status.channels = [int(value.strip()) for value in echoed.split(",") if value.strip()]
+                else:
+                    all_success = False
+            time.sleep(INTER_COMMAND_DELAY)
 
         if request.is_array_pzt_pzr_mode and str(request.array_operation_mode).strip().upper() == "PZT_RS":
             pzt_muxes_text = ",".join(str(mux) for mux in request.pzt_muxes_to_send)
@@ -269,17 +306,30 @@ class ADCConfigurationService:
                     all_success = False
                 time.sleep(INTER_COMMAND_DELAY)
 
-        repeat_text = str(request.repeat)
-        success, received = self._send_command_and_wait_ack(f"repeat {repeat_text}", repeat_text)
-        if success:
-            arduino_status.repeat = int(received) if received not in (None, "") else request.repeat
+        if request.is_testboard_7953:
+            arduino_status.repeat = 1
         else:
-            all_success = False
-        time.sleep(INTER_COMMAND_DELAY)
+            repeat_text = str(request.repeat)
+            success, received = self._send_command_and_wait_ack(f"repeat {repeat_text}", repeat_text)
+            if success:
+                arduino_status.repeat = int(received) if received not in (None, "") else request.repeat
+            else:
+                all_success = False
+            time.sleep(INTER_COMMAND_DELAY)
 
         effective_use_ground = bool(request.use_ground)
         effective_ground_pin = int(request.ground_pin)
-        if effective_use_ground and request.is_array_mcu and int(request.effective_channel_multiplier) == 2:
+        if (
+            effective_use_ground
+            and request.is_testboard_7953
+            and any(channel == effective_ground_pin for _lane, channel in request.testboard_adc_routes)
+        ):
+            effective_use_ground = False
+            messages.append(
+                "Vmid parking disabled: Vmid channel "
+                f"{effective_ground_pin} is also present in the active TestBoard routes"
+            )
+        elif effective_use_ground and request.is_array_mcu and int(request.effective_channel_multiplier) == 2:
             active_channels = {int(channel) for channel in request.channels_to_send}
             if effective_ground_pin in active_channels:
                 effective_use_ground = False
@@ -288,16 +338,17 @@ class ADCConfigurationService:
                     f"{effective_ground_pin} overlaps active channels in Array dual-mux mode and can stall streaming"
                 )
 
+        park_command = "vmid" if request.is_testboard_7953 else "ground"
         if effective_use_ground:
             ground_pin_text = str(effective_ground_pin)
-            success, received = self._send_command_and_wait_ack(f"ground {ground_pin_text}", ground_pin_text)
+            success, received = self._send_command_and_wait_ack(f"{park_command} {ground_pin_text}", ground_pin_text)
             if success:
                 arduino_status.ground_pin = int(received) if received not in (None, "") else effective_ground_pin
                 arduino_status.use_ground = True
             else:
                 all_success = False
         else:
-            success, received = self._send_command_and_wait_ack("ground false", "false")
+            success, received = self._send_command_and_wait_ack(f"{park_command} false", "false")
             if success:
                 arduino_status.use_ground = False
             else:
@@ -305,12 +356,15 @@ class ADCConfigurationService:
         time.sleep(INTER_COMMAND_DELAY)
 
         normalized_buffer_size = self._normalize_adc_buffer_size(request)
-        buffer_text = str(normalized_buffer_size)
-        success, received = self._send_command_and_wait_ack(f"buffer {buffer_text}", buffer_text)
-        if success:
-            arduino_status.buffer = int(received) if received not in (None, "") else normalized_buffer_size
+        if request.is_testboard_7953:
+            arduino_status.buffer = 1
         else:
-            all_success = False
+            buffer_text = str(normalized_buffer_size)
+            success, received = self._send_command_and_wait_ack(f"buffer {buffer_text}", buffer_text)
+            if success:
+                arduino_status.buffer = int(received) if received not in (None, "") else normalized_buffer_size
+            else:
+                all_success = False
 
         return all_success, normalized_buffer_size, messages
 
@@ -409,7 +463,11 @@ class ADCConfigurationService:
                 return messages
 
         actual_repeat = arduino_status.repeat
-        if actual_repeat is not None and actual_repeat != request.repeat:
+        if (
+            not request.is_testboard_7953
+            and actual_repeat is not None
+            and actual_repeat != request.repeat
+        ):
             messages.append(f"MISMATCH: Expected repeat {request.repeat}, got {actual_repeat}")
             return messages
 
@@ -417,6 +475,8 @@ class ADCConfigurationService:
         return messages
 
     def _normalize_adc_buffer_size(self, request: ADCConfigurationRequest) -> int:
+        if request.is_testboard_7953:
+            return 1
         if (
             request.is_array_pzt_pzr_mode
             and str(request.array_operation_mode).strip().upper() == "PZT_RS"
@@ -425,7 +485,11 @@ class ADCConfigurationService:
             pzt_sensor_count = max(1, len(request.channels) // PZT_RS_CHANNELS_PER_SENSOR)
             channel_count = pzt_sensor_count * PZT_RS_OUTPUTS_PER_SENSOR
         else:
-            channel_count = len(request.channels_to_send) * max(1, int(request.effective_channel_multiplier))
+            channel_count = (
+                len(request.testboard_adc_routes)
+                if request.is_testboard_7953
+                else len(request.channels_to_send) * max(1, int(request.effective_channel_multiplier))
+            )
         buffer_size = int(request.buffer_size)
         if buffer_size <= 0:
             return DEFAULT_CONFIG_BUFFER_SIZE

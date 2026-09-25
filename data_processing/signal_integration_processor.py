@@ -256,7 +256,14 @@ class SignalIntegrationProcessorMixin:
         return self.signal_integrator.get_current_values()
 
     def _build_signal_integration_channel_map(self) -> dict[int, Hashable]:
-        if hasattr(self, "get_active_channel_sensor_map"):
+        if (
+            hasattr(self, "is_testboard_7953_mode")
+            and self.is_testboard_7953_mode()
+        ):
+            from config.testboard_7953_board import PZT_CHANNEL_LABELS
+
+            raw_map = PZT_CHANNEL_LABELS
+        elif hasattr(self, "get_active_channel_sensor_map"):
             raw_map = self.get_active_channel_sensor_map()
         else:
             raw_map = list(SIGNAL_INTEGRATION_POSITION_ORDER)
@@ -447,6 +454,43 @@ class SignalIntegrationProcessorMixin:
         package_channels = [int(channel) for channel in group.get("channels", [])]
         package_positions = [int(position) for position in group.get("positions", [])]
         sample_indices_by_channel: dict[int, list[int]] = {}
+
+        if (
+            hasattr(self, "is_testboard_7953_mode")
+            and self.is_testboard_7953_mode()
+            and hasattr(self, "get_testboard_adc_routes")
+        ):
+            routes = list(self.get_testboard_adc_routes())
+            route_positions = {route: index for index, route in enumerate(routes)}
+            mapping_lane = int(group.get("mux", 1))
+            array_selection = (
+                self.get_testboard_array_selection()
+                if hasattr(self, "get_testboard_array_selection")
+                else "both"
+            )
+            from config.testboard_scan import physical_lanes_for_mapping
+
+            lanes = physical_lanes_for_mapping(mapping_lane, array_selection)
+            if not lanes:
+                return sample_indices_by_channel
+            # Pressure Map currently owns one spatial grid. When both physical
+            # arrays stream, use the first selected array; Time Series retains
+            # independent traces for both arrays.
+            adc_lane = int(lanes[0])
+            for local_index, channel in enumerate(
+                package_channels[:SIGNAL_INTEGRATION_CHANNEL_COUNT]
+            ):
+                route_index = route_positions.get((adc_lane, channel))
+                if route_index is None:
+                    continue
+                indices = [
+                    route_index * repeat_count + repeat_index
+                    for repeat_index in range(repeat_count)
+                ]
+                sample_indices_by_channel[local_index] = [
+                    index for index in indices if 0 <= index < samples_per_sweep
+                ]
+            return sample_indices_by_channel
 
         if self._is_signal_integration_pzt1_mode():
             unique_channels = unique_channels_in_order(channels)

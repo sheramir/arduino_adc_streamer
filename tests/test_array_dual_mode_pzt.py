@@ -18,6 +18,14 @@ class DummyCombo:
         return self._text
 
 
+class DummyLineEdit:
+    def __init__(self, text=""):
+        self._text = text
+
+    def text(self):
+        return self._text
+
+
 class DualModePZTHarness(ConfigurationMixin):
     def __init__(self):
         self.current_mcu = "Array_PZT_PZR1"
@@ -303,25 +311,81 @@ class ArrayDualModePZTTests(unittest.TestCase):
         self.assertTrue(harness.is_array_pzt_rs_mode())
         self.assertEqual(harness.get_supported_array_operation_modes(), ("PZT", "PZR", "PZT_RS"))
 
-    def test_7953_four_lane_sensor_mapping_uses_adc3_and_adc4_columns(self):
+    def test_7953_array2_uses_fixed_board_profile_not_sensor_editor_mapping(self):
         harness = DualModePZTHarness()
         harness.current_mcu = "PCB_TestBoard_7953"
-        harness.config["channels"] = [0, 1, 2, 3, 4, 0, 1, 2, 3, 4]
-        harness.config["selected_array_sensors"] = ["PZT1", "PZT2"]
+        harness.config.update({
+            "channels": list(range(10)),
+            "selected_array_sensors": ["PZT6", "PZT3"],
+            "testboard_array_selection": "2",
+            "testboard_scan_order": "interleaved",
+        })
         harness.get_active_sensor_configuration = lambda: {
             "mux_mapping": {
-                "PZT1": {"mux": 3, "channels": [0, 1, 2, 3, 4]},
-                "PZT2": {"mux": 4, "channels": [0, 1, 2, 3, 4]},
+                "PZT6": {"mux": 4, "channels": [15]},
+                "PZT3": {"mux": 3, "channels": [15]},
             }
         }
 
-        self.assertEqual(harness.get_effective_channel_multiplier(), 4)
-        self.assertEqual(harness.get_channels_for_arduino_command(), [0, 1, 2, 3, 4])
+        self.assertEqual(harness.get_effective_channel_multiplier(), 2)
+        self.assertEqual(harness.get_testboard_adc_routes()[:4], [(3, 0), (4, 5), (3, 1), (4, 6)])
+        self.assertEqual(harness.get_effective_samples_per_sweep(), 10)
+
+        specs = harness.get_display_channel_specs()
+        by_label = {spec["label"]: spec["sample_indices"] for spec in specs}
+        self.assertEqual(by_label["PZT6_B"], [0])
+        self.assertEqual(by_label["PZT3_B"], [1])
+        self.assertEqual(by_label["PZT6_T"], [8])
+        self.assertEqual(by_label["PZT3_T"], [9])
+
+    def test_7953_pzt3_and_pzt6_are_sparse_and_mirrored_across_both_arrays(self):
+        harness = DualModePZTHarness()
+        harness.current_mcu = "PCB_TestBoard_7953"
+        harness.config.update({
+            "channels": list(range(5, 10)) + list(range(5)),
+            "selected_array_sensors": ["PZT3", "PZT6"],
+            "testboard_array_selection": "both",
+            "testboard_scan_order": "interleaved",
+            "repeat": 99,
+        })
+
+        routes = harness.get_testboard_adc_routes()
+        self.assertEqual(len(routes), 20)
+        self.assertEqual(routes[:8], [(1, 0), (2, 5), (3, 0), (4, 5), (1, 1), (2, 6), (3, 1), (4, 6)])
+        self.assertNotIn((1, 5), routes)
+        self.assertNotIn((2, 0), routes)
         self.assertEqual(harness.get_effective_samples_per_sweep(), 20)
 
         specs = harness.get_display_channel_specs()
-        self.assertEqual([spec["sample_indices"] for spec in specs[:5]], [[2], [6], [10], [14], [18]])
-        self.assertEqual([spec["sample_indices"] for spec in specs[5:]], [[3], [7], [11], [15], [19]])
+        by_label = {spec["label"]: spec["sample_indices"] for spec in specs}
+        self.assertEqual(by_label["A1_PZT6_B"], [0])
+        self.assertEqual(by_label["A1_PZT3_B"], [1])
+        self.assertEqual(by_label["A2_PZT6_B"], [2])
+        self.assertEqual(by_label["A2_PZT3_B"], [3])
+
+    def test_7953_gui_selection_ignores_manual_channels_and_resolves_board_wiring(self):
+        harness = DualModePZTHarness()
+        harness.current_mcu = "PCB_TestBoard_7953"
+        harness.channels_input = DummyLineEdit("15,15")
+        harness.pzt_sequence_input = DummyLineEdit("3,6")
+
+        channels, text, source, sensors = harness.get_effective_channels_selection(
+            require_non_empty=True
+        )
+
+        self.assertEqual(channels, list(range(5, 10)) + list(range(5)))
+        self.assertEqual(text, "5,6,7,8,9,0,1,2,3,4")
+        self.assertEqual(source, "array")
+        self.assertEqual(sensors, ["PZT3", "PZT6"])
+
+    def test_7953_rejects_pzt_sensor_not_present_in_board_profile(self):
+        harness = DualModePZTHarness()
+        harness.current_mcu = "PCB_TestBoard_7953"
+        harness.channels_input = DummyLineEdit("")
+        harness.pzt_sequence_input = DummyLineEdit("2")
+
+        with self.assertRaisesRegex(ValueError, "not wired.*PZT2"):
+            harness.get_effective_channels_selection(require_non_empty=True)
 
 
 if __name__ == "__main__":

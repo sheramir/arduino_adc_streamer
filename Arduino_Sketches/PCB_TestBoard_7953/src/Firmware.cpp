@@ -38,10 +38,12 @@ void printMcu() {
 void printHelp() {
   Serial.println(F("# Commands are terminated by '*'."));
   Serial.println(F("# mode PZT|PZR, mcu, help, status, stop"));
-  Serial.println(F("# channels 0..15, repeat n, buffer n, run [ms]"));
-  Serial.println(F("# PZT: ground channel|true|false, ref, osr, gain"));
+  Serial.println(F("# PZT: array 1|2|both, scanorder interleaved|array|adc"));
+  Serial.println(F("# PZT: adcchannels adc:channel,..."));
+  Serial.println(F("# PZT: vmid channel|true|false, run [ms], ref, osr, gain"));
+  Serial.println(F("# Legacy Vmid alias: ground ..."));
   Serial.println(F("# PZR: rb, rk, cf, rxmax, ascii (requires enabled 555 hardware)"));
-  Serial.println(F("# PZT order: channel -> repeat -> ADC1,ADC2,ADC3,ADC4"));
+  Serial.println(F("# scanorder controls both acquisition and payload order"));
 }
 
 bool switchMode(const String &arguments) {

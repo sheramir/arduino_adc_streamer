@@ -6,109 +6,160 @@
 #include "ApiProtocol.h"
 
 namespace {
-DMAMEM static uint16_t g_samples[testboard_config::kMaxBlockSamples];
+DMAMEM static uint16_t g_samples[testboard_config::kMaxAdcRoutes];
 DMAMEM static uint8_t g_wire_block[
-    4 + testboard_config::kMaxBlockSamples * sizeof(uint16_t) + api_protocol::kTrailerBytes];
+    4 + testboard_config::kMaxAdcRoutes * sizeof(uint16_t) + api_protocol::kTrailerBytes];
+
+bool isUnsignedNumber(const String &value) {
+  if (!value.length()) return false;
+  for (uint16_t index = 0; index < value.length(); ++index) {
+    if (!isDigit(value.charAt(index))) return false;
+  }
+  return true;
 }
+}  // namespace
 
 PztController::PztController(AdcDevice **adcs, uint8_t adc_count, UsbSerialController &usb)
     : adcs_(adcs), adc_count_(adc_count), usb_(usb) {}
 
 void PztController::begin() {
-  channel_count_ = testboard_config::kDefaultChannelCount;
-  memcpy(channels_, testboard_config::kDefaultChannels, channel_count_);
-  repeat_ = testboard_config::kDefaultRepeat;
-  buffer_sweeps_ = testboard_config::kDefaultBufferSweeps;
-  ground_channel_ = testboard_config::kDefaultGroundChannel;
-  ground_enabled_ = testboard_config::kDefaultGroundEnabled;
+  vmid_channel_ = testboard_config::kDefaultVmidChannel;
+  vmid_park_enabled_ = testboard_config::kDefaultVmidParkEnabled;
+  array_selection_ = ARRAY_BOTH;
+  scan_order_ = SCAN_INTERLEAVED;
   for (uint8_t index = 0; index < adc_count_; ++index) {
     adcs_[index]->begin();
   }
 }
 
-bool PztController::setChannels(const String &arguments) {
+bool PztController::adcSelected(uint8_t adc) const {
+  if (adc >= adc_count_) return false;
+  if (array_selection_ == ARRAY_BOTH) return true;
+  if (array_selection_ == ARRAY_1) return adc < 2;
+  return adc >= 2;
+}
+
+bool PztController::setAdcChannels(const String &arguments) {
   if (running_) return false;
-  uint8_t parsed[testboard_config::kMaxChannelSequence];
-  uint8_t count = 0;
+  AdcRoute parsed[testboard_config::kMaxAdcRoutes];
+  uint8_t parsed_count = 0;
   int start = 0;
+
   while (start < static_cast<int>(arguments.length())) {
     const int comma = arguments.indexOf(',', start);
     String token = arguments.substring(start, comma < 0 ? arguments.length() : comma);
     token.trim();
-    for (uint16_t index = 0; index < token.length(); ++index) {
-      if (!isDigit(token.charAt(index))) return false;
-    }
-    const int value = token.toInt();
-    if (!token.length() || value < 0 || value >= testboard_config::kAdcChannels ||
-        count >= testboard_config::kMaxChannelSequence) {
+    const int colon = token.indexOf(':');
+    if (colon <= 0 || colon >= static_cast<int>(token.length()) - 1) return false;
+    String adc_text = token.substring(0, colon);
+    String channel_text = token.substring(colon + 1);
+    adc_text.trim();
+    channel_text.trim();
+    if (!isUnsignedNumber(adc_text) || !isUnsignedNumber(channel_text)) return false;
+
+    const int adc_number = adc_text.toInt();
+    const int channel = channel_text.toInt();
+    if (adc_number < 1 || adc_number > adc_count_ ||
+        channel < 0 || channel >= testboard_config::kAdcChannels ||
+        !adcSelected(static_cast<uint8_t>(adc_number - 1))) {
       return false;
     }
-    parsed[count++] = static_cast<uint8_t>(value);
+
+    const AdcRoute route = {
+        static_cast<uint8_t>(adc_number - 1),
+        static_cast<uint8_t>(channel),
+    };
+    bool duplicate_route = false;
+    for (uint8_t index = 0; index < parsed_count; ++index) {
+      if (parsed[index].adc == route.adc && parsed[index].channel == route.channel) {
+        duplicate_route = true;
+      }
+    }
+    if (!duplicate_route) {
+      if (parsed_count >= testboard_config::kMaxAdcRoutes) return false;
+      parsed[parsed_count++] = route;
+    }
+
     if (comma < 0) break;
     start = comma + 1;
   }
-  if (count == 0) return false;
-  const uint32_t proposed_samples = static_cast<uint32_t>(count) * repeat_ *
-                                    buffer_sweeps_ * adc_count_;
-  if (proposed_samples > testboard_config::kMaxBlockSamples) return false;
-  memcpy(channels_, parsed, count);
-  channel_count_ = count;
+
+  if (parsed_count == 0) return false;
+  memcpy(routes_, parsed, parsed_count * sizeof(AdcRoute));
+  route_count_ = parsed_count;
   return true;
 }
 
-bool PztController::setRepeat(const String &arguments) {
-  if (running_) return false;
-  const int value = arguments.toInt();
-  if (value < 1 || value > 255) return false;
-  const uint8_t old = repeat_;
-  repeat_ = static_cast<uint8_t>(value);
-  if (!blockFits()) {
-    repeat_ = old;
-    return false;
-  }
-  return true;
-}
-
-bool PztController::setBuffer(const String &arguments) {
-  if (running_) return false;
-  const int value = arguments.toInt();
-  if (value < 1 || value > 255) return false;
-  const uint8_t old = buffer_sweeps_;
-  buffer_sweeps_ = static_cast<uint8_t>(value);
-  if (!blockFits()) {
-    buffer_sweeps_ = old;
-    return false;
-  }
-  return true;
-}
-
-bool PztController::setGround(const String &arguments) {
+bool PztController::setArraySelection(const String &arguments) {
   if (running_) return false;
   String value = arguments;
+  value.trim();
+  value.toLowerCase();
+  ArraySelection selection;
+  if (value == "1" || value == "array1" || value == "array 1") {
+    selection = ARRAY_1;
+  } else if (value == "2" || value == "array2" || value == "array 2") {
+    selection = ARRAY_2;
+  } else if (value == "both") {
+    selection = ARRAY_BOTH;
+  } else {
+    return false;
+  }
+  array_selection_ = selection;
+  uint8_t kept = 0;
+  for (uint8_t index = 0; index < route_count_; ++index) {
+    if (adcSelected(routes_[index].adc)) routes_[kept++] = routes_[index];
+  }
+  route_count_ = kept;
+  // A following adcchannels command may replace all routes.  Accept an empty
+  // intermediate selection so switching directly from array 1 to array 2 is
+  // possible without first restoring "both".
+  return true;
+}
+
+bool PztController::setScanOrder(const String &arguments) {
+  if (running_) return false;
+  String value = arguments;
+  value.trim();
+  value.toLowerCase();
+  if (value == "interleaved") scan_order_ = SCAN_INTERLEAVED;
+  else if (value == "array") scan_order_ = SCAN_ARRAY;
+  else if (value == "adc") scan_order_ = SCAN_ADC;
+  else return false;
+  return true;
+}
+
+bool PztController::setVmid(const String &arguments) {
+  if (running_) return false;
+  String value = arguments;
+  value.trim();
   value.toLowerCase();
   if (value == "true") {
-    ground_enabled_ = true;
+    vmid_park_enabled_ = true;
     return true;
   }
   if (value == "false") {
-    ground_enabled_ = false;
+    vmid_park_enabled_ = false;
     return true;
   }
+  if (!isUnsignedNumber(value)) return false;
   const int channel = value.toInt();
   if (channel < 0 || channel >= testboard_config::kAdcChannels) return false;
-  ground_channel_ = static_cast<uint8_t>(channel);
-  ground_enabled_ = true;
+  for (uint8_t index = 0; index < route_count_; ++index) {
+    if (routes_[index].channel == channel) return false;
+  }
+  vmid_channel_ = static_cast<uint8_t>(channel);
+  vmid_park_enabled_ = true;
+  parkSelectedAdcs();
   return true;
 }
 
-bool PztController::blockFits() const {
-  const uint32_t total = static_cast<uint32_t>(channel_count_) * repeat_ *
-                         buffer_sweeps_ * adc_count_;
-  return total > 0 && total <= testboard_config::kMaxBlockSamples;
+bool PztController::routesValid() const {
+  return route_count_ > 0 && route_count_ <= testboard_config::kMaxAdcRoutes;
 }
 
 bool PztController::startRun(const String &arguments) {
-  if (!blockFits()) return false;
+  if (!routesValid()) return false;
   running_ = true;
   timed_run_ = arguments.length() > 0;
   run_duration_ms_ = timed_run_ ? static_cast<uint32_t>(arguments.toInt()) : 0;
@@ -116,15 +167,16 @@ bool PztController::startRun(const String &arguments) {
     running_ = false;
     return false;
   }
+  parkSelectedAdcs();
   run_started_ms_ = millis();
   return true;
 }
 
 bool PztController::handleCommand(const String &command, const String &arguments) {
-  if (command == "channels") return setChannels(arguments);
-  if (command == "repeat") return setRepeat(arguments);
-  if (command == "buffer") return setBuffer(arguments);
-  if (command == "ground") return setGround(arguments);
+  if (command == "adcchannels") return setAdcChannels(arguments);
+  if (command == "array") return setArraySelection(arguments);
+  if (command == "scanorder") return setScanOrder(arguments);
+  if (command == "vmid" || command == "ground") return setVmid(arguments);
   if (command == "run") return startRun(arguments);
   // Compatibility controls used by existing array configuration. ADS7953 has
   // fixed 12-bit conversion and an external reference; these are accepted as
@@ -136,27 +188,68 @@ bool PztController::handleCommand(const String &command, const String &arguments
   return false;
 }
 
-bool PztController::captureBlock() {
-  const uint32_t started = micros();
-  uint16_t sample_index = 0;
-  for (uint8_t sweep = 0; sweep < buffer_sweeps_; ++sweep) {
-    for (uint8_t channel_index = 0; channel_index < channel_count_; ++channel_index) {
-      const uint8_t channel = channels_[channel_index];
-      if (ground_enabled_) {
-        uint16_t discarded = 0;
-        for (uint8_t adc = 0; adc < adc_count_; ++adc) {
-          adcs_[adc]->readChannel(ground_channel_, discarded);
-        }
-      }
-      for (uint8_t repeat_index = 0; repeat_index < repeat_; ++repeat_index) {
-        // Wire order is channel -> repeat -> ADC1,ADC2,ADC3,ADC4.
-        for (uint8_t adc = 0; adc < adc_count_; ++adc) {
-          uint16_t sample = 0;
-          adcs_[adc]->readChannel(channel, sample);
-          g_samples[sample_index++] = sample;
-        }
+uint8_t PztController::buildScanPlan(AdcRoute *destination) const {
+  uint8_t output_count = 0;
+  if (scan_order_ == SCAN_ADC) {
+    for (uint8_t adc = 0; adc < adc_count_; ++adc) {
+      for (uint8_t index = 0; index < route_count_; ++index) {
+        if (routes_[index].adc == adc) destination[output_count++] = routes_[index];
       }
     }
+    return output_count;
+  }
+
+  const uint8_t pair_count = scan_order_ == SCAN_ARRAY ? 2 : 1;
+  for (uint8_t pair = 0; pair < pair_count; ++pair) {
+    const uint8_t first_adc = scan_order_ == SCAN_ARRAY ? pair * 2 : 0;
+    const uint8_t last_adc = scan_order_ == SCAN_ARRAY ? first_adc + 2 : adc_count_;
+    for (uint8_t depth = 0; depth < route_count_; ++depth) {
+      bool added = false;
+      for (uint8_t adc = first_adc; adc < last_adc; ++adc) {
+        uint8_t lane_depth = 0;
+        for (uint8_t index = 0; index < route_count_; ++index) {
+          if (routes_[index].adc != adc) continue;
+          if (lane_depth++ == depth) {
+            destination[output_count++] = routes_[index];
+            added = true;
+            break;
+          }
+        }
+      }
+      if (!added) break;
+    }
+  }
+  return output_count;
+}
+
+void PztController::parkAdc(uint8_t adc) {
+  if (!vmid_park_enabled_ || adc >= adc_count_) return;
+  uint16_t discarded = 0;
+  adcs_[adc]->readChannel(vmid_channel_, discarded);
+}
+
+void PztController::parkSelectedAdcs() {
+  if (!vmid_park_enabled_) return;
+  for (uint8_t adc = 0; adc < adc_count_; ++adc) {
+    bool routed = false;
+    for (uint8_t route = 0; route < route_count_; ++route) {
+      if (routes_[route].adc == adc) routed = true;
+    }
+    if (routed) parkAdc(adc);
+  }
+}
+
+bool PztController::captureBufferedBlock(const AdcRoute *plan, uint8_t plan_count) {
+  const uint32_t started = micros();
+  uint16_t sample_index = 0;
+  for (uint8_t route_index = 0; route_index < plan_count; ++route_index) {
+    const AdcRoute &route = plan[route_index];
+    uint16_t sample = 0;
+    if (!adcs_[route.adc]->readChannel(route.channel, sample)) sample = 0;
+    g_samples[sample_index++] = sample;
+    // The just-read PZT must not remain connected to the ADC input while
+    // another ADC or route is sampled.
+    parkAdc(route.adc);
   }
 
   const uint32_t ended = micros();
@@ -170,6 +263,49 @@ bool PztController::captureBlock() {
   return true;
 }
 
+bool PztController::captureArrayStreamedBlock(const AdcRoute *plan, uint8_t plan_count) {
+  const uint16_t total_samples = plan_count;
+  if (!total_samples) return false;
+
+  usb_.beginBinaryBlock(total_samples);
+  const uint32_t started = micros();
+  uint16_t emitted_samples = 0;
+  for (uint8_t array_number = 0; array_number < 2; ++array_number) {
+    uint16_t chunk_count = 0;
+    const uint8_t first_adc = array_number * 2;
+    const uint8_t last_adc = first_adc + 2;
+    for (uint8_t route_index = 0; route_index < plan_count; ++route_index) {
+      const AdcRoute &route = plan[route_index];
+      if (route.adc < first_adc || route.adc >= last_adc) continue;
+      uint16_t sample = 0;
+      if (!adcs_[route.adc]->readChannel(route.channel, sample)) sample = 0;
+      g_samples[chunk_count++] = sample;
+      parkAdc(route.adc);
+    }
+    if (chunk_count) {
+      usb_.writeBinarySamples(g_samples, chunk_count);
+      emitted_samples += chunk_count;
+    }
+  }
+
+  const uint32_t ended = micros();
+  if (emitted_samples != total_samples) return false;
+  const uint16_t average = static_cast<uint16_t>(
+      min((ended - started + emitted_samples / 2u) / emitted_samples, 65535u));
+  usb_.endBinaryBlock(average, started, ended);
+  return true;
+}
+
+bool PztController::captureBlock() {
+  AdcRoute plan[testboard_config::kMaxAdcRoutes];
+  const uint8_t plan_count = buildScanPlan(plan);
+  if (plan_count != route_count_) return false;
+  if (scan_order_ == SCAN_ARRAY) {
+    return captureArrayStreamedBlock(plan, plan_count);
+  }
+  return captureBufferedBlock(plan, plan_count);
+}
+
 void PztController::service() {
   if (!running_) return;
   if (timed_run_ && millis() - run_started_ms_ >= run_duration_ms_) {
@@ -180,6 +316,7 @@ void PztController::service() {
 }
 
 void PztController::stop() {
+  if (running_) parkSelectedAdcs();
   running_ = false;
   timed_run_ = false;
 }
@@ -188,20 +325,33 @@ bool PztController::isRunning() const {
   return running_;
 }
 
+const __FlashStringHelper *PztController::arraySelectionName() const {
+  if (array_selection_ == ARRAY_1) return F("1");
+  if (array_selection_ == ARRAY_2) return F("2");
+  return F("both");
+}
+
+const __FlashStringHelper *PztController::scanOrderName() const {
+  if (scan_order_ == SCAN_ARRAY) return F("array");
+  if (scan_order_ == SCAN_ADC) return F("adc");
+  return F("interleaved");
+}
+
 void PztController::printStatus() const {
   Serial.println(F("# -------- STATUS (PZT/ADS7953) --------"));
-  Serial.print(F("# channels="));
-  for (uint8_t index = 0; index < channel_count_; ++index) {
+  Serial.print(F("# adcchannels="));
+  for (uint8_t index = 0; index < route_count_; ++index) {
     if (index) Serial.print(',');
-    Serial.print(channels_[index]);
+    Serial.print(routes_[index].adc + 1);
+    Serial.print(':');
+    Serial.print(routes_[index].channel);
   }
   Serial.println();
-  Serial.print(F("# repeat=")); Serial.println(repeat_);
-  Serial.print(F("# buffer=")); Serial.println(buffer_sweeps_);
-  Serial.print(F("# adc_lanes=")); Serial.println(adc_count_);
-  Serial.print(F("# sample_order=channel,repeat,adc_lane")); Serial.println();
-  Serial.print(F("# ground=")); Serial.println(ground_enabled_ ? F("true") : F("false"));
-  Serial.print(F("# ground_channel=")); Serial.println(ground_channel_);
+  Serial.print(F("# array=")); Serial.println(arraySelectionName());
+  Serial.print(F("# scanorder=")); Serial.println(scanOrderName());
+  Serial.print(F("# route_count=")); Serial.println(route_count_);
+  Serial.print(F("# vmid_park=")); Serial.println(vmid_park_enabled_ ? F("true") : F("false"));
+  Serial.print(F("# vmid_channel=")); Serial.println(vmid_channel_);
   for (uint8_t adc = 0; adc < adc_count_; ++adc) {
     Serial.print(F("# adc")); Serial.print(adc + 1);
     Serial.print(F("_errors=")); Serial.println(adcs_[adc]->errorCount());

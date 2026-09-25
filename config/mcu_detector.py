@@ -108,12 +108,71 @@ class MCUDetectorMixin:
             self._apply_mcu_state(build_unknown_mcu_state())
 
     def _apply_mcu_view_state(self, view_state):
+        if hasattr(self, 'adc_config_group'):
+            self.adc_config_group.setVisible(view_state.show_adc_config_section)
+
+        if hasattr(self, 'channels_sequence_label'):
+            self.channels_sequence_label.setVisible(view_state.show_manual_channels)
+        if hasattr(self, 'channels_input'):
+            self.channels_input.setVisible(view_state.show_manual_channels)
+
+        if hasattr(self, 'repeat_label'):
+            self.repeat_label.setVisible(view_state.show_repeat_buffer_controls)
+        if hasattr(self, 'repeat_spin'):
+            self.repeat_spin.setVisible(view_state.show_repeat_buffer_controls)
+        if hasattr(self, 'buffer_label'):
+            self.buffer_label.setVisible(view_state.show_repeat_buffer_controls)
+        if hasattr(self, 'buffer_spin'):
+            self.buffer_spin.setVisible(view_state.show_repeat_buffer_controls)
+
+        if not view_state.show_repeat_buffer_controls:
+            if hasattr(self, 'repeat_spin'):
+                self.repeat_spin.blockSignals(True)
+                self.repeat_spin.setValue(1)
+                self.repeat_spin.blockSignals(False)
+            if hasattr(self, 'buffer_spin'):
+                self.buffer_spin.blockSignals(True)
+                self.buffer_spin.setValue(1)
+                self.buffer_spin.blockSignals(False)
+            if hasattr(self, 'config'):
+                self.config['repeat'] = 1
+
+        if hasattr(self, 'testboard_array_label'):
+            self.testboard_array_label.setVisible(view_state.show_testboard_scan_controls)
+        if hasattr(self, 'testboard_array_combo'):
+            self.testboard_array_combo.setVisible(view_state.show_testboard_scan_controls)
+        if hasattr(self, 'testboard_scan_order_label'):
+            self.testboard_scan_order_label.setVisible(view_state.show_testboard_scan_controls)
+        if hasattr(self, 'testboard_scan_order_combo'):
+            self.testboard_scan_order_combo.setVisible(view_state.show_testboard_scan_controls)
+        if hasattr(self, 'pzt_sequence_input'):
+            self.pzt_sequence_input.setPlaceholderText(
+                "e.g., 3,6"
+                if view_state.show_testboard_scan_controls
+                else "e.g., 1,3,5,7"
+            )
+            self.pzt_sequence_input.setToolTip(
+                "Wired sensors: PZT1, PZT3, PZT5, PZT6, PZT7"
+                if view_state.show_testboard_scan_controls
+                else ""
+            )
+
         if hasattr(self, 'ground_pin_label'):
             self.ground_pin_label.setVisible(view_state.show_ground_controls)
+            self.ground_pin_label.setText(
+                "Vmid Park Channel:"
+                if view_state.show_testboard_scan_controls
+                else "Ground Pin:"
+            )
         if hasattr(self, 'ground_pin_spin'):
             self.ground_pin_spin.setVisible(view_state.show_ground_controls)
         if hasattr(self, 'use_ground_check'):
             self.use_ground_check.setVisible(view_state.show_ground_controls)
+            self.use_ground_check.setText(
+                "Park on Vmid"
+                if view_state.show_testboard_scan_controls
+                else "Use Ground Sample"
+            )
 
         locked_ground_pin = self._get_locked_ground_pin_for_mcu_name(self.current_mcu)
         is_ground_default_mcu = locked_ground_pin is not None

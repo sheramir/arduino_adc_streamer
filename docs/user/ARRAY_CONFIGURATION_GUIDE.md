@@ -17,8 +17,7 @@ The current editor in the Sensor tab uses:
 - sensor IDs in canonical form such as `PZT1` or `PZR2`
 - optional legacy input such as `PZT_1`, which is normalized when saved
 - `1..5` logical channels per sensor
-- MUX/ADC lane IDs `1..4` (`1..2` on the PCB1.x MG24 boards;
-  `1..4` on `PCB_TestBoard_7953`)
+- MUX/ADC lane IDs `1..4` (`1..2` on the PCB1.x MG24 boards)
 - physical channel indices `0..15`
 
 ## What Array Layouts Affect
@@ -76,6 +75,24 @@ During acquisition:
 
 This means the physical stream can contain shared or de-duplicated channels, while the GUI still renders the selected sensors using sensor-specific labels.
 
+### PCB_TestBoard_7953 exception
+
+The TestBoard does not use the editable array `mux_mapping` for electrical
+routing. Its fixed wiring lives in `config/testboard_7953_board.py`:
+
+- Array 1 uses ADC1/ADC2; Array 2 uses ADC3/ADC4.
+- PZT6 and PZT7 use the first ADC in each pair on inputs 0..4 and 5..9.
+- PZT1, PZT3, and PZT5 use the second ADC in each pair on inputs 0..4, 5..9,
+  and 10..14.
+- Every five-input group is ordered B, L, C, R, T.
+
+When `PCB_TestBoard_7953` is connected, select Physical Arrays and enter PZT
+sensor numbers. Channels Sequence, PZR Sensors, Repeat Count, and Sweeps per
+block are hidden, along with the generic ADC controls that are not meaningful
+for ADS7953 acquisition. The array layout still determines where those PZT packages
+appear in pressure/heatmap views, but its MUX/channel fields do not alter the
+TestBoard's physical routes.
+
 ## Example JSON Shape
 
 ```json
@@ -110,9 +127,9 @@ This means the physical stream can contain shared or de-duplicated channels, whi
 
 - Every populated cell must be a valid `PZTn` or `PZRn` sensor ID.
 - Every sensor in the grid must have a MUX mapping.
-- MUX/ADC lane values must stay within `1..4`. Use only `1..2` for the
-  PCB1.x MG24 firmware. On `PCB_TestBoard_7953`, lanes `1,2` are sensor array
-  1 and lanes `3,4` are sensor array 2.
+- MUX/ADC lane values must stay within `1..4`. Use only `1..2` for PCB1.x MG24
+  firmware. These editable values are ignored for `PCB_TestBoard_7953`, whose
+  electrical mapping comes from its board profile.
 - Physical channels must stay within `0..15`.
 - `channels_per_sensor` must stay within `1..5`.
 

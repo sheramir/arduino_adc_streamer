@@ -129,6 +129,7 @@ class ControlPanelsMixin:
     def create_adc_config_section(self) -> QGroupBox:
         """Create ADC configuration section."""
         group = QGroupBox("ADC Configuration")
+        self.adc_config_group = group
         layout = QGridLayout()
 
         # Voltage Reference (hidden for Teensy)
@@ -274,7 +275,8 @@ class ControlPanelsMixin:
         layout = QGridLayout()
 
         # Channels sequence
-        layout.addWidget(QLabel("Channels Sequence:"), 0, 0)
+        self.channels_sequence_label = QLabel("Channels Sequence:")
+        layout.addWidget(self.channels_sequence_label, 0, 0)
         self.channels_input = QLineEdit()
         self.channels_input.setPlaceholderText("e.g., 0,1,1,2,3")
         self.channels_input.textChanged.connect(self.on_channels_changed)
@@ -301,37 +303,74 @@ class ControlPanelsMixin:
         self.pzr_sequence_label.hide()
         self.pzr_sequence_input.hide()
 
+        # PCB_TestBoard_7953-only routing controls.
+        self.testboard_array_label = QLabel("Physical Arrays:")
+        layout.addWidget(self.testboard_array_label, 3, 0)
+        self.testboard_array_combo = QComboBox()
+        self.testboard_array_combo.addItems(["Both arrays", "Array 1", "Array 2"])
+        self.testboard_array_combo.setCurrentText("Both arrays")
+        self.testboard_array_combo.setToolTip(
+            "Choose which ADS7953 pair is sampled: ADC1/2, ADC3/4, or both"
+        )
+        self.testboard_array_combo.currentTextChanged.connect(
+            self.on_testboard_array_selection_changed
+        )
+        layout.addWidget(self.testboard_array_combo, 3, 1, 1, 2)
+
+        self.testboard_scan_order_label = QLabel("Scan Order:")
+        layout.addWidget(self.testboard_scan_order_label, 4, 0)
+        self.testboard_scan_order_combo = QComboBox()
+        self.testboard_scan_order_combo.addItems(
+            ["Interleaved ADCs", "Array-at-a-time", "ADC-at-a-time"]
+        )
+        self.testboard_scan_order_combo.setCurrentText("Interleaved ADCs")
+        self.testboard_scan_order_combo.setToolTip(
+            "Compare ADC hopping across both arrays, array-by-array hopping, "
+            "or completing one ADC before moving to the next"
+        )
+        self.testboard_scan_order_combo.currentTextChanged.connect(
+            self.on_testboard_scan_order_changed
+        )
+        layout.addWidget(self.testboard_scan_order_combo, 4, 1, 1, 2)
+
+        self.testboard_array_label.hide()
+        self.testboard_array_combo.hide()
+        self.testboard_scan_order_label.hide()
+        self.testboard_scan_order_combo.hide()
+
         # Ground pin
         self.ground_pin_label = QLabel("Ground Pin:")
-        layout.addWidget(self.ground_pin_label, 3, 0)
+        layout.addWidget(self.ground_pin_label, 5, 0)
         self.ground_pin_spin = QSpinBox()
         self.ground_pin_spin.setRange(GROUND_PIN_MIN, GROUND_PIN_MAX)
         self.ground_pin_spin.setValue(GROUND_PIN_DEFAULT)
         self.ground_pin_spin.valueChanged.connect(self.on_ground_pin_changed)
-        layout.addWidget(self.ground_pin_spin, 3, 1)
+        layout.addWidget(self.ground_pin_spin, 5, 1)
 
         # Use ground sample
         self.use_ground_check = QCheckBox("Use Ground Sample")
         self.use_ground_check.setChecked(False)  # Default to disabled
         self.use_ground_check.stateChanged.connect(self.on_use_ground_changed)
-        layout.addWidget(self.use_ground_check, 3, 2)
+        layout.addWidget(self.use_ground_check, 5, 2)
 
         # Repeat count
-        layout.addWidget(QLabel("Repeat Count:"), 4, 0)
+        self.repeat_label = QLabel("Repeat Count:")
+        layout.addWidget(self.repeat_label, 6, 0)
         self.repeat_spin = QSpinBox()
         self.repeat_spin.setRange(REPEAT_COUNT_MIN, REPEAT_COUNT_MAX)
         self.repeat_spin.setValue(REPEAT_COUNT_DEFAULT)
         self.repeat_spin.valueChanged.connect(self.on_repeat_changed)
-        layout.addWidget(self.repeat_spin, 4, 1)
+        layout.addWidget(self.repeat_spin, 6, 1)
 
         # Buffer size (sweeps per block)
-        layout.addWidget(QLabel("Sweeps per block (buffer):"), 5, 0)
+        self.buffer_label = QLabel("Sweeps per block (buffer):")
+        layout.addWidget(self.buffer_label, 7, 0)
         self.buffer_spin = QSpinBox()
         self.buffer_spin.setRange(BUFFER_SIZE_MIN, BUFFER_SIZE_MAX)
         self.buffer_spin.setValue(DEFAULT_BUFFER_SIZE)
         self.buffer_spin.setToolTip("Number of sweeps sent per block from Arduino")
         self.buffer_spin.valueChanged.connect(self.on_buffer_size_changed)
-        layout.addWidget(self.buffer_spin, 5, 1)
+        layout.addWidget(self.buffer_spin, 7, 1)
 
         group.setLayout(layout)
         return group

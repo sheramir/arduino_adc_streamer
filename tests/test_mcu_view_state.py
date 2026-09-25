@@ -44,6 +44,16 @@ class MCUViewStateTests(unittest.TestCase):
         self.assertTrue(view_state.show_555_controls)
         self.assertTrue(view_state.osr_visible)
 
+    def test_7953_profile_shows_lane_aware_scan_controls(self):
+        profile = resolve_mcu_profile("PCB_TestBoard_7953", selected_array_mode="PZT")
+        view_state = build_mcu_view_state(profile)
+
+        self.assertTrue(profile.is_testboard_7953)
+        self.assertTrue(view_state.show_testboard_scan_controls)
+        self.assertFalse(view_state.show_manual_channels)
+        self.assertFalse(view_state.show_repeat_buffer_controls)
+        self.assertFalse(view_state.show_adc_config_section)
+
 
 if __name__ == "__main__":
     unittest.main()

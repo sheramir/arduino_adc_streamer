@@ -31,8 +31,6 @@ class PzrController {
   UsbSerialController &usb_;
   uint8_t channels_[testboard_config::kMaxChannelSequence];
   uint8_t channel_count_ = 0;
-  uint8_t repeat_ = 1;
-  uint8_t buffer_sweeps_ = 1;
   float rb_ohm_ = 470.0f;
   float rk_ohm_ = 470.0f;
   float cf_f_ = 22e-9f;

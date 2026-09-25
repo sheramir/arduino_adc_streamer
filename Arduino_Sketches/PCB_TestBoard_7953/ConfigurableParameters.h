@@ -40,14 +40,12 @@ static constexpr bool kAds7953Range2xVref = false;
 static constexpr uint8_t kAds7953PipelineFrames = 2;
 static constexpr bool kValidateReturnedChannel = true;
 
-static constexpr uint16_t kMaxBlockSamples = 8000;
 static constexpr uint8_t kMaxChannelSequence = 64;
+static constexpr uint8_t kMaxAdcRoutes = 64;
 static constexpr uint8_t kDefaultChannels[] = {0, 1, 2, 3, 4};
 static constexpr uint8_t kDefaultChannelCount = sizeof(kDefaultChannels);
-static constexpr uint8_t kDefaultRepeat = 1;
-static constexpr uint8_t kDefaultBufferSweeps = 1;
-static constexpr uint8_t kDefaultGroundChannel = 15;
-static constexpr bool kDefaultGroundEnabled = false;
+static constexpr uint8_t kDefaultVmidChannel = 15;
+static constexpr bool kDefaultVmidParkEnabled = false;
 
 // Optional future 555/PZR hardware. The test board has no 555 circuit, so the
 // safe default is disabled and mode PZR returns #NOT_OK. To enable it, assign

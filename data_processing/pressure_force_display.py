@@ -139,6 +139,21 @@ class PressureForceDisplayEngine:
         sensor_id = str(sensor_id).strip().upper()
         self._packages[sensor_id] = self._new_package_state()
 
+    def self_test(self) -> None:
+        """Verify ``self.settings`` actually produce a working engine.
+
+        Exercises the same construction path as ``reset()``/``configure_layout()``
+        without mutating any state, so callers can validate a candidate settings
+        dict *before* committing it to a running engine or worker thread.
+
+        Raises
+        ------
+        ValueError
+            If any PZT force parameter (capacitance, leak resistance, d33, ...)
+            is non-finite or out of its physically valid range.
+        """
+        self._new_package_state()
+
     def process_sample(
         self, sample_id: Hashable, package_centered_voltage_v: Mapping[str, Mapping[str, float]],
         timestamps_s: Mapping[str, object] | float, *,

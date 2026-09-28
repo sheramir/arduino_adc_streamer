@@ -57,6 +57,7 @@ class ForceBlockWorker(QThread):
     """
 
     result_ready = pyqtSignal(object)
+    worker_error = pyqtSignal(str)
 
     def __init__(self, engine: PressureForceDisplayEngine) -> None:
         super().__init__()
@@ -159,13 +160,29 @@ class ForceBlockWorker(QThread):
 
     def _handle_item(self, item: object) -> None:
         if item is _RESET_SENTINEL:
-            self._engine.reset()
+            self._safe_reset()
             return
         if isinstance(item, PressureForceDisplayEngine):
             self._engine = item
             return
         if isinstance(item, ForceBlockBatch):
             self._process_batch(item)
+
+    def _safe_reset(self) -> bool:
+        """Reset the engine, halting the worker instead of dying silently on failure.
+
+        ``reset()`` rebuilds every package from the engine's *own* settings, so
+        it can only fail if those settings are themselves invalid (a bug
+        upstream let a bad engine through). Never let that escape the run
+        loop unannounced.
+        """
+        try:
+            self._engine.reset()
+            return True
+        except Exception as exc:  # noqa: BLE001 - must never kill the thread silently
+            self._state = WorkerState.STOPPING
+            self.worker_error.emit(f"Force display halted: engine reset failed - {exc}")
+            return False
 
     # ------------------------------------------------------------------
     # Batch processing (runs on worker thread)
@@ -185,7 +202,7 @@ class ForceBlockWorker(QThread):
         except ValueError as exc:
             # Discontinuity (restart/buffer gap) — reset engine state and
             # continue from the next batch.  Never call back into GUI thread.
-            self._engine.reset()
+            self._safe_reset()
             _ = exc  # discontinuity logged by caller via status label indirectly
 
     def _integrate_sweeps(self, batch: ForceBlockBatch) -> None:

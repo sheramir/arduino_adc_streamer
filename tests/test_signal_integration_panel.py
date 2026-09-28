@@ -1313,6 +1313,56 @@ class SignalIntegrationPanelTests(unittest.TestCase):
         harness._rebuild_pressure_force_engine()
         self.assertEqual(harness.pressure_force_engine.settings["force_zero_band_min_n"], 0.05)
 
+    def test_invalid_pzt_force_settings_revert_to_last_good_and_warn(self):
+        """An invalid d33 (<= 0) must never crash the engine rebuild: the
+        rebuild falls back to the last working settings, the widget that
+        caused it snaps back to that value, and the user is warned - not
+        left with a silently divergent display."""
+        harness = SignalIntegrationPanelHarness()
+        self._install_shear_setting_widgets(harness)
+        harness.force_pzt_d33_spin = DummySpinBox(600.0)
+        harness.force_pzt_rleak_spin = DummySpinBox(1e8)
+        harness.force_pzt_center_capacitance_spin = DummySpinBox(1000.0)
+        harness.force_pzt_outer_capacitance_spin = DummySpinBox(1000.0)
+        harness.force_pzt_capacitance_unit_combo = DummyComboBox("pF")
+        harness.force_pzt_noise_spin = DummySpinBox(0.01)
+        harness.force_pzt_off_mux_check = DummyCheckBox(False)
+        harness.force_pzt_off_mux_rleak_spin = DummySpinBox(1e8)
+        harness.force_pzt_stuck_failsafe_check = DummyCheckBox(True)
+        harness.force_pzt_stuck_hold_spin = DummySpinBox(1.0)
+        harness.force_pzt_stuck_tau_spin = DummySpinBox(1.0)
+        harness.force_display_status_label = DummyLabel("")
+
+        harness.pressure_map_geometry = PressureMapGeometry()
+        harness.normal_force_calculator = NormalForceCalculator()
+        harness.shear_detector = ShearDetector()
+        harness.pressure_map_array_generator = PressureMapArrayGenerator(geometry=harness.pressure_map_geometry)
+        # Pre-seed a not-started worker so the rebuild takes the swap_engine
+        # path instead of spinning up a real QThread (matches the other
+        # worker-touching tests in this file).
+        placeholder_engine = PressureForceDisplayEngine(
+            geometry=harness.pressure_map_geometry,
+            normal_force_calculator=harness.normal_force_calculator,
+            shear_detector=harness.shear_detector,
+            pressure_map_array_generator=harness.pressure_map_array_generator,
+        )
+        harness._force_worker = ForceBlockWorker(placeholder_engine)
+
+        harness._rebuild_pressure_force_engine()
+        self.assertEqual(harness.pressure_force_engine.settings["d33_pc_per_n"], 600.0)
+
+        harness.force_pzt_d33_spin.setValue(0.0)
+        with patch("gui.signal_integration_panel.QMessageBox") as mock_message_box:
+            harness._rebuild_pressure_force_engine()
+
+        # Reverted to the last working value, not left broken or blank.
+        self.assertEqual(harness.pressure_force_engine.settings["d33_pc_per_n"], 600.0)
+        # The widget itself snaps back so the UI never lies about what's running.
+        self.assertEqual(harness.force_pzt_d33_spin.value(), 600.0)
+        # The user is told loudly - never a silent swallow.
+        mock_message_box.warning.assert_called_once()
+        self.assertIn("reverted", harness.force_display_status_label.text().lower())
+
     def test_pressure_map_tab_controls_expose_tooltips(self):
         harness = SignalIntegrationPanelHarness()
 

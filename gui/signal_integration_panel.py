@@ -21,7 +21,7 @@ from __future__ import annotations
 import math
 import time
 from pathlib import Path
-from typing import Hashable
+from typing import Hashable, Mapping
 
 import numpy as np
 import pyqtgraph as pg
@@ -1141,6 +1141,68 @@ class PressureMapPanelMixin:
             "quiet_hold_clear_s": self._spin_float("force_pzt_quiet_hold_spin", float(PZT_FORCE_DEFAULT_SETTINGS["quiet_hold_clear_s"])),
         }
 
+    def _apply_pzt_force_settings_to_widgets(self, settings: Mapping[str, object]) -> None:
+        """Force every PZT Force widget to reflect ``settings`` without re-triggering a rebuild."""
+        widget_names = (
+            "force_pzt_center_capacitance_spin", "force_pzt_outer_capacitance_spin",
+            "force_pzt_capacitance_unit_combo", "force_pzt_rleak_spin", "force_pzt_d33_spin",
+            "force_pzt_noise_spin", "force_pzt_off_mux_check", "force_pzt_off_mux_rleak_spin",
+            "force_display_max_n_spin", "force_arrow_gain_spin", "force_arrow_threshold_spin",
+            "force_pzt_stuck_failsafe_check", "force_pzt_stuck_hold_spin", "force_pzt_stuck_tau_spin",
+            "force_pzt_zero_floor_spin", "force_pzt_zero_band_fraction_spin",
+            "force_pzt_min_event_peak_spin", "force_pzt_quiet_release_spin", "force_pzt_quiet_hold_spin",
+        )
+        widgets = [getattr(self, name, None) for name in widget_names]
+        for widget in widgets:
+            if widget is not None and hasattr(widget, "blockSignals"):
+                widget.blockSignals(True)
+        try:
+            self._set_spin_value("force_pzt_center_capacitance_spin", settings, "center_capacitance_value", float)
+            self._set_spin_value("force_pzt_outer_capacitance_spin", settings, "outer_capacitance_value", float)
+            self._set_combo_value("force_pzt_capacitance_unit_combo", settings, "capacitance_unit")
+            self._set_spin_value("force_pzt_rleak_spin", settings, "rleak_ohm", float)
+            self._set_spin_value("force_pzt_d33_spin", settings, "d33_pc_per_n", float)
+            self._set_spin_value("force_pzt_noise_spin", settings, "noise_threshold_v", float)
+            self._set_check_value("force_pzt_off_mux_check", settings, "off_mux_leak_enabled")
+            self._set_spin_value("force_pzt_off_mux_rleak_spin", settings, "off_mux_rleak_ohm", float)
+            self._set_spin_value("force_display_max_n_spin", settings, "display_max_force_n", float)
+            self._set_spin_value("force_arrow_gain_spin", settings, "force_arrow_gain_mm_per_n", float)
+            self._set_spin_value("force_arrow_threshold_spin", settings, "force_arrow_min_threshold_n", float)
+            self._set_check_value("force_pzt_stuck_failsafe_check", settings, "stuck_force_failsafe_enabled")
+            self._set_spin_value("force_pzt_stuck_hold_spin", settings, "stuck_force_quiet_hold_s", float)
+            self._set_spin_value("force_pzt_stuck_tau_spin", settings, "stuck_force_decay_tau_s", float)
+            self._set_spin_value("force_pzt_zero_floor_spin", settings, "force_zero_band_min_n", float)
+            self._set_spin_value("force_pzt_zero_band_fraction_spin", settings, "force_zero_band_fraction", float)
+            self._set_spin_value("force_pzt_min_event_peak_spin", settings, "force_zero_min_event_peak_n", float)
+            self._set_spin_value("force_pzt_quiet_release_spin", settings, "quiet_hold_release_fraction", float)
+            self._set_spin_value("force_pzt_quiet_hold_spin", settings, "quiet_hold_clear_s", float)
+        finally:
+            for widget in widgets:
+                if widget is not None and hasattr(widget, "blockSignals"):
+                    widget.blockSignals(False)
+
+    def _warn_pzt_force_settings_rejected(self, reason: str) -> None:
+        """Surface a rejected PZT Force settings change loudly - never swallow it."""
+        message = (
+            "The PZT Force settings you entered are physically invalid and were "
+            f"rejected. Reverted to the last working configuration.\n\nReason: {reason}"
+        )
+        if hasattr(self, "force_display_status_label"):
+            self.force_display_status_label.setText(
+                "⚠ Force settings rejected — reverted to last working configuration"
+            )
+        if hasattr(self, "log_status"):
+            self.log_status(f"ERROR: PZT Force settings rejected - {reason}")
+        QMessageBox.warning(self, "Invalid PZT Force Settings", message)
+
+    def _on_force_worker_error(self, message: str) -> None:
+        """The force-integration worker halted itself rather than die silently."""
+        if hasattr(self, "force_display_status_label"):
+            self.force_display_status_label.setText(f"⚠ {message}")
+        if hasattr(self, "log_status"):
+            self.log_status(f"ERROR: {message}")
+        QMessageBox.critical(self, "Force Display Stopped", message)
+
     def on_pzt_force_settings_changed(self, _value: object | None = None) -> None:
         try:
             for widget in self._pressure_map_display_widgets():
@@ -1209,22 +1271,38 @@ class PressureMapPanelMixin:
             return 0.0025
         return max(1e-12, float(settings["noise_threshold_v"]) * capacitance_f / d33_c_per_n)
 
-    def _rebuild_pressure_force_engine(self) -> None:
-        if not hasattr(self, "pressure_map_geometry"):
-            return
-        new_engine = PressureForceDisplayEngine(
+    def _build_pzt_force_engine(self, settings: Mapping[str, object]) -> PressureForceDisplayEngine:
+        engine = PressureForceDisplayEngine(
             geometry=self.pressure_map_geometry,
-            settings=self._pzt_force_settings(),
+            settings=settings,
             normal_force_calculator=self.normal_force_calculator,
             shear_detector=self.shear_detector,
             pressure_map_array_generator=self.pressure_map_array_generator,
         )
+        engine.self_test()
+        return engine
+
+    def _rebuild_pressure_force_engine(self) -> None:
+        if not hasattr(self, "pressure_map_geometry"):
+            return
+        candidate_settings = self._pzt_force_settings()
+        try:
+            new_engine = self._build_pzt_force_engine(candidate_settings)
+            accepted_settings = candidate_settings
+        except (ValueError, KeyError, TypeError) as exc:
+            fallback_settings = getattr(self, "_last_good_pzt_force_settings", None) or dict(PZT_FORCE_DEFAULT_SETTINGS)
+            new_engine = self._build_pzt_force_engine(fallback_settings)
+            accepted_settings = fallback_settings
+            self._apply_pzt_force_settings_to_widgets(fallback_settings)
+            self._warn_pzt_force_settings_rejected(str(exc))
+        self._last_good_pzt_force_settings = dict(accepted_settings)
         self.pressure_force_engine = new_engine
         self._pressure_force_last_processed_sweep_count = int(getattr(self, "sweep_count", 0))
         worker = getattr(self, "_force_worker", None)
         if worker is None:
             self._force_worker = ForceBlockWorker(new_engine)
             self._force_worker.result_ready.connect(lambda r: self._on_force_result_ready(r))
+            self._force_worker.worker_error.connect(self._on_force_worker_error)
             self._force_worker.start()
         else:
             worker.swap_engine(new_engine)
@@ -1288,10 +1366,33 @@ class PressureMapPanelMixin:
             block, times, first_sweep_id, avg_sample_time_us, complete_packages
         )
 
+    def _cached_display_channel_specs(self) -> list:
+        """Return channel specs, refreshed once per force-dispatch cycle.
+
+        ``get_display_channel_specs()`` derives purely from configuration and
+        is otherwise unchanged for the ~30 sweeps between force dispatches, so
+        rebuilding it on every sweep is redundant work. Reusing the last
+        dispatch's cadence bounds staleness to one dispatch interval after a
+        config change, with no separate invalidation flag to keep in sync.
+        """
+        last_dispatch = getattr(self, "_force_last_dispatch_time", None)
+        cache = getattr(self, "_force_display_specs_cache", None)
+        if (
+            cache is not None
+            and last_dispatch is not None
+            and getattr(self, "_force_display_specs_cache_dispatch_time", None) == last_dispatch
+        ):
+            return cache
+        specs = self.get_display_channel_specs()
+        self._force_display_specs_cache = specs
+        self._force_display_specs_cache_dispatch_time = last_dispatch
+        return specs
+
     def _resolve_force_complete_packages(self, block: np.ndarray) -> dict:
         """Return packages that have all five shear positions covered."""
+        specs = self._cached_display_channel_specs()
         specs_by_package: dict[str, dict[str, dict]] = {}
-        for spec_index, spec in enumerate(self.get_display_channel_specs()):
+        for spec_index, spec in enumerate(specs):
             position = self._get_shear_position_for_display_spec(spec, spec_index)
             sample_indices = [
                 int(index) for index in spec.get("sample_indices", [])

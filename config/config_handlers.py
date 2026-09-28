@@ -734,6 +734,7 @@ class ConfigurationMixin:
         # changes the MCU or the selected array mode, so resolve them once.
         is_pzt_rs = self.is_array_pzt_rs_mode()
         is_pzt1 = self.is_array_pzt1_mode()
+        lane_count = self.get_effective_channel_multiplier() if is_pzt1 else 0
 
         if self.is_array_mcu_mode() and selection_source == 'array' and selected_array_sensors:
             sensor_groups = self.get_array_selected_sensor_groups()
@@ -760,7 +761,6 @@ class ConfigurationMixin:
                         elif is_pzt1:
                             unique_idx = unique_channel_positions.get(channel)
                             if unique_idx is not None:
-                                lane_count = self.get_effective_channel_multiplier()
                                 mux_index = max(0, min(lane_count - 1, mux_num - 1))
                                 base_idx = unique_idx * repeat_count * lane_count
                                 for repeat_idx in range(repeat_count):

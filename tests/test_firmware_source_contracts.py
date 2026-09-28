@@ -58,12 +58,13 @@ def test_pcb17_modular_mg24_preserves_transport_constants():
         assert literal in modular
 
 
-def test_7953_sketch_contract_has_requested_pins_identity_and_order():
-    sketch = SKETCHES / "PCB_TestBoard_7953"
-    config = (sketch / "ConfigurableParameters.h").read_text(encoding="utf-8")
+def test_7953_project_contract_has_requested_pins_identity_and_order():
+    sketch = SKETCHES / "TestBoard_7953"
+    config = (sketch / "include" / "ConfigurableParameters.h").read_text(encoding="utf-8")
     firmware = _tree_text(sketch)
 
-    assert (sketch / "PCB_TestBoard_7953.ino").is_file()
+    assert (sketch / "platformio.ini").is_file()
+    assert (sketch / "src" / "main.cpp").is_file()
     assert (sketch / "src").is_dir()
     for name, value in {
         "kSpi1MisoPin": 12,
@@ -79,7 +80,7 @@ def test_7953_sketch_contract_has_requested_pins_identity_and_order():
     }.items():
         assert f"{name} = {value}" in config
 
-    assert 'kMcuName[] = "PCB_TestBoard_7953"' in config
+    assert 'kMcuName[] = "TestBoard_7953"' in config
     for command in ("adcchannels", "scanorder", "array", "vmid"):
         assert command in firmware
     pzt_controller = (sketch / "src" / "PztController.cpp").read_text(encoding="utf-8")

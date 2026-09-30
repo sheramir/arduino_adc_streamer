@@ -25,7 +25,7 @@ Ads7953Adc g_adc1(g_spi1, testboard_config::kAdc1CsPin);
 Ads7953Adc g_adc2(g_spi1, testboard_config::kAdc2CsPin);
 Ads7953Adc g_adc3(g_spi2, testboard_config::kAdc3CsPin);
 Ads7953Adc g_adc4(g_spi2, testboard_config::kAdc4CsPin);
-AdcDevice *g_adcs[] = {&g_adc1, &g_adc2, &g_adc3, &g_adc4};
+Ads7953Adc *g_adcs[] = {&g_adc1, &g_adc2, &g_adc3, &g_adc4};
 PztController g_pzt(g_adcs, sizeof(g_adcs) / sizeof(g_adcs[0]), g_usb);
 PzrController g_pzr(g_usb);
 DeviceMode g_mode = MODE_PZT;
@@ -40,10 +40,13 @@ void printHelp() {
   Serial.println(F("# mode PZT|PZR, mcu, help, status, stop"));
   Serial.println(F("# PZT: array 1|2|both, scanorder interleaved|array|adc"));
   Serial.println(F("# PZT: adcchannels adc:channel,..."));
-  Serial.println(F("# PZT: vmid channel|true|false, run [ms], ref 2.5|5, osr, gain"));
+  Serial.println(F("# PZT: adcseq manual|auto1, spiengine blocking|dma|lpspi"));
+  Serial.println(F("# PZT: spiclock 100000..20000000 Hz"));
+  Serial.println(F("# PZT: channelrepeat 1|2|3, vmid 15|true|false"));
+  Serial.println(F("# PZT: run [ms], ref 2.5|5, osr, gain"));
   Serial.println(F("# Legacy Vmid alias: ground ..."));
   Serial.println(F("# PZR: rb, rk, cf, rxmax, ascii (requires enabled 555 hardware)"));
-  Serial.println(F("# scanorder controls both acquisition and payload order"));
+  Serial.println(F("# scanorder controls payload order; the engine may acquire in parallel"));
 }
 
 bool switchMode(const String &arguments) {

@@ -215,17 +215,30 @@ scanorder interleaved*         # round-robin across all enabled ADCs
 scanorder array*               # finish ADC1/2, then ADC3/4
 scanorder adc*                 # finish each ADC before the next ADC
 adcchannels 1:0,1:1,2:10*     # explicit ADC-lane/input routes
-vmid 15*                       # park each ADC on input 15 after its data read
-vmid false*                    # disable Vmid parking
+adcseq manual*                 # manual ADS7953 channel sequencing
+adcseq auto1*                  # sparse Auto-1 sequencing, one sample/channel
+spiengine blocking*            # sequential reference engine
+spiengine dma*                 # parallel buses through async DMA
+spiengine lpspi*               # parallel buses through direct LPSPI
+spiclock 10000000*             # runtime clock for both buses, 100 kHz..20 MHz
+channelrepeat 1|2|3*           # manual settling conversions; emit final value
+vmid 15*                       # enable optional between-channel Vmid sampling
+vmid false*                    # disable optional sampling, not mandatory parking
 ref 2.5*                       # select ADS7953 1xVREF range (2.5V full-scale)
 ref 5*                         # select ADS7953 2xVREF range (5V full-scale)
 ```
 
 The desktop app creates `adcchannels` from its fixed TestBoard wiring profile
 and the user's Physical Arrays + PZT Sensors selection. There is no TestBoard
-`channels`, `repeat`, or `buffer` PZT command: every route is sampled once and
-every frame contains one sweep. `ground` remains an alias for `vmid`; Vmid
-conversions are discarded and never change the binary sample count. Unlike the
+`channels`, `repeat`, or `buffer` PZT command: every route contributes one
+payload word and every frame contains one sweep. `channelrepeat` affects only
+manual settling conversions and does not change payload width. `ground` remains
+an alias for `vmid`; optional Vmid conversions are discarded and never change
+the binary sample count. Channel 15 is the board-fixed Vmid input. Active ADCs
+are always parked there at startup, stop, failures, and before another ADC takes
+over the same physical bus, even when `vmid false` is selected. `array 1` and
+`array 2` run only one physical bus; `array both` permits DMA/LPSPI overlap when
+both buses have routes. Unlike the
 other sketches, `TestBoard_7953`'s `ref` command is not a no-op: it toggles the
 ADS7953 mode-control range bit at runtime (board VREF is fixed at 2.5V, so
 `ref 2.5`/`ref 5` select the 1x/2x input span); `osr`, `gain`, `conv`, `samp`,
@@ -299,9 +312,11 @@ Example with `channels 14,14,15*`, `repeat 2*`:
 ch14 s1, ch14 s2, ch14 s3, ch14 s4, ch15 s1, ch15 s2
 ```
 
-For `TestBoard_7953`, the configured scan order replaces this generic
-channel order. Each route emits one sample, and each frame contains every
-active route exactly once.
+For `TestBoard_7953`, the configured scan order replaces this generic channel
+order as the payload-order contract. The DMA and direct-LPSPI engines may
+execute one route on each physical bus concurrently, then place both results
+into their canonical payload slots. Each route emits one sample, and each frame
+contains every active route exactly once.
 
 ## Host Integration Notes
 
@@ -312,6 +327,16 @@ active route exactly once.
 - Convert only the `RS1_hold` / `RS2_hold` words from scaled-ohms to ohms using the configured PZT_RS wire scale; the five `PZT_CH*` words remain raw MG24 ADC samples.
 - After `stop*`, expect text responses again on the same port.
 - The desktop app handles mixed text/binary transitions for the standard sketches listed above.
+
+## Hardware benchmarks
+
+Each PlatformIO test-board project can keep its board-specific runners in a
+local `benchmarks/` directory. The TestBoard 7953 runner owns the serial port,
+configures the firmware matrix, decodes the binary stream, and writes raw,
+interpreted, and comparison artifacts. Review
+[`TestBoard_7953/benchmarks/README.md`](TestBoard_7953/benchmarks/README.md)
+before using it; the GUI and all serial monitors must be closed during a
+benchmark session.
 
 ## Legacy And Experimental Sketches
 

@@ -65,9 +65,10 @@ Desktop GUI and firmware workspace for streaming ADC data from MG24 and Teensy b
 - `Arduino_Sketches/Teensy/`: Teensy ADC and 555-resistance sketches
 - `Arduino_Sketches/PCB1.7_SPI/`: active monolithic Teensy + MG24 array pair
 - `Arduino_Sketches/PCB1.7_with_libraries/`: equivalent self-contained modular pair
-- `Arduino_Sketches/PCB_TestBoard_7953/`: modular Teensy 4.1 + four-ADS7953
+- `Arduino_Sketches/TestBoard_7953/`: PlatformIO Teensy 4.1 + four-ADS7953
   test-board firmware with fixed board-profile routing, physical-array/PZT
-  selection, selectable scan order, one-sweep frames, and post-read Vmid parking
+  selection, manual/Auto-1 sequencing, blocking/DMA/direct-LPSPI engines,
+  one-sweep frames, and mandatory Vmid parking
 
 ### Configuration And Data
 

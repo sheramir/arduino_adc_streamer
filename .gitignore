@@ -56,5 +56,6 @@ Thumbs.db
 # *.csv
 # *.png
 # *_metadata.txt
+/Arduino_Sketches/*/benchmarks/results/
 token_dont_read_ai
 .archived/

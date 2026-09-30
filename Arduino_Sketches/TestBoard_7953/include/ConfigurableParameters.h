@@ -14,9 +14,12 @@ static constexpr uint8_t kAdcCount = 4;
 static constexpr uint8_t kAdcChannels = 16;
 static constexpr uint16_t kAdcFullScaleCode = 0x0FFF;
 
-// ADS7953 supports up to 20 MHz SCLK. Start at 10 MHz for board bring-up;
-// raise this only after checking signal integrity on both buses.
-static constexpr uint32_t kSpiClockHz = 10000000UL;
+// ADS7953 supports up to 20 MHz SCLK. The runtime "spiclock" command may
+// select within this guarded range; verify the actual clock and signal
+// integrity on both buses with a logic analyzer at each new setting.
+static constexpr uint32_t kDefaultSpiClockHz = 10000000UL;
+static constexpr uint32_t kMinSpiClockHz = 100000UL;
+static constexpr uint32_t kMaxSpiClockHz = 20000000UL;
 static constexpr uint8_t kSpiBitOrder = MSBFIRST;
 static constexpr uint8_t kSpiMode = SPI_MODE0;
 static constexpr uint32_t kCsHighTimeNs = 40;
@@ -40,13 +43,16 @@ static constexpr uint8_t kAdc4CsPin = 33;
 static constexpr bool kAds7953Range2xVref = false;
 static constexpr uint8_t kAds7953PipelineFrames = 2;
 static constexpr bool kValidateReturnedChannel = true;
+static constexpr uint8_t kDefaultChannelRepeat = 3;
+static constexpr uint32_t kSpiTransferTimeoutUs = 1000;
 
 static constexpr uint8_t kMaxChannelSequence = 64;
 static constexpr uint8_t kMaxAdcRoutes = 64;
 static constexpr uint8_t kDefaultChannels[] = {0, 1, 2, 3, 4};
 static constexpr uint8_t kDefaultChannelCount = sizeof(kDefaultChannels);
 static constexpr uint8_t kDefaultVmidChannel = 15;
-static constexpr bool kDefaultVmidParkEnabled = false;
+static constexpr bool kDefaultVmidBetweenChannels = false;
+static constexpr uint16_t kMaxFrameOps = kMaxAdcRoutes * 5 + 8;
 
 // Optional future 555/PZR hardware. The test board has no 555 circuit, so the
 // safe default is disabled and mode PZR returns #NOT_OK. To enable it, assign

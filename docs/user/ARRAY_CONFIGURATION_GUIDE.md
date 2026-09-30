@@ -85,6 +85,11 @@ routing. Its fixed wiring lives in `config/testboard_7953_board.py`:
 - PZT1, PZT3, and PZT5 use the second ADC in each pair on inputs 0..4, 5..9,
   and 10..14.
 - Every five-input group is ordered B, L, C, R, T.
+- ADS7953 channel 15 is reserved for the board's Vmid connection and cannot be
+  selected as a sensor route.
+- Selecting only array 1 or array 2 activates only that array's physical SPI
+  bus. Selecting both arrays permits the firmware's DMA or direct-LPSPI engine
+  to operate the two buses concurrently.
 
 When `PCB_TestBoard_7953` is connected, select Physical Arrays and enter PZT
 sensor numbers. Channels Sequence, PZR Sensors, Repeat Count, and Sweeps per

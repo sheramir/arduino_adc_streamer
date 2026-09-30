@@ -4,7 +4,10 @@
 
 namespace {
 static constexpr uint16_t kManualMode = 0x1000;
+static constexpr uint16_t kAuto1Mode = 0x2000;
+static constexpr uint16_t kAuto1Program = 0x8000;
 static constexpr uint16_t kProgramControlBits = 0x0800;
+static constexpr uint16_t kResetAutoChannelCounter = 0x0400;
 static constexpr uint16_t kRange2xVref = 0x0040;
 }
 
@@ -14,11 +17,13 @@ Ads7953Adc::Ads7953Adc(SpiController &spi, uint8_t cs_pin)
 
 void Ads7953Adc::begin() {
   spi_.registerChipSelect(cs_pin_);
-  // Power-up defaults are manual mode/channel 0. Prime the two-frame command
-  // pipeline so the first application read has deterministic state.
-  const uint16_t command = manualCommand(0);
-  spi_.transfer16(cs_pin_, command);
-  spi_.transfer16(cs_pin_, command);
+  // Prime the two-frame command pipeline and leave the MUX on the board-fixed
+  // Vmid input. All four ADCs therefore start parked even before routes exist.
+  const uint16_t command = manualCommand(testboard_config::kDefaultVmidChannel);
+  for (uint8_t frame = 0; frame < testboard_config::kAds7953PipelineFrames;
+       ++frame) {
+    spi_.transfer16(cs_pin_, command);
+  }
 }
 
 uint8_t Ads7953Adc::channelCount() const {
@@ -38,6 +43,56 @@ void Ads7953Adc::setRange2xVref(bool enabled) {
   range_2x_vref_ = enabled;
 }
 
+uint16_t Ads7953Adc::auto1ProgramCommand() const {
+  return kAuto1Program;
+}
+
+uint16_t Ads7953Adc::auto1ControlCommand(bool reset_channel_counter) const {
+  uint16_t word = kAuto1Mode | kProgramControlBits;
+  if (reset_channel_counter) word |= kResetAutoChannelCounter;
+  if (range_2x_vref_) word |= kRange2xVref;
+  return word;
+}
+
+uint16_t Ads7953Adc::continueCommand() const {
+  return 0;
+}
+
+uint16_t Ads7953Adc::transferBlocking(uint16_t command) {
+  return spi_.transfer16(cs_pin_, command);
+}
+
+uint8_t Ads7953Adc::returnedChannel(uint16_t response) const {
+  return static_cast<uint8_t>((response >> 12) & 0x0F);
+}
+
+uint16_t Ads7953Adc::returnedSample(uint16_t response) const {
+  return response & testboard_config::kAdcFullScaleCode;
+}
+
+bool Ads7953Adc::decodeResponse(
+    uint16_t response, uint8_t expected_channel, uint16_t &sample) {
+  sample = returnedSample(response);
+  if (testboard_config::kValidateReturnedChannel &&
+      returnedChannel(response) != expected_channel) {
+    ++errors_;
+    return false;
+  }
+  return true;
+}
+
+void Ads7953Adc::recordError() {
+  ++errors_;
+}
+
+SpiController &Ads7953Adc::spiController() {
+  return spi_;
+}
+
+uint8_t Ads7953Adc::chipSelectPin() const {
+  return cs_pin_;
+}
+
 bool Ads7953Adc::readChannel(uint8_t channel, uint16_t &sample) {
   if (channel >= channelCount()) {
     ++errors_;
@@ -52,13 +107,7 @@ bool Ads7953Adc::readChannel(uint8_t channel, uint16_t &sample) {
     response = spi_.transfer16(cs_pin_, command);
   }
 
-  const uint8_t returned_channel = static_cast<uint8_t>((response >> 12) & 0x0F);
-  sample = response & testboard_config::kAdcFullScaleCode;
-  if (testboard_config::kValidateReturnedChannel && returned_channel != channel) {
-    ++errors_;
-    return false;
-  }
-  return true;
+  return decodeResponse(response, channel, sample);
 }
 
 uint32_t Ads7953Adc::errorCount() const {

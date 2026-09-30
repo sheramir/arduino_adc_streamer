@@ -61,6 +61,7 @@ def test_pcb17_modular_mg24_preserves_transport_constants():
 def test_7953_project_contract_has_requested_pins_identity_and_order():
     sketch = SKETCHES / "TestBoard_7953"
     config = (sketch / "include" / "ConfigurableParameters.h").read_text(encoding="utf-8")
+    platformio = (sketch / "platformio.ini").read_text(encoding="utf-8")
     firmware = _tree_text(sketch)
 
     assert (sketch / "platformio.ini").is_file()
@@ -81,17 +82,45 @@ def test_7953_project_contract_has_requested_pins_identity_and_order():
         assert f"{name} = {value}" in config
 
     assert 'kMcuName[] = "TestBoard_7953"' in config
-    for command in ("adcchannels", "scanorder", "array", "vmid"):
+    assert "platform = teensy@6.0.0" in platformio
+    for command in (
+        "adcchannels",
+        "scanorder",
+        "array",
+        "vmid",
+        "adcseq",
+        "spiengine",
+        "spiclock",
+        "channelrepeat",
+    ):
         assert command in firmware
     pzt_controller = (sketch / "src" / "PztController.cpp").read_text(encoding="utf-8")
     assert 'command == "repeat"' not in pzt_controller
     assert 'command == "buffer"' not in pzt_controller
-    assert "repeat_" not in pzt_controller
     assert "buffer_sweeps_" not in pzt_controller
+    assert "channel_repeat_" in pzt_controller
+    assert "spi_clock_hz_" in pzt_controller
+    assert "kMinSpiClockHz = 100000" in config
+    assert "kMaxSpiClockHz = 20000000" in config
     for scan_order in ("SCAN_INTERLEAVED", "SCAN_ARRAY", "SCAN_ADC"):
         assert scan_order in firmware
-    assert "parkAdc(route.adc)" in firmware
-    assert "parkSelectedAdcs()" in firmware
+    for engine in ("SPI_ENGINE_BLOCKING", "SPI_ENGINE_DMA", "SPI_ENGINE_LPSPI"):
+        assert engine in firmware
+    for sequence in ("ADC_SEQUENCE_MANUAL", "ADC_SEQUENCE_AUTO1"):
+        assert sequence in firmware
+    assert "parkActiveAdcs()" in firmware
+    assert "buildParkStream" in firmware
+    assert "kDefaultVmidChannel = 15" in config
+    assert "channel == testboard_config::kDefaultVmidChannel" in pzt_controller
+    assert 'command == "vmidchannel"' not in pzt_controller
+    assert 'command == "vmidsample"' not in pzt_controller
+    assert "startDma16" in firmware
+    assert "startLpspi16" in firmware
+    assert "EventResponder" in firmware
+    assert "kAuto1Program = 0x8000" in firmware
+    assert "kAuto1Mode = 0x2000" in firmware
+    assert "g_samples[ready.destination] = sample" in pzt_controller
+    assert "g_samples[destination] = stream.adc->returnedSample(response)" in pzt_controller
     assert "Do not flush binary traffic" in firmware
     assert "kBlockMagic1 = 0xAA" in firmware
     assert "kBlockMagic2 = 0x55" in firmware

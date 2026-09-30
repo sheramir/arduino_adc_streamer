@@ -2,13 +2,14 @@
 
 #include <Arduino.h>
 
+#include "Ads7953Adc.h"
 #include "ConfigurableParameters.h"
-#include "AdcDevice.h"
 #include "UsbSerialController.h"
 
 class PztController {
  public:
-  PztController(AdcDevice **adcs, uint8_t adc_count, UsbSerialController &usb);
+  PztController(Ads7953Adc **adcs, uint8_t adc_count,
+                UsbSerialController &usb);
 
   void begin();
   bool handleCommand(const String &command, const String &arguments);
@@ -23,49 +24,108 @@ class PztController {
     uint8_t channel;
   };
 
-  enum ArraySelection : uint8_t {
-    ARRAY_1,
-    ARRAY_2,
-    ARRAY_BOTH,
+  enum ArraySelection : uint8_t { ARRAY_1, ARRAY_2, ARRAY_BOTH };
+  enum ScanOrder : uint8_t { SCAN_INTERLEAVED, SCAN_ARRAY, SCAN_ADC };
+  enum AdcSequence : uint8_t { ADC_SEQUENCE_MANUAL, ADC_SEQUENCE_AUTO1 };
+  enum SpiEngine : uint8_t {
+    SPI_ENGINE_BLOCKING,
+    SPI_ENGINE_DMA,
+    SPI_ENGINE_LPSPI,
   };
 
-  enum ScanOrder : uint8_t {
-    SCAN_INTERLEAVED,
-    SCAN_ARRAY,
-    SCAN_ADC,
+  struct FrameOp {
+    uint16_t command;
+    uint8_t expected_channel;
+    uint8_t destination;
+    bool expected_valid;
+    bool store;
+  };
+
+  struct PendingResult {
+    uint8_t channel;
+    uint8_t destination;
+    bool valid;
+    bool store;
+  };
+
+  struct FrameStream {
+    Ads7953Adc *adc;
+    FrameOp ops[testboard_config::kMaxFrameOps];
+    uint16_t count;
+    uint16_t cursor;
+    PendingResult pending[testboard_config::kAds7953PipelineFrames];
+    bool auto_mode;
+    uint8_t auto_capture_start;
+    uint8_t auto_destinations[testboard_config::kAdcChannels];
+    bool auto_seen[testboard_config::kAdcChannels];
+    uint8_t auto_expected;
+    uint8_t auto_captured;
   };
 
   bool setAdcChannels(const String &arguments);
   bool setArraySelection(const String &arguments);
   bool setScanOrder(const String &arguments);
+  bool setAdcSequence(const String &arguments);
+  bool setSpiEngine(const String &arguments);
+  bool setSpiClock(const String &arguments);
+  bool setChannelRepeat(const String &arguments);
   bool setVmid(const String &arguments);
   bool setVrefRange(const String &arguments);
   bool startRun(const String &arguments);
   bool routesValid() const;
   bool captureBlock();
-  bool captureBufferedBlock(const AdcRoute *plan, uint8_t plan_count);
-  bool captureArrayStreamedBlock(const AdcRoute *plan, uint8_t plan_count);
   uint8_t buildScanPlan(AdcRoute *destination) const;
-  void parkAdc(uint8_t adc);
-  void parkSelectedAdcs();
+
+  void resetStream(FrameStream &stream, uint8_t adc);
+  bool appendOp(FrameStream &stream, uint16_t command,
+                bool expected_valid = false, uint8_t expected_channel = 0,
+                bool store = false, uint8_t destination = 0);
+  bool buildManualStream(FrameStream &stream, uint8_t adc,
+                         const AdcRoute *plan, uint8_t plan_count,
+                         bool park_after);
+  bool buildAuto1Stream(FrameStream &stream, uint8_t adc,
+                        const AdcRoute *plan, uint8_t plan_count,
+                        bool park_after);
+  bool buildParkStream(FrameStream &stream, uint8_t adc);
+  bool executeStreams(FrameStream *first, FrameStream *second);
+  bool executeFrame(Ads7953Adc *first_adc, uint16_t first_command,
+                    uint16_t &first_response, Ads7953Adc *second_adc,
+                    uint16_t second_command, uint16_t &second_response);
+  bool consumeResponse(FrameStream &stream, const FrameOp &op,
+                       uint16_t response, uint16_t op_index);
+  bool parkActiveAdcs();
+
   void applyVrefRange();
   bool adcSelected(uint8_t adc) const;
+  bool adcHasRoutes(uint8_t adc) const;
+  uint8_t activeAdcsOnBus(uint8_t bus) const;
   const __FlashStringHelper *arraySelectionName() const;
   const __FlashStringHelper *scanOrderName() const;
+  const __FlashStringHelper *adcSequenceName() const;
+  const __FlashStringHelper *spiEngineName() const;
   const __FlashStringHelper *vrefRangeName() const;
 
-  AdcDevice **adcs_;
+  Ads7953Adc **adcs_;
   uint8_t adc_count_;
   UsbSerialController &usb_;
   AdcRoute routes_[testboard_config::kMaxAdcRoutes];
   uint8_t route_count_ = 0;
   ArraySelection array_selection_ = ARRAY_BOTH;
   ScanOrder scan_order_ = SCAN_INTERLEAVED;
-  uint8_t vmid_channel_ = 15;
-  bool vmid_park_enabled_ = false;
+  AdcSequence adc_sequence_ = ADC_SEQUENCE_MANUAL;
+  SpiEngine spi_engine_ = SPI_ENGINE_BLOCKING;
+  uint32_t spi_clock_hz_ = testboard_config::kDefaultSpiClockHz;
+  uint8_t channel_repeat_ = testboard_config::kDefaultChannelRepeat;
+  bool vmid_between_channels_ = testboard_config::kDefaultVmidBetweenChannels;
   bool vref_range_2x_ = testboard_config::kAds7953Range2xVref;
   bool running_ = false;
   bool timed_run_ = false;
   uint32_t run_started_ms_ = 0;
   uint32_t run_duration_ms_ = 0;
+  uint32_t dma_start_errors_ = 0;
+  uint32_t lpspi_start_errors_ = 0;
+  uint32_t transfer_timeouts_ = 0;
+  uint32_t returned_channel_errors_ = 0;
+  FrameStream streams_[2];
+  bool sample_written_[testboard_config::kMaxAdcRoutes];
 };

@@ -220,7 +220,7 @@ adcseq auto1*                  # sparse Auto-1 sequencing, one sample/channel
 spiengine blocking*            # sequential reference engine
 spiengine dma*                 # parallel buses through async DMA
 spiengine lpspi*               # parallel buses through direct LPSPI
-spiclock 10000000*             # runtime clock for both buses, 100 kHz..20 MHz
+spiclock 20000000*             # runtime clock for both buses, 100 kHz..30 MHz; >20 MHz experimental
 channelrepeat 1|2|3*           # manual settling conversions; emit final value
 vmid 15*                       # enable optional between-channel Vmid sampling
 vmid false*                    # disable optional sampling, not mandatory parking

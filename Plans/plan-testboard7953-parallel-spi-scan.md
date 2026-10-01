@@ -176,19 +176,26 @@ Manual mode supports `channelrepeat 1..3` and optional Vmid sampling.
 Use ADS7953 Auto-1 rather than Auto-2 because Auto-1 supports a sparse selected
 channel mask.
 
-- Program each active ADC's Auto-1 mask from its configured `adcchannels` routes.
+- Program each active ADC's Auto-1 mask from its configured `adcchannels`
+  routes plus the fixed Vmid channel 15. Cache that mask until the route set
+  changes instead of programming it on every sweep.
 - Sample every selected channel exactly once per sweep.
 - Hardware scans selected channels in ascending input-number order.
 - Map returned `(adc, channel)` identities back to their payload destination
   indices; hardware scan order must not change wire interpretation.
 - Ignore `channelrepeat`; effective repeat is 1.
 - Ignore optional between-channel Vmid sampling, even when requested.
-- Before switching to the other ADC on the same physical bus, leave Auto-1 as
-  needed and complete a manual Vmid park sequence.
-- If only one ADC is active on a physical bus, it may remain in Auto-1 throughout
-  the run and is parked only at startup and stop.
-- Re-entering or resetting Auto-1 must restart at the first enabled channel so
-  each sweep contains one and only one result for every configured route.
+- Stop clocking an ADC immediately after its last sensor result. Because Vmid
+  is the highest enabled channel, that frame has already advanced the MUX to
+  channel 15; the ADC can remain selected in Auto-1 while the other device uses
+  the shared bus.
+- On the next sweep, discard the tagged Vmid result, then collect one result
+  from every selected sensor channel. This resumes the persistent sequence
+  without rewriting the mask or entering manual mode.
+- Use manual Vmid commands only at startup, stop, failure recovery, or when a
+  configuration/mode transition requires them.
+- Re-entering Auto-1 from another mode resets to the first enabled sensor;
+  persistent sweeps instead resume from the parked Vmid position.
 
 Auto-1 configuration frames and pipeline priming/draining are overhead, not
 payload samples.
@@ -598,7 +605,8 @@ peer `benchmarks/` directory, with arguments for:
 - output directory;
 - measurement window and warm-up duration;
 - repetition count;
-- one or more runtime SPI clocks from 100 kHz through 20 MHz;
+- one or more runtime SPI clocks from 100 kHz through 30 MHz, with values above
+  the ADS7953's specified 20 MHz maximum treated as experimental;
 - optional route-manifest override;
 - optional subset of test IDs for resuming or debugging a session; and
 - optional suppression of the generated Excel report.
@@ -642,7 +650,7 @@ adcchannels <adc:channel,...>*
 ref 2.5*
 adcseq <manual|auto1>*
 spiengine <blocking|dma|lpspi>*
-spiclock <100000..20000000>*
+spiclock <100000..30000000>*
 channelrepeat <1|2|3>*
 vmid <true|false>*
 status*

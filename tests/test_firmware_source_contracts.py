@@ -100,8 +100,11 @@ def test_7953_project_contract_has_requested_pins_identity_and_order():
     assert "buffer_sweeps_" not in pzt_controller
     assert "channel_repeat_" in pzt_controller
     assert "spi_clock_hz_" in pzt_controller
+    assert "kDefaultSpiClockHz = 20000000" in config
+    assert "kAdcBiasResistorOhms[kAdcCount]" in config
+    assert "1000000UL, 470000UL, 470000UL, 249000UL" in config
     assert "kMinSpiClockHz = 100000" in config
-    assert "kMaxSpiClockHz = 20000000" in config
+    assert "kMaxSpiClockHz = 30000000" in config
     for scan_order in ("SCAN_INTERLEAVED", "SCAN_ARRAY", "SCAN_ADC"):
         assert scan_order in firmware
     for engine in ("SPI_ENGINE_BLOCKING", "SPI_ENGINE_DMA", "SPI_ENGINE_LPSPI"):
@@ -119,6 +122,15 @@ def test_7953_project_contract_has_requested_pins_identity_and_order():
     assert "EventResponder" in firmware
     assert "kAuto1Program = 0x8000" in firmware
     assert "kAuto1Mode = 0x2000" in firmware
+    assert "auto1_programmed_masks_" in firmware
+    assert "auto1_mask_valid_" in firmware
+    assert "auto1_active_parked_" in firmware
+    assert 'F("# auto1_program_count=")' in pzt_controller
+    assert 'F("# auto1_resume_count=")' in pzt_controller
+    assert "stream.auto_wait_for_vmid = true" in pzt_controller
+    assert "stream.auto_finished_parked = true" in pzt_controller
+    assert "1u << testboard_config::kDefaultVmidChannel" in pzt_controller
+    assert "auto1ProgramCommand()) ||" in pzt_controller
     assert "g_samples[ready.destination] = sample" in pzt_controller
     assert "g_samples[destination] = stream.adc->returnedSample(response)" in pzt_controller
     assert "Do not flush binary traffic" in firmware

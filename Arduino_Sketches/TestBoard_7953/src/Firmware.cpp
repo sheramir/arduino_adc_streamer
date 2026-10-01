@@ -41,7 +41,7 @@ void printHelp() {
   Serial.println(F("# PZT: array 1|2|both, scanorder interleaved|array|adc"));
   Serial.println(F("# PZT: adcchannels adc:channel,..."));
   Serial.println(F("# PZT: adcseq manual|auto1, spiengine blocking|dma|lpspi"));
-  Serial.println(F("# PZT: spiclock 100000..20000000 Hz"));
+  Serial.println(F("# PZT: spiclock 100000..30000000 Hz (above 20 MHz experimental)"));
   Serial.println(F("# PZT: channelrepeat 1|2|3, vmid 15|true|false"));
   Serial.println(F("# PZT: run [ms], ref 2.5|5, osr, gain"));
   Serial.println(F("# Legacy Vmid alias: ground ..."));

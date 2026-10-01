@@ -19,9 +19,12 @@ Before running it:
 4. Close the GUI, serial monitors, and every other process using the port.
 5. Review `testboard_7953_routes.json`; channel 15 is reserved for mandatory
    parking and must not appear as a sampled route.
-6. Optionally fill `testboard_7953_bias_resistors.json` with physical route to
-   resistance mappings such as `{"1:3": 1000000}`. Values are ohms and are
-   copied into the warm-up export for later RC/capacitance fitting.
+6. Review `testboard_7953_bias_resistors.json`. Each key is an `ADC:channel`
+   route and each value is its bias resistance in ohms, such as
+   `{"1:3": 1000000}`. The supplied board map expands ADC1=1 MOhm,
+   ADC2=470 kOhm, ADC3=470 kOhm, and ADC4=249 kOhm across their populated
+   sensor channels. Channel 15 is Vmid and is intentionally omitted. Values
+   are copied into the warm-up export for later RC/capacitance fitting.
 7. Keep the wiring, power, sensors, and physical environment unchanged for the
    complete session.
 8. Choose an output drive with several gigabytes free. The runner deliberately
@@ -59,7 +62,7 @@ milliseconds and count/tolerance values are raw 12-bit ADC counts.
 | `-h`, `--help` | — | Print command usage and exit. |
 | `--port <port>` | None | Teensy serial port, such as `COM7`. Required for acquisition, but not for listing ports/tests or a dry run. |
 | `--baud <rate>` | `460800` | Serial baud rate used to open the Teensy port. USB serial transport may not use this as a physical line rate, but the host API still requires it. |
-| `--spi-clock-hz <hz>` | `10000000` | Requested ADC SPI clock. Valid range: 100,000–20,000,000 Hz. Repeat the flag to benchmark multiple clocks in one session; duplicate values are removed. |
+| `--spi-clock-hz <hz>` | `20000000` | Requested ADC SPI clock. Accepted range: 100,000–30,000,000 Hz. Values above the ADS7953's specified 20 MHz maximum are experimental. Repeat the flag to benchmark multiple clocks in one session; duplicate values are removed. |
 | `--routes <path>` | `testboard_7953_routes.json` | Route-manifest JSON defining named route sets, arrays, sampled ADC channels, and channels exempted from Vmid checks. |
 | `--bias-map <path>` | `testboard_7953_bias_resistors.json` | Optional JSON mapping physical routes such as `1:3` to bias resistance in ohms. Missing files are treated as an empty map. |
 | `--output <directory>` | Timestamped directory under `benchmarks/results/` | Session output directory. A non-empty directory is rejected unless `--resume` is also supplied. |
@@ -126,7 +129,10 @@ uv run python Arduino_Sketches/TestBoard_7953/benchmarks/testboard_7953_benchmar
   --port COM7 --spi-clock-hz 5000000 --spi-clock-hz 10000000
 ```
 
-The firmware accepts 100,000 through 20,000,000 Hz while stopped. The runner
+The firmware accepts 100,000 through 30,000,000 Hz while stopped. Frequencies
+above the ADS7953's specified 20 MHz maximum remain experimental. The 30 MHz
+ceiling is the fastest clock that passed combined four-ADC benchmarking;
+higher achievable clocks produced returned-channel errors. The runner
 sends `spiclock`, verifies `spi_clock_hz` in `status`, includes the clock in each
 test ID and comparison key, and records the requested clock in CSV, Excel, and
 session metadata. Reflash the updated firmware once before using this option.
@@ -159,6 +165,8 @@ Each session contains:
   route set, array, Vmid, channel repeat, engine, sequence, and SPI clock as
   filterable columns. Test ID and scan order are shown explicitly so tests that
   differ only in payload ordering are not displayed as identical configurations.
+  Summary comparison graphs are stacked below the table starting in column A,
+  so they remain accessible without horizontal scrolling.
   Auto1 is scheduled only with Vmid sampling off because its effective behavior
   is identical for either requested Vmid value. The Results worksheet repeats
   the Summary short ID (`T001`, etc.) on every associated repetition and

@@ -50,16 +50,22 @@ class PztController {
 
   struct FrameStream {
     Ads7953Adc *adc;
+    uint8_t adc_index;
     FrameOp ops[testboard_config::kMaxFrameOps];
     uint16_t count;
     uint16_t cursor;
     PendingResult pending[testboard_config::kAds7953PipelineFrames];
     bool auto_mode;
-    uint8_t auto_capture_start;
+    uint16_t auto_capture_start;
     uint8_t auto_destinations[testboard_config::kAdcChannels];
     bool auto_seen[testboard_config::kAdcChannels];
     uint8_t auto_expected;
     uint8_t auto_captured;
+    bool auto_wait_for_vmid;
+    bool auto_finished_parked;
+    bool auto_programmed_this_stream;
+    bool auto_resumed_persistent;
+    uint16_t auto_program_mask;
   };
 
   bool setAdcChannels(const String &arguments);
@@ -84,8 +90,7 @@ class PztController {
                          const AdcRoute *plan, uint8_t plan_count,
                          bool park_after);
   bool buildAuto1Stream(FrameStream &stream, uint8_t adc,
-                        const AdcRoute *plan, uint8_t plan_count,
-                        bool park_after);
+                        const AdcRoute *plan, uint8_t plan_count);
   bool buildParkStream(FrameStream &stream, uint8_t adc);
   bool executeStreams(FrameStream *first, FrameStream *second);
   bool executeFrame(Ads7953Adc *first_adc, uint16_t first_command,
@@ -93,6 +98,7 @@ class PztController {
                     uint16_t second_command, uint16_t &second_response);
   bool consumeResponse(FrameStream &stream, const FrameOp &op,
                        uint16_t response, uint16_t op_index);
+  void commitStreamState(const FrameStream &stream);
   bool parkActiveAdcs();
 
   void applyVrefRange();
@@ -126,6 +132,11 @@ class PztController {
   uint32_t lpspi_start_errors_ = 0;
   uint32_t transfer_timeouts_ = 0;
   uint32_t returned_channel_errors_ = 0;
+  uint32_t auto1_program_count_ = 0;
+  uint32_t auto1_resume_count_ = 0;
   FrameStream streams_[2];
+  uint16_t auto1_programmed_masks_[testboard_config::kAdcCount] = {};
+  bool auto1_mask_valid_[testboard_config::kAdcCount] = {};
+  bool auto1_active_parked_[testboard_config::kAdcCount] = {};
   bool sample_written_[testboard_config::kMaxAdcRoutes];
 };

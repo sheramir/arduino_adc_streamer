@@ -337,6 +337,7 @@ uint8_t PztController::buildScanPlan(AdcRoute *destination) const {
 void PztController::resetStream(FrameStream &stream, uint8_t adc) {
   memset(&stream, 0, sizeof(stream));
   stream.adc = adcs_[adc];
+  stream.adc_index = adc;
   for (uint8_t channel = 0; channel < testboard_config::kAdcChannels;
        ++channel) {
     stream.auto_destinations[channel] = 0xFF;
@@ -406,10 +407,11 @@ bool PztController::buildManualStream(
 
 bool PztController::buildAuto1Stream(
     FrameStream &stream, uint8_t adc, const AdcRoute *plan,
-    uint8_t plan_count, bool park_after) {
+    uint8_t plan_count) {
   resetStream(stream, adc);
   stream.auto_mode = true;
-  uint16_t channel_mask = 0;
+  uint16_t channel_mask = static_cast<uint16_t>(
+      1u << testboard_config::kDefaultVmidChannel);
   for (uint8_t index = 0; index < plan_count; ++index) {
     if (plan[index].adc != adc) continue;
     const uint8_t channel = plan[index].channel;
@@ -419,28 +421,38 @@ bool PztController::buildAuto1Stream(
   }
   if (!stream.auto_expected) return true;
 
-  if (!appendOp(stream, stream.adc->auto1ProgramCommand()) ||
-      !appendOp(stream, channel_mask) ||
-      !appendOp(stream, stream.adc->auto1ControlCommand(true))) {
-    return false;
-  }
-  stream.auto_capture_start = 4;
-  const uint8_t continuation_frames =
-      stream.auto_expected + testboard_config::kAds7953PipelineFrames;
-  for (uint8_t index = 0; index < continuation_frames; ++index) {
-    if (!appendOp(stream, stream.adc->continueCommand())) return false;
+  stream.auto_program_mask = channel_mask;
+  stream.auto_programmed_this_stream =
+      !auto1_mask_valid_[adc] || auto1_programmed_masks_[adc] != channel_mask;
+  if (stream.auto_programmed_this_stream) {
+    if (!appendOp(stream, stream.adc->auto1ProgramCommand()) ||
+        !appendOp(stream, channel_mask)) {
+      return false;
+    }
   }
 
-  if (park_after) {
-    for (uint8_t frame = 0;
-         frame < testboard_config::kAds7953PipelineFrames; ++frame) {
-      if (!appendOp(
-              stream,
-              stream.adc->manualCommand(
-                  testboard_config::kDefaultVmidChannel))) {
-        return false;
-      }
-    }
+  if (stream.auto_programmed_this_stream || !auto1_active_parked_[adc]) {
+    if (!appendOp(stream, stream.adc->auto1ControlCommand(true))) return false;
+    // The first selected-channel response arrives two frames after the
+    // Auto-1 control word. The program-register frames, when needed, are
+    // already included in stream.count.
+    stream.auto_capture_start =
+        stream.count + testboard_config::kAds7953PipelineFrames - 1;
+  } else {
+    // This ADC remained in Auto-1 with its MUX parked on channel 15. Ignore
+    // pipeline history until the discarded Vmid conversion is returned; that
+    // frame also advances the MUX to the first enabled sensor channel.
+    stream.auto_wait_for_vmid = true;
+    stream.auto_resumed_persistent = true;
+  }
+
+  // Provide a guarded upper bound. consumeResponse() ends this stream as soon
+  // as every sensor result has arrived; at that exact frame Auto-1 advances
+  // the MUX from the highest sensor channel to the enabled Vmid channel.
+  const uint8_t continuation_frames = stream.auto_expected +
+      testboard_config::kAds7953PipelineFrames + 3;
+  for (uint8_t index = 0; index < continuation_frames; ++index) {
+    if (!appendOp(stream, stream.adc->continueCommand())) return false;
   }
   return true;
 }
@@ -571,17 +583,27 @@ bool PztController::consumeResponse(
     FrameStream &stream, const FrameOp &op, uint16_t response,
     uint16_t op_index) {
   if (stream.auto_mode) {
-    if (op_index >= stream.auto_capture_start &&
-        stream.auto_captured < stream.auto_expected) {
-      const uint8_t channel = stream.adc->returnedChannel(response);
-      if (channel < testboard_config::kAdcChannels &&
-          stream.auto_destinations[channel] != 0xFF &&
-          !stream.auto_seen[channel]) {
-        const uint8_t destination = stream.auto_destinations[channel];
-        g_samples[destination] = stream.adc->returnedSample(response);
-        sample_written_[destination] = true;
-        stream.auto_seen[channel] = true;
-        ++stream.auto_captured;
+    if (op_index < stream.auto_capture_start) return true;
+    const uint8_t channel = stream.adc->returnedChannel(response);
+    if (stream.auto_wait_for_vmid) {
+      if (channel == testboard_config::kDefaultVmidChannel) {
+        stream.auto_wait_for_vmid = false;
+      }
+      return true;
+    }
+    if (channel < testboard_config::kAdcChannels &&
+        stream.auto_destinations[channel] != 0xFF &&
+        !stream.auto_seen[channel]) {
+      const uint8_t destination = stream.auto_destinations[channel];
+      g_samples[destination] = stream.adc->returnedSample(response);
+      sample_written_[destination] = true;
+      stream.auto_seen[channel] = true;
+      ++stream.auto_captured;
+      if (stream.auto_captured == stream.auto_expected) {
+        // Channel 15 is the highest enabled channel. When the last sensor
+        // result is shifted out, Auto-1 has already switched the MUX to Vmid.
+        stream.auto_finished_parked = true;
+        stream.cursor = stream.count;
       }
     }
     return true;
@@ -610,6 +632,22 @@ bool PztController::consumeResponse(
     sample_written_[ready.destination] = true;
   }
   return true;
+}
+
+void PztController::commitStreamState(const FrameStream &stream) {
+  const uint8_t adc = stream.adc_index;
+  if (adc >= adc_count_) return;
+  if (!stream.auto_mode) {
+    auto1_active_parked_[adc] = false;
+    return;
+  }
+  if (stream.auto_programmed_this_stream) {
+    auto1_programmed_masks_[adc] = stream.auto_program_mask;
+    auto1_mask_valid_[adc] = true;
+    ++auto1_program_count_;
+  }
+  if (stream.auto_resumed_persistent) ++auto1_resume_count_;
+  auto1_active_parked_[adc] = stream.auto_finished_parked;
 }
 
 bool PztController::executeStreams(
@@ -674,6 +712,8 @@ bool PztController::parkActiveAdcs() {
       second = &streams_[1];
     }
     if (!executeStreams(first, second)) return false;
+    if (first != nullptr) commitStreamState(*first);
+    if (second != nullptr) commitStreamState(*second);
   }
   return true;
 }
@@ -697,7 +737,7 @@ bool PztController::captureBlock() {
           ? buildManualStream(
                 streams_[0], first_adc, plan, plan_count, park_after)
           : buildAuto1Stream(
-                streams_[0], first_adc, plan, plan_count, park_after);
+                streams_[0], first_adc, plan, plan_count);
       if (!built) return false;
       first = &streams_[0];
     }
@@ -707,11 +747,13 @@ bool PztController::captureBlock() {
           ? buildManualStream(
                 streams_[1], second_adc, plan, plan_count, park_after)
           : buildAuto1Stream(
-                streams_[1], second_adc, plan, plan_count, park_after);
+                streams_[1], second_adc, plan, plan_count);
       if (!built) return false;
       second = &streams_[1];
     }
     if (!executeStreams(first, second)) return false;
+    if (first != nullptr) commitStreamState(*first);
+    if (second != nullptr) commitStreamState(*second);
   }
 
   for (uint8_t index = 0; index < plan_count; ++index) {
@@ -825,6 +867,10 @@ void PztController::printStatus() const {
   Serial.print(F("# transfer_timeouts=")); Serial.println(transfer_timeouts_);
   Serial.print(F("# returned_channel_errors="));
   Serial.println(returned_channel_errors_);
+  Serial.print(F("# auto1_program_count="));
+  Serial.println(auto1_program_count_);
+  Serial.print(F("# auto1_resume_count="));
+  Serial.println(auto1_resume_count_);
   for (uint8_t adc = 0; adc < adc_count_; ++adc) {
     Serial.print(F("# adc")); Serial.print(adc + 1);
     Serial.print(F("_errors=")); Serial.println(adcs_[adc]->errorCount());

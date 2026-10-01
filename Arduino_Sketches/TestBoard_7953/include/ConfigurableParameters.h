@@ -14,12 +14,18 @@ static constexpr uint8_t kAdcCount = 4;
 static constexpr uint8_t kAdcChannels = 16;
 static constexpr uint16_t kAdcFullScaleCode = 0x0FFF;
 
-// ADS7953 supports up to 20 MHz SCLK. The runtime "spiclock" command may
-// select within this guarded range; verify the actual clock and signal
-// integrity on both buses with a logic analyzer at each new setting.
-static constexpr uint32_t kDefaultSpiClockHz = 10000000UL;
+// Physical sensor bias resistors, indexed by zero-based ADC index. These are
+// board metadata for future settling/RC measurements; channel 15 is Vmid and
+// does not use the sensor bias value.
+static constexpr uint32_t kAdcBiasResistorOhms[kAdcCount] = {
+    1000000UL, 470000UL, 470000UL, 249000UL};
+
+// ADS7953 specifies up to 20 MHz SCLK. The 30 MHz ceiling retains the fastest
+// clock that passed combined four-ADC benchmarking. Frequencies above 20 MHz
+// remain experimental and outside the converter specification.
+static constexpr uint32_t kDefaultSpiClockHz = 20000000UL;
 static constexpr uint32_t kMinSpiClockHz = 100000UL;
-static constexpr uint32_t kMaxSpiClockHz = 20000000UL;
+static constexpr uint32_t kMaxSpiClockHz = 30000000UL;
 static constexpr uint8_t kSpiBitOrder = MSBFIRST;
 static constexpr uint8_t kSpiMode = SPI_MODE0;
 static constexpr uint32_t kCsHighTimeNs = 40;

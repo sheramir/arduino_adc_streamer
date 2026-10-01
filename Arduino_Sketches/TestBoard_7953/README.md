@@ -21,11 +21,13 @@ pio run -d Arduino_Sketches/TestBoard_7953 -t upload
 | Array 1 / bus 1 | `SPI` (LPSPI4) | ADC1, ADC2 | 11 | 12 | 13 | 9, 24 |
 | Array 2 / bus 2 | `SPI1` (LPSPI3) | ADC3, ADC4 | 26 | 39 | 27 | 32, 33 |
 
-The buses default to 10 MHz, MSB first, SPI mode 0, and a minimum 40 ns CS-high
-interval. `spiclock` can change both buses at runtime from 100 kHz through the
-ADS7953 maximum of 20 MHz. Direct LPSPI mode uses these same pins and
-software-controlled CS GPIOs. It requires no PCS, handshake, or other
-additional board connection.
+The buses default to 20 MHz, MSB first, SPI mode 0, and a minimum 40 ns CS-high
+interval. `spiclock` can request 100 kHz through 30 MHz. The ADS7953 specifies
+a 20 MHz maximum; 20–30 MHz remains experimental and outside the ADC
+specification. Combined four-ADC testing passed at 30 MHz, while higher
+achievable clocks produced returned-channel errors. Direct LPSPI mode uses these
+same pins and software-controlled CS GPIOs. It requires no PCS, handshake, or
+other additional board connection.
 
 ADS7953 channel 15 is physically connected to Vmid and is reserved. It cannot
 be included in `adcchannels`.
@@ -62,7 +64,7 @@ adcseq auto1*                  # sparse ADS7953 Auto-1 channel mask
 spiengine blocking*            # sequential SPIClass reference
 spiengine dma*                 # EventResponder/DMA on both buses
 spiengine lpspi*               # direct paired LPSPI start/poll
-spiclock 10000000*             # both physical buses, 100 kHz..20 MHz
+spiclock 20000000*             # both buses, 100 kHz..30 MHz; >20 MHz experimental
 channelrepeat 1|2|3*           # manual settling conversions; retain final one
 ```
 
@@ -70,9 +72,13 @@ Manual mode pipelines the ADS7953 two-frame response delay. `channelrepeat`
 performs one to three consecutive conversions per route but emits only the
 last result, so it does not change frame width.
 
-Auto-1 programs a sparse mask for each active ADC, captures each selected
-channel once in ascending hardware channel order, and maps tagged responses
-back to the requested payload positions. Its effective repeat is always one.
+Auto-1 programs a persistent sparse mask for each active ADC. The mask also
+enables the board-fixed Vmid channel 15 as the final sequence position. The
+firmware captures each selected sensor channel once in ascending hardware
+channel order, maps tagged responses back to the requested payload positions,
+and stops clocking that ADC when the last sensor result has advanced its MUX to
+Vmid. On the next sweep it discards the Vmid result and continues from the
+first sensor without rewriting the mask. Its effective repeat is always one.
 
 DMA uses Teensy SPI's byte-oriented asynchronous transfer API with persistent
 per-bus buffers. Direct LPSPI uses the normal SPI pin mux established by
@@ -81,8 +87,10 @@ peripheral and polls internal receive flags with a bounded timeout.
 
 `spiclock` is accepted only while stopped. `status*` reports the requested
 value as `spi_clock_hz`; the Teensy SPI hardware may select the nearest
-supported divider. Check actual SCLK with a logic analyzer when exact frequency
-or signal integrity matters.
+supported divider, so the requested value is not proof of the wire frequency.
+Check actual SCLK with a logic analyzer. Treat returned-channel errors, transfer
+timeouts, malformed/missing frames, or repeatable cross-clock sample shifts as
+failure indicators when testing above 20 MHz.
 
 ### Vmid behavior
 
@@ -108,7 +116,10 @@ optional manual Vmid sampling is enabled. When both buses change ADC ownership,
 their parking frames are started together by DMA or direct LPSPI mode.
 
 Auto-1 ignores optional between-channel Vmid sampling but still applies all
-mandatory parking rules.
+mandatory parking rules. During a run it normally parks without leaving
+Auto-1: Vmid is the highest enabled mask bit, so the MUX reaches channel 15
+immediately after the last sensor result. Manual Vmid commands remain the
+startup, stop, failure-recovery, and explicit-mode-change fallback.
 
 ### Other commands
 
@@ -117,7 +128,7 @@ mandatory parking rules.
 | `mode PZT|PZR*` | Select acquisition path; PZR is unavailable unless optional 555 hardware is configured |
 | `mcu*` | Print `# TestBoard_7953` |
 | `help*` | Print command summary |
-| `status*` | Print requested/effective sequencing, engine, SPI clock, Vmid, topology, and error counters |
+| `status*` | Print requested/effective sequencing, engine, SPI clock, Vmid, topology, error counters, and cumulative Auto1 program/resume counts |
 | `ref 2.5|5*` | Select ADS7953 1xVREF or 2xVREF input span |
 | `run*` / `run <ms>*` | Start continuous or timed streaming |
 | `stop*` | Park active ADCs and stop |

@@ -142,7 +142,7 @@ def _write_table_sheet(
 
 
 def _summary_label(row: Mapping[str, Any]) -> str:
-    clock_mhz = float(row.get("spi_clock_hz") or 10_000_000) / 1_000_000.0
+    clock_mhz = float(row.get("spi_clock_hz") or 20_000_000) / 1_000_000.0
     return (
         f"{row.get('route_set', '')} | {row.get('scanorder', '')} | "
         f"{row.get('spiengine', '')} | {row.get('adcseq', '')} | "
@@ -214,7 +214,7 @@ def _write_summary(workbook: Any, result_rows: Sequence[Mapping[str, Any]]) -> N
             row.get("vmid_requested", ""),
             row.get("channelrepeat_requested", ""),
             _summary_label(row),
-            float(row.get("spi_clock_hz") or 10_000_000) / 1_000_000.0,
+            float(row.get("spi_clock_hz") or 20_000_000) / 1_000_000.0,
             row.get("spiengine", ""), row.get("adcseq", ""),
             row.get("duration_median_us", ""), row.get("block_period_median_us", ""),
             row.get("payload_throughput_sps", ""), row.get("sweep_rate_hz", ""),
@@ -245,6 +245,7 @@ def _write_summary(workbook: Any, result_rows: Sequence[Mapping[str, Any]]) -> N
     first_row = 5
     last_row = 4 + len(aggregates)
     categories = ["Summary", first_row, 0, last_row, 0]
+    chart_start_row = 7 + len(aggregates)
 
     timing = workbook.add_chart({"type": "column"})
     timing.add_series({
@@ -261,7 +262,7 @@ def _write_summary(workbook: Any, result_rows: Sequence[Mapping[str, Any]]) -> N
     timing.set_y_axis({"name": "Microseconds", "min": 0})
     timing.set_legend({"position": "top"})
     timing.set_size({"width": 1050, "height": 420})
-    worksheet.insert_chart("X5", timing)
+    worksheet.insert_chart(chart_start_row, 0, timing)
 
     rates = workbook.add_chart({"type": "column"})
     rates.add_series({
@@ -273,7 +274,7 @@ def _write_summary(workbook: Any, result_rows: Sequence[Mapping[str, Any]]) -> N
     rates.set_y_axis({"name": "Sweeps per second", "min": 0})
     rates.set_legend({"none": True})
     rates.set_size({"width": 1050, "height": 420})
-    worksheet.insert_chart("X27", rates)
+    worksheet.insert_chart(chart_start_row + 22, 0, rates)
 
     samples = workbook.add_chart({"type": "line"})
     for column, name, color in (
@@ -290,7 +291,7 @@ def _write_summary(workbook: Any, result_rows: Sequence[Mapping[str, Any]]) -> N
     samples.set_y_axis({"name": "Raw ADC counts", "min": 0, "max": 4095})
     samples.set_legend({"position": "top"})
     samples.set_size({"width": 1050, "height": 420})
-    worksheet.insert_chart("X49", samples)
+    worksheet.insert_chart(chart_start_row + 44, 0, samples)
 
 
 def _format_resistance(value: Any) -> str:
@@ -613,7 +614,7 @@ def write_existing_session_report(
     default_clock = int(
         configured_clocks[0]
         if configured_clocks
-        else initial_status.get("spi_clock_hz", 10_000_000)
+        else initial_status.get("spi_clock_hz", 20_000_000)
     )
     if channel_stats_path.exists():
         write_benchmark_workbook(

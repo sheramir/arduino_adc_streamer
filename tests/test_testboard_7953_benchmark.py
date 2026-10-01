@@ -26,9 +26,11 @@ from Arduino_Sketches.TestBoard_7953.benchmarks.testboard_7953_benchmark import 
     load_route_manifest,
     measured_capture_after_warmup,
     parse_status,
+    parse_args,
     payload_order,
     validate_status,
     DEFAULT_ROUTES_PATH,
+    MAX_SPI_CLOCK_HZ,
 )
 
 
@@ -74,12 +76,12 @@ def test_route_manifest_and_matrix_cover_required_modes():
 
     assert len(ids) == len(configs)
     assert all(route.channel != 15 for route_set in route_sets.values() for route in route_set.routes)
-    assert "one_adc_bus1__interleaved__manual__blocking__repeat1__vmidoff__spi10000000hz" in ids
-    assert "all_four_full__interleaved__manual__dma__repeat3__vmidon__spi10000000hz" in ids
-    assert "all_four_full__interleaved__auto1__lpspi__repeat1__vmidoff__spi10000000hz" in ids
+    assert "one_adc_bus1__interleaved__manual__blocking__repeat1__vmidoff__spi20000000hz" in ids
+    assert "all_four_full__interleaved__manual__dma__repeat3__vmidon__spi20000000hz" in ids
+    assert "all_four_full__interleaved__auto1__lpspi__repeat1__vmidoff__spi20000000hz" in ids
     assert all(not config.vmid for config in configs if config.adcseq == "auto1")
-    assert "all_four_full__array__manual__dma__repeat1__vmidoff__spi10000000hz" in ids
-    assert "all_four_full__adc__manual__lpspi__repeat1__vmidoff__spi10000000hz" in ids
+    assert "all_four_full__array__manual__dma__repeat1__vmidoff__spi20000000hz" in ids
+    assert "all_four_full__adc__manual__lpspi__repeat1__vmidoff__spi20000000hz" in ids
 
     multi_clock = build_test_matrix(route_sets, spi_clocks=(5_000_000, 10_000_000))
     assert len(multi_clock) == 2 * len(configs)
@@ -106,6 +108,15 @@ def test_complete_matrix_can_focus_one_route_set_and_scan_order():
     }
     assert len(auto1) == 3
     assert all(config.channelrepeat == 1 and not config.vmid for config in auto1)
+
+
+def test_experimental_spi_clock_ceiling_is_30_mhz():
+    assert parse_args(["--dry-run"]).spi_clocks_hz == [20_000_000]
+    assert MAX_SPI_CLOCK_HZ == 30_000_000
+    args = parse_args(["--dry-run", "--spi-clock-hz", "30000000"])
+    assert args.spi_clocks_hz == [30_000_000]
+    with pytest.raises(SystemExit):
+        parse_args(["--dry-run", "--spi-clock-hz", "30000001"])
 
 
 def test_payload_order_matches_all_three_firmware_orders():
@@ -140,7 +151,7 @@ def test_status_parser_and_validator_require_effective_firmware_configuration():
     config = BenchmarkConfig("pair", "both", "interleaved", "auto1", "dma", 3, True)
     lines = [
         "# adcchannels=1:0,3:0", "# array=both", "# scanorder=interleaved",
-        "# adcseq=auto1", "# spiengine=dma", "# spi_clock_hz=10000000",
+        "# adcseq=auto1", "# spiengine=dma", "# spi_clock_hz=20000000",
         "# channelrepeat_requested=3",
         "# channelrepeat_effective=1", "# vmid_channel=15",
         "# vmid_between_channels_requested=true",
@@ -258,9 +269,9 @@ def test_resume_baselines_are_restored_from_sample_csv(tmp_path):
 
     restored = load_baselines_from_csv(samples, results)
 
-    assert restored[(Route(1, 0), 10_000_000)].median == 2045
-    assert restored[(Route(1, 0), 10_000_000)].mad == 5
-    assert restored[(Route(1, 0), 10_000_000)].test_id == "base"
+    assert restored[(Route(1, 0), 20_000_000)].median == 2045
+    assert restored[(Route(1, 0), 20_000_000)].mad == 5
+    assert restored[(Route(1, 0), 20_000_000)].test_id == "base"
 
 
 def test_aggregate_reports_matched_speedup_against_blocking():
@@ -393,12 +404,16 @@ def test_excel_report_contains_tables_and_native_charts(tmp_path):
             archive.read(name).decode("utf-8")
             for name in members if name.startswith("xl/charts/chart")
         )
+        summary_drawing_xml = archive.read(
+            "xl/drawings/drawing1.xml"
+        ).decode("utf-8")
     assert "xl/workbook.xml" in members
     assert any(name.startswith("xl/charts/chart") for name in members)
     assert "Warmup Samples" in workbook_xml
     assert "Warmup Channel" in workbook_xml
     assert "Warmup Curves" in workbook_xml
     assert 'plotVisOnly val="1"' in chart_xml
+    assert summary_drawing_xml.count("<xdr:col>0</xdr:col>") >= 3
     for header in (
         "Test ID", "Measured runs", "Route set", "Array", "Scan order", "Vmid",
         "Channel repeat",

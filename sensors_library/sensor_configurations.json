@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "selected_name": "Array_PCB1.7",
   "deleted_names": [
     "Single_PZT_New"
@@ -277,6 +277,108 @@
           "rs_channels": [
             1,
             0
+          ]
+        }
+      },
+      "channel_layout": {
+        "channels_per_sensor": 5
+      }
+    },
+    {
+      "name": "TestBoard_7953",
+      "type": "array_layout",
+      "board_profile": "TestBoard_7953",
+      "reverse_polarity": false,
+      "channel_sensor_map": [
+        "B",
+        "L",
+        "C",
+        "R",
+        "T"
+      ],
+      "array_count": 2,
+      "arrays": {
+        "1": {
+          "adc_lanes": [
+            1,
+            2
+          ]
+        },
+        "2": {
+          "adc_lanes": [
+            3,
+            4
+          ]
+        }
+      },
+      "array_layout": {
+        "cells": [
+          [
+            null,
+            "PZT7",
+            null
+          ],
+          [
+            "PZT1",
+            "PZT6",
+            "PZT5"
+          ],
+          [
+            null,
+            "PZT3",
+            null
+          ]
+        ]
+      },
+      "mux_mapping": {
+        "PZT6": {
+          "mux": 1,
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ]
+        },
+        "PZT7": {
+          "mux": 1,
+          "channels": [
+            5,
+            6,
+            7,
+            8,
+            9
+          ]
+        },
+        "PZT1": {
+          "mux": 2,
+          "channels": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ]
+        },
+        "PZT3": {
+          "mux": 2,
+          "channels": [
+            5,
+            6,
+            7,
+            8,
+            9
+          ]
+        },
+        "PZT5": {
+          "mux": 2,
+          "channels": [
+            10,
+            11,
+            12,
+            13,
+            14
           ]
         }
       },

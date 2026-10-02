@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import queue
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 import numpy as np
 from PyQt6.QtCore import QThread, pyqtSignal
@@ -45,6 +45,7 @@ class ForceRenderResult:
     package_results: list
     array_result: object | None
     dropped_sweeps: int
+    array_results: dict = field(default_factory=dict)
 
 
 class ForceBlockWorker(QThread):
@@ -197,6 +198,8 @@ class ForceBlockWorker(QThread):
                 package_results=self._engine.package_results(),
                 array_result=self._engine.array_result(),
                 dropped_sweeps=batch.dropped_sweeps_before,
+                array_results={array: self._engine.array_result(f"A{array}_") for array in (1, 2)}
+                if any(key.startswith(('A1_', 'A2_')) for key in batch.grid_positions) else {},
             )
             self.result_ready.emit(result)
         except ValueError as exc:

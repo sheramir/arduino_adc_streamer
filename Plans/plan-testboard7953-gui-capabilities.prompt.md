@@ -1,8 +1,14 @@
 ## Plan: TestBoard_7953 GUI Capabilities and Two-Array Display
 
-Status: PLANNED - planning only; implementation and validation have not started.
+Status: IMPLEMENTED - automated validation passed; hardware acceptance pending.
 Date: 2026-10-02
 Workspace: `C:/Code/arduino_adc_streamer/`
+
+Maintenance note (2026-10-02): the subsequent
+[board-registry refactor](plan-boardRegistry-jsonProfiles-refactor.prompt.md)
+supersedes this plan's Python-owned wiring/defaults and read-only electrical editor.
+Board values now live in `config/boards/profiles/testboard_7953.json`; wiring lives
+in sensor JSON. Existing acquisition/display behavior is preserved.
 
 Update the Python GUI to recognize the active `Arduino_Sketches/TestBoard_7953`
 firmware and expose the controls appropriate to this PZT-only board. Support
@@ -14,8 +20,34 @@ Extend the sensor library with a TestBoard configuration describing two similar
 arrays, their spatial layout, and their physical ADC associations. Preserve the
 existing behavior of MG24, Teensy, 555, and PCB1.x Array boards.
 
-This document is an implementation prompt for a later task. The current task
-creates only this plan and its entry in `Plans/README.md`.
+Implementation completed on 2026-10-02 following the user's authorization.
+The sections below preserve the agreed requirements and implementation approach.
+
+**Implementation and validation record**
+
+- Added canonical/alias detection, PZT-only ADC and acquisition controls, fixed
+  Vmid/manual constraints, settling-repeat semantics and status verification.
+- Added the bundled two-array sensor configuration using the Array_PCB1.7 grid,
+  schema migration, fixed electrical-map validation and editor preservation.
+- Added immutable acquisition descriptors and shared runtime array switching,
+  retaining complete buffers and array-qualified processing/calibration identity.
+- Updated archive/CSV export/reload and independent Analysis array selection,
+  including package-specific shear/normal overlays and captured voltage scaling.
+- Guarded delayed Spectrum results after a display switch; added scrolling to
+  keep acquisition controls readable on smaller windows.
+- Full automated suite: `.\.venv\Scripts\python.exe -m pytest tests -q`:
+  **871 passed, 34 subtests passed**. New TestBoard suite contains 53 cases,
+  including physical route sentinels, status completeness, sparse/full routes,
+  5 V export/reload after disconnect, view switching and calibration identity.
+- Reviewed the rendered GUI at small-window size with readable acquisition fields.
+  Documentation updated in the array guide and GUI/config READMEs.
+- Physical ADS7953 connection timing is unavailable from the current firmware.
+  Decay tab supports array-qualified voltage preview and gates physical decay
+  characterization; Analysis automatic physical connection timing reports
+  unavailable rather than using MG24 or emitted-sample timing.
+- Firmware was not changed. Hardware acceptance in verification item 8 remains
+  pending, including >RAM archive capture and requested-versus-measured SPI clock.
+
 
 **Current behavior and gaps**
 

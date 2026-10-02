@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 
-from config.testboard_7953_board import ARRAY_ADC_LANES
+from config.testboard_7953_board import default_layout, is_testboard_7953
 
 
-TESTBOARD_MCU_NAME = "PCB_TestBoard_7953"
+TESTBOARD_MCU_NAME = "TestBoard_7953"
 
 TESTBOARD_ARRAY_BOTH = "both"
 TESTBOARD_ARRAY_1 = "1"
@@ -30,10 +30,6 @@ TESTBOARD_SCAN_ORDER_LABELS = {
 }
 
 
-def is_testboard_7953(mcu_name: str | None) -> bool:
-    return (mcu_name or "").strip().lower() == TESTBOARD_MCU_NAME.lower()
-
-
 def normalize_testboard_array_selection(value: str | None) -> str:
     text = (value or TESTBOARD_ARRAY_BOTH).strip()
     if text in TESTBOARD_ARRAY_LABELS:
@@ -47,7 +43,10 @@ def normalize_testboard_array_selection(value: str | None) -> str:
 
 
 def normalize_testboard_scan_order(value: str | None) -> str:
-    text = (value or TESTBOARD_SCAN_INTERLEAVED).strip()
+    if not value:
+        from config.testboard_7953_board import TESTBOARD_DEFAULT_SCAN_ORDER
+        value = TESTBOARD_DEFAULT_SCAN_ORDER
+    text = value.strip()
     if text in TESTBOARD_SCAN_ORDER_LABELS:
         return TESTBOARD_SCAN_ORDER_LABELS[text]
     normalized = text.lower().replace("_", " ").replace("-", " ")
@@ -55,7 +54,9 @@ def normalize_testboard_scan_order(value: str | None) -> str:
         return TESTBOARD_SCAN_ARRAY
     if normalized in ("adc", "adc at a time", "adc sequential"):
         return TESTBOARD_SCAN_ADC
-    return TESTBOARD_SCAN_INTERLEAVED
+    if normalized in ("interleaved", "interleaved adcs"):
+        return TESTBOARD_SCAN_INTERLEAVED
+    raise ValueError(f"Invalid TestBoard scan order: {value}")
 
 
 def selected_testboard_arrays(selection: str | None) -> tuple[int, ...]:
@@ -67,7 +68,7 @@ def selected_testboard_arrays(selection: str | None) -> tuple[int, ...]:
     return (1, 2)
 
 
-def physical_lanes_for_mapping(mapping_lane: int, selection: str | None) -> tuple[int, ...]:
+def physical_lanes_for_mapping(mapping_lane: int, selection: str | None, layout=None) -> tuple[int, ...]:
     """Resolve a pair-local mapping lane to physical ADC lanes.
 
     Lanes 1/2 are mirrored to lanes 3/4 when array 2 is selected. Explicit
@@ -75,8 +76,9 @@ def physical_lanes_for_mapping(mapping_lane: int, selection: str | None) -> tupl
     """
     lane = int(mapping_lane)
     arrays = selected_testboard_arrays(selection)
-    if lane in (1, 2):
-        return tuple(ARRAY_ADC_LANES[array_number][lane - 1] for array_number in arrays)
+    pairs = (layout or default_layout())['arrays']
+    if 1 <= lane <= len(next(iter(pairs.values()))['adc_lanes']):
+        return tuple(pairs[str(array_number)]['adc_lanes'][lane - 1] for array_number in arrays)
     if lane in (3, 4) and 2 in arrays:
         return (lane,)
     return ()
@@ -100,13 +102,14 @@ def build_testboard_routes(
     sensor_groups: Iterable[Mapping[str, object]],
     *,
     array_selection: str | None,
+    layout=None,
 ) -> list[tuple[int, int]]:
     """Build requested lane/channel membership without imposing scan order."""
     groups = list(sensor_groups)
     routes: list[tuple[int, int]] = []
     for group in groups:
         lanes = physical_lanes_for_mapping(
-            int(group.get("mux", 1)), array_selection
+            int(group.get("mux", 1)), array_selection, layout
         )
         for lane in lanes:
             for channel in group.get("channels", []):

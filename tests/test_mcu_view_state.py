@@ -52,7 +52,7 @@ class MCUViewStateTests(unittest.TestCase):
         self.assertTrue(view_state.show_testboard_scan_controls)
         self.assertFalse(view_state.show_manual_channels)
         self.assertFalse(view_state.show_repeat_buffer_controls)
-        self.assertFalse(view_state.show_adc_config_section)
+        self.assertTrue(view_state.show_adc_config_section)
 
 
 if __name__ == "__main__":

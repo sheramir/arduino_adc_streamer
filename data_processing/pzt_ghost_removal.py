@@ -97,6 +97,9 @@ class PztGhostRemovalMixin:
             and hasattr(self, 'get_testboard_adc_routes')
         ):
             routes = list(self.get_testboard_adc_routes())
+            descriptor = self.get_testboard_descriptor() if hasattr(self, 'get_testboard_descriptor') else None
+            if descriptor:
+                routes = [tuple(route) for route in descriptor['ordered_routes']]
             groups = []
             for adc_lane in (1, 2, 3, 4):
                 lane_route_indices = [
@@ -140,7 +143,7 @@ class PztGhostRemovalMixin:
     def _pzt_ghost_baseline_array_from_plot(self, samples_per_sweep: int) -> np.ndarray | None:
         baselines = np.zeros(int(samples_per_sweep), dtype=np.float32)
         covered = np.zeros(int(samples_per_sweep), dtype=bool)
-        for spec in self.get_display_channel_specs():
+        for spec in getattr(self, "get_acquisition_channel_specs", self.get_display_channel_specs)():
             baseline = self.plot_baselines.get(spec.get('key'))
             if baseline is None:
                 continue

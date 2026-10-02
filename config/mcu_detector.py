@@ -21,12 +21,9 @@ class MCUDetectorMixin:
 
     @staticmethod
     def _get_locked_ground_pin_for_mcu_name(mcu_name: str | None) -> int | None:
-        normalized_name = (mcu_name or "").strip().lower()
-        if normalized_name == "array_pzt_pzr1":
-            return 10
-        if normalized_name == "array_pzt_pzr1.7":
-            return 15
-        return None
+        from config.boards import resolve_board
+        param = resolve_board(mcu_name).mode().parameters.get('ground_pin')
+        return param.default if param and param.definition.get('policy') == 'fixed' else None
 
     @classmethod
     def _is_ground_default_mcu_name(cls, mcu_name: str | None) -> bool:
@@ -45,22 +42,22 @@ class MCUDetectorMixin:
         if not self.uses_generic_555_tuning_defaults():
             return
 
-        self.config['rb_ohms'] = 470.0
-        self.config['rk_ohms'] = 470.0
-        self.config['cf_farads'] = 220e-9
-        self.config['rxmax_ohms'] = ANALYZER555_DEFAULT_RXMAX_OHMS
+        self.config['rb_ohms'] = profile.mode.parameters['rb_ohms'].default
+        self.config['rk_ohms'] = profile.mode.parameters['rk_ohms'].default
+        self.config['cf_farads'] = profile.mode.parameters['cf_farads'].default
+        self.config['rxmax_ohms'] = profile.mode.parameters['rxmax_ohms'].default
 
         if hasattr(self, 'rb_spin'):
             self.rb_spin.blockSignals(True)
-            self.rb_spin.setValue(470.0)
+            self.rb_spin.setValue(self.config['rb_ohms'])
             self.rb_spin.blockSignals(False)
         if hasattr(self, 'rk_spin'):
             self.rk_spin.blockSignals(True)
-            self.rk_spin.setValue(470.0)
+            self.rk_spin.setValue(self.config['rk_ohms'])
             self.rk_spin.blockSignals(False)
         if hasattr(self, 'cf_value_spin'):
             self.cf_value_spin.blockSignals(True)
-            self.cf_value_spin.setValue(220.0)
+            self.cf_value_spin.setValue(self.config['cf_farads'] / 1e-9)
             self.cf_value_spin.blockSignals(False)
         if hasattr(self, 'cf_unit_combo'):
             self.cf_unit_combo.blockSignals(True)
@@ -68,10 +65,10 @@ class MCUDetectorMixin:
             self.cf_unit_combo.blockSignals(False)
         if hasattr(self, 'rxmax_spin'):
             self.rxmax_spin.blockSignals(True)
-            self.rxmax_spin.setValue(ANALYZER555_DEFAULT_RXMAX_OHMS)
+            self.rxmax_spin.setValue(self.config['rxmax_ohms'])
             self.rxmax_spin.blockSignals(False)
 
-        self.log_status("PZT_RS defaults loaded: rb=470Ω, rk=470Ω, cf=220nF, rxmax=65500Ω")
+        self.log_status("PZT_RS tuning defaults loaded from board profile")
 
     def _apply_mcu_state(self, state):
         previous_mcu = self.current_mcu
@@ -108,6 +105,9 @@ class MCUDetectorMixin:
             self._apply_mcu_state(build_unknown_mcu_state())
 
     def _apply_mcu_view_state(self, view_state):
+        # Restore generic values before applying the new MCU's locked defaults.
+        if not view_state.show_testboard_scan_controls and getattr(self, '_testboard_controls_active', False):
+            self.apply_testboard_controls(False)
         if hasattr(self, 'adc_config_group'):
             self.adc_config_group.setVisible(view_state.show_adc_config_section)
 
@@ -117,13 +117,13 @@ class MCUDetectorMixin:
             self.channels_input.setVisible(view_state.show_manual_channels)
 
         if hasattr(self, 'repeat_label'):
-            self.repeat_label.setVisible(view_state.show_repeat_buffer_controls)
+            self.repeat_label.setVisible(view_state.show_repeat_control)
         if hasattr(self, 'repeat_spin'):
-            self.repeat_spin.setVisible(view_state.show_repeat_buffer_controls)
+            self.repeat_spin.setVisible(view_state.show_repeat_control)
         if hasattr(self, 'buffer_label'):
-            self.buffer_label.setVisible(view_state.show_repeat_buffer_controls)
+            self.buffer_label.setVisible(view_state.show_buffer_control)
         if hasattr(self, 'buffer_spin'):
-            self.buffer_spin.setVisible(view_state.show_repeat_buffer_controls)
+            self.buffer_spin.setVisible(view_state.show_buffer_control)
 
         if not view_state.show_repeat_buffer_controls:
             if hasattr(self, 'repeat_spin'):
@@ -152,7 +152,7 @@ class MCUDetectorMixin:
                 else "e.g., 1,3,5,7"
             )
             self.pzt_sequence_input.setToolTip(
-                "Wired sensors: PZT1, PZT3, PZT5, PZT6, PZT7"
+                "Select sensor IDs from the active sensor configuration"
                 if view_state.show_testboard_scan_controls
                 else ""
             )
@@ -265,15 +265,37 @@ class MCUDetectorMixin:
         self.sample_rate_spin.setVisible(view_state.show_teensy_controls)
 
         self.log_status(f"Device mode: {view_state.device_mode_log_label}")
+        if hasattr(self, "apply_testboard_controls"):
+            self.apply_testboard_controls(view_state.show_testboard_scan_controls)
 
     def update_gui_for_mcu(self):
         """Update GUI controls based on detected MCU type."""
+        self._applying_board_profile = True
         if hasattr(self, 'update_array_mode_options'):
             self.update_array_mode_options()
 
         selected_mode = "PZT"
         if hasattr(self, 'get_selected_array_operation_mode'):
             selected_mode = self.get_selected_array_operation_mode()
+        from config.boards import get_board_registry
+        from config.boards.settings import BoardPreferences, parameter_values
+        previous = getattr(self, 'board_context', None)
+        preferences = getattr(self, 'board_preferences', BoardPreferences())
+        self.board_preferences = preferences
+        next_context = get_board_registry().context(self.current_mcu, selected_mode)
+        changed = previous is None or previous.profile.id != next_context.profile.id or previous.mode.id != next_context.mode.id
+        if changed:
+            self.config_is_valid = False
+        if changed and previous and hasattr(self, 'config'):
+            try:
+                preferences.save(previous, self.config)
+            except ValueError:
+                pass
+        self.board_context = next_context
+        if getattr(self, 'adc_session', None) is not None:
+            self.adc_session.set_board_context(next_context)
+        if hasattr(self, 'config') and hasattr(self.config, 'register_parameters'):
+            self.config.register_parameters(next_context.mode)
         profile = resolve_mcu_profile(self.current_mcu, selected_array_mode=selected_mode)
         view_state = build_mcu_view_state(profile)
         self.device_mode = profile.device_mode
@@ -298,6 +320,18 @@ class MCUDetectorMixin:
             self.refresh_spectrum_filter_availability(log_message=False)
 
         self._apply_mcu_view_state(view_state)
+        if hasattr(self, 'adc_config_group'):
+            from gui.board_controls import apply_board_controls
+            if changed and next_context.profile.definition.get('preferences', {}).get('reconnect') != 'defaults':
+                from config.boards.settings import legacy_updates
+                restored = preferences.restore(next_context)
+                if hasattr(self.config, 'register_parameters'):
+                    self.config.register_parameters(next_context.mode)
+                self.config.update(legacy_updates(next_context.mode, restored))
+            apply_board_controls(self, defaults=changed and next_context.profile.definition.get('preferences', {}).get('reconnect') == 'defaults')
+            if hasattr(self, 'refresh_testboard_sequence_controls'):
+                self.refresh_testboard_sequence_controls()
+        self._applying_board_profile = False
 
         if hasattr(self, 'update_heatmap_ui_for_mode'):
             self.update_heatmap_ui_for_mode()

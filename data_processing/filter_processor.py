@@ -391,7 +391,7 @@ class FilterProcessorMixin:
         if not is_array:
             return None
 
-        specs = list(self.get_display_channel_specs())
+        specs = list(getattr(self, "get_acquisition_channel_specs", self.get_display_channel_specs)())
 
         stream_map = {}
         for spec in specs:

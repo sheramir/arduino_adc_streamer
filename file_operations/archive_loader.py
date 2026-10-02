@@ -120,6 +120,7 @@ class ArchiveLoaderMixin:
             invalid_archive_lines = 0
             unknown_archive_entries = 0
             archive_rs_units = None
+            descriptor = None
             
             with open(self._archive_path, 'r', encoding='utf-8') as f:
                 # First line is metadata - skip it
@@ -128,6 +129,20 @@ class ArchiveLoaderMixin:
                     try:
                         metadata = json.loads(first_line)
                         archive_rs_units = extract_archive_rs_units(metadata)
+                        saved_context = metadata.get('metadata', {}).get('board_context')
+                        if saved_context:
+                            from config.boards.capture import validate_capture_context
+                            validate_capture_context(saved_context)
+                            self.board_capture_context = saved_context
+                        descriptor = metadata.get('metadata', {}).get('testboard_acquisition')
+                        if descriptor:
+                            from config.testboard_acquisition import validate_descriptor
+                            validate_descriptor(descriptor)
+                            self.testboard_capture_descriptor = descriptor
+                        else:
+                            from config.testboard_7953_board import is_testboard_7953
+                            if is_testboard_7953(metadata.get('metadata', {}).get('mcu_type')):
+                                raise ValueError('Legacy TestBoard archive lacks saved ADC/array route identity.')
                     except json.JSONDecodeError:
                         pass
                 
@@ -140,12 +155,16 @@ class ArchiveLoaderMixin:
 
                             # New format: {"timestamp_s": float, "samples": [...]}
                             if isinstance(sweep_data, dict) and 'samples' in sweep_data:
+                                if descriptor:
+                                    validate_descriptor(descriptor, len(sweep_data['samples']))
                                 sweeps.append(sweep_data.get('samples', []))
                                 ts_val = sweep_data.get('timestamp_s')
                                 archive_timestamps.append(ts_val if isinstance(ts_val, (int, float)) else None)
 
                             # Legacy format: raw list of samples per sweep
                             elif isinstance(sweep_data, list):
+                                if descriptor:
+                                    validate_descriptor(descriptor, len(sweep_data))
                                 sweeps.append(sweep_data)
                                 archive_timestamps.append(None)
 

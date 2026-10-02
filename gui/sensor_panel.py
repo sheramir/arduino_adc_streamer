@@ -353,6 +353,18 @@ class SensorPanelMixin:
 
         config = self.get_active_sensor_configuration()
         self.sensor_name_edit.setText(str(config["name"]))
+        from config.boards import resolve_board
+        declared = config.get('board_profile')
+        policy = resolve_board(declared).definition.get('sensor_editability', {}) if declared else {}
+        lane_label = resolve_board(declared).hardware.get('lane_label', 'MUX') if declared else 'MUX'
+        fixed_board = not policy.get('electrical', True)
+        for spin in self.sensor_position_spins.values():
+            spin.setEnabled(not fixed_board)
+        self.array_channels_per_sensor.setEnabled(not fixed_board)
+        self.array_mux_table.setEditTriggers(
+            QTableWidget.EditTrigger.NoEditTriggers if fixed_board else QTableWidget.EditTrigger.DoubleClicked | QTableWidget.EditTrigger.EditKeyPressed)
+        self.array_mux_table.setHorizontalHeaderLabels(["Sensor", f"{lane_label} (pair position)", "Channels", "RS Channels"])
+        self.array_mux_table.setToolTip("Electrical editing is disabled by the board profile." if fixed_board else "Electrical routes are defined by this sensor configuration.")
 
         if hasattr(self, "sensor_reverse_polarity_check"):
             self.sensor_reverse_polarity_check.blockSignals(True)
@@ -705,6 +717,7 @@ class SensorPanelMixin:
         default_array_config = default_array_configuration()
         return {
             "name": str(name if name is not None else self.active_sensor_config_name),
+            **{key: current_config[key] for key in ("array_count", "arrays", "board_profile") if key in current_config},
             "type": str(config_type if config_type is not None else current_config.get("type", "channel_layout")),
             "channel_sensor_map": list(
                 channel_sensor_map
@@ -782,6 +795,9 @@ class SensorPanelMixin:
             mux_mapping=default_config["mux_mapping"],
             channel_layout=default_config["channel_layout"],
         )
+        # New blank layouts do not inherit the current board's fixed wiring.
+        for key in ('arrays', 'array_count', 'board_profile'):
+            new_config.pop(key, None)
         
         self.sensor_configurations.append(new_config)
         self.active_sensor_config_name = new_name

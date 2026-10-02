@@ -6,17 +6,25 @@ Normalize widget-derived ADC config values into a plain snapshot.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from config.adc_config_state import ADCConfigurationState
 
 
+# Read-only compatibility lookup for legacy snapshot callers. Live widgets use item data.
+from config.boards import get_board_registry
 VREF_LABEL_TO_COMMAND = {
-    "1.2V (Internal)": "1.2",
-    "3.3V (VDD)": "vdd",
+    choice['label']: choice['id']
+    for board in get_board_registry().profiles.values()
+    for mode in board.modes.values()
+    for choice in (mode.parameters['reference'].choices if 'reference' in mode.parameters else ())
 }
+
+
+def _testboard_default(key):
+    return get_board_registry().profiles['testboard_7953'].mode().parameters[key].default
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,10 +45,16 @@ class ADCConfigurationSnapshot:
     rk_ohms: float
     cf_farads: float
     rxmax_ohms: float
+    testboard_spi_clock_hz: int = field(default_factory=lambda: _testboard_default("spi_clock_hz"))
+    testboard_channel_repeat: int = field(default_factory=lambda: _testboard_default("settling_conversions"))
+    testboard_sequence: str = field(default_factory=lambda: _testboard_default("sequence"))
 
     def as_config_updates(self) -> dict:
         return {
             "reference": self.reference,
+            "testboard_spi_clock_hz": self.testboard_spi_clock_hz,
+            "testboard_channel_repeat": self.testboard_channel_repeat,
+            "testboard_sequence": self.testboard_sequence,
             "osr": self.osr,
             "gain": self.gain,
             "repeat": self.repeat,
@@ -99,7 +113,7 @@ def build_adc_configuration_snapshot(
     array_operation_mode: str | None,
     current_testboard_array_selection: str = "both",
     testboard_array_selection: str | None = None,
-    current_testboard_scan_order: str = "interleaved",
+    current_testboard_scan_order: str = "adc",
     testboard_scan_order: str | None = None,
     current_rb_ohms: float,
     rb_value: float | None,
@@ -108,6 +122,9 @@ def build_adc_configuration_snapshot(
     cf_farads: float,
     current_rxmax_ohms: float,
     rxmax_value: float | None,
+    testboard_spi_clock_hz: int = None,
+    testboard_channel_repeat: int = None,
+    testboard_sequence: str = None,
 ) -> ADCConfigurationSnapshot:
     return ADCConfigurationSnapshot(
         reference=normalize_reference(
@@ -138,4 +155,7 @@ def build_adc_configuration_snapshot(
         rk_ohms=float(rk_value if rk_value is not None else current_rk_ohms),
         cf_farads=float(cf_farads),
         rxmax_ohms=float(rxmax_value if rxmax_value is not None else current_rxmax_ohms),
+        testboard_spi_clock_hz=_testboard_default("spi_clock_hz") if testboard_spi_clock_hz is None else testboard_spi_clock_hz,
+        testboard_channel_repeat=_testboard_default("settling_conversions") if testboard_channel_repeat is None else testboard_channel_repeat,
+        testboard_sequence=_testboard_default("sequence") if testboard_sequence is None else testboard_sequence,
     )

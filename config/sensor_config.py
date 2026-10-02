@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import re
+from copy import deepcopy
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -247,7 +248,9 @@ def normalize_array_layout(array_layout: Dict[str, object]) -> Dict[str, object]
 
 def normalize_mux_mapping(
     mux_mapping: Dict[str, object],
-    allowed_sensors: set[str] | None = None
+    allowed_sensors: set[str] | None = None,
+    *, channel_max=SENSOR_CONFIG_CHANNEL_MAX, mux_max=SENSOR_CONFIG_MUX_MAX,
+    channels_per_sensor_max=SENSOR_CONFIG_ARRAY_CELL_CHANNELS_MAX, preserve_order=False,
 ) -> Dict[str, object] | None:
     """Normalize and validate MUX mapping structure."""
     if not isinstance(mux_mapping, dict):
@@ -269,15 +272,15 @@ def normalize_mux_mapping(
             channels_raw = mapping_data.get("channels", [])
             rs_channels_raw = mapping_data.get("rs_channels", [])
             
-            if mux_num < SENSOR_CONFIG_MUX_MIN or mux_num > SENSOR_CONFIG_MUX_MAX:
+            if mux_num < SENSOR_CONFIG_MUX_MIN or mux_num > mux_max:
                 return None
             if not isinstance(channels_raw, list):
                 return None
             
             channels = [int(c) for c in channels_raw]
-            if len(channels) < 1 or len(channels) > SENSOR_CONFIG_ARRAY_CELL_CHANNELS_MAX:
+            if len(channels) < 1 or len(channels) > channels_per_sensor_max:
                 return None
-            if any(c < SENSOR_CONFIG_CHANNEL_MIN or c > SENSOR_CONFIG_CHANNEL_MAX for c in channels):
+            if any(c < SENSOR_CONFIG_CHANNEL_MIN or c > channel_max for c in channels):
                 return None
             if len(set(channels)) != len(channels):  # Check for duplicates
                 return None
@@ -287,14 +290,14 @@ def normalize_mux_mapping(
                 rs_channels = [int(c) for c in rs_channels_raw]
                 if len(rs_channels) > 2:
                     return None
-                if any(c < SENSOR_CONFIG_CHANNEL_MIN or c > SENSOR_CONFIG_CHANNEL_MAX for c in rs_channels):
+                if any(c < SENSOR_CONFIG_CHANNEL_MIN or c > channel_max for c in rs_channels):
                     return None
             elif rs_channels_raw not in (None, ""):
                 return None
             
             normalized[sensor_id] = {
                 "mux": mux_num,
-                "channels": sorted(channels),
+                "channels": channels if preserve_order else sorted(channels),
                 "rs_channels": rs_channels,
             }
         except (ValueError, TypeError):
@@ -318,6 +321,9 @@ def normalize_array_config(config: Dict[str, object]) -> Dict[str, object] | Non
     """Normalize and validate array configuration."""
     if not isinstance(config, dict):
         return None
+    if any(key in config for key in ('arrays', 'array_count', 'board_profile')):
+        normalized = normalize_combined_sensor_config(config)
+        return normalized if normalized and normalized['type'] == 'array_layout' else None
     
     name = str(config.get("name", "")).strip()
     if not name:
@@ -365,7 +371,7 @@ def normalize_array_config(config: Dict[str, object]) -> Dict[str, object] | Non
     }
 
 
-def normalize_optional_array_config(config: Dict[str, object]) -> Dict[str, object] | None:
+def normalize_optional_array_config(config: Dict[str, object], profile=None) -> Dict[str, object] | None:
     """Normalize optional array attachment.
 
     Returns an empty dict when no array is configured, a normalized attachment when
@@ -386,7 +392,10 @@ def normalize_optional_array_config(config: Dict[str, object]) -> Dict[str, obje
             return None
         return {}
 
-    mux_mapping = normalize_mux_mapping(mux_mapping_raw, allowed_sensors=sensors)
+    limits = dict(channel_max=profile.hardware['inputs_per_adc'] - 1,
+                  mux_max=profile.hardware['adc_lane_count'],
+                  channels_per_sensor_max=profile.hardware['inputs_per_adc'], preserve_order=True) if profile else {}
+    mux_mapping = normalize_mux_mapping(mux_mapping_raw, allowed_sensors=sensors, **limits)
     if not mux_mapping:
         return None
 
@@ -399,7 +408,8 @@ def normalize_optional_array_config(config: Dict[str, object]) -> Dict[str, obje
 
     try:
         channels_per_sensor = int(channel_layout_raw.get("channels_per_sensor", SENSOR_CONFIG_ARRAY_CELL_CHANNELS_MAX))
-        if channels_per_sensor < 1 or channels_per_sensor > SENSOR_CONFIG_ARRAY_CELL_CHANNELS_MAX:
+        maximum = profile.hardware['inputs_per_adc'] if profile else SENSOR_CONFIG_ARRAY_CELL_CHANNELS_MAX
+        if channels_per_sensor < 1 or channels_per_sensor > maximum:
             return None
     except (ValueError, TypeError):
         return None
@@ -421,8 +431,17 @@ def normalize_combined_sensor_config(config: Dict[str, object]) -> Dict[str, obj
         return None
 
     default_map = list(default_sensor_configuration()["channel_sensor_map"])
+    from config.boards import get_board_registry
+    profile = get_board_registry().resolve(config['board_profile']) if config.get('board_profile') else None
     channel_sensor_map = normalize_channel_sensor_map(config.get("channel_sensor_map"))
-    array_attachment = normalize_optional_array_config(config)
+    if profile:
+        raw = config.get('channel_sensor_map')
+        if not isinstance(raw, list) or not raw or len(set(raw)) != len(raw):
+            return None
+        channel_sensor_map = [str(v).strip().upper() for v in raw]
+        if any(not v for v in channel_sensor_map):
+            return None
+    array_attachment = normalize_optional_array_config(config, profile)
 
     if channel_sensor_map is None:
         if array_attachment is None or not array_attachment:
@@ -441,6 +460,26 @@ def normalize_combined_sensor_config(config: Dict[str, object]) -> Dict[str, obj
         ),
     }
     normalized.update(array_attachment)
+    if array_attachment:
+        try:
+            default_lanes = list(range(1, profile.hardware['adc_lane_count'] + 1)) if profile else [1, 2]
+            arrays = config.get('arrays', {'1': {'adc_lanes': default_lanes}})
+            count = config.get('array_count', len(arrays))
+            if type(count) is not int or count < 1 or not isinstance(arrays, dict) or len(arrays) != count:
+                return None
+            if set(arrays) != {str(i) for i in range(1, count + 1)}:
+                return None
+            lanes = [lane for entry in arrays.values() for lane in entry['adc_lanes']]
+            if not lanes or len(set(lanes)) != len(lanes) or any(type(lane) is not int or lane < 1 for lane in lanes):
+                return None
+            normalized['array_count'] = count
+            normalized['arrays'] = deepcopy(arrays)
+            if config.get("board_profile"):
+                normalized["board_profile"] = config["board_profile"]
+                from config.boards.validation import validate_sensor_layout
+                validate_sensor_layout(normalized, profile)
+        except (ValueError, TypeError, KeyError):
+            return None
     return normalized
 
 

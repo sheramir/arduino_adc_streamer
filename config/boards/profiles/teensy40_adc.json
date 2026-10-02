@@ -1,0 +1,238 @@
+{
+  "schema_version": 1,
+  "profile_version": 1,
+  "id": "teensy40_adc",
+  "mcu_aliases": [
+    "TEENSY40"
+  ],
+  "provenance": {
+    "source": "Arduino_Sketches/Teensy/ADC_Streamer_binary_scan2/",
+    "verified_against": "Repository firmware and host compatibility tests"
+  },
+  "default_mode": "ADC",
+  "hardware": {
+    "adc_resolution_bits": 12,
+    "adc_lane_count": 1,
+    "inputs_per_adc": 10,
+    "max_arrays": 1,
+    "reserved_inputs": {}
+  },
+  "transport": {
+    "baud_rate": 460800,
+    "command_terminator": "***",
+    "run_ack": "legacy",
+    "bootstrap": "shared_usb"
+  },
+  "preferences": {
+    "reconnect": "preserve"
+  },
+  "sensor_requirements": {},
+  "sensor_editability": {
+    "electrical": true,
+    "spatial": true
+  },
+  "modes": {
+    "ADC": {
+      "device_mode": "adc",
+      "features": {
+        "is_array_pzt_pzr17": false,
+        "is_teensy": true,
+        "yaxis_units_locked": false,
+        "yaxis_units_value": null,
+        "show_charge_discharge_labels": false,
+        "show_manual_channels": true,
+        "device_mode_log_label": "ADC streamer"
+      },
+      "parameters": {
+        "osr": {
+          "type": "enum",
+          "default": 2,
+          "label": "Averaging:",
+          "policy": "editable",
+          "section": "adc",
+          "tooltip": "Hardware averaging: 0=disabled, higher = better SNR",
+          "choices": [
+            {
+              "id": 2,
+              "label": "2",
+              "wire_value": 2
+            },
+            {
+              "id": 4,
+              "label": "4",
+              "wire_value": 4
+            },
+            {
+              "id": 8,
+              "label": "8",
+              "wire_value": 8
+            }
+          ]
+        },
+        "conversion_speed": {
+          "type": "enum",
+          "default": "med",
+          "label": "Conversion Speed:",
+          "policy": "editable",
+          "section": "adc",
+          "command": "conv",
+          "legacy_key": "conv_speed",
+          "choices": [
+            {
+              "id": "low",
+              "label": "low",
+              "wire_value": "low"
+            },
+            {
+              "id": "med",
+              "label": "med",
+              "wire_value": "med"
+            },
+            {
+              "id": "high",
+              "label": "high",
+              "wire_value": "high"
+            },
+            {
+              "id": "ad10",
+              "label": "ad10",
+              "wire_value": "ad10"
+            },
+            {
+              "id": "ad20",
+              "label": "ad20",
+              "wire_value": "ad20"
+            }
+          ]
+        },
+        "sampling_speed": {
+          "type": "enum",
+          "default": "med",
+          "label": "Sampling Speed:",
+          "policy": "editable",
+          "section": "adc",
+          "command": "samp",
+          "legacy_key": "samp_speed",
+          "choices": [
+            {
+              "id": "vlow",
+              "label": "vlow",
+              "wire_value": "vlow"
+            },
+            {
+              "id": "low",
+              "label": "low",
+              "wire_value": "low"
+            },
+            {
+              "id": "lmed",
+              "label": "lmed",
+              "wire_value": "lmed"
+            },
+            {
+              "id": "med",
+              "label": "med",
+              "wire_value": "med"
+            },
+            {
+              "id": "mhigh",
+              "label": "mhigh",
+              "wire_value": "mhigh"
+            },
+            {
+              "id": "high",
+              "label": "high",
+              "wire_value": "high"
+            },
+            {
+              "id": "hvhigh",
+              "label": "hvhigh",
+              "wire_value": "hvhigh"
+            },
+            {
+              "id": "vhigh",
+              "label": "vhigh",
+              "wire_value": "vhigh"
+            }
+          ]
+        },
+        "sample_rate": {
+          "type": "integer",
+          "default": 0,
+          "label": "Sampling Rate [Hz]:",
+          "policy": "editable",
+          "section": "adc",
+          "command": "rate",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "ground_sampling": {
+          "type": "boolean",
+          "default": false,
+          "label": "Use Ground Sample",
+          "policy": "editable",
+          "section": "acquisition",
+          "legacy_key": "use_ground"
+        },
+        "ground_pin": {
+          "type": "integer",
+          "default": 0,
+          "label": "Ground Pin:",
+          "policy": "editable",
+          "section": "acquisition",
+          "minimum": 0,
+          "maximum": 18
+        },
+        "samples_per_channel": {
+          "type": "integer",
+          "default": 1,
+          "label": "Repeat Count:",
+          "policy": "editable",
+          "section": "acquisition",
+          "legacy_key": "repeat",
+          "minimum": 1,
+          "maximum": 16
+        },
+        "sweeps_per_block": {
+          "type": "integer",
+          "default": 1,
+          "label": "Sweeps per Block:",
+          "policy": "editable",
+          "section": "acquisition",
+          "minimum": 1,
+          "maximum": 10000
+        },
+        "reference": {
+          "type": "enum",
+          "default": "vdd",
+          "label": "Voltage Reference:",
+          "policy": "fixed",
+          "section": "adc",
+          "choices": [
+            {
+              "id": "vdd",
+              "label": "3.3V (fixed)",
+              "wire_value": "vdd",
+              "full_scale_volts": 3.3,
+              "aliases": [
+                "3.3"
+              ]
+            }
+          ]
+        }
+      },
+      "scaling": {
+        "units": "adc_counts"
+      },
+      "adapters": {
+        "protocol": "legacy_adc",
+        "frame": "adc_u16_timed",
+        "acquisition": "channels",
+        "timing": "reported"
+      },
+      "rules": [],
+      "buffer_limits": {},
+      "emitted_adc_lanes": 1
+    }
+  }
+}

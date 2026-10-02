@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:adc-streamer:board-profile:1",
+  "title": "ADC Streamer board profile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "profile_version", "id", "mcu_aliases", "provenance", "default_mode", "hardware", "transport", "modes"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "profile_version": {"type": "integer", "minimum": 1},
+    "id": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+    "mcu_aliases": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "provenance": {"type": "object", "required": ["source"], "properties": {"source": {"type": "string"}}},
+    "default_mode": {"type": "string", "minLength": 1},
+    "hardware": {
+      "type": "object", "additionalProperties": false,
+      "required": ["adc_resolution_bits", "adc_lane_count", "inputs_per_adc", "max_arrays", "reserved_inputs"],
+      "properties": {
+        "adc_resolution_bits": {"type": "integer", "minimum": 1, "maximum": 16},
+        "adc_lane_count": {"type": "integer", "minimum": 1},
+        "inputs_per_adc": {"type": "integer", "minimum": 1},
+        "max_arrays": {"type": "integer", "minimum": 1},
+        "lane_label": {"type": "string"},
+        "reserved_inputs": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}}
+      }
+    },
+    "transport": {
+      "type": "object", "additionalProperties": false,
+      "required": ["baud_rate", "command_terminator", "run_ack", "bootstrap"],
+      "properties": {
+        "baud_rate": {"type": "integer", "minimum": 1},
+        "command_terminator": {"type": "string", "minLength": 1},
+        "run_ack": {"enum": ["none", "legacy"]},
+        "bootstrap": {"const": "shared_usb"}
+      }
+    },
+    "preferences": {"type": "object", "properties": {"reconnect": {"enum": ["defaults", "preserve"]}}},
+    "sensor_requirements": {"type": "object", "properties": {"placements": {"type": "array", "uniqueItems": true, "items": {"type": "string"}}}},
+    "sensor_editability": {"type": "object", "additionalProperties": false, "properties": {"electrical": {"type": "boolean"}, "spatial": {"type": "boolean"}}},
+    "variants": {"type": "object", "additionalProperties": {"type": "object"}},
+    "modes": {"type": "object", "minProperties": 1, "additionalProperties": {"$ref": "#/$defs/mode"}}
+  },
+  "$defs": {
+    "mode": {
+      "type": "object", "additionalProperties": false,
+      "required": ["device_mode", "emitted_adc_lanes", "features", "parameters", "scaling", "adapters", "rules"],
+      "properties": {
+        "device_mode": {"enum": ["adc", "555"]},
+        "emitted_adc_lanes": {"type": "integer", "minimum": 1},
+        "features": {"type": "object"},
+        "parameters": {"type": "object", "additionalProperties": {"$ref": "#/$defs/parameter"}},
+        "scaling": {"type": "object", "required": ["units"], "properties": {"full_scale_volts": {"type": "number", "exclusiveMinimum": 0}, "units": {"type": "string"}, "legacy_references": {"type": "object", "additionalProperties": {"type": "number", "exclusiveMinimum": 0}}, "unknown_reference": {"const": "default"}}},
+        "adapters": {
+          "type": "object", "additionalProperties": false,
+          "required": ["protocol", "frame", "acquisition", "timing"],
+          "properties": {
+            "protocol": {"enum": ["legacy_adc", "legacy_555", "array_dual", "ads7953"]},
+            "frame": {"enum": ["adc_u16_timed", "timer_555", "pzt_rs_u16", "ads7953_u16_timed"]},
+            "acquisition": {"enum": ["channels", "array_mux", "array_combined", "multi_array"]},
+            "timing": {"enum": ["unavailable", "mg24_mux", "reported"]}
+          }
+        },
+        "rules": {"type": "array", "items": {"$ref": "#/$defs/rule"}},
+        "timing_profile": {"type": "string", "minLength": 1},
+        "buffer_limits": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 1}},
+        "timing": {"type": "object"}
+      }
+    },
+    "parameter": {
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "default", "label", "policy", "section"],
+      "properties": {
+        "type": {"enum": ["enum", "integer", "number", "boolean", "text"]},
+        "default": {"type": ["string", "integer", "number", "boolean"]},
+        "label": {"type": "string"},
+        "policy": {"enum": ["editable", "fixed", "config_file_only", "reported"]},
+        "section": {"type": "string"},
+        "legacy_key": {"type": "string"},
+        "choices": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/choice"}},
+        "minimum": {"type": "number"}, "maximum": {"type": "number"},
+        "step": {"type": "number", "exclusiveMinimum": 0},
+        "display_scale": {"type": "number", "exclusiveMinimum": 0},
+        "display_unit": {"type": "string"}, "decimals": {"type": "integer", "minimum": 0},
+        "tooltip": {"type": "string"}, "visible": {"type": "boolean"},
+        "order": {"type": "integer"}, "command": {"type": "string", "pattern": "^[a-z][a-z0-9]*$"}
+      },
+      "allOf": [
+        {"if": {"properties": {"type": {"const": "enum"}}}, "then": {"required": ["choices"]}},
+        {"if": {"properties": {"type": {"const": "integer"}}}, "then": {"properties": {"default": {"type": "integer"}}}},
+        {"if": {"properties": {"type": {"const": "boolean"}}}, "then": {"properties": {"default": {"type": "boolean"}}}}
+      ]
+    },
+    "choice": {
+      "type": "object", "additionalProperties": false, "required": ["id", "label", "wire_value"],
+      "properties": {
+        "id": {"type": ["string", "integer"]}, "label": {"type": "string"},
+        "wire_value": {"type": ["string", "number", "boolean"]},
+        "full_scale_volts": {"type": "number", "exclusiveMinimum": 0},
+        "aliases": {"type": "array", "uniqueItems": true, "items": {"type": ["string", "integer"]}}
+      }
+    },
+    "rule": {
+      "type": "object", "additionalProperties": false, "required": ["when"],
+      "properties": {
+        "when": {"type": "object", "additionalProperties": false, "required": ["parameter", "equals"], "properties": {"parameter": {"type": "string"}, "equals": {"type": ["string", "number", "boolean"]}}},
+        "force": {"type": "object"}, "effective": {"type": "object"},
+        "enabled": {"type": "object", "additionalProperties": {"type": "boolean"}},
+        "visible": {"type": "object", "additionalProperties": {"type": "boolean"}}
+      }
+    }
+  }
+}

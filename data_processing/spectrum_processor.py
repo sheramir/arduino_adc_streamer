@@ -389,7 +389,8 @@ class SpectrumProcessorMixin:
     def _group_spectrum_specs_by_package(self, specs):
         """Return {sensor_id: [specs]} in selection order, or {} outside array mode."""
         try:
-            if not self.is_array_sensor_selection_mode():
+            descriptor = self.get_testboard_descriptor() if hasattr(self, 'get_testboard_descriptor') else None
+            if not descriptor and not self.is_array_sensor_selection_mode():
                 return {}
         except Exception:
             return {}
@@ -555,6 +556,12 @@ class SpectrumProcessorMixin:
 
     def on_spectrum_worker_result(self, result: dict):
         self.spectrum_busy = False
+        descriptor = self.get_testboard_descriptor() if hasattr(self, 'get_testboard_descriptor') else None
+        if descriptor and result.get('status') == 'ok':
+            prefix = f"A{getattr(self, 'display_array_id', 1)}_"
+            if any(not channel['label'].startswith(prefix) for channel in result.get('channels', [])):
+                self.update_spectrum()
+                return
 
         if result.get('status') != 'ok':
             self.show_spectrum_status(result.get('message', 'Spectrum unavailable.'))

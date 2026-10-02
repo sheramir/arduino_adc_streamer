@@ -1,9 +1,12 @@
 """Serial/protocol/configuration timing constants."""
 
+from .board_compat import legacy_bootstrap, legacy_parameter, legacy_mode
+
+# Read-only legacy defaults. Active boards use their resolved profile.
 # Serial Communication Settings
-BAUD_RATE = 460800
+BAUD_RATE = legacy_bootstrap()['baud_rate']
 SERIAL_TIMEOUT = 1.0
-COMMAND_TERMINATOR = "***"
+COMMAND_TERMINATOR = legacy_bootstrap()['command_terminator']
 
 # Configuration Command Settings
 CONFIG_RETRY_ATTEMPTS = 3
@@ -18,22 +21,22 @@ ARDUINO_RESET_DELAY = 2.0
 TARGET_LATENCY_SEC = 0.25
 MAX_SAMPLES_BUFFER = 32000
 USB_PACKET_SIZE = 64
-DEFAULT_BUFFER_SIZE = 1
+DEFAULT_BUFFER_SIZE = legacy_parameter('generic_adc', 'sweeps_per_block', 'default')
 # Fallback sweeps-per-block used when a configuration request carries no usable
 # buffer size. Distinct from DEFAULT_BUFFER_SIZE, which seeds the UI spin box.
 DEFAULT_CONFIG_BUFFER_SIZE = 128
-ARRAY_PZT_MAX_MUX_PAIRS_PER_BLOCK = 6000
-ARRAY_PZT_RS_MAX_SWEEPS_PER_BLOCK = 64
+ARRAY_PZT_MAX_MUX_PAIRS_PER_BLOCK = legacy_mode('array_pzt1')['buffer_limits']['mux_pairs']
+ARRAY_PZT_RS_MAX_SWEEPS_PER_BLOCK = legacy_mode('array_pzt_pzr17', 'PZT_RS')['buffer_limits']['max_sweeps']
 
 # UI Control Ranges and Defaults (serial-adjacent controls)
-BUFFER_SIZE_MIN = 1
-BUFFER_SIZE_MAX = 10000
-GROUND_PIN_MIN = 0
-GROUND_PIN_MAX = 18
-GROUND_PIN_DEFAULT = 0
-REPEAT_COUNT_MIN = 1
-REPEAT_COUNT_MAX = 16
-REPEAT_COUNT_DEFAULT = 1
+BUFFER_SIZE_MIN = legacy_parameter('generic_adc', 'sweeps_per_block', 'minimum')
+BUFFER_SIZE_MAX = legacy_parameter('generic_adc', 'sweeps_per_block', 'maximum')
+GROUND_PIN_MIN = legacy_parameter('generic_adc', 'ground_pin', 'minimum')
+GROUND_PIN_MAX = legacy_parameter('generic_adc', 'ground_pin', 'maximum')
+GROUND_PIN_DEFAULT = legacy_parameter('generic_adc', 'ground_pin', 'default')
+REPEAT_COUNT_MIN = legacy_parameter('generic_adc', 'samples_per_channel', 'minimum')
+REPEAT_COUNT_MAX = legacy_parameter('generic_adc', 'samples_per_channel', 'maximum')
+REPEAT_COUNT_DEFAULT = legacy_parameter('generic_adc', 'samples_per_channel', 'default')
 TIMED_RUN_MIN = 10
 TIMED_RUN_MAX = 3600000
 TIMED_RUN_DEFAULT = 1000
@@ -57,4 +60,4 @@ SERIAL_ASCII_LINE_MAX_BYTES = 512
 
 # MCU Detection Constants
 MCU_DETECTION_TIMEOUT_SEC = 2.0
-TEENSY_SAMPLE_RATE_MAX_HZ = 1000000
+TEENSY_SAMPLE_RATE_MAX_HZ = legacy_parameter('teensy40_adc', 'sample_rate', 'maximum')

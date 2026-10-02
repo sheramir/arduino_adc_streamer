@@ -7,6 +7,7 @@ Owns ADC buffer snapshotting, baseline capture, and ADC curve rendering.
 from __future__ import annotations
 
 import numpy as np
+from config.boards.capture import adc_resolution_bits
 import pyqtgraph as pg
 from PyQt6.QtCore import Qt
 
@@ -98,7 +99,7 @@ class ADCPlottingMixin:
         data_array, timestamps_array, avg_sample_time_sec = snapshot
         if hasattr(self, 'reconstruct_pzt_signal_for_baseline_capture'):
             data_array = self.reconstruct_pzt_signal_for_baseline_capture(data_array)
-        display_specs = self.get_display_channel_specs()
+        display_specs = getattr(self, "get_acquisition_channel_specs", self.get_display_channel_specs)()
         if not display_specs or len(timestamps_array) == 0:
             if log_message:
                 self.log_status("No visible channels available to zero signals")
@@ -132,6 +133,8 @@ class ADCPlottingMixin:
             self.plot_baselines[spec['key']] = baseline_value
 
             channel = self._extract_channel_from_spec_key(spec.get('key'))
+            if spec.get('array_number'):
+                channel = spec['key']
             if channel is not None:
                 self.channel_plot_baselines[channel] = baseline_value
 
@@ -411,7 +414,7 @@ class ADCPlottingMixin:
             and self.yaxis_units_combo.currentText() == "Voltage"
         ):
             vref = self.get_vref_voltage()
-            max_adc_value = (2 ** IADC_RESOLUTION_BITS) - 1
+            max_adc_value = (2 ** adc_resolution_bits(self)) - 1
             channel_data = (channel_data / max_adc_value) * vref
 
         if (
@@ -438,7 +441,7 @@ class ADCPlottingMixin:
                     # Baselines are captured from raw ADC counts; convert to volts
                     # before subtracting from voltage-domain display data.
                     vref = self.get_vref_voltage()
-                    max_adc_value = (2 ** IADC_RESOLUTION_BITS) - 1
+                    max_adc_value = (2 ** adc_resolution_bits(self)) - 1
                     baseline_value = (baseline_value / max_adc_value) * vref
                 channel_data = channel_data - baseline_value
 
@@ -463,6 +466,9 @@ class ADCPlottingMixin:
         reverse_polarity = False
         if hasattr(self, 'is_active_sensor_reverse_polarity'):
             reverse_polarity = bool(self.is_active_sensor_reverse_polarity())
+        descriptor = self.get_testboard_descriptor() if hasattr(self, 'get_testboard_descriptor') else None
+        if descriptor:
+            reverse_polarity = bool(descriptor['sensor_configuration'].get('reverse_polarity', False))
         if not reverse_polarity:
             return samples
 
@@ -473,7 +479,7 @@ class ADCPlottingMixin:
                 midpoint = float(baseline_value)
                 if self.yaxis_units_combo.currentText() == "Voltage":
                     vref = self.get_vref_voltage()
-                    max_adc_value = (2 ** IADC_RESOLUTION_BITS) - 1
+                    max_adc_value = (2 ** adc_resolution_bits(self)) - 1
                     midpoint = (midpoint / max_adc_value) * vref
 
         if midpoint is None:
@@ -541,7 +547,7 @@ class ADCPlottingMixin:
                 vref = self.get_vref_voltage()
                 self.plot_widget.setYRange(0, vref, padding=0.02)
             else:
-                max_adc_value = (2 ** IADC_RESOLUTION_BITS) - 1
+                max_adc_value = (2 ** adc_resolution_bits(self)) - 1
                 self.plot_widget.setYRange(0, max_adc_value, padding=0.02)
         else:
             self.plot_widget.enableAutoRange(axis='y')

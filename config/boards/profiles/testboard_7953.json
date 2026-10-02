@@ -1,0 +1,246 @@
+{
+  "schema_version": 1,
+  "profile_version": 1,
+  "id": "testboard_7953",
+  "mcu_aliases": [
+    "TestBoard_7953",
+    "PCB_TestBoard_7953"
+  ],
+  "provenance": {
+    "source": "Arduino_Sketches/TestBoard_7953/",
+    "verified_against": "Repository firmware and host compatibility tests"
+  },
+  "default_mode": "PZT",
+  "hardware": {
+    "adc_resolution_bits": 12,
+    "adc_lane_count": 4,
+    "inputs_per_adc": 16,
+    "max_arrays": 2,
+    "reserved_inputs": {
+      "vmid": 15
+    },
+    "lane_label": "ADC"
+  },
+  "transport": {
+    "baud_rate": 460800,
+    "command_terminator": "***",
+    "run_ack": "none",
+    "bootstrap": "shared_usb"
+  },
+  "preferences": {
+    "reconnect": "defaults"
+  },
+  "sensor_requirements": {
+    "placements": [
+      "B",
+      "L",
+      "C",
+      "R",
+      "T"
+    ]
+  },
+  "sensor_editability": {
+    "electrical": true,
+    "spatial": true
+  },
+  "modes": {
+    "PZT": {
+      "device_mode": "adc",
+      "features": {
+        "is_array_pzt_pzr17": false,
+        "is_teensy": false,
+        "yaxis_units_locked": false,
+        "yaxis_units_value": null,
+        "show_charge_discharge_labels": false,
+        "show_manual_channels": false,
+        "device_mode_log_label": "ADC streamer"
+      },
+      "parameters": {
+        "reference": {
+          "type": "enum",
+          "default": "2.5",
+          "label": "Voltage Reference:",
+          "policy": "editable",
+          "section": "adc",
+          "choices": [
+            {
+              "id": "2.5",
+              "label": "2.5 V",
+              "wire_value": "2.5",
+              "full_scale_volts": 2.5
+            },
+            {
+              "id": "5",
+              "label": "5 V",
+              "wire_value": "5",
+              "full_scale_volts": 5.0,
+              "aliases": [
+                "5.0"
+              ]
+            }
+          ]
+        },
+        "vmid_sampling": {
+          "type": "boolean",
+          "default": false,
+          "label": "Use Vmid Sample",
+          "policy": "editable",
+          "section": "acquisition",
+          "legacy_key": "use_ground"
+        },
+        "samples_per_channel": {
+          "type": "integer",
+          "default": 1,
+          "label": "Repeat Count:",
+          "policy": "fixed",
+          "section": "acquisition",
+          "legacy_key": "repeat",
+          "minimum": 1,
+          "maximum": 16
+        },
+        "sweeps_per_block": {
+          "type": "integer",
+          "default": 1,
+          "label": "Sweeps per Block:",
+          "policy": "fixed",
+          "section": "acquisition",
+          "minimum": 1,
+          "maximum": 10000
+        },
+        "spi_clock_hz": {
+          "type": "integer",
+          "default": 20000000,
+          "label": "SPI CLK [MHz]:",
+          "policy": "editable",
+          "section": "adc",
+          "display_scale": 1e-06,
+          "display_unit": "MHz",
+          "decimals": 3,
+          "step": 100000,
+          "tooltip": "Requested SPI clock; values above 20 MHz are experimental",
+          "legacy_key": "testboard_spi_clock_hz",
+          "minimum": 100000,
+          "maximum": 30000000
+        },
+        "settling_conversions": {
+          "type": "integer",
+          "default": 1,
+          "label": "Repeat Count:",
+          "policy": "editable",
+          "section": "acquisition",
+          "tooltip": "Settling conversions per channel; only the final result is retained",
+          "legacy_key": "testboard_channel_repeat",
+          "minimum": 1,
+          "maximum": 3
+        },
+        "sequence": {
+          "type": "enum",
+          "default": "manual",
+          "label": "Sequence:",
+          "policy": "editable",
+          "section": "acquisition",
+          "legacy_key": "testboard_sequence",
+          "choices": [
+            {
+              "id": "manual",
+              "label": "manual",
+              "wire_value": "manual"
+            },
+            {
+              "id": "auto1",
+              "label": "auto1",
+              "wire_value": "auto1"
+            }
+          ]
+        },
+        "array_selection": {
+          "type": "enum",
+          "default": "both",
+          "label": "Array:",
+          "policy": "editable",
+          "section": "acquisition",
+          "legacy_key": "testboard_array_selection",
+          "choices": [
+            {
+              "id": "both",
+              "label": "Both arrays",
+              "wire_value": "both"
+            },
+            {
+              "id": "1",
+              "label": "Array 1",
+              "wire_value": "1"
+            },
+            {
+              "id": "2",
+              "label": "Array 2",
+              "wire_value": "2"
+            }
+          ]
+        },
+        "scan_order": {
+          "type": "enum",
+          "default": "adc",
+          "label": "Scan order:",
+          "policy": "config_file_only",
+          "section": "acquisition",
+          "legacy_key": "testboard_scan_order",
+          "choices": [
+            {
+              "id": "adc",
+              "label": "adc",
+              "wire_value": "adc"
+            },
+            {
+              "id": "array",
+              "label": "array",
+              "wire_value": "array"
+            },
+            {
+              "id": "interleaved",
+              "label": "interleaved",
+              "wire_value": "interleaved"
+            }
+          ]
+        }
+      },
+      "scaling": {
+        "units": "adc_counts"
+      },
+      "adapters": {
+        "protocol": "ads7953",
+        "frame": "ads7953_u16_timed",
+        "acquisition": "multi_array",
+        "timing": "unavailable"
+      },
+      "rules": [
+        {
+          "when": {
+            "parameter": "vmid_sampling",
+            "equals": true
+          },
+          "force": {
+            "sequence": "manual"
+          },
+          "enabled": {
+            "sequence": false
+          }
+        },
+        {
+          "when": {
+            "parameter": "sequence",
+            "equals": "auto1"
+          },
+          "effective": {
+            "settling_conversions": 1
+          },
+          "enabled": {
+            "settling_conversions": false
+          }
+        }
+      ],
+      "buffer_limits": {},
+      "emitted_adc_lanes": 4
+    }
+  }
+}

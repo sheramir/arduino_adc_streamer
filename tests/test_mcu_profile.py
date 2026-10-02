@@ -73,7 +73,10 @@ class MCUProfileTests(unittest.TestCase):
         self.assertFalse(profile.is_teensy)
         self.assertFalse(profile.show_manual_channels)
         self.assertFalse(profile.show_repeat_buffer_controls)
-        self.assertFalse(profile.show_adc_config_section)
+        self.assertTrue(profile.show_adc_config_section)
+        self.assertTrue(profile.show_reference_control)
+        self.assertFalse(profile.osr_visible)
+        self.assertFalse(profile.show_gain_control)
 
 
 if __name__ == "__main__":

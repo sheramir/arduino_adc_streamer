@@ -78,6 +78,8 @@ class SerialReaderThread(QThread):
         self.running = True
         self.is_capturing = False
         self.expected_samples_per_sweep = None
+        from serial_communication.protocols.registry import FRAME_ADAPTERS
+        self.frame_codec = FRAME_ADAPTERS['adc_u16_timed']
         # Persistent buffer that holds partial binary packets between reads
         self.binary_buffer = bytearray()
         self._debug_binary_packets_seen = 0
@@ -196,9 +198,7 @@ class SerialReaderThread(QThread):
                     payload_start = buf_start + SERIAL_PACKET_HEADER_BYTES
                     payload_end = payload_start + sample_count * 2
                     # .copy() so the array owns its data before buffer is trimmed below
-                    samples = np.frombuffer(
-                        memoryview(buffer)[payload_start:payload_end], dtype='<u2'
-                    ).copy()
+                    samples = self.frame_codec.decode(memoryview(buffer)[payload_start:payload_end]).copy()
 
                     # avg_sample_time_us: uint16 LE, 2 bytes after payload
                     avg_time_offset = payload_end

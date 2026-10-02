@@ -454,6 +454,9 @@ class SignalIntegrationProcessorMixin:
         package_channels = [int(channel) for channel in group.get("channels", [])]
         package_positions = [int(position) for position in group.get("positions", [])]
         sample_indices_by_channel: dict[int, list[int]] = {}
+        if group.get("sample_indices"):
+            return {i: [index] for i, index in enumerate(group["sample_indices"])
+                    if index < samples_per_sweep}
 
         if (
             hasattr(self, "is_testboard_7953_mode")
@@ -470,13 +473,15 @@ class SignalIntegrationProcessorMixin:
             )
             from config.testboard_scan import physical_lanes_for_mapping
 
-            lanes = physical_lanes_for_mapping(mapping_lane, array_selection)
+            layout = self.get_active_sensor_configuration()
+            lanes = physical_lanes_for_mapping(mapping_lane, array_selection, layout)
             if not lanes:
                 return sample_indices_by_channel
             # Pressure Map currently owns one spatial grid. When both physical
             # arrays stream, use the first selected array; Time Series retains
             # independent traces for both arrays.
-            adc_lane = int(lanes[0])
+            array_id = getattr(self, "display_array_id", 1)
+            adc_lane = next((lane for lane in lanes if lane in layout['arrays'][str(array_id)]['adc_lanes']), lanes[0])
             for local_index, channel in enumerate(
                 package_channels[:SIGNAL_INTEGRATION_CHANNEL_COUNT]
             ):
@@ -566,6 +571,9 @@ class SignalIntegrationProcessorMixin:
         return False
 
     def _is_signal_integration_reverse_polarity(self) -> bool:
+        descriptor = self.get_testboard_descriptor() if hasattr(self, 'get_testboard_descriptor') else None
+        if descriptor:
+            return bool(descriptor['sensor_configuration'].get('reverse_polarity', False))
         if hasattr(self, "is_active_sensor_reverse_polarity"):
             return bool(self.is_active_sensor_reverse_polarity())
         return False

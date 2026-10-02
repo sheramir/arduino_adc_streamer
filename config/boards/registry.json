@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "profiles": [
+    "profiles/mg24.json",
+    "profiles/mg24_mux.json",
+    "profiles/teensy40_adc.json",
+    "profiles/teensy_adc_compat.json",
+    "profiles/teensy555.json",
+    "profiles/array_pzt1.json",
+    "profiles/array_pzt_pzr1.json",
+    "profiles/array_pzt_pzr17.json",
+    "profiles/array_dual_compat.json",
+    "profiles/testboard_7953.json",
+    "profiles/generic_555.json",
+    "profiles/generic_adc.json",
+    "profiles/generic_array.json"
+  ],
+  "fallback": "generic_adc",
+  "bootstrap": {
+    "baud_rate": 460800,
+    "command_terminator": "***",
+    "detection_timeout_sec": 2.0
+  },
+  "compatibility_families": [
+    {
+      "priority": 10,
+      "match": "prefix",
+      "value": "array_pzt_pzr",
+      "profile": "array_dual_compat"
+    },
+    {
+      "priority": 20,
+      "match": "prefix",
+      "value": "array_ppzt_pzr1",
+      "profile": "array_pzt_pzr1"
+    },
+    {
+      "priority": 30,
+      "match": "prefix",
+      "value": "array",
+      "profile": "generic_array"
+    },
+    {
+      "priority": 40,
+      "match": "contains",
+      "value": "555",
+      "profile": "generic_555"
+    },
+    {
+      "priority": 50,
+      "match": "contains",
+      "value": "teensy",
+      "profile": "teensy_adc_compat"
+    }
+  ]
+}

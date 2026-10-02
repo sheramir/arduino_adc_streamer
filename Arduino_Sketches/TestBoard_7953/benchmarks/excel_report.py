@@ -91,6 +91,7 @@ def _write_table_sheet(
     fields: Sequence[str],
     rows: Sequence[Mapping[str, Any]],
     table_name: str,
+    field_formats: Optional[Mapping[str, Any]] = None,
 ) -> None:
     worksheet = workbook.add_worksheet(name)
     worksheet.hide_gridlines(2)
@@ -110,7 +111,7 @@ def _write_table_sheet(
             if isinstance(value, int):
                 worksheet.write_number(row_index, col, value, integer)
             elif isinstance(value, float):
-                worksheet.write_number(row_index, col, value, number)
+                worksheet.write_number(row_index, col, value, (field_formats or {}).get(field, number))
             else:
                 worksheet.write(row_index, col, value, text)
     if fields and rows:
@@ -503,6 +504,127 @@ def write_benchmark_workbook(
         glossary.freeze_panes(1, 0)
     finally:
         workbook.close()
+
+
+def write_ghosting_workbook(
+    output_path: Path,
+    summary_rows: Sequence[Mapping[str, Any]],
+    pair_rows: Sequence[Mapping[str, Any]],
+    attempt_rows: Sequence[Mapping[str, Any]],
+    metadata: Mapping[str, Any],
+    graphs: Mapping[str, Mapping[str, Any]],
+    glossary_path: Path,
+) -> None:
+    """Write selected-attempt tables and synchronized native signal charts.
+
+    Graphs contain a shared reduced time vector, all acquired signal columns,
+    and Y bounds computed from the full-resolution window before reduction.
+    """
+    try:
+        import xlsxwriter
+    except ImportError as exc:
+        raise RuntimeError("XlsxWriter is required; run 'uv sync'") from exc
+    temporary = output_path.with_suffix(".xlsx.tmp")
+    workbook = xlsxwriter.Workbook(str(temporary))
+    workbook.set_properties({"title": "TestBoard 7953 ghosting report",
+                             "subject": "Sensor coupling amplitudes and synchronized signals"})
+    try:
+        percentage = workbook.add_format({"num_format": '0.00"%"'})
+        correlation = workbook.add_format({"num_format": "0.000"})
+        leading_fields = {
+            "Summary": ["source", "status", "selected_attempt", "source_peak", "source_stdev", "ghosting_detected", "ghost_targets", "inconclusive_pairs"],
+            "Pairs": ["source", "attempt", "target", "status", "source_peak", "target_peak", "source_stdev", "target_stdev", "attenuation_pct", "correlation", "ghosting_detected"],
+            "Attempts": ["source", "attempt", "status", "source_peak", "source_stdev", "ghosting_detected", "ghost_targets", "notes"],
+        }
+        for name, rows in (("Summary", summary_rows), ("Pairs", pair_rows), ("Attempts", attempt_rows)):
+            fields = list(dict.fromkeys([*leading_fields[name], *(key for row in rows for key in row)]))
+            printable = [{key: ("Yes" if value else "No") if isinstance(value, bool) else value
+                          for key, value in row.items()} for row in rows]
+            _write_table_sheet(workbook, name, fields, printable, f"Ghosting{name}",
+                               {"attenuation_pct": percentage, "correlation": correlation})
+        worksheet = workbook.add_worksheet("Signal Graphs")
+        worksheet.hide_gridlines(2)
+        worksheet.set_column("A:A", 23)
+        worksheet.set_column("B:B", 90)
+        worksheet.write("A1", "Source signal overlays")
+        worksheet.write("A2", "Baseline-relative counts; all measured channels. Detection evaluates only the source ADC.")
+        data = workbook.add_worksheet("Chart Data")
+        data.hide()
+        palette = (
+            "#4472C4", "#ED7D31", "#70AD47", "#A5A5A5", "#FFC000",
+            "#5B9BD5", "#C55A11", "#548235", "#7F6000", "#7030A0",
+            "#00B0F0", "#FF0000", "#76933C", "#8064A2", "#4BACC6",
+            "#264478", "#9E480E", "#43682B", "#636363", "#997300",
+            "#255E91", "#843C0C", "#375623", "#5F497A", "#31859B",
+        )
+        source_rows = sorted(summary_rows, key=lambda r: tuple(map(int, str(r["source"]).split(":"))))
+        first_graph_row = len(source_rows) + 5
+        data_row = 0
+        for index, row in enumerate(source_rows):
+            source = str(row["source"])
+            adc, channel = source.split(":")
+            label = f"ADC{adc}_CH{channel}"
+            chart_row = first_graph_row + index * 32
+            worksheet.write_url(index + 3, 0, f"internal:'Signal Graphs'!A{chart_row + 1}", string=label)
+            worksheet.write(index + 3, 1, f"{row['status']} | selected attempt {row.get('selected_attempt', '')}")
+            worksheet.write(chart_row, 0, label)
+            graph = graphs.get(source)
+            if not graph or row.get("selected_attempt", "") == "":
+                worksheet.write(chart_row + 1, 0, f"No valid signal graph: {row['status']}")
+                continue
+            if graph["attempt"] != row["selected_attempt"]:
+                raise ValueError(f"Graph attempt differs from summary for {source}")
+            times = graph["times_s"]
+            signals = graph["signals"]
+            routes = list(graph["routes"])
+            count = len(times)
+            if not count or signals.shape != (count, len(routes)):
+                raise ValueError(f"Invalid chart data dimensions for {source}")
+            first = data_row + 1
+            last = first + count - 1
+            data.write_row(data_row, 0, [f"{label} attempt {graph['attempt']} time_s", *routes])
+            for offset, elapsed in enumerate(times):
+                data.write_number(first + offset, 0, float(elapsed))
+                data.write_row(first + offset, 1, [float(value) for value in signals[offset]])
+            chart = workbook.add_chart({"type": "scatter", "subtype": "straight"})
+            series_order = [i for i, route in enumerate(routes) if route != source] + [routes.index(source)]
+            for route_index in series_order:
+                route = routes[route_index]
+                route_adc, route_channel = route.split(":")
+                chart.add_series({
+                    "name": f"ADC{route_adc}_CH{route_channel}" + (" (source)" if route == source else ""),
+                    "categories": ["Chart Data", first, 0, last, 0],
+                    "values": ["Chart Data", first, route_index + 1, last, route_index + 1],
+                    "line": {"color": palette[route_index % len(palette)], "width": 3 if route == source else 1},
+                    "marker": {"type": "none"},
+                })
+            reduced = count < graph["full_sample_count"]
+            title = f"{label} — attempt {graph['attempt']}"
+            if reduced:
+                title += f" (display reduced to {count} points)"
+            chart.set_title({"name": title})
+            chart.set_x_axis({"name": "Time since trigger (s)", "min": 0, "max": 2})
+            lower, upper = graph["bounds"]
+            chart.set_y_axis({"name": "Baseline-relative ADC counts", "min": lower, "max": upper})
+            chart.set_legend({"position": "right"})
+            chart.set_size({"width": 1100, "height": 600})
+            chart.show_hidden_data()
+            worksheet.insert_chart(chart_row + 1, 0, chart)
+            data_row = last + 2
+        session = workbook.add_worksheet("Session")
+        session.write_row(0, 0, ["Metadata field", "Value"])
+        for index, (key, value) in enumerate(flatten_metadata(metadata), 1):
+            session.write(index, 0, key)
+            session.write(index, 1, value)
+        session.set_column("A:A", 46)
+        session.set_column("B:B", 90)
+        session.freeze_panes(1, 0)
+        glossary_rows = [{"Field": field, "File": file, "Meaning": meaning}
+                         for field, file, meaning in read_glossary(glossary_path)]
+        _write_table_sheet(workbook, "Glossary", ["Field", "File", "Meaning"], glossary_rows, "GhostingGlossary")
+    finally:
+        workbook.close()
+    temporary.replace(output_path)
 
 
 def _sample_summary(values: Sequence[int]) -> dict[str, Any]:

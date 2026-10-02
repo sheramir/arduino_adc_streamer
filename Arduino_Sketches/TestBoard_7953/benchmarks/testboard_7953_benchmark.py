@@ -33,7 +33,9 @@ try:
         percentile,
         uint32_delta,
     )
-    from .excel_report import write_benchmark_workbook
+    from .excel_report import write_benchmark_workbook, write_ghosting_workbook
+    from .ghosting_analysis import analyze_window, chart_bounds, chart_indices, summarize_attempts, strongest_attempt
+    from .ghosting_capture import ConsoleKeys, GhostingCapture, GhostingCaptureError, capture_ghosting_attempt
 except ImportError:  # Direct execution from this directory.
     from benchmark_common import (  # type: ignore
         BinaryFrame,
@@ -43,7 +45,9 @@ except ImportError:  # Direct execution from this directory.
         percentile,
         uint32_delta,
     )
-    from excel_report import write_benchmark_workbook  # type: ignore
+    from excel_report import write_benchmark_workbook, write_ghosting_workbook  # type: ignore
+    from ghosting_analysis import analyze_window, chart_bounds, chart_indices, summarize_attempts, strongest_attempt
+    from ghosting_capture import ConsoleKeys, GhostingCapture, GhostingCaptureError, capture_ghosting_attempt
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -1775,6 +1779,338 @@ def select_configs(configs: Sequence[TestConfig], selectors: Sequence[str],
     return selected
 
 
+GHOST_ATTEMPT_FIELDS = [
+    "session_id", "source", "attempt", "status", "source_peak", "source_stdev", "source_clipped",
+    "sample_count", "trigger_threshold", "ghosting_detected", "ghost_targets",
+    "inconclusive_pairs", "invalid_frames", "resync_events", "discarded_bytes", "notes",
+]
+GHOST_SUMMARY_FIELDS = ["selected_attempt", *GHOST_ATTEMPT_FIELDS]
+GHOST_PAIR_FIELDS = [
+    "session_id", "source", "attempt", "target", "source_peak", "target_peak",
+    "source_stdev", "target_stdev", "attenuation_pct", "correlation", "target_threshold", "target_clipped", "ghosting_detected", "status",
+]
+GHOST_SAMPLE_FIELDS = [
+    "session_id", "source", "attempt", "phase", "frame_index", "block_start_us",
+    "block_end_us", "elapsed_us", "adc", "channel", "sample_raw", "baseline",
+    "baseline_stdev", "noise_sigma", "baseline_relative",
+]
+
+
+def select_ghosting_config(args: argparse.Namespace, route_sets: dict[str, RouteSet]) -> tuple[RouteSet, TestConfig]:
+    if args.ghost_adc is not None:
+        array = "1" if args.ghost_adc <= 2 else "2"
+        parent = route_sets.get(f"full_array{array}")
+        if parent is None:
+            raise ValueError(f"Route manifest requires full_array{array} for --ghost-adc")
+        routes = tuple(route for route in parent.routes if route.adc == args.ghost_adc)
+        route_set = RouteSet(f"ghost_adc{args.ghost_adc}", array, routes, frozenset())
+    else:
+        name = args.route_set_filters[0]
+        if name == "all_four_full":
+            print("Ghosting tests one array: all_four_full is mapped to full_array1 (array 1).")
+            name = "full_array1"
+        if name not in route_sets:
+            raise ValueError(f"Unknown ghosting route set: {name}")
+        route_set = route_sets[name]
+    if route_set.array == "both":
+        raise ValueError("Ghosting cannot test two arrays; choose one ADC or one array")
+    if not route_set.routes:
+        raise ValueError("Ghosting selection has no sensor routes")
+    if any(route.channel >= (10 if route.adc in (1, 3) else 15) for route in route_set.routes):
+        raise ValueError("Ghosting routes must use populated sensor channels")
+    config = TestConfig(route_set.name, route_set.array, args.scan_order_filters[0],
+                        "manual", args.spi_engine, 1, args.vmid == "on", args.spi_clocks_hz[0])
+    return route_set, config
+
+
+def write_ghosting_csv(path: Path, fields: Sequence[str], rows: Sequence[dict[str, Any]]) -> None:
+    temporary = path.with_suffix(".csv.tmp")
+    with temporary.open("w", encoding="utf-8", newline="") as destination:
+        writer = csv.DictWriter(destination, fieldnames=fields, extrasaction="ignore")
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({field: finite_or_blank(row.get(field, "")) for field in fields})
+        destination.flush()
+        os.fsync(destination.fileno())
+    os.replace(temporary, path)
+
+
+def ghosting_sample_rows(capture: GhostingCapture, routes: Sequence[Route],
+                         session_id: str, source: str, attempt: int) -> Iterable[dict[str, Any]]:
+    for phase, frames in (("baseline", capture.baseline), ("window", capture.window)):
+        if not frames:
+            continue
+        origin = capture.trigger_start_us if phase == "window" else frames[0].block_start_us
+        for index, frame in enumerate(frames):
+            for route, sample in zip(routes, frame.samples):
+                reference = capture.calibration.get(str(route))
+                yield {
+                    "session_id": session_id, "source": source, "attempt": attempt,
+                    "phase": phase, "frame_index": index, "adc": route.adc, "channel": route.channel,
+                    "block_start_us": frame.block_start_us, "block_end_us": frame.block_end_us,
+                    "elapsed_us": uint32_delta(frame.block_start_us, origin),
+                    "sample_raw": sample, "baseline": reference.baseline if reference else "",
+                    "baseline_stdev": reference.stdev if reference else "",
+                    "noise_sigma": reference.noise_sigma if reference else "",
+                    "baseline_relative": sample - reference.baseline if reference else "",
+                }
+
+
+def print_ghosting_result(row: dict[str, Any], pairs: Sequence[dict[str, Any]]) -> None:
+    print(f"  {row['status']}: source peak={row.get('source_peak', 'n/a')} counts, "
+          f"std={row.get('source_stdev', 'n/a')} counts")
+    if row.get("notes"):
+        print(f"  {row['notes']}")
+    for pair in pairs:
+        correlation = pair["correlation"]
+        displayed = f"{correlation:.3f}" if isinstance(correlation, (int, float)) else "undefined"
+        attenuation = pair["attenuation_pct"]
+        attenuation_display = f"{attenuation:.2f}%" if isinstance(attenuation, (int, float)) else "undefined"
+        print(f"    {pair['target']}: peak={pair['target_peak']:.2f} counts, "
+              f"std={pair['target_stdev']:.2f} counts, "
+              f"attenuation={attenuation_display}, r={displayed}, {pair['status']}")
+
+
+def ghosting_next_action() -> str:
+    while True:
+        answer = input("Continue [Enter/C], Redo [R], or Quit [Q]: ").strip().lower()
+        if answer in ("", "c", "continue"):
+            return "continue"
+        if answer in ("r", "redo"):
+            return "redo"
+        if answer in ("q", "quit"):
+            return "quit"
+
+
+def run_ghosting_session(args: argparse.Namespace, route_sets: dict[str, RouteSet]) -> int:
+    import numpy as np
+
+    route_set, config = select_ghosting_config(args, route_sets)
+    ordered = payload_order(route_set.routes, config.scanorder)
+    route_names = tuple(map(str, ordered))
+    print(f"Ghosting: {config.test_id}; {len(ordered)} sources; two-second windows; "
+          "channelrepeat=1, repetitions=1.")
+    if args.requested_window_ms != 2000 or args.requested_repetitions != 1:
+        print(f"Requested window={args.requested_window_ms} ms, repetitions={args.requested_repetitions}; "
+              "ghosting overrides these to 2000 ms and 1.")
+    if args.dry_run or args.list_tests:
+        print("Sources: " + ", ".join(str(route) for route in sorted(ordered)))
+        print(f"Source trigger: max({args.ghost_trigger_counts:g} counts, "
+              f"{args.ghost_trigger_sigma:g} * noise sigma), "
+              f"{args.ghost_trigger_samples} consecutive same-polarity samples.")
+        print(f"Target detection: max({args.ghost_target_counts:g} counts, "
+              f"{args.ghost_target_sigma:g} * noise sigma); positive correlation >= "
+              f"{args.ghost_correlation_min:g}.")
+        print("Dry run only; no serial port was opened.")
+        return 0
+    if not args.port:
+        raise SystemExit("--port is required for ghosting acquisition")
+    if not sys.stdin.isatty():
+        raise SystemExit("Ghosting acquisition requires an interactive terminal for immediate Space handling")
+    now = datetime.now(timezone.utc)
+    output = (args.output or DEFAULT_RESULTS_ROOT / now.strftime("%Y%m%dT%H%M%SZ-ghosting")).resolve()
+    if output.exists() and any(output.iterdir()):
+        raise SystemExit(f"Output directory is not empty: {output}; choose a new ghosting directory")
+    output.mkdir(parents=True, exist_ok=True)
+    if not args.no_raw:
+        (output / "raw").mkdir(exist_ok=True)
+    session_id = now.strftime("testboard7953-ghosting-%Y%m%dT%H%M%SZ")
+    metadata: dict[str, Any] = {
+        "session_id": session_id, "mode": "ghosting", "schema_version": 2,
+        "runner_version": RUNNER_VERSION, "runner_path": str(Path(__file__).resolve()),
+        "git_revision": git_revision(), "started_utc": now.isoformat(), "status": "running",
+        "port": args.port, "baud": args.baud,
+        "route_manifest": str(args.routes.resolve()),
+        "requested_selection": f"ADC{args.ghost_adc}" if args.ghost_adc else args.route_set_filters[0],
+        "effective_route_set": route_set.name, "array": config.array, "routes": list(route_names),
+        "scan_order": config.scanorder, "spi_engine": config.spiengine,
+        "spi_clock_hz": config.spi_clock_hz, "vmid": args.vmid, "adcseq": "manual",
+        "channelrepeat": 1, "repetitions": 1, "window_ms": 2000,
+        "requested_window_ms": args.requested_window_ms, "requested_repetitions": args.requested_repetitions,
+        "warm_up_ms": args.warm_up_ms, "baseline_ms": args.ghost_baseline_ms,
+        "trigger_counts": args.ghost_trigger_counts, "target_counts": args.ghost_target_counts,
+        "trigger_samples": args.ghost_trigger_samples,
+        "trigger_sigma": args.ghost_trigger_sigma, "target_sigma": args.ghost_target_sigma,
+        "correlation_min": args.ghost_correlation_min, "calibrations": [],
+        "detection_coverage": "all_other_channels_on_same_adc", "graph_coverage": "all_measured_channels",
+        "selection_policy": "strongest_valid_source_peak; ties retain earlier attempt",
+        "attenuation_method": "100 * target_sample_stdev / source_sample_stdev; ddof=1",
+        "attenuation_window": "full-resolution shared two-second signal window",
+    }
+    attempts: list[dict[str, Any]] = []
+    all_pairs: list[dict[str, Any]] = []
+    graphs: dict[str, dict[str, Any]] = {}
+    log = SessionLog(output / "session_commands.log")
+    samples = CsvAppender(output / "ghosting_samples.csv", GHOST_SAMPLE_FIELDS)
+    serial_port = None
+    protocol = None
+    exit_code = 0
+    active_capture = None
+    active_row = None
+
+    def persist() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        summary = summarize_attempts(route_names, attempts)
+        selected = {(r["source"], r["selected_attempt"]) for r in summary if r["selected_attempt"] != ""}
+        pairs = [p for p in all_pairs if (p["source"], p["attempt"]) in selected]
+        write_ghosting_csv(output / "ghosting_summary.csv", GHOST_SUMMARY_FIELDS, summary)
+        write_ghosting_csv(output / "ghosting_pairs.csv", GHOST_PAIR_FIELDS, pairs)
+        write_ghosting_csv(output / "ghosting_attempts.csv", GHOST_ATTEMPT_FIELDS, attempts)
+        atomic_write_json(output / "session_metadata.json", metadata)
+        return summary, pairs
+
+    def save_capture(capture: GhostingCapture, row: dict[str, Any]) -> None:
+        samples.rows(ghosting_sample_rows(capture, ordered, session_id, row["source"], row["attempt"]))
+        if not args.no_raw:
+            for phase, frames in (("warmup", capture.warmup), ("baseline", capture.baseline), ("window", capture.window)):
+                if frames:
+                    destination = output / "raw" / f"adc{row['source'].replace(':', '_ch')}__attempt{row['attempt']}__{phase}.bin"
+                    with destination.open("wb") as raw_file:
+                        for frame in frames:
+                            raw_file.write(frame.raw)
+        metadata["calibrations"].append({
+            "source": row["source"], "attempt": row["attempt"],
+            "channels": {r: {"baseline": c.baseline, "stdev": c.stdev,
+                             "noise_sigma": c.noise_sigma, "sample_count": c.sample_count}
+                         for r, c in capture.calibration.items()},
+        })
+
+    try:
+        persist()
+        serial_port = open_serial_port(args.port, args.baud)
+        protocol = SerialProtocol(serial_port, log)
+        protocol.drain_until_idle()
+        protocol.send_command("stop")
+        if FIRMWARE_IDENTITY not in protocol.send_command("mcu"):
+            raise BenchmarkError(f"Expected firmware {FIRMWARE_IDENTITY}")
+        protocol.send_command("mode PZT")
+        initial = parse_status(protocol.send_command("status"))
+        metadata["firmware_status_initial"] = initial
+        nonzero = {key: counter_value(initial, key) for key in ERROR_COUNTERS if counter_value(initial, key)}
+        if nonzero and not args.allow_existing_errors:
+            raise BenchmarkError(f"Firmware has existing errors: {nonzero}; investigate or use --allow-existing-errors")
+        if nonzero:
+            log.write(f"WARNING pre-existing counters: {nonzero}")
+        quitting = False
+        for route in sorted(ordered):
+            source = str(route)
+            number = 0
+            while True:
+                answer = input(f"Release all sensors before ADC{route.adc}_CH{route.channel}; "
+                               "Enter when ready, Q to quit: ").strip().lower()
+                if answer == "q":
+                    quitting = True
+                    break
+                number += 1
+                active_capture = GhostingCapture()
+                active_row = {"session_id": session_id, "source": source, "attempt": number,
+                              "status": "INCOMPLETE", "notes": ""}
+                pairs = []
+                candidate_graph = None
+                try:
+                    protocol.drain_until_idle()
+                    before = configure_test(protocol, config, route_set)
+                    metadata["firmware_status_effective"] = before
+                    with ConsoleKeys() as keys:
+                        capture_ghosting_attempt(protocol, route_names, source, args, keys,
+                                                active_capture, notify=lambda message: print(message, flush=True))
+                    after = parse_status(protocol.send_command("status"))
+                    deltas = counter_deltas(before, after)
+                    if any(deltas.values()):
+                        raise BenchmarkError(f"Firmware counters increased: {deltas}")
+                    if active_capture.status == "COMPLETE":
+                        values = np.array([frame.samples for frame in active_capture.window])
+                        metrics, pairs = analyze_window(values, route_names, source, active_capture.calibration,
+                                                        target_counts=args.ghost_target_counts,
+                                                        target_sigma=args.ghost_target_sigma,
+                                                        correlation_min=args.ghost_correlation_min)
+                        active_row.update(metrics)
+                        if metrics["source_clipped"]:
+                            active_row["notes"] = "Source reached 0 or 4095; excluded from strongest-valid selection. Redo with a lighter press."
+                        previous = strongest_attempt(attempts, source)
+                        if metrics["status"] == "VALID" and (previous is None or metrics["source_peak"] > previous["source_peak"]):
+                            signals = values - np.array([active_capture.calibration[r].baseline for r in route_names])
+                            indices = chart_indices(signals)
+                            candidate_graph = {
+                                "attempt": number, "routes": list(route_names),
+                                "times_s": np.array([uint32_delta(active_capture.window[int(i)].block_start_us,
+                                                                  active_capture.trigger_start_us) / 1_000_000 for i in indices]),
+                                "signals": signals[indices], "bounds": chart_bounds(signals),
+                                "full_sample_count": len(values),
+                            }
+                    else:
+                        active_row["status"] = "INCOMPLETE" if active_capture.status == "QUIT" else active_capture.status
+                except (BenchmarkError, GhostingCaptureError, ValueError, OSError) as exc:
+                    active_row.update(status="FAILED", notes=str(exc))
+                    log.write(f"GHOSTING ATTEMPT FAILED {source} attempt={number}: {exc}")
+                active_row.update(trigger_threshold=active_capture.trigger_threshold,
+                                  sample_count=len(active_capture.window),
+                                  invalid_frames=active_capture.invalid_frames,
+                                  resync_events=active_capture.resync_events,
+                                  discarded_bytes=active_capture.discarded_bytes)
+                save_capture(active_capture, active_row)
+                attempts.append(active_row)
+                all_pairs.extend({"session_id": session_id, "attempt": number, **pair} for pair in pairs)
+                if candidate_graph is not None:
+                    graphs[source] = candidate_graph
+                print_ghosting_result(active_row, pairs)
+                quitting = active_capture.status == "QUIT"
+                skipped = active_capture.status == "SKIPPED"
+                active_capture = None
+                active_row = None
+                persist()
+                action = "quit" if quitting else "continue" if skipped else ghosting_next_action()
+                if action == "quit":
+                    quitting = True
+                    break
+                if action == "continue":
+                    break
+            if quitting:
+                break
+        metadata["status"] = "partial" if quitting else "complete"
+    except (KeyboardInterrupt, EOFError):
+        exit_code = 130
+        metadata["status"] = "interrupted"
+        print("Ghosting interrupted; completed and partial attempts are preserved.", file=sys.stderr)
+    except (BenchmarkError, GhostingCaptureError, OSError, ValueError) as exc:
+        exit_code = 1
+        metadata.update(status="failed", failure=str(exc))
+        log.write(f"GHOSTING SESSION FAILED {exc}")
+        print(f"Ghosting failed: {exc}", file=sys.stderr)
+    finally:
+        if active_capture is not None and active_row is not None and active_row not in attempts:
+            if active_row["status"] != "FAILED":
+                active_row.update(status="INCOMPLETE", notes=metadata.get("failure", "Session interrupted during attempt"))
+            active_row.update(sample_count=len(active_capture.window),
+                              trigger_threshold=active_capture.trigger_threshold,
+                              invalid_frames=active_capture.invalid_frames,
+                              resync_events=active_capture.resync_events,
+                              discarded_bytes=active_capture.discarded_bytes)
+            save_capture(active_capture, active_row)
+            attempts.append(active_row)
+        if protocol is not None:
+            try:
+                protocol.send_command("stop", timeout_s=2)
+            except Exception as exc:
+                log.write(f"CLEANUP stop: {exc}")
+        if serial_port is not None:
+            serial_port.close()
+        samples.close()
+        metadata["ended_utc"] = datetime.now(timezone.utc).isoformat()
+        summary, pairs = persist()
+        try:
+            if not args.no_excel:
+                write_ghosting_workbook(output / "ghosting_report.xlsx", summary, pairs,
+                                       attempts, metadata, graphs, GLOSSARY_PATH)
+        except (OSError, RuntimeError, ValueError) as exc:
+            metadata["report_error"] = str(exc)
+            atomic_write_json(output / "session_metadata.json", metadata)
+            print(f"Excel report failed; CSVs preserved: {exc}", file=sys.stderr)
+            exit_code = exit_code or 1
+        log.close()
+    print(f"Ghosting {metadata['status']}: {output}")
+    return exit_code
+
+
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", help="Teensy serial port, for example COM7")
@@ -1838,10 +2174,57 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--settling-stable-frames", type=int, default=5)
     parser.add_argument("--warmup-export-frames", type=int, default=250)
     parser.add_argument("--drift-timing-tolerance-pct", type=float, default=10.0)
-    args = parser.parse_args(argv)
+    ghost = parser.add_argument_group("interactive ghosting test")
+    ghost.add_argument("--ghosting", action="store_true", help="Test manually pressed sensor channels for ghosting")
+    ghost.add_argument("--ghost-adc", type=int, choices=(1, 2, 3, 4), help="Test one populated ADC; alternatively choose one --route-set")
+    ghost.add_argument("--spi-engine", choices=("blocking", "dma", "lpspi"), default="lpspi", help="Ghosting engine (default: lpspi)")
+    ghost.add_argument("--vmid", choices=("on", "off"), default="off", help="Ghosting between-channel Vmid conversions (default: off)")
+    ghost.add_argument("--ghost-baseline-ms", type=int, default=1000, help="Quiet calibration after warm-up (default: 1000 ms)")
+    ghost.add_argument("--ghost-trigger-counts", type=float, default=100, help="Source-trigger count floor (default: 100); effective threshold is also at least source sigma multiplier times noise")
+    ghost.add_argument("--ghost-trigger-samples", type=int, default=3, help="Consecutive same-polarity source samples above threshold (default: 3; range: 1..64)")
+    ghost.add_argument("--ghost-target-counts", type=float, default=1, help="Target peak count floor; also requires the target noise threshold")
+    ghost.add_argument("--ghost-trigger-sigma", type=float, default=5, help="Source noise multiplier (default: 5; minimum: 3)")
+    ghost.add_argument("--ghost-target-sigma", type=float, default=3, help="Target noise multiplier (default: 3)")
+    ghost.add_argument("--ghost-correlation-min", type=float, default=0.8, help="Minimum positive Pearson correlation (default: 0.8)")
+    tokens = list(argv) if argv is not None else sys.argv[1:]
+    args = parser.parse_args(tokens)
+    ghost_only = ("--ghost-adc", "--spi-engine", "--vmid", "--ghost-baseline-ms",
+                  "--ghost-trigger-counts", "--ghost-trigger-samples", "--ghost-target-counts", "--ghost-trigger-sigma",
+                  "--ghost-target-sigma", "--ghost-correlation-min")
+    if not args.ghosting and any(token.split("=", 1)[0] in ghost_only for token in tokens):
+        parser.error("interactive ghosting options require --ghosting")
+    if args.ghosting:
+        if args.idle_ms <= 0 or args.grace_ms <= 0:
+            parser.error("ghosting idle and grace durations must be positive")
+        if bool(args.ghost_adc) == bool(args.route_set_filters):
+            parser.error("ghosting requires either --ghost-adc or one --route-set")
+        if len(args.route_set_filters) > 1 or len(args.scan_order_filters) > 1:
+            parser.error("ghosting uses one route set and one scan order")
+        if args.tests or args.smoke_only or args.resume:
+            parser.error("ghosting does not support --tests, --smoke-only, or --resume")
+        if args.ghost_baseline_ms <= 0:
+            parser.error("ghost baseline duration must be positive")
+        if not 1 <= args.ghost_trigger_samples <= 64:
+            parser.error("ghost trigger confirmation must be 1..64 consecutive samples")
+        numeric = (args.ghost_trigger_counts, args.ghost_target_counts,
+                   args.ghost_trigger_sigma, args.ghost_target_sigma, args.ghost_correlation_min)
+        if not all(math.isfinite(value) for value in numeric):
+            parser.error("ghosting thresholds must be finite")
+        if args.ghost_trigger_counts <= 0 or args.ghost_target_counts <= 0 or args.ghost_target_sigma <= 0:
+            parser.error("ghosting count floors and target sigma must be positive")
+        if args.ghost_trigger_sigma < 3 or not 0 <= args.ghost_correlation_min <= 1:
+            parser.error("source sigma must be at least 3 and correlation must be 0..1")
+        args.requested_window_ms = args.window_ms
+        args.requested_repetitions = args.repetitions
+        args.window_ms = 2000
+        args.repetitions = 1
+        if not args.scan_order_filters:
+            args.scan_order_filters = ["adc"]
     if args.spi_clocks_hz is None:
         args.spi_clocks_hz = [DEFAULT_SPI_CLOCK_HZ]
     args.spi_clocks_hz = list(dict.fromkeys(args.spi_clocks_hz))
+    if args.ghosting and len(args.spi_clocks_hz) != 1:
+        parser.error("ghosting uses one SPI speed per session")
     if any(
         clock < MIN_SPI_CLOCK_HZ or clock > MAX_SPI_CLOCK_HZ
         for clock in args.spi_clocks_hz
@@ -1866,6 +2249,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return list_serial_ports()
 
     route_sets = load_route_manifest(args.routes)
+    if args.ghosting:
+        try:
+            return run_ghosting_session(args, route_sets)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
     bias_resistors = load_bias_resistors(args.bias_map)
     if args.route_set_filters or args.scan_order_filters:
         matrix = build_complete_matrix(

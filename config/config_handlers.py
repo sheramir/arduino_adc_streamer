@@ -31,8 +31,6 @@ from config.testboard_scan import (
     selected_testboard_arrays,
 )
 from config.testboard_7953_board import (
-    PZT_CHANNEL_LABELS,
-    PZT_SENSOR_ROUTES,
     build_testboard_sensor_groups,
     supported_pzt_sensors,
 )
@@ -56,22 +54,20 @@ from constants.ui import MAX_PLOT_COLUMNS
 from config.buffer_utils import validate_and_limit_sweeps_per_block
 
 
-class ConfigurationMixin:
+from config.testboard_runtime import TestBoardRuntimeMixin
+
+
+class ConfigurationMixin(TestBoardRuntimeMixin):
     """Mixin class for configuration management and event handlers."""
 
     def get_vref_voltage(self) -> float:
         """Get the numeric voltage reference value for the current configuration."""
-        vref_str = self.config['reference']
+        from config.boards.capture import full_scale_volts
+        return full_scale_volts(self)
 
-        if vref_str == "1.2":
-            return 1.2
-        if vref_str == "3.3" or vref_str == "vdd":
-            return 3.3
-        if vref_str == "0.8vdd":
-            return 3.3 * 0.8
-        if vref_str == "ext":
-            return 1.25
-        return 3.3
+    def get_adc_resolution_bits(self):
+        from config.boards.capture import adc_resolution_bits
+        return adc_resolution_bits(self)
 
     def get_estimated_555_pair_timeout_ms(self) -> int:
         return self.adc_configuration_service.estimate_555_pair_timeout_ms(
@@ -113,22 +109,21 @@ class ConfigurationMixin:
 
     def is_testboard_7953_mode(self) -> bool:
         """Return whether the connected board supports lane-aware scan routing."""
-        return is_testboard_7953(self.current_mcu)
+        return is_testboard_7953(getattr(self, 'current_mcu', None))
 
     def get_testboard_array_selection(self) -> str:
         if self.is_testboard_7953_mode() and hasattr(self, 'testboard_array_combo'):
             return normalize_testboard_array_selection(
-                self.testboard_array_combo.currentText()
+                self.testboard_array_combo.currentData() or self.testboard_array_combo.currentText()
             )
         return normalize_testboard_array_selection(
             self.config.get('testboard_array_selection', 'both')
         )
 
     def get_testboard_scan_order(self) -> str:
-        if self.is_testboard_7953_mode() and hasattr(self, 'testboard_scan_order_combo'):
-            return normalize_testboard_scan_order(
-                self.testboard_scan_order_combo.currentText()
-            )
+        if self.is_testboard_7953_mode():
+            from config.boards.settings import context_for
+            return context_for(self).mode.parameters["scan_order"].default
         return normalize_testboard_scan_order(
             self.config.get('testboard_scan_order', 'interleaved')
         )
@@ -143,6 +138,7 @@ class ConfigurationMixin:
         routes = build_testboard_routes(
             groups,
             array_selection=self.get_testboard_array_selection(),
+            layout=self.get_active_sensor_configuration(),
         )
         if ordered:
             return order_testboard_routes(routes, self.get_testboard_scan_order())
@@ -160,7 +156,8 @@ class ConfigurationMixin:
 
     def get_allowed_channel_max(self) -> int:
         """Return max channel index for manual channel entry validation."""
-        return 15 if self.is_array_mcu_mode() else 9
+        from config.boards.settings import context_for
+        return context_for(self).profile.hardware["inputs_per_adc"] - 1
 
     def is_array_pzt_pzr_mode(self) -> bool:
         """Return True when MCU supports runtime PZT/PZR mode switching."""
@@ -285,16 +282,17 @@ class ConfigurationMixin:
                     raise ValueError("Specify one or more TestBoard PZT sensors")
                 return [], "", "none", []
 
-            missing = [sensor_id for sensor_id in requested_sensors if sensor_id not in PZT_SENSOR_ROUTES]
+            layout = self.get_active_sensor_configuration()
+            missing = [sensor_id for sensor_id in requested_sensors if sensor_id not in layout.get("mux_mapping", {})]
             if missing:
-                supported = ", ".join(supported_pzt_sensors())
+                supported = ", ".join(supported_pzt_sensors(layout))
                 raise ValueError(
                     "PZT sensors not wired on PCB_TestBoard_7953: "
                     + ", ".join(missing)
                     + f". Supported sensors: {supported}"
                 )
 
-            groups = build_testboard_sensor_groups(requested_sensors)
+            groups = build_testboard_sensor_groups(requested_sensors, layout)
             channels = [
                 int(channel)
                 for group in groups
@@ -488,7 +486,7 @@ class ConfigurationMixin:
 
         selected_sensors = list(self.config.get('selected_array_sensors', []))
         if self.is_testboard_7953_mode():
-            return build_testboard_sensor_groups(selected_sensors)
+            return build_testboard_sensor_groups(selected_sensors, self.get_active_sensor_configuration())
 
         active_config = self.get_active_sensor_configuration() if hasattr(self, 'get_active_sensor_configuration') else {}
         mux_mapping = active_config.get('mux_mapping', {}) if isinstance(active_config, dict) else {}
@@ -522,6 +520,8 @@ class ConfigurationMixin:
 
     def get_sensor_package_groups(self, required_channels: int, channels=None):
         """Return normalized sensor-package groups for array and standard layouts."""
+        if self.get_testboard_descriptor() is not None:
+            return self.get_testboard_package_groups(visible=True)
         if channels is None:
             channels = self.config.get('channels', [])
         channels = list(channels or [])
@@ -592,6 +592,9 @@ class ConfigurationMixin:
 
     def get_effective_samples_per_sweep(self, channels=None, repeat_count=None) -> int:
         """Return the physical sample width of one sweep for the active MCU."""
+        captured = getattr(self, 'testboard_capture_descriptor', None)
+        if captured and (getattr(self, 'is_capturing', False) or getattr(self, 'sweep_count', 0)):
+            return len(captured['ordered_routes'])
         if channels is None:
             channels = self.config.get('channels', [])
         if repeat_count is None:
@@ -665,13 +668,14 @@ class ConfigurationMixin:
             )) > 1
             for group in sensor_groups:
                 sensor_id = str(group.get('sensor_id', ''))
-                channel_sensor_map = list(group.get('channel_labels', PZT_CHANNEL_LABELS))
+                channel_sensor_map = list(group.get('channel_labels', self.get_active_sensor_configuration().get('channel_sensor_map', [])))
                 lanes = physical_lanes_for_mapping(
                     int(group.get('mux', 1)),
                     self.get_testboard_array_selection(),
+                    self.get_active_sensor_configuration(),
                 )
                 for lane in lanes:
-                    array_number = 1 if lane <= 2 else 2
+                    array_number = next(int(a) for a, entry in self.get_active_sensor_configuration()['arrays'].items() if lane in entry['adc_lanes'])
                     package_id = f"A{array_number}_{sensor_id}" if show_array_prefix else sensor_id
                     for local_index, channel in enumerate(group.get('channels', [])):
                         route_index = route_positions.get((int(lane), int(channel)))
@@ -713,7 +717,7 @@ class ConfigurationMixin:
             color_slot += 1
         return specs
 
-    def get_display_channel_specs(self, channels=None, repeat_count=None):
+    def _get_all_display_channel_specs(self, channels=None, repeat_count=None):
         """Build display-channel metadata for plotting and channel selectors."""
         if channels is None:
             channels = self.config.get('channels', [])
@@ -972,7 +976,10 @@ class ConfigurationMixin:
     
     def on_vref_changed(self, text: str):
         """Handle voltage reference change."""
-        vref_cmd = VREF_LABEL_TO_COMMAND.get(text, "vdd")
+        from config.boards.settings import context_for
+        parameter = context_for(self).mode.parameters.get("reference")
+        value = self.vref_combo.currentData() if hasattr(self, "vref_combo") else None
+        vref_cmd = value if value is not None else next((c["id"] for c in parameter.choices if c["label"] == text), self.config["reference"]) if parameter else self.config["reference"]
         self.config['reference'] = vref_cmd
         self.config_is_valid = False
         self.update_start_button_state()
@@ -980,14 +987,14 @@ class ConfigurationMixin:
     def on_osr_changed(self, text: str):
         """Handle OSR (oversampling ratio) change."""
         if text.strip():  # Only update if text is not empty
-            self.config['osr'] = int(text)
+            self.config['osr'] = int(self.osr_combo.currentData() if hasattr(self, 'osr_combo') and self.osr_combo.currentData() is not None else text)
             self.refresh_adc_mux_timing()
             self.config_is_valid = False
             self.update_start_button_state()
     
     def on_gain_changed(self, text: str):
         """Handle gain change."""
-        gain_value = int(text.replace('×', ''))
+        gain_value = int(self.gain_combo.currentData() if hasattr(self, 'gain_combo') and self.gain_combo.currentData() is not None else text.replace('Ã—', ''))
         self.config['gain'] = gain_value
         self.refresh_adc_mux_timing()
         self.config_is_valid = False
@@ -1083,6 +1090,8 @@ class ConfigurationMixin:
         if not self.is_testboard_7953_mode():
             return
         self.config['testboard_array_selection'] = normalize_testboard_array_selection(text)
+        if hasattr(self, "refresh_display_array_control"):
+            self.refresh_display_array_control()
         self.update_channel_list()
         self.config_is_valid = False
         self.update_start_button_state()
@@ -1107,13 +1116,19 @@ class ConfigurationMixin:
         """Handle use ground checkbox change."""
         use_ground = state == Qt.CheckState.Checked.value
         self.config['use_ground'] = use_ground
+        if self.is_testboard_7953_mode() and hasattr(self, "refresh_testboard_sequence_controls"):
+            self.refresh_testboard_sequence_controls()
         self.refresh_adc_mux_timing()
         self.config_is_valid = False
         self.update_start_button_state()
 
     def on_repeat_changed(self, value: int):
         """Handle repeat count change."""
-        self.config['repeat'] = value
+        if self.is_testboard_7953_mode():
+            self.config['testboard_channel_repeat'] = value
+            self.config['repeat'] = 1
+        else:
+            self.config['repeat'] = value
         self.refresh_adc_mux_timing()
         self.config_is_valid = False
         self.update_start_button_state()
@@ -1164,14 +1179,32 @@ class ConfigurationMixin:
 
     def _build_adc_configuration_request(self) -> ADCConfigurationRequest:
         """Build a plain-data snapshot for the ADC configuration service."""
+        from config.boards.settings import context_for, legacy_updates
+        from gui.board_controls import read_board_controls
+        context = context_for(self)
+        resolved = read_board_controls(self)
+        if hasattr(self.config, "register_parameters"):
+            self.config.register_parameters(context.mode)
+        self.config.update(legacy_updates(context.mode, resolved))
+        if self.is_testboard_7953_mode():
+            from config.testboard_acquisition import normalize_settings, validate_board_layout
+            validate_board_layout(self.get_active_sensor_configuration(), context)
+            reference, clock, repeat, sequence, vmid = normalize_settings(
+                self.config["reference"],
+                self.config.get('testboard_spi_clock_hz', resolve_mcu_profile('TestBoard_7953').mode.parameters['spi_clock_hz'].default),
+                self.config.get('testboard_channel_repeat', 1), self.config.get('testboard_sequence', 'manual'),
+                self.use_ground_check.isChecked(), context)
+            self.config.update({'reference': reference, 'testboard_spi_clock_hz': clock,
+                                'testboard_channel_repeat': repeat, 'testboard_sequence': sequence,
+                                'use_ground': vmid, 'ground_pin': context.profile.hardware['reserved_inputs']['vmid'], 'repeat': 1})
         snapshot = build_adc_configuration_snapshot(
             current_reference=str(self.config.get('reference', 'vdd')),
             vref_label=self.vref_combo.currentText() if hasattr(self, 'vref_combo') else None,
-            use_vref_control=bool(hasattr(self, 'vref_combo') and not self.is_array_mcu_mode() and not (self.current_mcu and "Teensy" in self.current_mcu)),
+            use_vref_control=False,
             current_osr=int(self.config.get('osr', 2)),
-            osr_label=self.osr_combo.currentText().strip() if hasattr(self, 'osr_combo') and self.osr_combo.currentText().strip() else None,
+            osr_label=None,
             current_gain=int(self.config.get('gain', 1)),
-            gain_label=self.gain_combo.currentText() if hasattr(self, 'gain_combo') else None,
+            gain_label=None,
             current_repeat=int(self.config.get('repeat', 1)),
             repeat_value=(
                 1
@@ -1181,7 +1214,7 @@ class ConfigurationMixin:
             current_use_ground=bool(self.config.get('use_ground', False)),
             use_ground_checked=bool(self.use_ground_check.isChecked()) if hasattr(self, 'use_ground_check') else None,
             current_ground_pin=int(self.config.get('ground_pin', -1)),
-            ground_pin_value=int(self.ground_pin_spin.value()) if hasattr(self, 'ground_pin_spin') else None,
+            ground_pin_value=context.profile.hardware['reserved_inputs']['vmid'] if self.is_testboard_7953_mode() else int(self.ground_pin_spin.value()) if hasattr(self, 'ground_pin_spin') else None,
             current_conv_speed=str(self.config.get('conv_speed', 'med')),
             conv_speed_label=self.conv_speed_combo.currentText() if hasattr(self, 'conv_speed_combo') else None,
             current_samp_speed=str(self.config.get('samp_speed', 'med')),
@@ -1201,6 +1234,9 @@ class ConfigurationMixin:
             cf_farads=self._get_cf_farads_from_controls(),
             current_rxmax_ohms=float(self.config.get('rxmax_ohms', 0.0)),
             rxmax_value=float(self.rxmax_spin.value()) if hasattr(self, 'rxmax_spin') else None,
+            testboard_spi_clock_hz=self.config.get('testboard_spi_clock_hz', resolve_mcu_profile('TestBoard_7953').mode.parameters['spi_clock_hz'].default),
+            testboard_channel_repeat=self.config.get('testboard_channel_repeat', 1),
+            testboard_sequence=self.config.get('testboard_sequence', 'manual'),
         )
 
         snapshot.apply_to_config(self.config)
@@ -1213,6 +1249,9 @@ class ConfigurationMixin:
 
         return ADCConfigurationRequest(
             current_mcu=self.current_mcu,
+            board_context=context,
+            parameters=dict(resolved.requested),
+            sensor_configuration=self.get_active_sensor_configuration() if hasattr(self, 'get_active_sensor_configuration') else None,
             device_mode=str(getattr(self, 'device_mode', 'adc')),
             channels=list(self.config.get('channels', [])),
             channels_to_send=self.get_channels_for_arduino_command(),
@@ -1236,6 +1275,9 @@ class ConfigurationMixin:
             testboard_array_selection=snapshot.testboard_array_selection,
             testboard_scan_order=snapshot.testboard_scan_order,
             testboard_adc_routes=self.get_testboard_adc_routes(ordered=False),
+            testboard_spi_clock_hz=snapshot.testboard_spi_clock_hz,
+            testboard_channel_repeat=snapshot.testboard_channel_repeat,
+            testboard_sequence=snapshot.testboard_sequence,
             is_testboard_7953=self.is_testboard_7953_mode(),
             is_array_mcu=self.is_array_mcu_mode(),
             is_array_pzt_pzr_mode=self.is_array_pzt_pzr_mode(),
@@ -1247,11 +1289,19 @@ class ConfigurationMixin:
         """Apply service output back onto GUI-owned state."""
         self.device_mode = result.resolved_device_mode
         self.arduino_status.apply(result.arduino_status)
+        if result.success and self.is_testboard_7953_mode() and hasattr(self, 'last_sent_config'):
+            for key in ('reference', 'ground_pin', 'use_ground', 'repeat', 'testboard_spi_clock_hz',
+                        'testboard_channel_repeat', 'testboard_sequence', 'testboard_array',
+                        'testboard_scan_order', 'testboard_routes'):
+                value = getattr(result.arduino_status, key)
+                setattr(self.last_sent_config, key, list(value) if isinstance(value, list) else value)
 
         normalized_buffer_size = int(result.normalized_buffer_size)
         current_buffer_size = int(self.buffer_spin.value()) if hasattr(self, 'buffer_spin') else normalized_buffer_size
         if normalized_buffer_size != current_buffer_size:
-            if getattr(self, 'device_mode', 'adc') == '555' and current_buffer_size > ANALYZER555_BUFFER_SIZE_MAX:
+            from config.boards.settings import context_for
+            maximum = context_for(self).mode.parameters['sweeps_per_block'].definition['maximum']
+            if getattr(self, 'device_mode', 'adc') == '555' and current_buffer_size > maximum:
                 self.log_status(f"555 mode buffer limited from {current_buffer_size} to {normalized_buffer_size}")
             elif normalized_buffer_size == DEFAULT_CONFIG_BUFFER_SIZE and current_buffer_size <= 0:
                 self.log_status(f"Invalid buffer size, using default value: {normalized_buffer_size}")
@@ -1389,10 +1439,10 @@ class ConfigurationMixin:
                 "PZT_RS timing -> "
                 f"pair_timeout_ms={self.get_estimated_555_pair_timeout_ms()}, "
                 f"channel_timeout_ms={self.get_estimated_pzt_rs_channel_timeout_ms()}, "
-                f"rb={float(self.config.get('rb_ohms', 0.0)):.0f}Ω, "
-                f"rk={float(self.config.get('rk_ohms', 0.0)):.0f}Ω, "
+                f"rb={float(self.config.get('rb_ohms', 0.0)):.0f}Î©, "
+                f"rk={float(self.config.get('rk_ohms', 0.0)):.0f}Î©, "
                 f"cf={float(self.config.get('cf_farads', 0.0)):.12g}F, "
-                f"rxmax={float(self.config.get('rxmax_ohms', 0.0)):.0f}Ω"
+                f"rxmax={float(self.config.get('rxmax_ohms', 0.0)):.0f}Î©"
             )
         if self.is_testboard_7953_mode():
             ordered_routes = format_testboard_routes(self.get_testboard_adc_routes())
@@ -1446,13 +1496,15 @@ class ConfigurationMixin:
     def on_configuration_success(self):
         """Handle successful configuration."""
         self.config_is_valid = True
-        self.log_status("✓ Configuration verified - Ready to start")
+        self.log_status("âœ“ Configuration verified - Ready to start")
         self.log_status("Configuration complete - all parameters confirmed")
         self.update_start_button_state()
         self._apply_configure_button_state(build_configuration_success_state())
     
     def on_configuration_failed(self):
         """Handle failed configuration."""
+        self.config_is_valid = False
+        self.update_start_button_state()
         self.log_status("ERROR: Configuration failed after retries")
         self._apply_configure_button_state(build_configuration_failed_state())
     
@@ -1470,6 +1522,9 @@ class ConfigurationMixin:
     
     def update_start_button_state(self):
         """Update Start button state based on configuration validity."""
+        if hasattr(self, '_board_parameter_controls') and not getattr(self, '_applying_board_profile', False):
+            from gui.board_controls import refresh_parameter_rules
+            refresh_parameter_rules(self, capture_locked=getattr(self, 'is_capturing', False))
         if self.serial_port and self.serial_port.is_open and not self.is_capturing:
             if self.config_is_valid:
                 self._apply_start_button_state(build_start_ready_state())

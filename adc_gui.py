@@ -162,6 +162,10 @@ class ADCStreamerGUI(
         self.load_last_shear_settings()
         self.load_last_force_calibration_state()
         self.load_last_analysis_settings()
+        from file_operations.board_preferences import load_board_preferences
+        from gui.board_controls import apply_board_controls
+        load_board_preferences(self)
+        apply_board_controls(self)
 
         # Post-initialization
         self.update_port_list()
@@ -261,7 +265,10 @@ class ADCStreamerGUI(
     def _init_config_state(self):
         """Initialize configuration state."""
         self.device_mode = 'adc'
-        self.adc_configuration_service = ADCConfigurationService(self.send_command_and_wait_ack)
+        self.adc_configuration_service = ADCConfigurationService(
+            self.send_command_and_wait_ack,
+            read_testboard_status=lambda: self.adc_session.read_testboard_status(),
+        )
         self.adc_configuration_runner = ADCConfigurationRunner(self.adc_configuration_service)
 
         self.config = build_default_adc_config_state()
@@ -395,11 +402,12 @@ class ADCStreamerGUI(
 
     def _create_left_control_panel(self) -> QWidget:
         """Create left panel with all control sections."""
-        from PyQt6.QtWidgets import QVBoxLayout, QSizePolicy
+        from PyQt6.QtWidgets import QVBoxLayout, QSizePolicy, QScrollArea, QFrame, QLayout
         panel = QWidget()
         panel.setMinimumSize(0, 0)
         panel.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         layout = QVBoxLayout(panel)
+        layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
         layout.setSpacing(MAIN_PANEL_LAYOUT_SPACING)
 
         # Add all control sections from the leaf GUI mixins
@@ -411,7 +419,12 @@ class ADCStreamerGUI(
         layout.addWidget(self.create_status_section())
         layout.addStretch()
 
-        return panel
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(panel)
+        scroll.setMinimumWidth(panel.minimumSizeHint().width() + scroll.verticalScrollBar().sizeHint().width())
+        return scroll
 
     def _create_right_visualization_panel(self) -> QWidget:
         """Create right panel with tabbed visualization."""
@@ -432,6 +445,8 @@ class ADCStreamerGUI(
 
     def closeEvent(self, event):
         """Handle window close event."""
+        from file_operations.board_preferences import save_board_preferences
+        save_board_preferences(self)
         self.save_last_spectrum_settings()
         self.save_last_heatmap_settings()
         self.save_last_shear_settings()

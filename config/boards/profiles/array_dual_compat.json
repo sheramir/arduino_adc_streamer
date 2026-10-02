@@ -1,0 +1,270 @@
+{
+  "schema_version": 1,
+  "profile_version": 1,
+  "id": "array_dual_compat",
+  "mcu_aliases": [
+    "Array_PZT_PZR_v1"
+  ],
+  "provenance": {
+    "source": "Historical dual-array host contract",
+    "verified_against": "Repository firmware and host compatibility tests"
+  },
+  "default_mode": "PZT",
+  "hardware": {
+    "adc_resolution_bits": 12,
+    "adc_lane_count": 2,
+    "inputs_per_adc": 16,
+    "max_arrays": 1,
+    "reserved_inputs": {}
+  },
+  "transport": {
+    "baud_rate": 460800,
+    "command_terminator": "***",
+    "run_ack": "legacy",
+    "bootstrap": "shared_usb"
+  },
+  "preferences": {
+    "reconnect": "preserve"
+  },
+  "sensor_requirements": {},
+  "sensor_editability": {
+    "electrical": true,
+    "spatial": true
+  },
+  "modes": {
+    "PZT": {
+      "device_mode": "adc",
+      "features": {
+        "is_array_pzt_pzr17": false,
+        "is_teensy": false,
+        "yaxis_units_locked": false,
+        "yaxis_units_value": null,
+        "show_charge_discharge_labels": false,
+        "show_manual_channels": true,
+        "device_mode_log_label": "PZT"
+      },
+      "parameters": {
+        "osr": {
+          "type": "enum",
+          "default": 4,
+          "label": "OSR (Oversampling):",
+          "policy": "editable",
+          "section": "adc",
+          "tooltip": "Oversampling ratio: higher = better SNR, lower sample rate",
+          "choices": [
+            {
+              "id": 2,
+              "label": "2",
+              "wire_value": 2
+            },
+            {
+              "id": 4,
+              "label": "4",
+              "wire_value": 4
+            },
+            {
+              "id": 8,
+              "label": "8",
+              "wire_value": 8
+            }
+          ]
+        },
+        "gain": {
+          "type": "enum",
+          "default": 1,
+          "label": "Gain:",
+          "policy": "editable",
+          "section": "adc",
+          "choices": [
+            {
+              "id": 1,
+              "label": "1\u00d7",
+              "wire_value": 1
+            },
+            {
+              "id": 2,
+              "label": "2\u00d7",
+              "wire_value": 2
+            },
+            {
+              "id": 3,
+              "label": "3\u00d7",
+              "wire_value": 3
+            },
+            {
+              "id": 4,
+              "label": "4\u00d7",
+              "wire_value": 4
+            }
+          ]
+        },
+        "ground_sampling": {
+          "type": "boolean",
+          "default": false,
+          "label": "Use Ground Sample",
+          "policy": "editable",
+          "section": "acquisition",
+          "legacy_key": "use_ground"
+        },
+        "ground_pin": {
+          "type": "integer",
+          "default": 0,
+          "label": "Ground Pin:",
+          "policy": "editable",
+          "section": "acquisition",
+          "minimum": 0,
+          "maximum": 18
+        },
+        "samples_per_channel": {
+          "type": "integer",
+          "default": 1,
+          "label": "Repeat Count:",
+          "policy": "editable",
+          "section": "acquisition",
+          "legacy_key": "repeat",
+          "minimum": 1,
+          "maximum": 16
+        },
+        "sweeps_per_block": {
+          "type": "integer",
+          "default": 1,
+          "label": "Sweeps per Block:",
+          "policy": "editable",
+          "section": "acquisition",
+          "minimum": 1,
+          "maximum": 10000
+        },
+        "reference": {
+          "type": "enum",
+          "default": "vdd",
+          "label": "Voltage Reference:",
+          "policy": "fixed",
+          "section": "adc",
+          "choices": [
+            {
+              "id": "vdd",
+              "label": "3.3V (fixed)",
+              "wire_value": "vdd",
+              "full_scale_volts": 3.3,
+              "aliases": [
+                "3.3"
+              ]
+            }
+          ]
+        }
+      },
+      "scaling": {
+        "units": "adc_counts"
+      },
+      "adapters": {
+        "protocol": "array_dual",
+        "frame": "adc_u16_timed",
+        "acquisition": "array_mux",
+        "timing": "reported"
+      },
+      "rules": [],
+      "buffer_limits": {
+        "mux_pairs": 6000
+      },
+      "emitted_adc_lanes": 2
+    },
+    "PZR": {
+      "device_mode": "555",
+      "features": {
+        "is_array_pzt_pzr17": false,
+        "is_teensy": false,
+        "yaxis_units_locked": true,
+        "yaxis_units_value": "Values",
+        "show_charge_discharge_labels": true,
+        "show_manual_channels": true,
+        "device_mode_log_label": "PZR"
+      },
+      "parameters": {
+        "samples_per_channel": {
+          "type": "integer",
+          "default": 1,
+          "label": "Repeat Count:",
+          "policy": "editable",
+          "section": "acquisition",
+          "legacy_key": "repeat",
+          "minimum": 1,
+          "maximum": 16
+        },
+        "sweeps_per_block": {
+          "type": "integer",
+          "default": 1,
+          "label": "Sweeps per Block:",
+          "policy": "editable",
+          "section": "acquisition",
+          "minimum": 1,
+          "maximum": 256
+        },
+        "rb_ohms": {
+          "type": "number",
+          "default": 470.0,
+          "label": "Rb [\u03a9]:",
+          "policy": "editable",
+          "section": "adc",
+          "command": "rb",
+          "minimum": 1,
+          "maximum": 1000000000.0
+        },
+        "rk_ohms": {
+          "type": "number",
+          "default": 0.0,
+          "label": "Rk [\u03a9]:",
+          "policy": "editable",
+          "section": "adc",
+          "command": "rk",
+          "minimum": 0,
+          "maximum": 1000000000.0
+        },
+        "cf_farads": {
+          "type": "number",
+          "default": 2.2e-08,
+          "label": "Cf [F]:",
+          "policy": "editable",
+          "section": "adc",
+          "command": "cf",
+          "minimum": 1e-15,
+          "maximum": 1.0
+        },
+        "rxmax_ohms": {
+          "type": "number",
+          "default": 65500.0,
+          "label": "Rx Max [\u03a9]:",
+          "policy": "editable",
+          "section": "adc",
+          "command": "rxmax",
+          "minimum": 1,
+          "maximum": 1000000000000.0
+        }
+      },
+      "scaling": {
+        "full_scale_volts": 3.3,
+        "legacy_references": {
+          "1.2": 1.2,
+          "3.3": 3.3,
+          "vdd": 3.3,
+          "0.8vdd": 2.64,
+          "ext": 1.25,
+          "2.5": 2.5,
+          "5": 5,
+          "5.0": 5
+        },
+        "units": "timer_ticks"
+      },
+      "adapters": {
+        "protocol": "array_dual",
+        "frame": "timer_555",
+        "acquisition": "array_mux",
+        "timing": "reported"
+      },
+      "rules": [],
+      "buffer_limits": {
+        "mux_pairs": 6000
+      },
+      "emitted_adc_lanes": 1
+    }
+  }
+}

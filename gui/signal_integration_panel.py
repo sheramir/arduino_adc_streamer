@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Hashable, Mapping
 
 import numpy as np
+from config.boards.capture import adc_resolution_bits
 import pyqtgraph as pg
 from PyQt6.QtCore import QByteArray, QSettings, Qt, QTimer, pyqtSlot
 from PyQt6.QtWidgets import (
@@ -1383,7 +1384,7 @@ class PressureMapPanelMixin:
             and getattr(self, "_force_display_specs_cache_dispatch_time", None) == last_dispatch
         ):
             return cache
-        specs = self.get_display_channel_specs()
+        specs = getattr(self, "get_acquisition_channel_specs", self.get_display_channel_specs)()
         self._force_display_specs_cache = specs
         self._force_display_specs_cache_dispatch_time = last_dispatch
         return specs
@@ -1480,7 +1481,7 @@ class PressureMapPanelMixin:
         self._force_sweep_accumulator = []
 
         dt_s = max(0.0, float(avg_sample_time_us) / 1_000_000.0)
-        voltage_scale = float(self.get_vref_voltage()) / float((2 ** IADC_RESOLUTION_BITS) - 1)
+        voltage_scale = float(self.get_vref_voltage()) / float((2 ** adc_resolution_bits(self)) - 1)
         ghost_net_centered = bool(
             getattr(self, "is_pzt_ghost_block_net_centered", lambda: False)()
         )
@@ -1501,6 +1502,9 @@ class PressureMapPanelMixin:
         multiplier = SENSOR_POLARITY_NORMAL_MULTIPLIER
         if hasattr(self, "is_active_sensor_reverse_polarity") and self.is_active_sensor_reverse_polarity():
             multiplier = SENSOR_POLARITY_REVERSED_MULTIPLIER
+        descriptor = self.get_testboard_descriptor() if hasattr(self, 'get_testboard_descriptor') else None
+        if descriptor:
+            multiplier = SENSOR_POLARITY_REVERSED_MULTIPLIER if descriptor['sensor_configuration'].get('reverse_polarity') else SENSOR_POLARITY_NORMAL_MULTIPLIER
         batch = ForceBlockBatch(
             sweeps=sweeps,
             timestamps=timestamps,
@@ -1512,7 +1516,7 @@ class PressureMapPanelMixin:
             complete_packages=complete_packages,
             baselines=dict(getattr(self, "plot_baselines", {})),
             polarity_multiplier=float(multiplier),
-            mux_timing=getattr(self, "adc_mux_timing", None),
+            mux_timing=None if descriptor else getattr(self, "adc_mux_timing", None),
             jerk_shapes=list(self._latest_jerk_package_displays),
             dropped_sweeps_before=0,
             grid_positions=self._get_force_display_grid_positions(),
@@ -1558,6 +1562,9 @@ class PressureMapPanelMixin:
         if result is None or not hasattr(self, "force_pressure_map_widget"):
             return
         results = result.package_results
+        if getattr(result, 'array_results', {}):
+            array = getattr(self, 'display_array_id', 1)
+            results = [item for item in results if item.sensor_id.startswith(f'A{array}_')]
         if not results:
             self.force_pressure_map_widget.update_force_display(None)
             return
@@ -1568,6 +1575,8 @@ class PressureMapPanelMixin:
         }:
             status.setText("")
         array_result = result.array_result
+        if getattr(result, 'array_results', {}):
+            array_result = result.array_results.get(getattr(self, 'display_array_id', 1))
         # A positioned package layout is always a complete, static Force
         # array.  Zero packages remain visible as zero fields rather than
         # being dropped when they have no current force increment.
@@ -3643,6 +3652,9 @@ class PressureMapPanelMixin:
 
     def _get_array_sensor_grid_positions(self) -> dict[str, tuple[int, int]]:
         active_config = self.get_active_sensor_configuration() if hasattr(self, "get_active_sensor_configuration") else {}
+        descriptor = self.get_testboard_descriptor() if hasattr(self, "get_testboard_descriptor") else None
+        if descriptor:
+            active_config = descriptor['sensor_configuration']
         array_layout = active_config.get("array_layout", {}) if isinstance(active_config, dict) else {}
         cells = array_layout.get("cells", []) if isinstance(array_layout, dict) else []
 
@@ -3654,6 +3666,8 @@ class PressureMapPanelMixin:
                 sensor_id = normalize_array_cell(cell_value)
                 if sensor_id:
                     positions[sensor_id] = (int(row_index), int(col_index))
+                    if descriptor:
+                        positions[f"A{getattr(self, 'display_array_id', 1)}_{sensor_id}"] = (int(row_index), int(col_index))
         return positions
 
     def _get_signal_integration_package_layout(self) -> list[dict[str, object]]:
@@ -3669,7 +3683,7 @@ class PressureMapPanelMixin:
 
             for index, group in enumerate(sensor_groups):
                 fallback_id = selected_sensors[index] if index < len(selected_sensors) else f"PACKAGE{index + 1}"
-                sensor_id = str(group.get("sensor_id") or fallback_id).strip().upper()
+                sensor_id = str(group.get("package_id") or group.get("sensor_id") or fallback_id).strip().upper()
                 layout.append({
                     "sensor_id": sensor_id,
                     "grid_position": grid_positions.get(sensor_id),
@@ -3698,6 +3712,11 @@ class PressureMapPanelMixin:
         Force Display layout must instead remain the complete configured PZT
         array so inactive packages render as zero-valued package fields.
         """
+        descriptor = self.get_testboard_descriptor() if hasattr(self, 'get_testboard_descriptor') else None
+        if descriptor:
+            cells = descriptor['sensor_configuration']['array_layout']['cells']
+            return {f'A{array}_{sensor}': (row, col) for array in descriptor['sampled_arrays']
+                    for row, values in enumerate(cells) for col, sensor in enumerate(values) if sensor}
         if hasattr(self, "is_array_sensor_selection_mode") and self.is_array_sensor_selection_mode():
             return dict(self._get_array_sensor_grid_positions())
         return {
@@ -4154,7 +4173,7 @@ class PressureMapPanelMixin:
         return channel_data, channel_times, latest_value
 
     def _convert_signal_integration_counts_to_voltage(self, adc_counts: np.ndarray) -> np.ndarray:
-        max_adc_value = float((2 ** IADC_RESOLUTION_BITS) - 1)
+        max_adc_value = float((2 ** adc_resolution_bits(self)) - 1)
         return (np.asarray(adc_counts, dtype=np.float64) / max_adc_value) * float(self.get_vref_voltage())
 
     def _apply_signal_integration_sensor_polarity(self, integrated_samples: np.ndarray) -> np.ndarray:

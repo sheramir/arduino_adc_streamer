@@ -1,0 +1,41 @@
+{
+  "adc_mode": "normal",
+  "adc_clk_hz_by_gain": {
+    "1": 10000000,
+    "2": 5000000,
+    "3": 2500000,
+    "4": 2500000
+  },
+  "digital_average": 1,
+  "mux_settle_us": 3.0,
+  "mux_turn_on_us": 0.15,
+  "mux_address_overhead_us": 0.25,
+  "adc_start_overhead_us": 0.15,
+  "pair_loop_software_overhead_us": 8.293,
+  "burst_finalize_overhead_us": null,
+  "firmware_timing_version": "MG24_Dual_MUX_SPI_Slave1.7b",
+  "repeat_implementation": "uniform_retained_pair_loop_block_timestamp_estimate",
+  "per_mux_selection_overhead_us": 6.64,
+  "block_fixed_overhead_us": 9.23,
+  "ground_dummy_software_overhead_us": 12.325,
+  "iadc_input_switch_cycles": 2,
+  "ground_mode": "dwell_only",
+  "ground_dwell_us": 50.0,
+  "warmup_us": 0.0,
+  "calibration": {
+    "version": "2026-08-07",
+    "date": "2026-08-07",
+    "firmware_timing_version": "MG24_Dual_MUX_SPI_Slave1.7b",
+    "compiler_core_version": "not recorded",
+    "method": "Single-MUX-pair MCU block-timestamp measurements at repeat counts 1 and 16, three runs each, with and without dummy ground; repeat counts 5 and 10 used as additional checks.",
+    "calibrated_osr": 4,
+    "calibrated_gain": 1,
+    "calibrated_adc_clk_hz": 10000000,
+    "calibrated_mux_settle_us": 3.0,
+    "pair_loop_total_us": 12.093,
+    "pair_loop_software_overhead_us": 8.293,
+    "ground_phase_us": 59.89,
+    "ground_dummy_software_overhead_us": 12.325,
+    "note": "Pair-loop and ground-phase values are inferred from complete MCU block timestamps. The dwell-only ground phase uses the configured delayMicroseconds duration plus the calibrated selection overhead; recalibrate it if the firmware or toolchain changes."
+  }
+}

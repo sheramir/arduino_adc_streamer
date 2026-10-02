@@ -41,6 +41,8 @@ class CaptureLifecycleMixin:
                 self.processed_data_buffer.fill(0)
             if zero_buffers and self.sweep_timestamps_buffer is not None:
                 self.sweep_timestamps_buffer.fill(0)
+        if hasattr(self, "freeze_testboard_capture_descriptor"):
+            self.freeze_testboard_capture_descriptor()
         self.plot_baselines = {}
         self.channel_plot_baselines = {}
         self.rosette_plot_baselines = {}
@@ -85,6 +87,8 @@ class CaptureLifecycleMixin:
 
     def _reset_signal_processing_state(self, *, reset_shear=False):
         """Reset filter pipeline state and optionally shear processing."""
+        self._testboard_heatmap_processors = {}
+        self._testboard_cop_history = {}
         self.filter_apply_pending = True
         self.reset_filter_states()
         if hasattr(self, '_invalidate_timeseries_filter_cache'):
@@ -136,6 +140,7 @@ class CaptureLifecycleMixin:
         else:
             self.full_view_btn.setEnabled(False)
 
+        self.board_capture_context = None
         self._reset_capture_buffer_state()
         self._reset_signal_processing_state(reset_shear=False)
         if hasattr(self, 'begin_pzt_ghost_capture'):
@@ -151,6 +156,9 @@ class CaptureLifecycleMixin:
         self.adc_mux_timing = calculate_adc_mux_timing_for_acquisition(
             getattr(self, "current_mcu", None), self.config
         )
+
+        from config.boards.capture import freeze_owner_context
+        freeze_owner_context(self)
 
         self.plot_widget.setMouseEnabled(x=False, y=False)
         self.plot_widget.setMenuEnabled(False)
@@ -169,6 +177,8 @@ class CaptureLifecycleMixin:
 
         try:
             capture_metadata = {
+                'board_context': self.board_capture_context,
+                'mcu_type': self.current_mcu,
                 'channels': self.config.get('channels', []),
                 'repeat': self.config.get('repeat', 1),
                 'ground_pin': self.config.get('ground_pin'),
@@ -192,6 +202,8 @@ class CaptureLifecycleMixin:
                 capture_metadata['pzt_mux_connected_time_s'] = self.adc_mux_timing.sensor_connected_s
                 capture_metadata['pzt_mux_connected_time_source'] = 'adc_mux_timing.t_connected_s'
             archive_metadata = {'metadata': capture_metadata}
+            if getattr(self, "testboard_capture_descriptor", None):
+                capture_metadata['testboard_acquisition'] = self.testboard_capture_descriptor
             self._archive_writer = ArchiveWriterThread(str(archive_path), archive_metadata)
             self._archive_writer.start()
             self._archive_path = str(archive_path)
@@ -366,6 +378,7 @@ class CaptureLifecycleMixin:
 
     def set_controls_enabled(self, enabled: bool):
         """Enable or disable configuration controls."""
+        self._acquisition_controls_enabled = enabled
         self.port_combo.setEnabled(enabled and not self.serial_port)
         self.refresh_ports_btn.setEnabled(enabled and not self.serial_port)
 
@@ -392,3 +405,13 @@ class CaptureLifecycleMixin:
             self.timed_run_spin.setEnabled(False)
 
         self.window_size_spin.setEnabled(enabled)
+        for name in ("testboard_array_combo", "testboard_spi_clock_spin"):
+            if hasattr(self, name):
+                getattr(self, name).setEnabled(enabled)
+        if hasattr(self, "refresh_testboard_sequence_controls"):
+            self.refresh_testboard_sequence_controls()
+        if hasattr(self, "refresh_display_array_control"):
+            self.refresh_display_array_control()
+        if hasattr(self, '_board_parameter_controls'):
+            from gui.board_controls import refresh_parameter_rules
+            refresh_parameter_rules(self, capture_locked=not enabled)

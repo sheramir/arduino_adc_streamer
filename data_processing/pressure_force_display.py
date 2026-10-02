@@ -342,12 +342,13 @@ class PressureForceDisplayEngine:
             ) for sensor_id, state in self._packages.items()
         ]
 
-    def array_result(self) -> ForceMapArrayResult | None:
+    def array_result(self, array_prefix: str | None = None) -> ForceMapArrayResult | None:
         fields = [
             PressureMapArrayForcePackage(sensor_id, position, state.accumulated_force_grid_n,
                                          self._x_coordinates_mm, self._y_coordinates_mm)
             for sensor_id, state in self._packages.items()
             if (position := self._configured_grid_positions.get(sensor_id)) is not None
+            and (array_prefix is None or sensor_id.startswith(array_prefix))
         ]
         if not fields:
             return None

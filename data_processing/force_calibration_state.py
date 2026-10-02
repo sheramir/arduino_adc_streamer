@@ -33,6 +33,8 @@ class CalibrationRow:
     min_sensor_value: float | None = None  # For PZR/Rosette: min resistance
     timestamp: float | None = None  # Unix timestamp when row was captured
     integration_samples: int = 0  # Snapshot of active integration window size
+    array_number: int | None = None
+    sensor_id: str | None = None
 
 
 @dataclass(slots=True)

@@ -115,7 +115,7 @@ class TimingDisplayMixin:
             if arduino_avg_sample_time_us > 0:
                 arduino_sample_rate_hz = 1000000.0 / arduino_avg_sample_time_us
 
-                display_channels = self.get_display_channel_specs()
+                display_channels = getattr(self, "get_acquisition_channel_specs", self.get_display_channel_specs)()
                 if display_channels:
                     arduino_per_channel_rate_hz = arduino_sample_rate_hz / len(display_channels)
                 else:
@@ -217,7 +217,7 @@ class TimingDisplayMixin:
                 # RS slots are excluded: get_display_channel_specs() returns PZT
                 # signals only, and RS values are 555-derived, not ADC-sampled.
                 try:
-                    signal_count = len(self.get_display_channel_specs())
+                    signal_count = len(getattr(self, "get_acquisition_channel_specs", self.get_display_channel_specs)())
                 except Exception:
                     signal_count = 0
                 return conversion_rate_hz / signal_count if signal_count > 0 else conversion_rate_hz

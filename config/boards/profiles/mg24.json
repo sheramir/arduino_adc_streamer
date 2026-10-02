@@ -1,0 +1,192 @@
+{
+  "schema_version": 1,
+  "profile_version": 1,
+  "id": "mg24",
+  "mcu_aliases": [
+    "MG24"
+  ],
+  "provenance": {
+    "source": "Arduino_Sketches/MG24/ADC_Streamer_binary_scan/",
+    "verified_against": "Repository firmware and host compatibility tests"
+  },
+  "default_mode": "ADC",
+  "hardware": {
+    "adc_resolution_bits": 12,
+    "adc_lane_count": 1,
+    "inputs_per_adc": 10,
+    "max_arrays": 1,
+    "reserved_inputs": {}
+  },
+  "transport": {
+    "baud_rate": 460800,
+    "command_terminator": "***",
+    "run_ack": "legacy",
+    "bootstrap": "shared_usb"
+  },
+  "preferences": {
+    "reconnect": "preserve"
+  },
+  "sensor_requirements": {},
+  "sensor_editability": {
+    "electrical": true,
+    "spatial": true
+  },
+  "modes": {
+    "ADC": {
+      "device_mode": "adc",
+      "features": {
+        "is_array_pzt_pzr17": false,
+        "is_teensy": false,
+        "yaxis_units_locked": false,
+        "yaxis_units_value": null,
+        "show_charge_discharge_labels": false,
+        "show_manual_channels": true,
+        "device_mode_log_label": "ADC streamer"
+      },
+      "parameters": {
+        "reference": {
+          "type": "enum",
+          "default": "vdd",
+          "label": "Voltage Reference:",
+          "policy": "editable",
+          "section": "adc",
+          "choices": [
+            {
+              "id": "1.2",
+              "label": "1.2V (Internal)",
+              "wire_value": "1.2",
+              "full_scale_volts": 1.2,
+              "aliases": [
+                "INTERNAL1V2",
+                "1V2"
+              ]
+            },
+            {
+              "id": "vdd",
+              "label": "3.3V (VDD)",
+              "wire_value": "vdd",
+              "full_scale_volts": 3.3,
+              "aliases": [
+                "3.3",
+                "VDD",
+                "3V3"
+              ]
+            }
+          ]
+        },
+        "osr": {
+          "type": "enum",
+          "default": 2,
+          "label": "OSR (Oversampling):",
+          "policy": "editable",
+          "section": "adc",
+          "tooltip": "Oversampling ratio: higher = better SNR, lower sample rate",
+          "choices": [
+            {
+              "id": 2,
+              "label": "2",
+              "wire_value": 2
+            },
+            {
+              "id": 4,
+              "label": "4",
+              "wire_value": 4
+            },
+            {
+              "id": 8,
+              "label": "8",
+              "wire_value": 8
+            }
+          ]
+        },
+        "gain": {
+          "type": "enum",
+          "default": 1,
+          "label": "Gain:",
+          "policy": "editable",
+          "section": "adc",
+          "choices": [
+            {
+              "id": 1,
+              "label": "1\u00d7",
+              "wire_value": 1
+            },
+            {
+              "id": 2,
+              "label": "2\u00d7",
+              "wire_value": 2
+            },
+            {
+              "id": 3,
+              "label": "3\u00d7",
+              "wire_value": 3
+            },
+            {
+              "id": 4,
+              "label": "4\u00d7",
+              "wire_value": 4
+            }
+          ]
+        },
+        "ground_sampling": {
+          "type": "boolean",
+          "default": false,
+          "label": "Use Ground Sample",
+          "policy": "editable",
+          "section": "acquisition",
+          "legacy_key": "use_ground"
+        },
+        "ground_pin": {
+          "type": "integer",
+          "default": 0,
+          "label": "Ground Pin:",
+          "policy": "editable",
+          "section": "acquisition",
+          "minimum": 0,
+          "maximum": 18
+        },
+        "samples_per_channel": {
+          "type": "integer",
+          "default": 1,
+          "label": "Repeat Count:",
+          "policy": "editable",
+          "section": "acquisition",
+          "legacy_key": "repeat",
+          "minimum": 1,
+          "maximum": 16
+        },
+        "sweeps_per_block": {
+          "type": "integer",
+          "default": 1,
+          "label": "Sweeps per Block:",
+          "policy": "editable",
+          "section": "acquisition",
+          "minimum": 1,
+          "maximum": 10000
+        }
+      },
+      "scaling": {
+        "legacy_references": {
+          "1.2": 1.2,
+          "3.3": 3.3,
+          "vdd": 3.3,
+          "0.8vdd": 2.64,
+          "ext": 1.25,
+          "2.5": 2.5,
+          "5": 5,
+          "5.0": 5
+        },
+        "units": "adc_counts"
+      },
+      "adapters": {
+        "protocol": "legacy_adc",
+        "frame": "adc_u16_timed",
+        "acquisition": "channels",
+        "timing": "reported"
+      },
+      "rules": [],
+      "buffer_limits": {},
+      "emitted_adc_lanes": 1
+    }
+  }
+}

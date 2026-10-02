@@ -6,7 +6,7 @@ Plain helpers for ADC runtime defaults and connection view-state snapshots.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, replace, fields, field
 from enum import Enum, auto
 
 
@@ -29,6 +29,7 @@ class ADCConnectionViewState:
 
 @dataclass(slots=True)
 class ArduinoStatus:
+    parameters: dict = field(default_factory=dict)
     channels: list[int] | None = None
     repeat: int | None = None
     ground_pin: int | None = None
@@ -41,11 +42,23 @@ class ArduinoStatus:
     rk: float | None = None
     cf: float | None = None
     rxmax: float | None = None
+    testboard_routes: list[tuple[int, int]] | None = None
+    testboard_array: str | None = None
+    testboard_scan_order: str | None = None
+    testboard_sequence: str | None = None
+    testboard_spi_clock_hz: int | None = None
+    testboard_channel_repeat: int | None = None
+    testboard_effective_repeat: int | None = None
+    testboard_vmid: bool | None = None
+    testboard_effective_vmid: bool | None = None
+    testboard_engine: str | None = None
+    testboard_route_count: int | None = None
 
     def copy(self) -> "ArduinoStatus":
         return replace(self)
 
     def apply(self, other: "ArduinoStatus") -> None:
+        self.parameters = dict(other.parameters)
         self.channels = None if other.channels is None else list(other.channels)
         self.repeat = other.repeat
         self.ground_pin = other.ground_pin
@@ -58,6 +71,10 @@ class ArduinoStatus:
         self.rk = other.rk
         self.cf = other.cf
         self.rxmax = other.rxmax
+        for item in fields(self):
+            if item.name.startswith("testboard_"):
+                value = getattr(other, item.name)
+                setattr(self, item.name, list(value) if isinstance(value, list) else value)
 
 
 @dataclass(slots=True)
@@ -69,6 +86,12 @@ class LastSentConfig:
     osr: int | None = None
     gain: int | None = None
     reference: str | None = None
+    testboard_spi_clock_hz: int | None = None
+    testboard_channel_repeat: int | None = None
+    testboard_sequence: str | None = None
+    testboard_array: str | None = None
+    testboard_scan_order: str | None = None
+    testboard_routes: list[tuple[int, int]] | None = None
 
     def copy(self) -> "LastSentConfig":
         return replace(self)

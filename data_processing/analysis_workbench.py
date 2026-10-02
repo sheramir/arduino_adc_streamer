@@ -12,7 +12,7 @@ from __future__ import annotations
 import csv
 import heapq
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Iterable, Mapping
@@ -143,6 +143,7 @@ def build_in_memory_snapshot(owner) -> AnalysisSourceSnapshot:
         "source": "in_memory",
         "timing": _owner_analysis_timing_metadata(owner),
     }
+    _attach_testboard_metadata(owner, metadata)
     return AnalysisSourceSnapshot(
         data=data,
         timestamps_s=_normalize_timestamps(timestamps, data.shape[0]),
@@ -188,6 +189,7 @@ def build_snapshot_from_archive(owner) -> AnalysisSourceSnapshot:
         "source": "archive",
         "timing": _owner_analysis_timing_metadata(owner),
     }
+    _attach_testboard_metadata(owner, metadata)
     return AnalysisSourceSnapshot(
         data=data,
         timestamps_s=_normalize_timestamps(ts, data.shape[0]),
@@ -250,6 +252,17 @@ def load_exported_csv_snapshot(csv_path, metadata_path) -> AnalysisSourceSnapsho
 
     if np.isnan(data).any():
         raise ValueError("CSV signal columns contain missing or non-numeric values.")
+
+    from config.testboard_acquisition import validate_descriptor
+    from config.testboard_7953_board import is_testboard_7953
+    from config.boards.capture import validate_capture_context
+    if metadata.get('board_context'):
+        validate_capture_context(metadata['board_context'])
+    descriptor = metadata.get('testboard_acquisition')
+    if descriptor:
+        validate_descriptor(descriptor, data.shape[1], data_columns)
+    elif is_testboard_7953(metadata.get('mcu_type')):
+        raise ValueError('Legacy TestBoard data lacks saved ADC/array route identity; array association is unavailable.')
 
     timestamps = _timestamps_from_export_rows(rows, metadata)
     force_x = _force_column_newtons(rows, axis="x")
@@ -321,7 +334,7 @@ def prepare_analysis_data(
     for label, column in iter_analysis_signal_columns(snapshot):
         if label not in visible_set or column >= data.shape[1]:
             continue
-        y_values = _signal_display_values(label, data[:, column], vref_voltage)
+        y_values = _signal_display_values(label, data[:, column], source_voltage(snapshot, vref_voltage), source_adc_bits(snapshot))
         voltage_by_label[label] = y_values
         traces.append(AnalysisTrace(label=label, x=x_base[:, column], y=y_values, group="signal"))
 
@@ -513,7 +526,7 @@ def estimate_analysis_pzt_force_calibration(
             continue
         if _is_resistance_like_label(label):
             continue
-        voltage_v = _signal_display_values(label, data[:, column], vref_voltage)
+        voltage_v = _signal_display_values(label, data[:, column], source_voltage(snapshot, vref_voltage), source_adc_bits(snapshot))
         estimate = estimate_pzt_quiet_baseline(
             voltage_v,
             time_base_s[:, column],
@@ -727,6 +740,31 @@ def build_overlay_traces(
     if not any(bool(overlay_flags.get(key, False)) for key in ("shear", "normal")):
         return overlays
 
+    if snapshot.metadata.get('testboard_acquisition'):
+        # Compute each five-channel package independently, retaining array identity.
+        packages = {}
+        for label, column in iter_analysis_signal_columns(snapshot):
+            if label in visible_set:
+                packages.setdefault(label.rsplit('_', 1)[0], []).append((label, column))
+        for package_id, columns in packages.items():
+            metadata = dict(snapshot.metadata)
+            metadata.pop('testboard_acquisition', None)
+            package_snapshot = replace(snapshot, channel_labels=[c[0] for c in columns],
+                                       channel_indices=[c[1] for c in columns], metadata=metadata)
+            if len(_position_channel_map(package_snapshot)) != len(SHEAR_SENSOR_POSITIONS):
+                continue
+            traces = build_overlay_traces(
+                package_snapshot, data, axis_mode=axis_mode,
+                visible_labels=package_snapshot.channel_labels,
+                overlay_flags={**overlay_flags, 'integration': False},
+                vref_voltage=vref_voltage, integration_window_samples=integration_window_samples,
+                hpf_cutoff_hz=hpf_cutoff_hz,
+            )
+            for trace in traces:
+                trace.label = f'{package_id} {trace.label}'
+            overlays.extend(traces)
+        return overlays
+
     position_channels = _position_channel_map(snapshot)
     if not all(position in position_channels for position in SHEAR_SENSOR_POSITIONS):
         if snapshot.samples_per_sweep < len(SHEAR_SENSOR_POSITIONS):
@@ -740,7 +778,7 @@ def build_overlay_traces(
         }
 
     volts_by_position = {
-        position: counts_to_volts(data[:, column], vref_voltage)
+        position: counts_to_volts(data[:, column], source_voltage(snapshot, vref_voltage), source_adc_bits(snapshot))
         for position, (column, _label) in position_channels.items()
         if column < data.shape[1]
     }
@@ -792,7 +830,7 @@ def build_integration_traces(
 ) -> list[AnalysisTrace]:
     visible_set = set(visible_labels)
     voltage_by_label = {
-        label: _signal_display_values(label, data[:, column], vref_voltage)
+        label: _signal_display_values(label, data[:, column], source_voltage(snapshot, vref_voltage), source_adc_bits(snapshot))
         for label, column in iter_analysis_signal_columns(snapshot)
         if label in visible_set and column < data.shape[1] and not _is_resistance_like_label(label)
     }
@@ -843,15 +881,44 @@ def integrate_voltage_series(
         return _fallback_integrated(voltage_by_key, int(integration_window_samples))
 
 
-def counts_to_volts(values, vref_voltage: float) -> np.ndarray:
-    max_adc_value = float((2 ** IADC_RESOLUTION_BITS) - 1)
+def _attach_testboard_metadata(owner, metadata):
+    from copy import deepcopy
+    from config.boards.capture import attach_capture_context
+    attach_capture_context(owner, metadata)
+    descriptor = getattr(owner, 'testboard_capture_descriptor', None)
+    if descriptor:
+        metadata['testboard_acquisition'] = deepcopy(descriptor)
+        metadata['configuration'].update(reference=descriptor['reference'], repeat=1,
+                                          adc_resolution_bits=descriptor['adc_resolution_bits'])
+
+
+def source_adc_bits(snapshot):
+    context = snapshot.metadata.get('board_context')
+    if context:
+        return context['hardware']['adc_resolution_bits']
+    descriptor = snapshot.metadata.get('testboard_acquisition')
+    return descriptor['adc_resolution_bits'] if descriptor else snapshot.metadata.get('configuration', {}).get('adc_resolution_bits', IADC_RESOLUTION_BITS)
+
+
+def source_voltage(snapshot, fallback=3.3):
+    context = snapshot.metadata.get('board_context')
+    if context:
+        return float(context['full_scale_volts'])
+    descriptor = snapshot.metadata.get('testboard_acquisition')
+    if descriptor:
+        return float(descriptor.get('full_scale_volts', descriptor['reference']))
+    return float(snapshot.metadata.get('configuration', {}).get('vref_voltage', fallback))
+
+
+def counts_to_volts(values, vref_voltage: float, adc_resolution_bits=IADC_RESOLUTION_BITS) -> np.ndarray:
+    max_adc_value = float((2 ** adc_resolution_bits) - 1)
     return (np.asarray(values, dtype=np.float64) / max_adc_value) * float(vref_voltage)
 
 
-def _signal_display_values(label: str, values, vref_voltage: float) -> np.ndarray:
+def _signal_display_values(label: str, values, vref_voltage: float, adc_resolution_bits=IADC_RESOLUTION_BITS) -> np.ndarray:
     if _is_resistance_like_label(label):
         return np.asarray(values, dtype=np.float64)
-    return counts_to_volts(values, vref_voltage)
+    return counts_to_volts(values, vref_voltage, adc_resolution_bits)
 
 
 def _is_resistance_like_label(label: str) -> bool:
@@ -906,7 +973,7 @@ def _build_in_memory_channel_labels(owner, column_count: int, *, fallback_channe
     specs = []
     if hasattr(owner, "get_display_channel_specs"):
         try:
-            specs.extend(list(owner.get_display_channel_specs() or []))
+            specs.extend(list(getattr(owner, "get_acquisition_channel_specs", owner.get_display_channel_specs)() or []))
         except Exception:
             specs = []
     if hasattr(owner, "get_rosette_display_channel_specs"):
@@ -1041,6 +1108,8 @@ def _owner_analysis_timing_metadata(owner) -> dict:
     timing_state = getattr(owner, "timing_state", None)
     timing_data = getattr(timing_state, "timing_data", {}) if timing_state is not None else {}
     result = dict(timing_data) if isinstance(timing_data, dict) else {}
+    if getattr(owner, 'testboard_capture_descriptor', None):
+        return {**result, 'physical_adc_connection_timing': 'unavailable for ADS7953'}
 
     # The current run may be analysed before export.  Preserve the same compact
     # calculator payload that is written to capture JSON so Auto timing uses the
@@ -1104,7 +1173,7 @@ def _owner_pzt_adc_input_by_label(owner) -> dict[str, int]:
     if not hasattr(owner, "get_display_channel_specs"):
         return {}
     try:
-        specs = owner.get_display_channel_specs() or []
+        specs = getattr(owner, "get_acquisition_channel_specs", owner.get_display_channel_specs)() or []
     except Exception:
         return {}
     mapping: dict[str, int] = {}
@@ -1131,7 +1200,7 @@ def _owner_pzt_pre_sample_decay_s_by_label(owner, timing) -> dict[str, float]:
     if not hasattr(owner, "get_display_channel_specs"):
         return {}
     try:
-        specs = owner.get_display_channel_specs() or []
+        specs = getattr(owner, "get_acquisition_channel_specs", owner.get_display_channel_specs)() or []
     except Exception:
         return {}
     result: dict[str, float] = {}
@@ -1188,6 +1257,8 @@ def _normalize_pzt_mux_timing_mode(value) -> str:
 
 
 def _auto_pzt_mux_connected_time_s(snapshot: AnalysisSourceSnapshot) -> tuple[float | None, str]:
+    if snapshot.metadata.get('testboard_acquisition'):
+        return None, 'ADS7953 physical connection timing unavailable'
     timing = snapshot.metadata.get("timing", {}) if isinstance(snapshot.metadata, dict) else {}
     direct_value = _optional_float(snapshot.metadata.get("pzt_mux_connected_time_s")) if isinstance(snapshot.metadata, Mapping) else None
     if direct_value is not None and direct_value > 0.0:

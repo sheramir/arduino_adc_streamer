@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 from PyQt6.QtWidgets import QMessageBox
 
-from constants.plotting import IADC_RESOLUTION_BITS
+from config.boards.capture import adc_resolution_bits, attach_capture_context
 from constants.pzt_rs import extract_archive_rs_units, get_pzt_rs_ohms_per_wire_unit
 from data_processing.force_state import get_force_runtime_state
 from data_processing.adc_mux_timing import adc_mux_timing_log, calculate_adc_mux_timing_for_acquisition
@@ -104,7 +104,7 @@ class DataExporterMixin:
 
         if effective_total_rate_hz is not None and samples_per_sweep > 0:
             try:
-                display_specs = self.get_display_channel_specs()
+                display_specs = getattr(self, "get_acquisition_channel_specs", self.get_display_channel_specs)()
             except (AttributeError, TypeError):
                 display_specs = []
             for spec in display_specs or []:
@@ -472,6 +472,18 @@ class DataExporterMixin:
     
     def save_data(self):
         """Save captured data to CSV file with metadata."""
+        capture_context = getattr(self, "board_capture_context", None) or {}
+        capture_config = capture_context.get("acquisition", self.config)
+        captured_combined = capture_context.get("mode") == "PZT_RS" if capture_context else self.is_array_pzt_rs_mode()
+        if capture_context:
+            interpretation = capture_context['interpretation']
+            captured_mux = (
+                interpretation['adapters']['acquisition'] != 'channels'
+                and interpretation['device_mode'] != '555'
+                and interpretation['emitted_adc_lanes'] > 1
+            )
+        else:
+            captured_mux = self.is_array_pzt1_mode()
         archive_path = None
         try:
             if getattr(self, '_archive_path', None):
@@ -586,17 +598,18 @@ class DataExporterMixin:
             csv_path = directory / f"{filename}_{timestamp}.csv"
             metadata_path = directory / f"{filename}_{timestamp}_metadata.json"
 
-            is_555_mode = (getattr(self, 'device_mode', 'adc') == '555') or ('555' in (self.current_mcu or ''))
-            repeat_count = max(1, int(self.config.get('repeat', 1)))
-            if self.is_array_pzt1_mode() or self.is_array_pzt_rs_mode():
-                all_specs = list(self.get_display_channel_specs())
-                if self.is_array_pzt_rs_mode():
+            is_555_mode = (getattr(self, 'board_capture_context', None) or {}).get('interpretation', {}).get('device_mode', getattr(self, 'device_mode', 'adc')) == '555'
+            descriptor = getattr(self, 'testboard_capture_descriptor', None)
+            repeat_count = 1 if descriptor else max(1, int(capture_config.get('repeat', 1)))
+            if descriptor or capture_context.get('channel_specs') or captured_mux or captured_combined:
+                all_specs = list(capture_context.get("channel_specs") or getattr(self, "get_acquisition_channel_specs", self.get_display_channel_specs)())
+                if captured_combined and not capture_context.get("channel_specs"):
                     all_specs.extend(self.get_rosette_display_channel_specs())
                 col_label_map = {}
                 for spec in all_specs:
                     for col_idx in spec.get('sample_indices', []):
                         col_label_map[col_idx] = spec.get('label', f"Col{col_idx}")
-                total_cols = self.get_effective_samples_per_sweep(repeat_count=repeat_count)
+                total_cols = len(descriptor['ordered_routes']) if descriptor else self.samples_per_sweep if capture_context else self.get_effective_samples_per_sweep(repeat_count=repeat_count)
                 export_column_indices = [index for index in sorted(col_label_map) if 0 <= index < total_cols]
                 if export_column_indices:
                     header = [col_label_map[index] for index in export_column_indices]
@@ -662,7 +675,7 @@ class DataExporterMixin:
 
             rs_round_indices = (
                 self.get_pzt_rs_rosette_sample_indices()
-                if self.is_array_pzt_rs_mode()
+                if captured_combined
                 else []
             )
 
@@ -754,8 +767,8 @@ class DataExporterMixin:
                     "repeat_count": self.config['repeat'],
                     "ground_pin": self.config['ground_pin'],
                     "use_ground_sample": self.config['use_ground'],
-                    "adc_resolution_bits": IADC_RESOLUTION_BITS,
-                    "voltage_reference": self.config['reference'],
+                    "adc_resolution_bits": adc_resolution_bits(self),
+                    "voltage_reference": capture_config['reference'],
                     "osr": self.config['osr'],
                     "gain": self.config['gain'],
                     "buffer_sweeps_per_block": self.buffer_spin.value(),
@@ -867,6 +880,21 @@ class DataExporterMixin:
                 metadata["notes"] = notes
 
             # Save metadata as JSON
+            descriptor = getattr(self, 'testboard_capture_descriptor', None)
+            if descriptor:
+                metadata['testboard_acquisition'] = descriptor
+                metadata['mcu_type'] = descriptor['mcu']
+                metadata.pop('adc_mux_timing', None)
+                metadata['timing'].pop('pzt_mux_connected_time_s', None)
+                metadata['timing'].pop('pzt_mux_connected_time_source', None)
+                metadata['timing']['physical_connection_timing'] = 'unavailable for ADS7953'
+                metadata['configuration'].update({
+                    'voltage_reference': descriptor['reference'], 'adc_resolution_bits': descriptor['adc_resolution_bits'],
+                    'repeat_count': 1, 'buffer_sweeps_per_block': 1,
+                    'buffer_total_samples': len(descriptor['ordered_routes']),
+                    'sampled_arrays': descriptor['sampled_arrays'],
+                })
+            attach_capture_context(self, metadata)
             self._update_save_data_notice("Writing metadata...")
             with open(metadata_path, 'w') as f:
                 json.dump(metadata, f, indent=2)

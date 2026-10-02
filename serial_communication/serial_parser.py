@@ -17,7 +17,7 @@ class SerialParserMixin:
             # Log all status messages
             self.log_status(line)
             # Parse status lines when not in configuration mode
-            if 'STATUS' in line or ':' in line or (line.startswith('#   ') and ',' in line):
+            if 'STATUS' in line or ':' in line or '=' in line or (line.startswith('#   ') and ',' in line):
                 self.parse_status_line(line)
         else:
             # Only log if it's printable ASCII (not binary data that got through)
@@ -27,6 +27,9 @@ class SerialParserMixin:
     def parse_status_line(self, line: str):
         """Parse a single line from Arduino status output."""
         try:
+            from serial_communication.testboard_status import apply_testboard_status_line
+            if apply_testboard_status_line(self.arduino_status, line):
+                return
             # Parse channels: "#   1,2,3,4,5"
             if line.startswith('#   ') and ',' in line and not ':' in line:
                 channels_str = line[4:].strip()

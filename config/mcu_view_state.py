@@ -30,6 +30,14 @@ class MCUViewState:
     osr_default: str
     osr_tooltip: str
     device_mode_log_label: str
+    show_repeat_control: bool = True
+    show_buffer_control: bool = True
+    show_spi_clock_control: bool = False
+    show_sequence_control: bool = False
+    show_display_array_control: bool = False
+    show_ground_pin_control: bool = True
+    reference_choices: tuple[str, ...] = ('1.2V (Internal)', '3.3V (VDD)')
+    repeat_maximum: int = 16
 
 
 def build_mcu_view_state(profile) -> MCUViewState:
@@ -53,4 +61,12 @@ def build_mcu_view_state(profile) -> MCUViewState:
         osr_default=profile.osr_default,
         osr_tooltip=profile.osr_tooltip,
         device_mode_log_label=profile.device_mode_log_label,
+        show_repeat_control=profile.show_repeat_control,
+        show_buffer_control=profile.show_buffer_control,
+        show_spi_clock_control=profile.show_spi_clock_control,
+        show_sequence_control=profile.show_sequence_control,
+        show_display_array_control=profile.show_display_array_control,
+        show_ground_pin_control=profile.show_ground_pin_control,
+        reference_choices=profile.reference_choices,
+        repeat_maximum=profile.repeat_maximum,
     )

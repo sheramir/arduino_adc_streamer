@@ -1,0 +1,132 @@
+{
+  "schema_version": 1,
+  "profile_version": 1,
+  "id": "generic_555",
+  "mcu_aliases": [
+    "555 Analyzer"
+  ],
+  "provenance": {
+    "source": "Historical 555-family host fallback",
+    "verified_against": "Repository firmware and host compatibility tests"
+  },
+  "default_mode": "555",
+  "hardware": {
+    "adc_resolution_bits": 12,
+    "adc_lane_count": 1,
+    "inputs_per_adc": 10,
+    "max_arrays": 1,
+    "reserved_inputs": {}
+  },
+  "transport": {
+    "baud_rate": 460800,
+    "command_terminator": "***",
+    "run_ack": "legacy",
+    "bootstrap": "shared_usb"
+  },
+  "preferences": {
+    "reconnect": "preserve"
+  },
+  "sensor_requirements": {},
+  "sensor_editability": {
+    "electrical": true,
+    "spatial": true
+  },
+  "modes": {
+    "555": {
+      "device_mode": "555",
+      "features": {
+        "is_array_pzt_pzr17": false,
+        "is_teensy": false,
+        "yaxis_units_locked": true,
+        "yaxis_units_value": "Values",
+        "show_charge_discharge_labels": true,
+        "show_manual_channels": true,
+        "device_mode_log_label": "555 analyzer"
+      },
+      "parameters": {
+        "samples_per_channel": {
+          "type": "integer",
+          "default": 1,
+          "label": "Repeat Count:",
+          "policy": "editable",
+          "section": "acquisition",
+          "legacy_key": "repeat",
+          "minimum": 1,
+          "maximum": 16
+        },
+        "sweeps_per_block": {
+          "type": "integer",
+          "default": 1,
+          "label": "Sweeps per Block:",
+          "policy": "editable",
+          "section": "acquisition",
+          "minimum": 1,
+          "maximum": 256
+        },
+        "rb_ohms": {
+          "type": "number",
+          "default": 470.0,
+          "label": "Rb [\u03a9]:",
+          "policy": "editable",
+          "section": "adc",
+          "command": "rb",
+          "minimum": 1,
+          "maximum": 1000000000.0
+        },
+        "rk_ohms": {
+          "type": "number",
+          "default": 0.0,
+          "label": "Rk [\u03a9]:",
+          "policy": "editable",
+          "section": "adc",
+          "command": "rk",
+          "minimum": 0,
+          "maximum": 1000000000.0
+        },
+        "cf_farads": {
+          "type": "number",
+          "default": 2.2e-08,
+          "label": "Cf [F]:",
+          "policy": "editable",
+          "section": "adc",
+          "command": "cf",
+          "minimum": 1e-15,
+          "maximum": 1.0
+        },
+        "rxmax_ohms": {
+          "type": "number",
+          "default": 65500.0,
+          "label": "Rx Max [\u03a9]:",
+          "policy": "editable",
+          "section": "adc",
+          "command": "rxmax",
+          "minimum": 1,
+          "maximum": 1000000000000.0
+        }
+      },
+      "scaling": {
+        "full_scale_volts": 3.3,
+        "legacy_references": {
+          "1.2": 1.2,
+          "3.3": 3.3,
+          "vdd": 3.3,
+          "0.8vdd": 2.64,
+          "ext": 1.25,
+          "2.5": 2.5,
+          "5": 5,
+          "5.0": 5
+        },
+        "units": "timer_ticks"
+      },
+      "adapters": {
+        "protocol": "legacy_555",
+        "frame": "timer_555",
+        "acquisition": "channels",
+        "timing": "reported"
+      },
+      "rules": [],
+      "buffer_limits": {},
+      "emitted_adc_lanes": 1
+    }
+  }
+}

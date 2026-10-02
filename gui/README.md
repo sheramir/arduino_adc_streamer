@@ -1,5 +1,10 @@
 # GUI
 
+`board_controls.py` binds scalar controls to versioned MCU profiles. It owns
+enum item IDs, ranges, defaults, labels, units, dependencies and capture locks;
+generic extra parameters do not require a board-name branch. Specialized
+sensor/display components retain their mixins. See [board maintenance](../config/boards/README.md).
+
 Tab construction and UI panels for the Arduino ADC streamer desktop application. Each file is a PyQt6 mixin (combined into the main GUI window class) or a standalone custom widget, together building the application's tabs: Time Series, Rosette (RS), Pressure Map, Heatmap, Force Calibration, Spectrum, Analysis, and Sensor, plus shared file/status/control panels and small utility widgets.
 
 ## Files
@@ -223,3 +228,14 @@ Mixin (`SpectrumPanelMixin`) for the **Spectrum** tab: FFT/Welch PSD controls, f
 - Array-wide single-point selection for Heatmap point tracking is computed by `data_processing/heatmap_point_tracker.py`, which lets the GUI renderer stay focused on layout and display concerns.
 - `signal_integration_panel.py` defines `PressureMapPanelMixin` as the real class and keeps `SignalIntegrationPanelMixin` only as a module-level alias for backward compatibility. The file name and several helper names still reflect the older "Signal Integration" terminology even though the active tab label is "Pressure Map", so the module is intentionally mixed-name for now rather than fully renamed.
 - All panel mixins assume they are composed into a single main-window class alongside sibling mixins and other modules (e.g. `data_processing`, `file_operations`, `constants`) — most methods reference `self.<attr>` provided elsewhere, so no file here is independently runnable.
+
+## TestBoard_7953 controls
+
+`testboard_panel.py` presents the PZT-only board controls and restores ordinary
+controls when another MCU connects. ADC controls are 2.5/5 V span and SPI MHz;
+acquisition controls are arrays, PZTs, Vmid, settling repeat and manual/auto1
+sequence. A shared Display Array selector stays enabled during capture. All
+signal views use absolute indices into the complete acquired payload. Analysis
+uses an independent source-aware selector. Decay characterization is gated when
+ADS7953 physical connection timing is unavailable; live voltage preview remains
+available. See [the array guide](../docs/user/ARRAY_CONFIGURATION_GUIDE.md).

@@ -30,6 +30,7 @@ class CaptureCacheMixin:
         )
 
         if reply == QMessageBox.StandardButton.Yes:
+            self.testboard_capture_descriptor = None
             self.drain_serial_input(0.05)
 
             self._reset_capture_buffer_state(reset_samples_per_sweep=True)

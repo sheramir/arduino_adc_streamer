@@ -14,8 +14,6 @@ from PyQt6.QtCore import QCoreApplication, QThread
 
 from constants.serial import (
     ARDUINO_RESET_DELAY,
-    BAUD_RATE,
-    COMMAND_TERMINATOR,
     CONFIG_RETRY_DELAY,
     SERIAL_TIMEOUT,
 )
@@ -36,15 +34,27 @@ class ADCSessionController:
         # worker while text lines still arrive via a GUI-thread Qt signal
         # queued connection, so waiter-list access must be thread-safe.
         self._waiters_lock = threading.Lock()
+        self.board_context = None
+
+    def set_board_context(self, context):
+        self.board_context = context
+        if self.serial_thread is not None:
+            from serial_communication.protocols.registry import FRAME_ADAPTERS
+            self.serial_thread.frame_codec = FRAME_ADAPTERS[context.mode.definition['adapters']['frame']]
+        if self.serial_port is not None and self.serial_port.is_open:
+            self.serial_port.baudrate = context.profile.definition['transport']['baud_rate']
 
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
     def connect(self, port_name: str, *, thread_wait_ms: int = 250):
+        from config.boards import get_board_registry
+        bootstrap = get_board_registry().bootstrap
+        self.board_context = None
         port = serial.Serial(
             port=port_name,
-            baudrate=BAUD_RATE,
+            baudrate=bootstrap['baud_rate'],
             timeout=SERIAL_TIMEOUT,
             rtscts=True,
         )
@@ -186,7 +196,9 @@ class ADCSessionController:
     def send_command(self, command: str):
         if not self.serial_port or not self.serial_port.is_open:
             raise RuntimeError("Not connected to serial port")
-        self.serial_port.write(f"{command}{COMMAND_TERMINATOR}".encode("utf-8"))
+        from config.boards import get_board_registry
+        transport = self.board_context.profile.definition['transport'] if self.board_context else get_board_registry().bootstrap
+        self.serial_port.write(f"{command}{transport['command_terminator']}".encode("utf-8"))
         self.serial_port.flush()
 
     def send_command_and_wait_ack(self, command: str, expected_value: str, timeout: float, max_retries: int):
@@ -239,6 +251,24 @@ class ADCSessionController:
             self.serial_thread.clear_buffer()
         self.serial_port.reset_input_buffer()
 
+    def read_testboard_status(self, timeout=2.0):
+        from serial_communication.adc_connection_state import build_default_arduino_status
+        from serial_communication.testboard_status import apply_testboard_status_line
+        status = build_default_arduino_status()
+        started = False
+
+        def collect(line):
+            nonlocal started
+            if "STATUS (PZT/ADS7953)" in line:
+                started = True
+            if started:
+                apply_testboard_status_line(status, line, self.board_context)
+            return started and line.startswith("# ---") and "STATUS" not in line
+
+        completed = self.wait_for_line(collect, timeout, consume=True,
+                                       send_action=lambda: self.send_command("status"))
+        return status if completed else None
+
     # ------------------------------------------------------------------
     # MCU detection
     # ------------------------------------------------------------------
@@ -250,7 +280,7 @@ class ADCSessionController:
         if line.startswith("#OK") or line.startswith("#NOT_OK") or line.startswith("#   "):
             return False
         payload = line[1:].strip()
-        if not payload or ":" in payload:
+        if not payload or ":" in payload or "=" in payload:
             return False
         return True
 

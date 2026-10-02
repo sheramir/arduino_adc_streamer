@@ -38,67 +38,15 @@ import numpy as np
 # Keep these in lockstep with MG24_Dual_MUX_SPI_Slave1.7b.ino.  They are
 # deliberately separate from the calibrated timing profile so changing the
 # firmware's ground behavior only requires changing these two app constants.
-MG24_GROUND_READ_ADC = False
-MG24_GROUND_DWELL_US = 50.0
+from pathlib import Path
+import json
+from config.boards import get_board_registry
 
-
-MG24_TIMING_PROFILE = {
-    "adc_mode": "normal",
-    "adc_clk_hz_by_gain": {
-        1: 10_000_000,
-        2: 5_000_000,
-        3: 2_500_000,
-        4: 2_500_000,
-    },
-    "digital_average": 1,
-    "mux_settle_us": 3.0, # 20us is optimal for ghosting. 3us is minimal but faster sampling rate.
-    "mux_turn_on_us": 0.15,
-    "mux_address_overhead_us": 0.25,
-    # Used only to place the ADC-start event in the timeline. It is already
-    # included in pair_loop_software_overhead_us and must not be added twice.
-    "adc_start_overhead_us": 0.15,
-    # Every retained pair, including repeat 1, executes this same firmware
-    # loop iteration.
-    "pair_loop_software_overhead_us": 8.293,
-    "burst_finalize_overhead_us": None,
-    "firmware_timing_version": "MG24_Dual_MUX_SPI_Slave1.7b",
-    "repeat_implementation": "uniform_retained_pair_loop_block_timestamp_estimate",
-    "per_mux_selection_overhead_us": 6.64,
-    "block_fixed_overhead_us": 9.23,
-    "ground_dummy_software_overhead_us": 12.325,
-    "iadc_input_switch_cycles": 2,
-    "ground_mode": "dummy_adc_pair" if MG24_GROUND_READ_ADC else "dwell_only",
-    "ground_dwell_us": MG24_GROUND_DWELL_US,
-    "warmup_us": 0.0,
-    "calibration": {
-        "version": "2026-08-07",
-        "date": "2026-08-07",
-        "firmware_timing_version": "MG24_Dual_MUX_SPI_Slave1.7b",
-        "compiler_core_version": "not recorded",
-        "method": (
-            "Single-MUX-pair MCU block-timestamp measurements at repeat counts "
-            "1 and 16, three runs each, with and without dummy ground; "
-            "repeat counts 5 and 10 used as additional checks."
-        ),
-        "calibrated_osr": 4,
-        "calibrated_gain": 1,
-        "calibrated_adc_clk_hz": 10_000_000,
-        "calibrated_mux_settle_us": 3.0,
-        "pair_loop_total_us": 12.093,
-        "pair_loop_software_overhead_us": 8.293,
-        "ground_phase_us": (
-            0.25 + 3.0 + MG24_GROUND_DWELL_US + 6.64
-            if not MG24_GROUND_READ_ADC else 19.375
-        ),
-        "ground_dummy_software_overhead_us": 12.325,
-        "note": (
-            "Pair-loop and ground-phase values are inferred from complete MCU "
-            "block timestamps. The dwell-only ground phase uses the configured "
-            "delayMicroseconds duration plus the calibrated selection overhead; "
-            "recalibrate it if the firmware or toolchain changes."
-        ),
-    },
-}
+MG24_TIMING_PROFILE = json.loads((Path(__file__).resolve().parents[1] / 'config/boards/timing_profiles/mg24_dual_mux.json').read_text(encoding='utf-8'))
+MG24_TIMING_PROFILE['adc_clk_hz_by_gain'] = {int(k): v for k, v in MG24_TIMING_PROFILE['adc_clk_hz_by_gain'].items()}
+# Read-only legacy names; edit timing JSON rather than these aliases.
+MG24_GROUND_READ_ADC = MG24_TIMING_PROFILE['ground_mode'] == 'dummy_adc_pair'
+MG24_GROUND_DWELL_US = MG24_TIMING_PROFILE['ground_dwell_us']
 
 SUPPORTED_MG24_OSR_VALUES = frozenset({2, 4, 8})
 
@@ -427,19 +375,14 @@ class Mg24DualMuxTimingCalculator(AdcMuxTimingCalculator):
 # ``Array_PZT_PZR1`` is the identifier emitted by the current firmware. The
 # doubled-P spelling appeared in an earlier timing specification, so retain it
 # as an input-only compatibility alias; logs always use the canonical profile.
-TIMING_CALCULATORS = {
-    "Array_PZT_PZR1": Mg24DualMuxTimingCalculator,
-    "Array_PPZT_PZR1": Mg24DualMuxTimingCalculator,
-}
-
-
-def get_adc_mux_timing_calculator(mcu_id: str | None) -> AdcMuxTimingCalculator | None:
-    """Return the registered calculator for an MCU identifier, if any."""
-    normalized_id = (mcu_id or "").strip()
-    for prefix, calculator_type in TIMING_CALCULATORS.items():
-        if normalized_id == prefix or normalized_id.startswith(f"{prefix}."):
-            return calculator_type()
-    return None
+def get_adc_mux_timing_calculator(mcu_id):
+    mode = get_board_registry().resolve(mcu_id).mode()
+    if mode.definition['adapters']['timing'] != 'mg24_mux':
+        return None
+    from config.boards.models import thaw
+    profile = thaw(mode.definition['timing'])
+    profile['adc_clk_hz_by_gain'] = {int(k): v for k, v in profile['adc_clk_hz_by_gain'].items()}
+    return Mg24DualMuxTimingCalculator(profile=profile)
 
 
 def calculate_adc_mux_timing_for_acquisition(
@@ -449,7 +392,7 @@ def calculate_adc_mux_timing_for_acquisition(
     """Calculate timing from the current acquisition configuration when supported.
 
     ``sweeps_per_block`` (alias ``buffer``) is only folded into the continuous
-    connection model for a single active channel with ground sampling off —
+    connection model for a single active channel with ground sampling off â€”
     the one configuration where the MG24 firmware's same-channel MUX-reselect
     skip actually applies. Any other channel count or ground-enabled config
     ignores it, matching prior behavior exactly.

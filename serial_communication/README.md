@@ -1,5 +1,11 @@
 # Serial Communication
 
+BoardContext selects protocol adapters and shared frame codecs from
+`protocols/registry.py`. ADCSessionController retains the transport/waiter stack,
+using registry bootstrap before identification and profile transport afterward.
+Commands, ACK/status verification and payload/footer formats are retained.
+See [board coverage](../config/boards/coverage.md).
+
 This folder contains all serial-port code for the Arduino ADC Streamer GUI: connecting to and disconnecting from the MCU's ADC stream and the optional force-sensor device, reading data on background threads so the Qt event loop never blocks, parsing ASCII status/ack lines and binary sample packets, and exposing GUI-facing mixins that the main window composes in. The ADC side (`adc_connection_state.py`, `adc_connection_workflow.py`, `adc_session.py`, `adc_serial.py`) and the force side (`force_connection_state.py`, `force_connection_workflow.py`, `force_session.py`, `force_serial.py`) follow a parallel structure: a session controller owns the `pyserial` port and reader thread, a workflow coordinates connect/disconnect sequencing, plain dataclasses describe view state for the GUI to render, and a mixin wires that machinery into the main window's widgets and callbacks. `serial_threads.py` defines the two `QThread` subclasses that actually read bytes off the wire — one decoding a binary block-packet protocol plus interleaved `#`-prefixed ASCII lines for the ADC, the other parsing CSV-like text lines for the force sensor — and `serial_parser.py` interprets the ADC's ASCII status output into an `ArduinoStatus` object. `__init__.py` re-exports the public classes and helpers so other modules can import from `serial_communication` directly.
 
 ## Files

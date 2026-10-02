@@ -13,7 +13,7 @@ class ADCConfigStateTests(unittest.TestCase):
         self.assertEqual(state.selected_array_sensors, [])
         self.assertEqual(state.array_operation_mode, "PZT")
         self.assertEqual(state.testboard_array_selection, "both")
-        self.assertEqual(state.testboard_scan_order, "interleaved")
+        self.assertEqual(state.testboard_scan_order, "adc")
         self.assertEqual(state.repeat, 1)
         self.assertEqual(state.reference, "vdd")
 

@@ -65,6 +65,8 @@ class PiezoHeatmapProcessorMixin:
         return f"Sensor{package_index + 1}"
 
     def _get_heatmap_baseline_key_for_display_spec(self, spec):
+        if spec.get('array_number'):
+            return spec.get('key')
         key = spec.get('key') if isinstance(spec, dict) else None
         if isinstance(key, tuple):
             if key and key[0] == 'sensor' and len(key) >= 4:
@@ -138,6 +140,17 @@ class PiezoHeatmapProcessorMixin:
         cop_y = np.sum(np.array(SENSOR_POS_Y, dtype=np.float32) * weights) / total_weight
 
         smooth_alpha = settings.get('smooth_alpha', SMOOTH_ALPHA)
+        descriptor = self.get_testboard_descriptor() if hasattr(self, 'get_testboard_descriptor') else None
+        if descriptor:
+            key = (getattr(self, 'display_array_id', 1), package_index)
+            states = getattr(self, '_testboard_cop_history', {})
+            self._testboard_cop_history = states
+            old_x, old_y, old_i = states.get(key, (0.0, 0.0, 0.0))
+            value = (smooth_alpha * cop_x + (1-smooth_alpha) * old_x,
+                     smooth_alpha * cop_y + (1-smooth_alpha) * old_y,
+                     smooth_alpha * intensity + (1-smooth_alpha) * old_i)
+            states[key] = value
+            return value
         self.smoothed_cop_x[package_index] = smooth_alpha * cop_x + (1 - smooth_alpha) * self.smoothed_cop_x[package_index]
         self.smoothed_cop_y[package_index] = smooth_alpha * cop_y + (1 - smooth_alpha) * self.smoothed_cop_y[package_index]
         self.smoothed_intensity[package_index] = smooth_alpha * intensity + (1 - smooth_alpha) * self.smoothed_intensity[package_index]
@@ -254,6 +267,9 @@ class PiezoHeatmapProcessorMixin:
             return None
 
         display_specs = list(self.get_display_channel_specs() or [])
+        board_descriptor = self.get_testboard_descriptor() if hasattr(self, 'get_testboard_descriptor') else None
+        if board_descriptor:
+            display_specs = self.get_acquisition_channel_specs()
         if not display_specs:
             return None
 
@@ -302,8 +318,11 @@ class PiezoHeatmapProcessorMixin:
         per_channel_rate_hz = sample_rate_hz / samples_per_repeat
         window_end_time_sec = float(timestamps[-1]) if timestamps.size else None
         package_sensor_values = []
+        if board_descriptor:
+            from config.testboard_acquisition import descriptor_groups
+            package_order = [g['package_id'] for g in descriptor_groups(board_descriptor) if g['package_id'] in package_samples]
 
-        for package_index, package_id in enumerate(package_order[:MAX_SENSOR_PACKAGES]):
+        for package_index, package_id in enumerate(package_order if board_descriptor else package_order[:MAX_SENSOR_PACKAGES]):
             channel_samples = []
             for position in sensor_labels:
                 samples_for_position = package_samples[package_id].get(position, [])
@@ -312,7 +331,17 @@ class PiezoHeatmapProcessorMixin:
                 else:
                     channel_samples.append(np.asarray([], dtype=np.float64))
 
-            processor = self.heatmap_signal_processors[package_index]
+            if board_descriptor:
+                from data_processing.heatmap_signal_processing import HeatmapSignalProcessor
+                processors = getattr(self, '_testboard_heatmap_processors', {})
+                self._testboard_heatmap_processors = processors
+                if package_id not in processors:
+                    from constants.heatmap import BIAS_CALIBRATION_DURATION_SEC, HPF_CUTOFF_HZ
+                    processors[package_id] = HeatmapSignalProcessor(channel_count=5,
+                        bias_duration_sec=BIAS_CALIBRATION_DURATION_SEC, hpf_cutoff_hz=HPF_CUTOFF_HZ)
+                processor = processors[package_id]
+            else:
+                processor = self.heatmap_signal_processors[package_index]
             processor.set_hpf_cutoff(settings.get('hpf_cutoff_hz', 0.0))
             rms_values, _ = processor.compute_rms(
                 channel_samples,
@@ -332,7 +361,8 @@ class PiezoHeatmapProcessorMixin:
                 settings.get('smooth_alpha', SMOOTH_ALPHA),
                 0.0,
             )
-            package_sensor_values.append(smoothed)
+            if not board_descriptor or package_id.startswith(f"A{settings.get('display_array_id', getattr(self, 'display_array_id', 1))}_"):
+                package_sensor_values.append(smoothed)
 
         return package_sensor_values
 

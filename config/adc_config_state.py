@@ -8,6 +8,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from typing import Any
+from config.boards import get_board_registry
+
+
+def _default(profile, parameter):
+    return get_board_registry().profiles[profile].mode().parameters[parameter].default
 
 from constants.defaults_555 import (
     ANALYZER555_DEFAULT_CF_FARADS,
@@ -23,14 +28,17 @@ class ADCConfigurationState:
     channel_selection_source: str = "none"
     selected_array_sensors: list[str] = field(default_factory=list)
     array_operation_mode: str = "PZT"
-    testboard_array_selection: str = "both"
-    testboard_scan_order: str = "interleaved"
-    repeat: int = 1
+    testboard_array_selection: str = field(default_factory=lambda: _default("testboard_7953", "array_selection"))
+    testboard_scan_order: str = field(default_factory=lambda: _default("testboard_7953", "scan_order"))
+    testboard_spi_clock_hz: int = field(default_factory=lambda: _default("testboard_7953", "spi_clock_hz"))
+    testboard_channel_repeat: int = field(default_factory=lambda: _default("testboard_7953", "settling_conversions"))
+    testboard_sequence: str = field(default_factory=lambda: _default("testboard_7953", "sequence"))
+    repeat: int = field(default_factory=lambda: _default("generic_adc", "samples_per_channel"))
     ground_pin: int = -1
     use_ground: bool = False
-    osr: int = 2
-    gain: int = 1
-    reference: str = "vdd"
+    osr: int = field(default_factory=lambda: _default("generic_adc", "osr"))
+    gain: int = field(default_factory=lambda: _default("generic_adc", "gain"))
+    reference: str = field(default_factory=lambda: _default("generic_adc", "reference"))
     conv_speed: str = "med"
     samp_speed: str = "med"
     sample_rate: int = 0
@@ -39,9 +47,16 @@ class ADCConfigurationState:
     cf_farads: float = ANALYZER555_DEFAULT_CF_FARADS
     rxmax_ohms: float = ANALYZER555_DEFAULT_RXMAX_OHMS
 
+    parameters: dict[str, Any] = field(default_factory=dict)
+
+    def register_parameters(self, mode):
+        self.parameters = {p.legacy_key: self.parameters.get(p.legacy_key, p.default)
+                           for p in mode.parameters.values() if not hasattr(self, p.legacy_key)}
+
     def copy(self) -> "ADCConfigurationState":
         return replace(
             self,
+            parameters=dict(self.parameters),
             channels=list(self.channels),
             selected_array_sensors=list(self.selected_array_sensors),
         )
@@ -49,17 +64,20 @@ class ADCConfigurationState:
     def get(self, key: str, default: Any = None) -> Any:
         if hasattr(self, key):
             return getattr(self, key)
-        return default
+        return self.parameters.get(key, default)
 
     def __getitem__(self, key: str) -> Any:
         if not hasattr(self, key):
-            raise KeyError(key)
+            return self.parameters[key]
         return getattr(self, key)
 
     def __setitem__(self, key: str, value: Any) -> None:
         if not hasattr(self, key):
-            raise KeyError(key)
-        setattr(self, key, value)
+            if key not in self.parameters:
+                raise KeyError(key)
+            self.parameters[key] = value
+        else:
+            setattr(self, key, value)
 
     def update(self, values: dict[str, Any]) -> None:
         for key, value in values.items():

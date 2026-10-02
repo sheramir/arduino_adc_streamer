@@ -287,3 +287,24 @@ under `~/.adc_streamer/sensors/`.
   this package.
 - `mcu_detector.py`, `config_handlers.py`, and other mixins assume they are mixed into a class
   that also provides Qt widgets (`self.osr_combo`, `self.vref_label`, etc.); they are not usable standalone.
+
+## TestBoard_7953 configuration
+
+`boards/profiles/testboard_7953.json` owns capabilities, defaults and limits.
+Sensor JSON owns electrical and spatial mappings. `testboard_7953_board.py` is
+a read-only compatibility facade. Edit the profile's `scan_order.default`
+(default `adc`) and restart the app.
+`testboard_acquisition.py` validates the two-array sensor schema and builds the
+serializable capture descriptor with absolute payload indices and array-qualified
+route/package identities. `testboard_runtime.py` projects visible specs from that
+complete descriptor; view switching does not change device settings. The service
+uses bare ACKs followed by a complete `key=value` status verification. ADS7953
+settling repeat is separate from the legacy payload repeat, which remains 1.
+
+## Board registry
+
+See [boards/README.md](boards/README.md) for profiles, the schema, rules, shared
+GUI bindings, adapters, settings namespaces, capture migrations and adding a board.
+[boards/coverage.md](boards/coverage.md) documents all MCU paths and firmware
+ambiguity. Plots and offline Analysis use captured ADC bit depth/span. New files
+freeze the board context; old files retain compatibility readers.

@@ -212,6 +212,13 @@ class PztDecayPanelMixin:
             return
         current = self.pzt_decay_signal_combo.currentText(); self.pzt_decay_signal_combo.blockSignals(True); self.pzt_decay_signal_combo.clear()
         config = self.get_active_sensor_configuration() if hasattr(self, "get_active_sensor_configuration") else {}
+        descriptor = self.get_testboard_descriptor() if hasattr(self, 'get_testboard_descriptor') else None
+        if descriptor:
+            for spec in self.get_display_channel_specs():
+                self.pzt_decay_signal_combo.addItem(spec['label'])
+            self.pzt_decay_signal_combo.blockSignals(False)
+            self._update_pzt_decay_mapping_label()
+            return
         positions = [str(x).upper() for x in config.get("channel_sensor_map", [])]
         for sensor, mapping in config.get("mux_mapping", {}).items():
             for position in positions[:len(mapping.get("channels", []))]:
@@ -224,6 +231,13 @@ class PztDecayPanelMixin:
         return resolve_pzt_decay_signal_mapping(config, self.pzt_decay_signal_combo.currentText())
 
     def _update_pzt_decay_mapping_label(self, *_args) -> None:
+        descriptor = self.get_testboard_descriptor() if hasattr(self, 'get_testboard_descriptor') else None
+        if descriptor:
+            self._set_pzt_decay_measurement_controls(False)
+            self.pzt_decay_calculate_vmid_btn.setEnabled(False)
+            self.pzt_decay_mapping_label.setText(
+                f"Array {getattr(self, 'display_array_id', 1)} live voltage preview. ADS7953 physical connection timing is unavailable for decay characterization.")
+            return
         try:
             mapping = self._selected_pzt_decay_mapping()
             cached = mapping.logical_signal in self.pzt_decay_vmid_by_signal
@@ -267,7 +281,9 @@ class PztDecayPanelMixin:
             return "ground false", -1
         ground_pin = self._pzt_decay_config_snapshot.ground_pin
         if ground_pin < 0 or ground_pin == mapping.mux_address:
-            ground_pin = 0 if mapping.mux_address != 0 else 15
+            from config.boards.settings import context_for
+            maximum = context_for(self).profile.hardware['inputs_per_adc'] - 1
+            ground_pin = 0 if mapping.mux_address != 0 else maximum
         return f"ground {ground_pin}", ground_pin
 
     def _update_pzt_decay_sampling_controls(self, *_args) -> None:
@@ -489,6 +505,19 @@ class PztDecayPanelMixin:
             self._finish_pzt_decay_capture(error=str(exc))
 
     def process_pzt_decay_block(self, block_samples: np.ndarray, sweep_timestamps_s: np.ndarray) -> None:
+        descriptor = self.get_testboard_descriptor() if hasattr(self, 'get_testboard_descriptor') else None
+        if descriptor and not self.pzt_decay_active:
+            selected = self.pzt_decay_signal_combo.currentText()
+            spec = next((s for s in self.get_display_channel_specs() if s['label'] == selected), None)
+            if spec and hasattr(self, '_get_ordered_active_buffer_snapshot'):
+                snapshot = self._get_ordered_active_buffer_snapshot(recent_window_sec=5.0)
+                if snapshot is not None:
+                    data, times, _dt = snapshot
+                    index = spec['sample_indices'][0]
+                    self._pzt_decay_measured_curve.setData(times[-5000:],
+                        data[-5000:, index] / ((2 ** descriptor['adc_resolution_bits']) - 1) * float(descriptor.get('full_scale_volts', descriptor['reference'])))
+                    self.pzt_decay_plot.setTitle(selected)
+            return
         if not self.pzt_decay_active or self.pzt_decay_analyzer is None: return
         self._pzt_decay_last_sample_monotonic = time.monotonic()
         timing = self.pzt_decay_analyzer.timing
@@ -500,7 +529,7 @@ class PztDecayPanelMixin:
             burst_index = self._pzt_decay_next_burst_index
             state = self.pzt_decay_analyzer.state
             for repeat_index in range(repeat_count):
-                voltage = float(sweep[input_index + 2 * repeat_index]) / 4095.0 * float(self.get_vref_voltage())
+                voltage = float(sweep[input_index + 2 * repeat_index]) / ((2 ** self.get_adc_resolution_bits()) - 1) * float(self.get_vref_voltage())
                 previous_state = self.pzt_decay_analyzer.state
                 state = self.pzt_decay_analyzer.add_sample(
                     voltage, float(timestamp), burst_index=burst_index, repeat_index=repeat_index,

@@ -51,6 +51,163 @@ Run the default benchmark (1 s warm-up, 5 s measurement, three repetitions):
 uv run python Arduino_Sketches/TestBoard_7953/benchmarks/testboard_7953_benchmark.py --port COM7
 ```
 
+## Interactive ghosting test
+
+Use `--ghosting` to investigate whether an isolated press produces a smaller,
+similarly shaped response on other channels. Run it from an interactive
+terminal so Space can skip a broken or inactive source without Enter. Close
+the GUI and other serial clients first.
+
+Test one ADC (ADC2 has 15 populated sensor channels):
+
+```powershell
+uv run python Arduino_Sketches/TestBoard_7953/benchmarks/testboard_7953_benchmark.py `
+  --ghosting --ghost-adc 2 --port COM3
+```
+
+Test all 25 channels in array 1 with explicit acquisition settings:
+
+```powershell
+uv run python Arduino_Sketches/TestBoard_7953/benchmarks/testboard_7953_benchmark.py `
+  --ghosting --route-set full_array1 --port COM3 `
+  --vmid on --scan-order adc --spi-clock-hz 20000000 --spi-engine lpspi
+```
+
+Inspect the effective settings and sources without opening the port:
+
+```powershell
+uv run python Arduino_Sketches/TestBoard_7953/benchmarks/testboard_7953_benchmark.py `
+  --ghosting --route-set all_four_full --dry-run
+```
+
+Select either `--ghost-adc 1|2|3|4` or one `--route-set`. ADC1/ADC3 have 10
+populated channels (0–9); ADC2/ADC4 have 15 (0–14). Arrays 1/2 contain ADC1/ADC2
+and ADC3/ADC4 respectively. `all_four_full` is mapped to `full_array1`, with a
+notice and requested/effective selections in metadata. Other two-array route
+sets are rejected. Channel 15 is Vmid and is never a sensor source.
+
+Each ghosting session uses one configuration, manual ADC sequencing,
+`channelrepeat=1`, and `repetitions=1`. The window is always two seconds from
+the source trigger. `--window-ms` and `--repetitions` are overridden and the
+requested values are recorded. Matrix filters (`--tests`), smoke mode, multiple
+settings, and `--resume` are unsupported; use a new output directory for each
+session. Normal benchmark sessions keep their existing behavior.
+
+| Ghosting option | Default | Meaning |
+| --- | --- | --- |
+| `--spi-engine blocking|dma|lpspi` | `lpspi` | One acquisition engine. |
+| `--vmid on|off` | `off` | Optional between-channel Vmid conversions; mandatory parking remains enabled. |
+| `--scan-order` | `adc` | One payload order; also accepts `array` and `interleaved`. |
+| `--spi-clock-hz` | `20000000` | One SPI speed within the existing 100 kHz–30 MHz limits. |
+| `--warm-up-ms` | `1000` | Device-time warm-up before each attempt; excluded from baseline and measurements. |
+| `--ghost-baseline-ms` | `1000` | Quiet calibration duration after warm-up. |
+| `--ghost-trigger-counts` | `100` | Minimum source-trigger threshold in ADC counts, above the unpressed excursions observed during board testing. |
+| `--ghost-trigger-samples` | `3` | Consecutive samples beyond the threshold with the same polarity; accepts 1–64. |
+| `--ghost-trigger-sigma` | `5` | Source noise multiplier; must be at least 3. |
+| `--ghost-target-counts` | `1` | Minimum noticeable target amplitude in ADC counts. |
+| `--ghost-target-sigma` | `3` | Target noise multiplier; must be positive. |
+| `--ghost-correlation-min` | `0.8` | Minimum positive Pearson correlation to classify ghosting. |
+
+Before each source or redo, release **all** sensors and press Enter when ready.
+The runner warms up and calculates each channel's median baseline and sample
+standard deviation. Noise sigma is the greater of one count and that measured
+standard deviation. Keep every sensor untouched throughout calibration.
+
+After `Press ADCn_CHm` appears, press only the requested source. The trigger
+requires three consecutive samples more than
+`max(trigger_counts, trigger_sigma * source_noise_sigma)` from baseline, all on
+the same side of baseline. An in-band sample or polarity change resets the
+confirmation. The two-second capture starts at the **first** sample in the
+confirmed run and retains all confirming samples. Press **Space** while waiting to skip
+and advance to the next source, or **Q** to finish with a partial report.
+After a captured/failed attempt, choose Enter/C to continue, R to redo, or Q to
+finish. Ctrl+C preserves completed results and any available partial capture.
+
+The source count floor defaults to 100 because an unpressed ADC1 session
+recorded source excursions up to 58 counts even though the quiet calibration
+standard deviations were below one count. A 5-sigma rule alone produced a
+5-count threshold and falsely triggered on these later excursions. The higher
+floor and consecutive-sample confirmation reject that recorded behavior.
+If a real press is weaker than the floor, choose a lower
+`--ghost-trigger-counts` explicitly after checking unpressed excursions for
+your configuration. Target thresholds remain independently configurable and
+default to 3 sigma with a one-count floor.
+
+For every other channel on the source ADC, the runner reports its absolute
+baseline-relative peak, signal standard deviation, attenuation percentage, and signed, zero-lag
+Pearson correlation over the same sweeps. Ghosting requires both a peak above
+`max(target_counts, target_sigma * target_noise_sigma)` and correlation at least
+the configured minimum. There is no attenuation cutoff; inverted responses
+are reported but do not pass the positive-correlation rule. A clipped target
+or undefined correlation is inconclusive. Source clipping at 0/4095 excludes
+the attempt from strongest-valid selection.
+
+Attenuation is `100 * std(target_signal) / std(source_signal)`, using sample
+standard deviations (`ddof=1`) from the full-resolution shared two-second
+window. An attenuation value of 20% means the target's standard deviation is
+20% of the source's. Both `source_stdev` and `target_stdev` are exported in ADC
+counts so the ratio can be checked. A constant source has undefined attenuation
+(blank in CSV/Excel); a constant target has 0% attenuation and undefined
+correlation. Additive noise still contributes to standard deviations, so this
+is a measured attenuation estimate; baseline-noise variance is not subtracted.
+Ghosting schema version 2 replaces the former peak-ratio field `gain_pct` with
+`attenuation_pct` in new sessions. Existing session artifacts are preserved.
+
+The Summary uses the valid attempt with the **largest source amplitude**;
+ties retain the earlier attempt. A skipped redo preserves an existing valid
+result. The Attempts sheet retains all attempts, and the sample CSV retains
+baseline and signal-window data at full resolution. A source with no valid
+result is marked skipped, failed, clipped, incomplete, or untested as applicable.
+
+### Ghosting artifacts and graphs
+
+Sessions default to a timestamped directory beneath `benchmarks/results/`.
+`--output`, `--no-raw`, `--no-excel`, `--idle-ms`, `--grace-ms`, and
+`--allow-existing-errors` are also supported. CSVs and metadata are saved after
+each attempt. Completion, Quit, and interruption produce a workbook unless
+`--no-excel` is set.
+
+- `ghosting_summary.csv`: strongest-valid source results and source statuses.
+- `ghosting_pairs.csv`: all same-ADC target metrics for selected attempts.
+- `ghosting_attempts.csv`: complete attempt history.
+- `ghosting_samples.csv`: baseline/window samples, baselines, noise estimates,
+  route identities, and device timestamps for all measured channels.
+- `ghosting_report.xlsx`: Summary, Pairs, Attempts, Signal Graphs, Session,
+  Glossary, and hidden Chart Data sheets.
+- `raw/*.bin`: optional warm-up/baseline/window frame captures per attempt;
+  indefinite trigger-wait traffic is not retained.
+
+**Signal Graphs** contains one native Excel chart per source with a valid
+selected attempt: 25 for an array or 10/15 for one ADC. Each chart overlays the
+source and **all measured channels**, including the other ADC in an array
+session. Detection remains limited to the source ADC. Missing valid results
+have labeled placeholders, and the source index links to each graph slot.
+
+Graphs show baseline-relative counts against device time since the trigger,
+from 0 to 2 seconds. A thicker source line identifies the pressed channel.
+Each chart's Y-axis covers the minimum/maximum of all its full-resolution
+traces with 5% padding (at least one count). Graphs use at most 5,000 common
+time points, preserving per-channel bucket extrema and window endpoints;
+reduced plots are labeled. Metrics and CSVs always use full-resolution data.
+
+### Hardware validation
+
+The software reports correlated responses; it cannot distinguish electrical
+coupling from mechanically transmitted force. Physically isolate unpressed
+sensors and avoid loading shared sensor packages or the board during a press.
+Baseline noise is estimated from the quiet window and may include drift or
+environmental interference; it is not a separately measured white-noise spectrum.
+Timing and correlation use aligned sweeps because firmware does not provide
+individual channel sample timestamps.
+
+Validate one ADC and one array on the real board: perform an isolated press,
+redo it with a larger unclipped response, skip an inactive source, and quit
+partway through. Confirm summary selection and charts match the intended
+attempt. Test clipping with a lighter redo, Ctrl+C while waiting/capturing,
+and stream loss. Where available, use controlled electrical signal injection
+to verify a known attenuation and correlation without mechanically loading targets.
+Hardware behavior and visual Excel layout still require on-device/manual review.
+
 ## Benchmark command-line flags
 
 Run with `--help` to display the parser's short reference. The complete set of

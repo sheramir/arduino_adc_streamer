@@ -26,6 +26,46 @@ In the Excel report, filter the `ADC` and `Channel` columns on `Warmup Samples`
 to select one physical channel. The `Warmup Channel` graph plots visible rows
 only, so it updates to show that channel's startup response and stable median.
 
+## Ghosting output
+
+`--ghosting` writes `ghosting_summary.csv`, `ghosting_pairs.csv`,
+`ghosting_attempts.csv`, `ghosting_samples.csv`, and `ghosting_report.xlsx`.
+The strongest valid source attempt supplies both the summary metrics and its
+Signal Graphs overlay. Detection compares all other channels on the source ADC;
+graphs overlay all acquired channels. Optional raw files contain complete
+warm-up/baseline/window frames, excluding indefinite trigger-wait traffic.
+
+| Field | File | Meaning |
+| --- | --- | --- |
+| source | Ghosting files | Pressed route as `ADC:channel`. |
+| target | Ghosting Pairs | Compared route on the same ADC as the source. |
+| attempt | Ghosting files | One-based attempt for this source, including redos. |
+| selected_attempt | Ghosting Summary | Strongest valid source attempt; earlier attempt wins a tie. Blank if none. |
+| status | Ghosting Summary/Attempts | `VALID`, `CLIPPED`, `SKIPPED`, `FAILED`, `INCOMPLETE`, or `UNTESTED`. A skipped redo preserves a prior valid selection. |
+| status | Ghosting Pairs | `GHOST`, `NO_GHOST`, or `INCONCLUSIVE`; clipping or undefined correlation is inconclusive. |
+| source_peak | Ghosting tables | Maximum absolute source departure from its calibrated median, in counts. |
+| target_peak | Ghosting Pairs | Maximum absolute target departure from its calibrated median, in counts. |
+| source_stdev | Ghosting tables | Source sample standard deviation (`ddof=1`) over the full-resolution two-second signal window, in ADC counts. Separate from quiet baseline noise. |
+| target_stdev | Ghosting Pairs | Target sample standard deviation (`ddof=1`) over the same signal-window sweeps, in ADC counts. |
+| attenuation_pct | Ghosting Pairs | `100 * target_stdev / source_stdev`. 20% means target variation is 20% of source variation. Blank if source variance is zero; zero for a constant target with a varying source. Noise contributes to this measured estimate; no noise-variance subtraction is applied. Replaces the former peak-ratio field in ghosting schema version 2. |
+| correlation | Ghosting Pairs | Signed zero-lag Pearson correlation over matching sweeps in the two-second window. Blank if either signal has zero variance. |
+| trigger_threshold | Ghosting Summary/Attempts | Effective source threshold: max of count floor (default 100 counts) and source sigma multiplier times its noise estimate. Trigger requires strictly exceeding it for the configured number of consecutive same-polarity samples. |
+| trigger_samples | Ghosting Session metadata | Consecutive same-polarity source samples required above the threshold (default 3). In-band samples or polarity changes reset confirmation. Window time zero is the first sample in the confirmed run. |
+| target_threshold | Ghosting Pairs | Effective target threshold: max of count floor and target sigma multiplier times its noise estimate. Target peak must strictly exceed it. |
+| ghosting_detected | Ghosting tables | Target passed amplitude and positive-correlation rules, or source has at least one such target. No attenuation cutoff is applied. |
+| ghost_targets | Ghosting Summary/Attempts | Comma-separated same-ADC routes classified as ghosts. |
+| inconclusive_pairs | Ghosting Summary/Attempts | Number of targets whose clipping or undefined correlation prevented classification. |
+| source_clipped | Ghosting Summary/Attempts | Source reached ADC rail 0 or 4095; attempt is excluded from strongest-valid selection. |
+| target_clipped | Ghosting Pairs | Target reached ADC rail 0 or 4095; pair classification is inconclusive. |
+| phase | Ghosting Samples | `baseline` or `window`; warm-up is excluded from measurement and optionally retained as raw frames. |
+| baseline | Ghosting Samples | Channel median during the quiet calibration window for this attempt. |
+| baseline_stdev | Ghosting Samples | Channel sample standard deviation during quiet calibration. |
+| noise_sigma | Ghosting Samples | Greater of one ADC count and baseline standard deviation; used for source/target thresholds. |
+| baseline_relative | Ghosting Samples/Graphs | Raw sample minus that channel's own baseline; graph values use these counts. |
+| elapsed_us | Ghosting Samples | Wraparound-safe device time from baseline start or source-trigger sweep, depending on phase. |
+| sample_count | Ghosting Summary/Attempts | Number of captured signal-window sweeps, excluding baseline and warm-up. |
+| notes | Ghosting Summary/Attempts | Failure, clipping, or interruption explanation. |
+
 ## Results fields
 
 | Field | File | Meaning |

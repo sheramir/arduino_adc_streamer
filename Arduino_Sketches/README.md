@@ -12,6 +12,7 @@ This folder contains the firmware variants used by the desktop ADC Streamer GUI.
 - `PCB1.7_SPI/`: Teensy+MG24 SPI array firmware for PCB v1.7 (DRDY + combined PZT/RS mode)
 - `PCB1.7_with_libraries/`: library-backed PCB v1.7 sketches with the same `PZT_RS` protocol behavior
 - `TestBoard_7953/`: PlatformIO project for the Teensy 4.1 master driving four ADS7953 ADCs on two SPI buses (superseded the archived Arduino IDE `PCB_TestBoard_7953` sketch, now under `legacy/`)
+- `TestBoard_ADC124/`: PlatformIO Teensy 4.1 firmware and standalone benchmarks for two ADC124S101 converters on one SPI bus, each connected to four GPIO-controlled MUXes; fixed 3.3 V reference (desktop GUI profile not yet implemented)
 
 ## Current Sketch Map
 
@@ -26,6 +27,7 @@ This folder contains the firmware variants used by the desktop ADC Streamer GUI.
 | Teensy + MG24 SPI (PCB1.7) | Mixed PZT/PZR/RS array pair with DRDY and combined mode | `PCB1.7_SPI/Teensy_SPI_Master_Array_PZT_PZR1.7_DRDY.ino` + `PCB1.7_SPI/MG24_Dual_MUX_SPI_Slave1.7_DRDY.ino` | PCB v1.7 with `PZT_RS` combined stream (`PZT_CH1`...`PZT_CH5`,`RS1_hold`,`RS2_hold`) per selected PZT sensor | `# Array_PZT_PZR1.7` |
 | Teensy + MG24 SPI (PCB1.7 library-backed) | Library-backed PCB v1.7 pair with DRDY and combined mode | `PCB1.7_with_libraries/Teensy/Teensy.ino` + `PCB1.7_with_libraries/MG24/MG24.ino` | PCB v1.7 with the same `PZT_RS` behavior packaged as sketch-local libraries | `# Array_PZT_PZR1.7` |
 | Teensy 4.1 + ADS7953 test board | Four ADS7953 ADCs on two SPI buses | `TestBoard_7953/` (PlatformIO project; build with `pio run`) | Two selectable sensor arrays with sparse lane routing and three scan orders; optional future 555/PZR module | `# TestBoard_7953` |
+| Teensy 4.1 + ADC124S101 test board | Two ADCs and eight external MUXes on one SPI bus | `TestBoard_ADC124/` (PlatformIO project) | Two 25-channel arrays; GPIO address grouping, opposite EN polarities, standalone benchmark runner | `# TestBoard_ADC124` |
 
 ## Which Sketch Should You Flash
 
@@ -36,6 +38,7 @@ This folder contains the firmware variants used by the desktop ADC Streamer GUI.
 - Use `PCB1.7_SPI/` for PCB v1.7 hardware, including the combined `PZT_RS` mode (recommended for v1.7).
 - Use `PCB1.7_with_libraries/` when you want the PCB v1.7 pair in the library-backed sketch layout.
 - Use `TestBoard_7953/` for the Teensy 4.1 test board with four ADS7953 ADCs.
+- Use `TestBoard_ADC124/` for the ADC124S101/TMUX1108/TMUX1308A board; use its [standalone runner](TestBoard_ADC124/benchmarks/README.md), since GUI configuration support is not yet implemented.
 - Use `PCB1.5_SPI/` for PCB v1.5 dual-board array hardware.
 - Use `PCB1.0_SPI/` only for legacy PCB v1.0 hardware.
 
@@ -329,6 +332,11 @@ contains every active route exactly once.
 - The desktop app handles mixed text/binary transitions for the standard sketches listed above.
 
 ## Hardware benchmarks
+
+The [ADC124 runner](TestBoard_ADC124/benchmarks/README.md) uses triple routes
+`array:mux:input`, one shared SPI bus, fixed 3.3 V reference and 8–16 MHz SCLK.
+Its [firmware protocol](TestBoard_ADC124/README.md) retains the common binary
+envelope but uses external MUX address sequencing rather than ADS7953 modes.
 
 Each PlatformIO test-board project can keep its board-specific runners in a
 local `benchmarks/` directory. The TestBoard 7953 runner owns the serial port,

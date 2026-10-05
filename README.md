@@ -69,6 +69,10 @@ Desktop GUI and firmware workspace for streaming ADC data from MG24 and Teensy b
   test-board firmware with fixed board-profile routing, physical-array/PZT
   selection, manual/Auto-1 sequencing, blocking/DMA/direct-LPSPI engines,
   one-sweep frames, and mandatory Vmid parking
+- `Arduino_Sketches/TestBoard_ADC124/`: Teensy 4.1 firmware and a standalone
+  [benchmark runner](Arduino_Sketches/TestBoard_ADC124/benchmarks/README.md) for
+  two ADC124S101 ADCs and eight external MUXes on one SPI bus, two 25-channel
+  arrays, and a fixed 3.3 V reference; desktop GUI board profile pending
 
 ### Configuration And Data
 

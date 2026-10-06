@@ -1,5 +1,16 @@
 # Benchmark output glossary
 
+Runner 2.3 adds three whole-capture integrity counters (including warm-up):
+`timestamp_regressions` counts backward start timestamps using wrap-safe
+differences, `duplicate_frames` counts exact frame replays within a timer epoch,
+and `invalid_timing_frames` counts zero/backward acquisition durations or
+overlapping/backward inter-frame timing. One frame may contribute more than once
+to the last counter if both checks fail. Genuine uint32 rollover is accepted.
+Any nonzero counter fails a measured repetition, as do parser resynchronizations
+and discarded bytes. `usb_write_errors` records the firmware counter delta for
+short binary writes. These counts are numeric columns in the Excel Results sheet.
+Use a new results directory for this schema; retain earlier sessions unchanged.
+
 The benchmark keeps CSV files for exact, resumable machine-readable data and
 also creates `benchmark_report.xlsx` for review and charts. Excel cannot contain
 the complete decoded sample stream for large sessions because one worksheet is

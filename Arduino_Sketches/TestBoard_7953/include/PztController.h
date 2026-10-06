@@ -80,6 +80,8 @@ class PztController {
   bool startRun(const String &arguments);
   bool routesValid() const;
   bool captureBlock();
+  bool prepareRun();
+  bool prepareSweepStream(uint8_t adc);
   uint8_t buildScanPlan(AdcRoute *destination) const;
 
   void resetStream(FrameStream &stream, uint8_t adc);
@@ -89,8 +91,7 @@ class PztController {
   bool buildManualStream(FrameStream &stream, uint8_t adc,
                          const AdcRoute *plan, uint8_t plan_count,
                          bool park_after);
-  bool buildAuto1Stream(FrameStream &stream, uint8_t adc,
-                        const AdcRoute *plan, uint8_t plan_count);
+  bool buildAuto1Stream(FrameStream &stream, uint8_t adc);
   bool buildParkStream(FrameStream &stream, uint8_t adc);
   bool executeStreams(FrameStream *first, FrameStream *second);
   bool executeFrame(Ads7953Adc *first_adc, uint16_t first_command,
@@ -134,7 +135,13 @@ class PztController {
   uint32_t returned_channel_errors_ = 0;
   uint32_t auto1_program_count_ = 0;
   uint32_t auto1_resume_count_ = 0;
-  FrameStream streams_[2];
+  // Immutable route/manual-command plans are rebuilt once at every run start.
+  AdcRoute scan_plan_[testboard_config::kMaxAdcRoutes];
+  uint8_t adc_route_counts_[testboard_config::kAdcCount] = {};
+  uint16_t adc_channel_masks_[testboard_config::kAdcCount] = {};
+  uint8_t adc_destinations_[testboard_config::kAdcCount][testboard_config::kAdcChannels];
+  SpiController *active_buses_[2] = {};
+  FrameStream streams_[testboard_config::kAdcCount];
   uint16_t auto1_programmed_masks_[testboard_config::kAdcCount] = {};
   bool auto1_mask_valid_[testboard_config::kAdcCount] = {};
   bool auto1_active_parked_[testboard_config::kAdcCount] = {};

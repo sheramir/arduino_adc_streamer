@@ -1,5 +1,16 @@
 # TestBoard 7953 benchmarks
 
+Runner 2.3 fails captures containing exact frame replays, backward/overlapping
+timestamps, stale text (discarded bytes/resynchronization), or short-write error
+counter increases. Checks include warm-up and accept genuine timer rollover.
+Use a fresh output directory; earlier runner 2.2 sessions remain valid historical
+artifacts with their original, less strict verdicts. Failed attempts and raw
+captures remain evidence even if an automatic retry later passes.
+
+After uploading the USB repair, run the
+[focused 12-capture check](../../../docs/architecture/TESTBOARD_7953_USB_STREAM_DIAGNOSIS.md#implemented-repair)
+before repeating the full performance comparison.
+
 This directory contains host-side benchmark tools for the TestBoard 7953
 PlatformIO project. Other test-board projects can keep their own `benchmarks/`
 directory alongside their firmware. Generated sessions are written below

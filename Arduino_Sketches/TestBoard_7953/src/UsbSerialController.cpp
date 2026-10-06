@@ -37,10 +37,14 @@ void UsbSerialController::writeAck(bool success, const String &arguments) {
   Serial.flush();
 }
 
-void UsbSerialController::writeBinaryBlock(const uint8_t *data, uint32_t length) {
-  Serial.write(data, length);
+bool UsbSerialController::writeBinaryBlock(const uint8_t *data, uint32_t length) {
   // Do not flush binary traffic. Teensy USB queues these bytes, allowing the
   // next acquisition to begin while the USB peripheral drains its buffer.
+  if (Serial.write(data, length) != length) {
+    ++write_errors_;
+    return false;
+  }
+  return true;
 }
 
 void UsbSerialController::beginBinaryBlock(uint16_t sample_count) {

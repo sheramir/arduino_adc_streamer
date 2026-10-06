@@ -49,6 +49,37 @@ class BinaryFrame:
         return uint32_delta(self.block_end_us, self.block_start_us)
 
 
+def stream_integrity_counts(frames: Sequence[BinaryFrame]) -> dict[str, int]:
+    """Check a complete capture, including warm-up, without discarding evidence.
+
+    Forward time differences must be less than half a uint32 timer cycle.
+    Real wraparound is accepted; a backward step is not interpreted as a
+    roughly 71-minute gap. Exact-frame replay detection is scoped to each
+    timer epoch so a long capture can legitimately pass through rollover.
+    """
+    counts = dict(timestamp_regressions=0, duplicate_frames=0, invalid_timing_frames=0)
+    seen: set[bytes] = set()
+    previous = None
+    for frame in frames:
+        duration = frame.acquisition_duration_us
+        if not 0 < duration < UINT32_MODULUS // 2:
+            counts["invalid_timing_frames"] += 1
+        if previous is not None:
+            period = uint32_delta(frame.block_start_us, previous.block_start_us)
+            gap = uint32_delta(frame.block_start_us, previous.block_end_us)
+            if period >= UINT32_MODULUS // 2:
+                counts["timestamp_regressions"] += 1
+            elif frame.block_start_us < previous.block_start_us:
+                seen.clear()  # Genuine timer rollover, not a backward step.
+            if gap >= UINT32_MODULUS // 2:
+                counts["invalid_timing_frames"] += 1
+        if frame.raw in seen:
+            counts["duplicate_frames"] += 1
+        seen.add(frame.raw)
+        previous = frame
+    return counts
+
+
 class BinaryFrameParser:
     """Incrementally decode framed ADC blocks and recover after bad bytes."""
 

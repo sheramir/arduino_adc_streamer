@@ -15,6 +15,7 @@ NUMERIC_FIELDS = {
     "channelrepeat_effective", "ref", "warm_up_ms", "window_ms",
     "captured_frames_total", "warmup_frames_discarded", "valid_frames",
     "invalid_frames", "resync_events", "discarded_bytes", "trailing_bytes",
+    "timestamp_regressions", "duplicate_frames", "invalid_timing_frames", "usb_write_errors",
     "suspected_missing_frames", "total_samples", "sample_count", "adc",
     "channel", "startup_min_raw", "sample_min_raw", "sample_p1_raw",
     "sample_p5_raw", "sample_mean_raw", "sample_median_raw",

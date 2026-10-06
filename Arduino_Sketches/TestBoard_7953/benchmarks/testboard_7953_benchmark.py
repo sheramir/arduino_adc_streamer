@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import argparse
 import csv
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import json
 import math
@@ -32,6 +32,7 @@ try:
         numeric_summary,
         percentile,
         uint32_delta,
+        stream_integrity_counts,
     )
     from .excel_report import write_benchmark_workbook, write_ghosting_workbook
     from .ghosting_analysis import analyze_window, chart_bounds, chart_indices, summarize_attempts, strongest_attempt
@@ -44,6 +45,7 @@ except ImportError:  # Direct execution from this directory.
         numeric_summary,
         percentile,
         uint32_delta,
+        stream_integrity_counts,
     )
     from excel_report import write_benchmark_workbook, write_ghosting_workbook  # type: ignore
     from ghosting_analysis import analyze_window, chart_bounds, chart_indices, summarize_attempts, strongest_attempt
@@ -56,7 +58,7 @@ DEFAULT_BIAS_MAP_PATH = SCRIPT_DIR / "testboard_7953_bias_resistors.json"
 DEFAULT_RESULTS_ROOT = SCRIPT_DIR / "results"
 GLOSSARY_PATH = SCRIPT_DIR / "OUTPUT_GLOSSARY.md"
 FIRMWARE_IDENTITY = "# TestBoard_7953"
-RUNNER_VERSION = "2.2"
+RUNNER_VERSION = "2.3"
 DEFAULT_SPI_CLOCK_HZ = 20_000_000
 MIN_SPI_CLOCK_HZ = 100_000
 MAX_SPI_CLOCK_HZ = 30_000_000
@@ -65,6 +67,7 @@ ERROR_COUNTERS = (
     "lpspi_start_errors",
     "transfer_timeouts",
     "returned_channel_errors",
+    "usb_write_errors",
 )
 
 
@@ -154,6 +157,7 @@ class CaptureResult:
     trailing_bytes: int
     wall_duration_ns: int
     timed_out: bool
+    stream_integrity: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -204,6 +208,7 @@ RESULT_FIELDS = [
     "warm_up_ms", "window_ms", "captured_frames_total",
     "warmup_frames_discarded", "valid_frames", "invalid_frames", "resync_events",
     "discarded_bytes", "trailing_bytes", "capture_timed_out",
+    "timestamp_regressions", "duplicate_frames", "invalid_timing_frames",
     "suspected_missing_frames",
     "total_samples", "startup_min_raw", "sample_min_raw", "sample_p1_raw",
     "sample_p5_raw", "sample_mean_raw", "sample_median_raw",
@@ -216,6 +221,7 @@ RESULT_FIELDS = [
     "host_arrival_period_median_us", "speedup_vs_blocking",
     "throughput_gain_pct", "dma_start_errors", "lpspi_start_errors",
     "transfer_timeouts", "returned_channel_errors", "vmid_warning_count",
+    "usb_write_errors",
     "vmid_severe_count", "unstable_channel_count",
     "cross_mode_shift_count", "drift_warning_count",
     "settling_warning_count", "settling_max_frames", "settling_max_us",
@@ -555,12 +561,13 @@ class SerialProtocol:
                 break
 
         trailing = parser.finish()
+        integrity = stream_integrity_counts(frames)
         wall_ns = time.monotonic_ns() - started_ns
         self.log.write(
             "CAPTURE "
             f"duration_ms={duration_ms} frames={len(frames)} raw={len(raw)} "
             f"invalid={parser.invalid_frames} resync={parser.resync_events} "
-            f"trailing={trailing}"
+            f"trailing={trailing} integrity={integrity}"
         )
         return CaptureResult(
             frames=frames,
@@ -571,6 +578,7 @@ class SerialProtocol:
             trailing_bytes=trailing,
             wall_duration_ns=wall_ns,
             timed_out=timed_out,
+            stream_integrity=integrity,
         )
 
 
@@ -660,6 +668,7 @@ def measured_capture_after_warmup(
         trailing_bytes=capture.trailing_bytes,
         wall_duration_ns=capture.wall_duration_ns,
         timed_out=capture.timed_out,
+        stream_integrity=capture.stream_integrity or stream_integrity_counts(capture.frames),
     )
     return measured, discarded
 
@@ -1020,10 +1029,14 @@ def result_row_for_capture(
 ) -> dict[str, Any]:
     config = scheduled.config
     deltas = counter_deltas(before_status, after_status)
+    integrity = capture.stream_integrity or stream_integrity_counts(capture.frames)
     duration = metrics["duration"]
     hard_failure = (
         capture.timed_out
         or capture.invalid_frames > 0
+        or capture.resync_events > 0
+        or capture.discarded_bytes > 0
+        or any(integrity.values())
         or capture.trailing_bytes > 0
         or not capture.frames
         or channel_counts["integrity_failure"] > 0
@@ -1037,6 +1050,8 @@ def result_row_for_capture(
         )
     )
     overall = "FAIL" if hard_failure else "WARN" if warning else "PASS"
+    if any(integrity.values()) or capture.discarded_bytes or capture.resync_events:
+        notes = f"{notes}; STREAM_INTEGRITY: {integrity}, discarded_bytes={capture.discarded_bytes}, resync_events={capture.resync_events}".lstrip("; ")
     return {
         "session_id": session_id,
         "test_id": scheduled.test_id,
@@ -1066,6 +1081,7 @@ def result_row_for_capture(
         "discarded_bytes": capture.discarded_bytes,
         "trailing_bytes": capture.trailing_bytes,
         "capture_timed_out": str(capture.timed_out).lower(),
+        **integrity,
         "suspected_missing_frames": metrics["suspected_missing_frames"],
         "total_samples": sum(frame.sample_count for frame in capture.frames),
         "startup_min_raw": settling_summary["startup_min_raw"],
@@ -1309,6 +1325,11 @@ def aggregate_result_rows(rows: Sequence[dict[str, str]]) -> list[dict[str, Any]
             "captured_frames_total": sum(int(row.get("captured_frames_total", 0)) for row in group),
             "warmup_frames_discarded": sum(int(row.get("warmup_frames_discarded", 0)) for row in group),
             "invalid_frames": sum(int(row.get("invalid_frames", 0)) for row in group),
+            **{key: sum(int(row.get(key, 0)) for row in group) for key in (
+                "resync_events", "discarded_bytes", "trailing_bytes",
+                "timestamp_regressions", "duplicate_frames", "invalid_timing_frames",
+                *ERROR_COUNTERS,
+            )},
             "total_samples": sum(int(row.get("total_samples", 0)) for row in group),
             "startup_min_raw": min(numbers("startup_min_raw"), default=""),
             "sample_min_raw": min(numbers("sample_min_raw"), default=""),
@@ -1489,7 +1510,9 @@ def recover_with_smoke(
         args.grace_ms, args.idle_ms,
     )
     after = stop_after_capture(protocol)
-    if not capture.frames or capture.invalid_frames or capture.timed_out:
+    if (not capture.frames or capture.invalid_frames or capture.timed_out
+            or capture.trailing_bytes or capture.discarded_bytes or capture.resync_events
+            or any((capture.stream_integrity or stream_integrity_counts(capture.frames)).values())):
         raise BenchmarkError("Blocking recovery smoke capture failed")
     deltas = counter_deltas(before, after)
     if any(deltas.values()):
@@ -1672,6 +1695,8 @@ def run_smoke(protocol: SerialProtocol, config: TestConfig, route_set: RouteSet,
     if (
         not capture.frames
         or capture.invalid_frames
+        or capture.discarded_bytes or capture.resync_events
+        or any((capture.stream_integrity or stream_integrity_counts(capture.frames)).values())
         or capture.trailing_bytes
         or capture.timed_out
         or impossible_value

@@ -6,6 +6,24 @@
 #include "ConfigurableParameters.h"
 
 namespace {
+// Restore ordinary SPI state on every exit, including acquisition failures.
+class LpspiSession {
+ public:
+  bool begin(SpiController *spi) {
+    if (spi == nullptr) return true;
+    if (!spi->beginLpspiSession()) return false;
+    spi_ = spi;
+    return true;
+  }
+  void close() {
+    if (spi_ != nullptr) spi_->endLpspiSession();
+    spi_ = nullptr;
+  }
+  ~LpspiSession() { close(); }
+ private:
+  SpiController *spi_ = nullptr;
+};
+
 DMAMEM static uint16_t g_samples[testboard_config::kMaxAdcRoutes];
 DMAMEM static uint8_t g_wire_block[
     4 + testboard_config::kMaxAdcRoutes * sizeof(uint16_t) +
@@ -270,6 +288,7 @@ bool PztController::startRun(const String &arguments) {
       : 0;
   if (timed && duration == 0) return false;
   if (!parkActiveAdcs()) return false;
+  if (!prepareRun()) return false;
   timed_run_ = timed;
   run_duration_ms_ = duration;
   run_started_ms_ = millis();
@@ -334,8 +353,51 @@ uint8_t PztController::buildScanPlan(AdcRoute *destination) const {
   return output_count;
 }
 
+bool PztController::prepareRun() {
+  if (buildScanPlan(scan_plan_) != route_count_) return false;
+  memset(adc_route_counts_, 0, sizeof(adc_route_counts_));
+  memset(adc_destinations_, 0xFF, sizeof(adc_destinations_));
+  active_buses_[0] = active_buses_[1] = nullptr;
+  for (uint8_t adc = 0; adc < adc_count_; ++adc) {
+    adc_channel_masks_[adc] = 1u << testboard_config::kDefaultVmidChannel;
+  }
+  for (uint8_t index = 0; index < route_count_; ++index) {
+    const AdcRoute &route = scan_plan_[index];
+    ++adc_route_counts_[route.adc];
+    adc_destinations_[route.adc][route.channel] = index;
+    adc_channel_masks_[route.adc] |= static_cast<uint16_t>(1u << route.channel);
+    active_buses_[route.adc / 2] = &adcs_[route.adc]->spiController();
+  }
+  if (adc_sequence_ == ADC_SEQUENCE_MANUAL) {
+    for (uint8_t adc = 0; adc < adc_count_; ++adc) {
+      if (!adc_route_counts_[adc]) continue;
+      if (!buildManualStream(streams_[adc], adc, scan_plan_, route_count_,
+                             activeAdcsOnBus(adc / 2) > 1)) return false;
+    }
+  }
+  return true;
+}
+
+bool PztController::prepareSweepStream(uint8_t adc) {
+  FrameStream &stream = streams_[adc];
+  if (adc_sequence_ == ADC_SEQUENCE_AUTO1) return buildAuto1Stream(stream, adc);
+  // Rewind only pipeline progress; preserve the precompiled manual operations.
+  stream.cursor = 0;
+  memset(stream.pending, 0, sizeof(stream.pending));
+  return true;
+}
+
 void PztController::resetStream(FrameStream &stream, uint8_t adc) {
-  memset(&stream, 0, sizeof(stream));
+  // Operations beyond count are never executed. Do not clear the large op array.
+  stream.count = stream.cursor = 0;
+  memset(stream.pending, 0, sizeof(stream.pending));
+  stream.auto_mode = false;
+  stream.auto_capture_start = 0;
+  memset(stream.auto_seen, 0, sizeof(stream.auto_seen));
+  stream.auto_expected = stream.auto_captured = 0;
+  stream.auto_wait_for_vmid = stream.auto_finished_parked = false;
+  stream.auto_programmed_this_stream = stream.auto_resumed_persistent = false;
+  stream.auto_program_mask = 0;
   stream.adc = adcs_[adc];
   stream.adc_index = adc;
   for (uint8_t channel = 0; channel < testboard_config::kAdcChannels;
@@ -406,19 +468,13 @@ bool PztController::buildManualStream(
 }
 
 bool PztController::buildAuto1Stream(
-    FrameStream &stream, uint8_t adc, const AdcRoute *plan,
-    uint8_t plan_count) {
+    FrameStream &stream, uint8_t adc) {
   resetStream(stream, adc);
   stream.auto_mode = true;
-  uint16_t channel_mask = static_cast<uint16_t>(
-      1u << testboard_config::kDefaultVmidChannel);
-  for (uint8_t index = 0; index < plan_count; ++index) {
-    if (plan[index].adc != adc) continue;
-    const uint8_t channel = plan[index].channel;
-    channel_mask |= static_cast<uint16_t>(1u << channel);
-    stream.auto_destinations[channel] = index;
-    ++stream.auto_expected;
-  }
+  const uint16_t channel_mask = adc_channel_masks_[adc];
+  memcpy(stream.auto_destinations, adc_destinations_[adc],
+         sizeof(stream.auto_destinations));
+  stream.auto_expected = adc_route_counts_[adc];
   if (!stream.auto_expected) return true;
 
   stream.auto_program_mask = channel_mask;
@@ -704,12 +760,12 @@ bool PztController::parkActiveAdcs() {
     FrameStream *first = nullptr;
     FrameStream *second = nullptr;
     if (first_adc < adc_count_ && adcHasRoutes(first_adc)) {
-      if (!buildParkStream(streams_[0], first_adc)) return false;
-      first = &streams_[0];
+      if (!buildParkStream(streams_[first_adc], first_adc)) return false;
+      first = &streams_[first_adc];
     }
     if (second_adc < adc_count_ && adcHasRoutes(second_adc)) {
-      if (!buildParkStream(streams_[1], second_adc)) return false;
-      second = &streams_[1];
+      if (!buildParkStream(streams_[second_adc], second_adc)) return false;
+      second = &streams_[second_adc];
     }
     if (!executeStreams(first, second)) return false;
     if (first != nullptr) commitStreamState(*first);
@@ -719,37 +775,28 @@ bool PztController::parkActiveAdcs() {
 }
 
 bool PztController::captureBlock() {
-  AdcRoute plan[testboard_config::kMaxAdcRoutes];
-  const uint8_t plan_count = buildScanPlan(plan);
-  if (plan_count != route_count_) return false;
-  memset(g_samples, 0, sizeof(g_samples));
-  memset(sample_written_, 0, sizeof(sample_written_));
+  const uint8_t plan_count = route_count_;
+  memset(sample_written_, 0, plan_count * sizeof(sample_written_[0]));
   const uint32_t started = micros();
+  LpspiSession sessions[2];
+  if (spi_engine_ == SPI_ENGINE_LPSPI &&
+      (!sessions[0].begin(active_buses_[0]) || !sessions[1].begin(active_buses_[1]))) {
+    ++lpspi_start_errors_;
+    return false;
+  }
 
   for (uint8_t position = 0; position < 2; ++position) {
     const uint8_t first_adc = position;
     const uint8_t second_adc = position + 2;
     FrameStream *first = nullptr;
     FrameStream *second = nullptr;
-    if (first_adc < adc_count_ && adcHasRoutes(first_adc)) {
-      const bool park_after = activeAdcsOnBus(0) > 1;
-      const bool built = adc_sequence_ == ADC_SEQUENCE_MANUAL
-          ? buildManualStream(
-                streams_[0], first_adc, plan, plan_count, park_after)
-          : buildAuto1Stream(
-                streams_[0], first_adc, plan, plan_count);
-      if (!built) return false;
-      first = &streams_[0];
+    if (first_adc < adc_count_ && adc_route_counts_[first_adc]) {
+      if (!prepareSweepStream(first_adc)) return false;
+      first = &streams_[first_adc];
     }
-    if (second_adc < adc_count_ && adcHasRoutes(second_adc)) {
-      const bool park_after = activeAdcsOnBus(1) > 1;
-      const bool built = adc_sequence_ == ADC_SEQUENCE_MANUAL
-          ? buildManualStream(
-                streams_[1], second_adc, plan, plan_count, park_after)
-          : buildAuto1Stream(
-                streams_[1], second_adc, plan, plan_count);
-      if (!built) return false;
-      second = &streams_[1];
+    if (second_adc < adc_count_ && adc_route_counts_[second_adc]) {
+      if (!prepareSweepStream(second_adc)) return false;
+      second = &streams_[second_adc];
     }
     if (!executeStreams(first, second)) return false;
     if (first != nullptr) commitStreamState(*first);
@@ -759,6 +806,8 @@ bool PztController::captureBlock() {
   for (uint8_t index = 0; index < plan_count; ++index) {
     if (!sample_written_[index]) return false;
   }
+  sessions[0].close();
+  sessions[1].close();
   const uint32_t ended = micros();
   const uint16_t average = plan_count
       ? static_cast<uint16_t>(min(
@@ -768,8 +817,7 @@ bool PztController::captureBlock() {
       g_wire_block, sizeof(g_wire_block), g_samples, plan_count, average,
       started, ended);
   if (!bytes) return false;
-  usb_.writeBinaryBlock(g_wire_block, bytes);
-  return true;
+  return usb_.writeBinaryBlock(g_wire_block, bytes);
 }
 
 void PztController::service() {
@@ -867,6 +915,7 @@ void PztController::printStatus() const {
   Serial.print(F("# transfer_timeouts=")); Serial.println(transfer_timeouts_);
   Serial.print(F("# returned_channel_errors="));
   Serial.println(returned_channel_errors_);
+  Serial.print(F("# usb_write_errors=")); Serial.println(usb_.writeErrors());
   Serial.print(F("# auto1_program_count="));
   Serial.println(auto1_program_count_);
   Serial.print(F("# auto1_resume_count="));

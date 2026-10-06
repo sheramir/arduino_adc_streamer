@@ -152,8 +152,7 @@ bool PzrController::emitBlock() {
   const uint32_t bytes = api_protocol::encodeBinaryBlock(
       g_pzr_wire, sizeof(g_pzr_wire), g_pzr_samples, index, average, started, ended);
   if (!bytes) return false;
-  usb_.writeBinaryBlock(g_pzr_wire, bytes);
-  return true;
+  return usb_.writeBinaryBlock(g_pzr_wire, bytes);
 }
 
 void PzrController::service() {

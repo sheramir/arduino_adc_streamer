@@ -21,12 +21,15 @@ class SpiController {
   bool finishDma16(uint16_t &rx_word);
   void cancelDma16();
 
+  bool beginLpspiSession();
+  void endLpspiSession();
   bool startLpspi16(uint8_t cs_pin, uint16_t tx_word);
   bool lpspiComplete() const;
   bool finishLpspi16(uint16_t &rx_word);
   void cancelLpspi16();
 
  private:
+  void releaseChipSelect();
   void endActiveTransfer();
 
   SPIClass &bus_;
@@ -38,6 +41,8 @@ class SpiController {
   bool transaction_active_ = false;
   bool dma_active_ = false;
   bool lpspi_active_ = false;
+  bool lpspi_session_active_ = false;
+  bool lpspi_single_word_ = false;
   uint32_t saved_tcr_ = 0;
   EventResponder dma_event_;
   uint8_t *dma_tx_ = nullptr;

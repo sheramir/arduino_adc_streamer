@@ -6,6 +6,7 @@ import pytest
 from Arduino_Sketches.TestBoard_7953.benchmarks.benchmark_common import (
     BinaryFrameParser,
     uint32_delta,
+    stream_integrity_counts,
 )
 from Arduino_Sketches.TestBoard_7953.benchmarks.excel_report import (
     _summary_test_ids,
@@ -29,6 +30,9 @@ from Arduino_Sketches.TestBoard_7953.benchmarks.testboard_7953_benchmark import 
     parse_args,
     payload_order,
     validate_status,
+    result_row_for_capture,
+    ScheduledTest,
+    frame_metrics,
     DEFAULT_ROUTES_PATH,
     MAX_SPI_CLOCK_HZ,
 )
@@ -67,6 +71,65 @@ def test_binary_parser_rejects_wrong_route_count_and_incomplete_tail():
     assert parser.invalid_frames == 1
     assert parser.finish() == len(make_frame([2, 3])) - 1
     assert parser.invalid_frames == 2
+
+
+def test_stream_integrity_detects_exact_replay_with_valid_headers_and_samples():
+    parser = BinaryFrameParser(expected_sample_count=1)
+    first = make_frame([2048], started=100, ended=110)
+    second = make_frame([2048], started=120, ended=130)
+    frames = parser.feed(first + second + first)
+    counts = stream_integrity_counts(frames)
+    assert parser.invalid_frames == 0
+    assert counts["timestamp_regressions"] == 1
+    assert counts["duplicate_frames"] == 1
+    assert counts["invalid_timing_frames"] > 0
+
+
+def test_stream_integrity_accepts_timer_rollover_and_acquisition_crossing_rollover():
+    parser = BinaryFrameParser(expected_sample_count=1)
+    frames = parser.feed(
+        make_frame([2048], started=0xFFFFFFF0, ended=4)
+        + make_frame([2048], started=10, ended=20)
+    )
+    assert not any(stream_integrity_counts(frames).values())
+
+
+@pytest.mark.parametrize("fault", ["replay", "text", "warmup", "usb_short_write", "overlap"])
+def test_result_verdict_rejects_stream_faults_including_warmup(fault):
+    parser = BinaryFrameParser(expected_sample_count=1)
+    raw = make_frame([2048], started=100, ended=110)
+    if fault in ("replay", "warmup"):
+        raw += make_frame([2048], started=120, ended=130)
+        raw += make_frame([2048], started=100, ended=110)
+    if fault == "text":
+        raw += b"# stale status\r\n"
+    if fault == "overlap":
+        raw += make_frame([2048], started=105, ended=115)
+    raw += make_frame([2048], started=2100, ended=2110)
+    raw += make_frame([2048], started=2200, ended=2210)
+    frames = parser.feed(raw)
+    capture = CaptureResult(frames, raw, parser.invalid_frames, parser.resync_events,
+                            parser.discarded_bytes, parser.finish(), 3_000_000, False)
+    if fault == "warmup":
+        capture, discarded = measured_capture_after_warmup(capture, 2)
+        assert discarded == 3
+        assert not any(stream_integrity_counts(capture.frames).values())
+        assert capture.stream_integrity["duplicate_frames"] == 1
+    route_set = RouteSet("single", "1", (Route(1, 0),), frozenset())
+    config = BenchmarkConfig("single", "1", "adc", "manual", "blocking", 1, False)
+    summary = {key: 2048 for key in ("min", "p1", "p5", "mean", "median", "p95", "p99", "max", "stdev")}
+    channels = {key: 0 for key in ("integrity_failure", "vmid_warning", "vmid_severe", "unstable", "cross_mode", "drift", "settling")}
+    row = result_row_for_capture(
+        session_id="test", scheduled=ScheduledTest(config, config.test_id, 1),
+        repetition=1, attempt=1, route_set=route_set, capture=capture,
+        before_status={}, after_status={"usb_write_errors": "1"} if fault == "usb_short_write" else {},
+        channel_counts=channels, sample_summary=summary,
+        settling_summary={"captured_frames_total": len(frames), "warmup_frames_discarded": 0,
+                          "startup_min_raw": 2048, "settling_max_frames": "", "settling_max_us": ""},
+        baseline_ids=set(), metrics=frame_metrics(capture), args=parse_args(["--dry-run"]),
+    )
+    assert row["overall_status"] == "FAIL"
+    assert row["data_integrity_status"] == "FAIL"
 
 
 def test_route_manifest_and_matrix_cover_required_modes():

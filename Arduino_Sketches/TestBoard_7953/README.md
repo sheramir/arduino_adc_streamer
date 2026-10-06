@@ -14,6 +14,19 @@ resolves Teensyduino framework `1.162.0`. Upload requires the physical Teensy:
 pio run -d Arduino_Sketches/TestBoard_7953 -t upload
 ```
 
+The PlatformIO build applies a project-controlled USB transmit repair to a
+build-local copy of the audited core. The installed framework is unchanged.
+The repair enforces compiler ordering around the transmit/automatic-flush
+guard and checks explicit-flush pending bytes under that guard. A changed
+framework source causes a build error until the patch is reviewed. Use this
+PlatformIO project to build the repaired firmware; an Arduino IDE build without
+the middleware does not include the repair. USB transfers remain asynchronous.
+
+Short binary writes stop acquisition and increment the additive status counter
+`usb_write_errors`. Binary framing and commands retain their existing layout.
+See [USB repair validation](../../docs/architecture/TESTBOARD_7953_USB_STREAM_DIAGNOSIS.md#implemented-repair)
+for offline checks and the focused on-board benchmark.
+
 ## Hardware map
 
 | Array / physical bus | Teensy object | ADCs | MOSI | MISO | SCK | CS pins |
@@ -84,6 +97,23 @@ DMA uses Teensy SPI's byte-oriented asynchronous transfer API with persistent
 per-bus buffers. Direct LPSPI uses the normal SPI pin mux established by
 `SPI.begin()`/`SPI1.begin()`, then starts one 16-bit frame on each active
 peripheral and polls internal receive flags with a bounded timeout.
+
+The acquisition plan is prepared once at `run*`: payload destinations and
+manual conversion/parking commands are cached for each ADC. Sweeps rewind
+pipeline state rather than rebuilding those commands. Auto-1 retains its
+persistent masks and rebuilds only the small startup/resume stream using cached
+routes. In LPSPI mode each active bus uses one 16-bit SPI transaction per sweep,
+with separate GPIO CS frames for every conversion. Session setup writes an
+explicit 16-bit command while disabled rather than reading asynchronous TCR
+state. Receive availability and a fresh transfer-complete flag are both checked
+before CS release. Ordinary SPI state is
+restored before USB enqueue and on acquisition failure.
+
+This optimization candidate has been built and checked with offline digital
+ADC models. On-board speed and analog behavior still need the matching
+before/after benchmark and hardware checks below. See
+[`firmware optimization notes`](../../docs/architecture/TESTBOARD_7953_FIRMWARE_OPTIMIZATION.md)
+for comparison instructions and validation coverage.
 
 `spiclock` is accepted only while stopped. `status*` reports the requested
 value as `spi_clock_hz`; the Teensy SPI hardware may select the nearest

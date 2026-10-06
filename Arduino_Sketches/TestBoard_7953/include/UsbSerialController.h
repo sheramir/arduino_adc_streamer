@@ -7,7 +7,8 @@ class UsbSerialController {
   void begin(uint32_t baud);
   bool readCommand(String &line);
   void writeAck(bool success, const String &arguments = "");
-  void writeBinaryBlock(const uint8_t *data, uint32_t length);
+  bool writeBinaryBlock(const uint8_t *data, uint32_t length);
+  uint32_t writeErrors() const { return write_errors_; }
   void beginBinaryBlock(uint16_t sample_count);
   void writeBinarySamples(const uint16_t *samples, uint16_t sample_count);
   void endBinaryBlock(
@@ -17,4 +18,5 @@ class UsbSerialController {
 
  private:
   String input_;
+  uint32_t write_errors_ = 0;
 };

@@ -16,7 +16,7 @@ Ads7953Adc::Ads7953Adc(SpiController &spi, uint8_t cs_pin)
       range_2x_vref_(testboard_config::kAds7953Range2xVref) {}
 
 void Ads7953Adc::begin() {
-  spi_.registerChipSelect(cs_pin_);
+  chip_select_ = spi_.registerChipSelect(cs_pin_);
   // Prime the two-frame command pipeline and leave the MUX on the board-fixed
   // Vmid input. All four ADCs therefore start parked even before routes exist.
   const uint16_t command = manualCommand(testboard_config::kDefaultVmidChannel);
@@ -83,14 +83,6 @@ bool Ads7953Adc::decodeResponse(
 
 void Ads7953Adc::recordError() {
   ++errors_;
-}
-
-SpiController &Ads7953Adc::spiController() {
-  return spi_;
-}
-
-uint8_t Ads7953Adc::chipSelectPin() const {
-  return cs_pin_;
 }
 
 bool Ads7953Adc::readChannel(uint8_t channel, uint16_t &sample) {

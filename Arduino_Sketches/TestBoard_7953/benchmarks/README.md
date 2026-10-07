@@ -1,8 +1,33 @@
 # TestBoard 7953 benchmarks
 
-Runner 2.3 fails captures containing exact frame replays, backward/overlapping
+Runner 2.5 retains the integrity checks and fails captures containing exact frame replays, backward/overlapping
 timestamps, stale text (discarded bytes/resynchronization), or short-write error
 counter increases. Checks include warm-up and accept genuine timer rollover.
+
+The latest PZT firmware keeps acquiring while USB is busy and discards sweeps
+it cannot immediately submit. The runner records per-run acquired/sent/discarded
+counts and actual sensor-period diagnostics, and reconciles them against every
+received frame even when profiling is off. Received timestamp gaps may therefore
+represent intentional omissions rather than acquisition stalls. PASS does not
+mean zero discarded sweeps; check the new counters separately.
+
+Use `run_live_usb_validation.ps1 -Port COM3` after uploading `teensy41_profile`
+for an 18-capture comparison. `-DryRun` inspects the matrix without opening COM3.
+Reader controls `--defer-parsing`, `--reader-pause-ms` and `--reader-pause-at-ms`
+compare live parsing with a raw-draining reader and a deliberate pause. Windows
+may buffer the pause without stalling the board. Use fresh output directories.
+See [live transport behavior and acceptance](../../../docs/architecture/TESTBOARD_7953_LIVE_USB_STREAM.md).
+
+Optional firmware profiling uses `--profile on` with the `teensy41_profile`
+build. The runner saves a stopped summary per measured attempt to
+`firmware_profile.jsonl`, including raw status fields and decoded phase timings.
+The default is off, including when a previous session left profiling enabled.
+An enabled profile also reconciles accepted complete writes with whole-capture
+received frame counts. Invalid/missing profile data and clock/wrap ambiguity fail
+the attempt while preserving evidence. Use separate output directories for
+on/off runs; resume cannot change the profiling mode. Profiling covers warm-up
+and measurement together. Existing timing CSV fields and binary framing remain.
+See [the reduced profiling procedure](../../../docs/architecture/TESTBOARD_7953_PHASE_PROFILING.md).
 Use a fresh output directory; earlier runner 2.2 sessions remain valid historical
 artifacts with their original, less strict verdicts. Failed attempts and raw
 captures remain evidence even if an automatic retry later passes.

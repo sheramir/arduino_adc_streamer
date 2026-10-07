@@ -34,8 +34,18 @@ struct FakeCommand {
 // SR completion flags are write-one-to-clear; MBF is read-only.
 struct FakeStatus {
   uint32_t value = 0;
-  operator uint32_t() const { return value; }
-  void operator=(uint32_t mask) { value &= ~(mask & 0x3F00u); }
+  unsigned completion_reads = 0;
+  operator uint32_t() {
+    if (completion_reads && !--completion_reads) {
+      value |= LPSPI_SR_TCF;
+      value &= ~LPSPI_SR_MBF;
+    }
+    return value;
+  }
+  void operator=(uint32_t mask) {
+    value &= ~(mask & 0x3F00u);
+    if (mask & LPSPI_SR_TCF) completion_reads = 0;
+  }
 };
 
 struct IMXRT_LPSPI_t;
@@ -55,21 +65,29 @@ struct IMXRT_LPSPI_t {
   FakeReceive RDR{this};
   FakeTransmit TDR{this};
   bool stall = false;
+  unsigned completion_reads = 0;
 };
 extern IMXRT_LPSPI_t IMXRT_LPSPI4_S, IMXRT_LPSPI3_S;
 uint16_t emulate_conversion(IMXRT_LPSPI_t *bus, uint16_t command);
 
 inline FakeReceive::operator uint32_t() { owner->RSR = LPSPI_RSR_RXEMPTY; return value; }
+inline unsigned fake_stalled_words = 0;
 inline void FakeTransmit::operator=(uint32_t command) {
   assert(!(owner->SR.value & LPSPI_SR_TCF)); // completion must be cleared per word
   if (owner->stall || (owner->TCR.value & LPSPI_TCR_RXMSK)) {
+    ++fake_stalled_words;
     owner->SR.value |= LPSPI_SR_MBF; owner->RSR = LPSPI_RSR_RXEMPTY; return;
   }
   assert((owner->TCR.value & 0xFFFu) == 15);
   owner->RDR.value = emulate_conversion(owner, static_cast<uint16_t>(command));
   owner->RSR = 0;
-  owner->SR.value &= ~LPSPI_SR_MBF;
-  owner->SR.value |= LPSPI_SR_TCF;
+  if (owner->completion_reads) {
+    owner->SR.completion_reads = owner->completion_reads;
+    owner->SR.value |= LPSPI_SR_MBF;
+  } else {
+    owner->SR.value &= ~LPSPI_SR_MBF;
+    owner->SR.value |= LPSPI_SR_TCF;
+  }
 }
 
 struct SPISettings { SPISettings(uint32_t, uint8_t, uint8_t) {} };

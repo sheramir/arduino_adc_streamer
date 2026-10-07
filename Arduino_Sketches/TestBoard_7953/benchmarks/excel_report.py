@@ -17,6 +17,8 @@ NUMERIC_FIELDS = {
     "invalid_frames", "resync_events", "discarded_bytes", "trailing_bytes",
     "timestamp_regressions", "duplicate_frames", "invalid_timing_frames", "usb_write_errors",
     "suspected_missing_frames", "total_samples", "sample_count", "adc",
+    "sampling_sweeps", "usb_frames_sent", "usb_frames_discarded",
+    "sampling_period_max_us", "sampling_period_over_1ms",
     "channel", "startup_min_raw", "sample_min_raw", "sample_p1_raw",
     "sample_p5_raw", "sample_mean_raw", "sample_median_raw",
     "sample_p95_raw", "sample_p99_raw", "sample_max_raw",

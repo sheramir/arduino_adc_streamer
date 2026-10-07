@@ -6,6 +6,16 @@
 #include <iostream>
 
 FakeSerial Serial;
+// Model the new atomic, nonblocking core contract, including disconnects.
+// write_delay_us intentionally affects only the old blocking Serial.write.
+extern "C" int usb_serial_try_write_frame(const void *buffer, uint32_t size) {
+  ++Serial.live_write_calls;
+  if (!buffer || !size || size > 2048 || Serial.write_limit < size) return -1;
+  if (!Serial.connected || Serial.write_capacity < static_cast<int>(size)) return 0;
+  const auto *data = static_cast<const uint8_t *>(buffer);
+  Serial.bytes.insert(Serial.bytes.end(), data, data + size);
+  return size;
+}
 uint32_t fake_us = 0;
 int pin_values[64];
 IMXRT_LPSPI_t IMXRT_LPSPI4_S, IMXRT_LPSPI3_S;
@@ -62,6 +72,7 @@ uint16_t emulate_conversion(IMXRT_LPSPI_t *bus, uint16_t command) {
 }
 
 uint16_t le16(size_t offset) { return Serial.bytes[offset] | (Serial.bytes[offset + 1] << 8); }
+uint32_t le32(size_t offset) { return le16(offset) | (uint32_t(le16(offset + 2)) << 16); }
 
 std::vector<std::pair<int, int>> canonical(const std::vector<std::pair<int, int>> &routes, const std::string &order) {
   std::array<std::vector<std::pair<int, int>>, 4> lanes;
@@ -114,6 +125,10 @@ int main() {
   IMXRT_LPSPI4_S.TCR.unstable_read = true;
   IMXRT_LPSPI3_S.TCR.unstable_read = true;
   auto command = [&](const char *name, const std::string &arg) { assert(pzt.handleCommand(String(name), String(arg))); };
+#if !TESTBOARD_PROFILE
+  assert(!pzt.handleCommand("profile", "on"));
+  command("profile", "off");
+#endif
   unsigned cases = 0;
   std::vector<std::vector<std::pair<int, int>>> topologies = {
     {{0, 5}, {0, 0}, {0, 2}}, {{2, 2}, {2, 0}},
@@ -150,17 +165,27 @@ int main() {
               command("spiengine", engine); command("adcseq", sequence);
               command("channelrepeat", std::to_string(repeat)); command("vmid", vmid ? "true" : "false");
               command("ref", cases % 2 ? "2.5" : "5");
+#if TESTBOARD_PROFILE
+              command("profile", cases % 2 ? "on" : "off");
+#endif
               command("run", "");
+              assert(!pzt.handleCommand("profile", "off"));
               auto expected = canonical(routes, order);
               for (int sweep = 0; sweep < 4; ++sweep) {
                 Serial.bytes.clear();
                 unsigned before = SPI.begins + SPI1.begins;
+                const unsigned gpio_before = fake_gpio_lookups;
+                const unsigned micros_before = fake_micros_reads;
                 pzt.service(); assert(pzt.isRunning());
                 assert(Serial.bytes.size() == 14 + expected.size() * 2);
                 assert(Serial.bytes[0] == 0xaa && Serial.bytes[1] == 0x55 && le16(2) == expected.size());
                 for (size_t index = 0; index < expected.size(); ++index)
                   assert(le16(4 + 2 * index) == 1000 + expected[index].first * 100 + expected[index].second);
                 if (std::string(engine) == "lpspi") {
+                  assert(fake_gpio_lookups == gpio_before);
+#if !TESTBOARD_PROFILE
+                  assert(fake_micros_reads - micros_before == 2); // wire timestamps only
+#endif
                   bool bus1_active = false, bus2_active = false;
                   for (auto route : routes) (route.first < 2 ? bus1_active : bus2_active) = true;
                   assert(SPI.begins + SPI1.begins - before == unsigned(bus1_active + bus2_active));
@@ -184,7 +209,9 @@ int main() {
   // A stuck peripheral must time out, stop, release CS and bus ownership, then
   // permit a new run in another engine without stale templates or RX state.
   IMXRT_LPSPI4_S.stall = true;
+  const unsigned yield_before = fake_yield_calls;
   pzt.service(); assert(!pzt.isRunning());
+  assert(fake_yield_calls > yield_before);
   assert(SPI.begins == SPI.ends && SPI1.begins == SPI1.ends);
   for (auto pin : pins) assert(pin_values[pin] == HIGH);
   IMXRT_LPSPI4_S.stall = false;
@@ -192,19 +219,146 @@ int main() {
   assert(pzt.isRunning() && le16(2) == 2); pzt.stop();
   command("spiengine", "lpspi"); command("run", "1");
   fake_us += 2000; pzt.service(); assert(!pzt.isRunning());
+  // Timeout with the second bus stuck, while the first has already completed.
+  // Force the cycle deadline to cross UINT32_MAX, then verify both CS cleanup
+  // and a healthy restart. Probe overhead cannot manufacture a huge timeout.
+  command("array", "both"); command("adcchannels", "1:1,3:2");
+  command("run", "");
+  fake_cycle_offset = UINT32_MAX - fake_us * (F_CPU_ACTUAL / 1000000u) - 100000u;
+  IMXRT_LPSPI3_S.stall = true;
+  const uint32_t cycle_before = ARM_DWT_CYCCNT;
+  const unsigned stalled_before = fake_stalled_words;
+  Serial.bytes.clear(); pzt.service();
+  const uint32_t elapsed_ticks = ARM_DWT_CYCCNT - cycle_before;
+  // Failure cleanup attempts parking too; each stuck word keeps the 1 ms bound.
+  const uint32_t timeout_ticks = (fake_stalled_words - stalled_before) * (F_CPU_ACTUAL / 1000u);
+  assert(timeout_ticks && elapsed_ticks >= timeout_ticks && elapsed_ticks < timeout_ticks + F_CPU_ACTUAL / 10000u);
+  assert(!pzt.isRunning() && Serial.bytes.empty());
+  assert(SPI.begins == SPI.ends && SPI1.begins == SPI1.ends);
+  for (auto pin : pins) assert(pin_values[pin] == HIGH);
+  IMXRT_LPSPI3_S.stall = false;
+  fake_cycle_offset = 0;
+  command("run", ""); Serial.bytes.clear(); pzt.service();
+  assert(pzt.isRunning() && le16(2) == 2); pzt.stop();
+  // RX may be ready before completion. Unequal delayed TCFs must still deliver
+  // both tagged responses, with periodic foreground service and no CS overlap.
+  command("run", "");
+  IMXRT_LPSPI4_S.completion_reads = 9000;
+  IMXRT_LPSPI3_S.completion_reads = 17000;
+  const unsigned delayed_yields = fake_yield_calls;
+  Serial.bytes.clear(); pzt.service();
+  assert(pzt.isRunning() && le16(2) == 2);
+  assert(le16(4) == 1001 && le16(6) == 1202);
+  assert(fake_yield_calls > delayed_yields);
+  for (auto pin : pins) assert(pin_values[pin] == HIGH);
+  IMXRT_LPSPI4_S.completion_reads = IMXRT_LPSPI3_S.completion_reads = 0;
+  pzt.stop();
+  command("array", "1"); command("adcchannels", "2:4,1:1");
   assert(IMXRT_LPSPI4_S.TCR.unstable_reads == 0);
   assert(IMXRT_LPSPI3_S.TCR.unstable_reads == 0);
-  // A partial USB enqueue must stop sampling, count the error, release buses,
+#if TESTBOARD_PROFILE
+  command("profile", "on");
+  assert(!pzt.handleCommand("profile", "invalid"));
+  // Cross a cycle-counter wrap, inject one low-capacity write, and ensure
+  // phase attribution/counters reset per run and are not printed while active.
+  fake_us = 7158270;
+  command("run", "");
+  for (int i = 0; i < 5; ++i) {
+    Serial.bytes.clear();
+    Serial.write_capacity = i == 2 ? 0 : 2048;
+    Serial.write_delay_us = i == 2 ? 3000 : 0;
+    pzt.service();
+    assert(pzt.isRunning());
+    if (i == 2) assert(Serial.bytes.empty());
+    else assert(le16(2) == 2);
+  }
+  Serial.text.clear(); pzt.printStatus();
+  assert(Serial.text.find("profile_written=") == std::string::npos);
+  pzt.stop(); Serial.text.clear(); pzt.printStatus();
+  assert(Serial.text.find("# profile_written=4\n") != std::string::npos);
+  assert(Serial.text.find("# profile_discarded=1\n") != std::string::npos);
+  std::cout << "PROFILE_STATUS_BEGIN\n" << Serial.text << "PROFILE_STATUS_END\n";
+  // Micros rollover is valid. An enclosing foreground interval spanning a whole
+  // CPU counter cycle is invalid, rather than being reported as a tiny gap.
+  Serial.write_capacity = 2048; Serial.write_delay_us = 0;
+  fake_us = UINT32_MAX - 20;
+  command("run", ""); pzt.service(); pzt.service();
+  fake_us += 8000000;
+  pzt.service(); pzt.stop(); Serial.text.clear(); pzt.printStatus();
+  assert(Serial.text.find("# profile_invalid_foreground=1\n") != std::string::npos);
+  command("profile", "off");
+  command("run", ""); pzt.service(); pzt.stop(); Serial.text.clear(); pzt.printStatus();
+  assert(Serial.text.find("# profile_enabled=false\n") != std::string::npos);
+  assert(Serial.text.find("# profile_written=") == std::string::npos);
+  command("profile", "on");
+#endif
+  // Complete hundreds of sweeps with USB busy or disconnected, across every
+  // engine and sequencing mode. On recovery emit only a fresh sweep, with no
+  // retained application backlog or stale pipeline, then reset per-run counts.
+  Serial.write_capacity = 2048; Serial.write_delay_us = 120000;
+  for (const char *engine : {"blocking", "dma", "lpspi"}) {
+    for (const char *sequence : {"manual", "auto1"}) {
+      command("spiengine", engine); command("adcseq", sequence);
+      command("array", "both"); command("adcchannels", "1:1,2:4,3:2,4:7");
+      command("run", ""); Serial.bytes.clear();
+      const uint32_t begin_busy = fake_us;
+      const uint32_t errors_before = usb.writeErrors();
+      const unsigned writes_before = Serial.live_write_calls;
+      for (int i = 0; i < 400; ++i) {
+        Serial.connected = i % 2 == 0;
+        Serial.write_capacity = i % 2 == 0 ? 0 : 2048;
+        pzt.service();
+        assert(pzt.isRunning() && Serial.bytes.empty());
+        for (auto pin : pins) assert(pin_values[pin] == HIGH);
+      }
+      assert(Serial.live_write_calls == writes_before + 400);
+      assert(fake_us - begin_busy < 100000); // Never the old 120 ms write wait.
+      assert(usb.writeErrors() == errors_before);
+      Serial.connected = true; Serial.write_capacity = 2048;
+      const uint32_t recovered_at = fake_us;
+      pzt.service();
+      assert(pzt.isRunning() && Serial.bytes.size() == 22 && le16(2) == 4);
+      assert(le16(4) == 1001 && le16(6) == 1104 && le16(8) == 1202 && le16(10) == 1307);
+      assert(le32(14) >= recovered_at && le32(18) > le32(14));
+      pzt.stop(); Serial.text.clear(); pzt.printStatus();
+      assert(Serial.text.find("# sampling_sweeps=401\n") != std::string::npos);
+      assert(Serial.text.find("# usb_frames_sent=1\n") != std::string::npos);
+      assert(Serial.text.find("# usb_frames_discarded=400\n") != std::string::npos);
+      assert(Serial.text.find("# sampling_period_over_1ms=0\n") != std::string::npos);
+#if TESTBOARD_PROFILE
+      assert(Serial.text.find("# profile_attempts=401\n") != std::string::npos);
+      assert(Serial.text.find("# profile_aborted=0\n") != std::string::npos);
+      assert(Serial.text.find("# profile_discarded=400\n") != std::string::npos);
+      assert(Serial.text.find("# profile_period=400,") != std::string::npos);
+#endif
+      command("run", ""); pzt.service(); pzt.stop();
+      Serial.text.clear(); pzt.printStatus();
+      assert(Serial.text.find("# sampling_sweeps=1\n") != std::string::npos);
+      assert(Serial.text.find("# usb_frames_discarded=0\n") != std::string::npos);
+      // A timed run must finish even while every sweep is discarded.
+      Serial.write_capacity = 0; command("run", "2");
+      while (pzt.isRunning()) pzt.service();
+      assert(Serial.text.find("# usb_write_errors=0\n") != std::string::npos);
+      Serial.write_capacity = 2048;
+    }
+  }
+  Serial.write_delay_us = 0;
+  // An unexpected core error must stop sampling, count the error, release buses,
   // and permit a subsequent run when the host accepts data again.
   command("run", "");
   Serial.write_limit = 5;
   const auto errors_before = usb.writeErrors();
-  pzt.service(); assert(!pzt.isRunning());
+  Serial.bytes.clear(); pzt.service(); assert(!pzt.isRunning() && Serial.bytes.empty());
   assert(usb.writeErrors() == errors_before + 1);
+#if TESTBOARD_PROFILE
+  Serial.text.clear(); pzt.printStatus();
+  assert(Serial.text.find("# profile_aborted=1\n") != std::string::npos);
+  assert(Serial.text.find("# profile_written=0\n") != std::string::npos);
+#endif
   assert(SPI.begins == SPI.ends && SPI1.begins == SPI1.ends);
   for (auto pin : pins) assert(pin_values[pin] == HIGH);
   Serial.write_limit = static_cast<size_t>(-1);
   command("run", ""); Serial.bytes.clear(); pzt.service();
-  assert(pzt.isRunning() && le16(2) == 2); pzt.stop();
+  assert(pzt.isRunning() && le16(2) == 4); pzt.stop();
   std::cout << cases << " digital acquisition cases passed; session/recovery checks passed\n";
 }

@@ -22,10 +22,41 @@ framework source causes a build error until the patch is reviewed. Use this
 PlatformIO project to build the repaired firmware; an Arduino IDE build without
 the middleware does not include the repair. USB transfers remain asynchronous.
 
-Short binary writes stop acquisition and increment the additive status counter
-`usb_write_errors`. Binary framing and commands retain their existing layout.
+PZT now uses an atomic nonblocking USB write: if USB cannot accept the complete
+sweep immediately, discard that sweep and keep sampling. No acquisition backlog
+is stored. Per-run status reports `sampling_sweeps`, `usb_frames_sent`,
+`usb_frames_discarded`, `sampling_period_max_us` and `sampling_period_over_1ms`.
+Unexpected write errors still stop acquisition and increment `usb_write_errors`;
+PZR retains its original write path. Binary framing and commands keep their
+existing layout. Previously accepted bytes in USB/Windows buffers can still
+arrive late. See [live USB behavior and the reduced COM3 test](../../docs/architecture/TESTBOARD_7953_LIVE_USB_STREAM.md).
 See [USB repair validation](../../docs/architecture/TESTBOARD_7953_USB_STREAM_DIAGNOSIS.md#implemented-repair)
 for offline checks and the focused on-board benchmark.
+
+## Optional phase profiling
+
+The default `teensy41` build excludes profiling probes and storage. To build
+the diagnostic firmware, select `-e teensy41_profile`; upload that environment
+explicitly. It starts with profiling off. While stopped, `profile on*` enables
+measurement and `profile off*` disables it without another upload. Changing the
+setting while running is rejected. `status*` reports profile availability and
+mode; detailed summaries are emitted only when stopped, never automatically
+in the binary stream. Each accepted run resets its profiling statistics.
+
+The benchmark's `--profile on` collects phase histograms, cycle counts, capacity
+observations, and long-period snapshots in `firmware_profile.jsonl`. Default
+`--profile off` normalizes the setting on diagnostic firmware, and stays
+compatible with earlier firmware. Frames and payload timing fields are unchanged.
+See [profiling instructions](../../docs/architecture/TESTBOARD_7953_PHASE_PROFILING.md)
+for upload, a reduced COM3 comparison, measurement limits, and offline checks.
+
+The current LPSPI candidate caches CS register access, specializes the word loop
+by engine, and uses cycle-counter polling with bounded foreground servicing.
+Both environments include it. The production 252-capture comparison passes
+with clean raw streams. Manual LPSPI with both full arrays at 20 MHz reaches
+16,889 sweeps/s, 60.5% above the original firmware. Long-gap latency and
+electrical/analog acceptance remain separate work; see
+[the production validation](../../docs/architecture/TESTBOARD_7953_LPSPI_PRODUCTION_RESULTS.md).
 
 ## Hardware map
 

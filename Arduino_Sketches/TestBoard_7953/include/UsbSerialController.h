@@ -8,6 +8,8 @@ class UsbSerialController {
   bool readCommand(String &line);
   void writeAck(bool success, const String &arguments = "");
   bool writeBinaryBlock(const uint8_t *data, uint32_t length);
+  enum class FrameWrite { Sent, Discarded, Error };
+  FrameWrite tryWriteBinaryBlock(const uint8_t *data, uint32_t length);
   uint32_t writeErrors() const { return write_errors_; }
   void beginBinaryBlock(uint16_t sample_count);
   void writeBinarySamples(const uint16_t *samples, uint16_t sample_count);

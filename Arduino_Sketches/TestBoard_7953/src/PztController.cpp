@@ -288,7 +288,17 @@ bool PztController::startRun(const String &arguments) {
       : 0;
   if (timed && duration == 0) return false;
   if (!parkActiveAdcs()) return false;
-  if (!prepareRun()) return false;
+#if TESTBOARD_PROFILE
+  profile_.reset();
+  const uint32_t prepare_started = profile_.stamp();
+#endif
+  const bool prepared = prepareRun();
+#if TESTBOARD_PROFILE
+  profile_.runPrepared(prepare_started);
+#endif
+  if (!prepared) return false;
+  sampling_sweeps_ = usb_frames_sent_ = usb_frames_discarded_ = 0;
+  sampling_previous_start_ = sampling_period_max_us_ = sampling_period_over_1ms_ = 0;
   timed_run_ = timed;
   run_duration_ms_ = duration;
   run_started_ms_ = millis();
@@ -308,6 +318,14 @@ bool PztController::handleCommand(
   if (command == "vmid" || command == "ground") return setVmid(arguments);
   if (command == "run") return startRun(arguments);
   if (command == "ref") return setVrefRange(arguments);
+  if (command == "profile") {
+    if (running_) return false;
+#if TESTBOARD_PROFILE
+    return profile_.setEnabled(arguments);
+#else
+    return arguments == "off";
+#endif
+  }
   if (command == "osr" || command == "gain" || command == "conv" ||
       command == "samp" || command == "rate") {
     return !running_;
@@ -527,17 +545,18 @@ bool PztController::buildParkStream(FrameStream &stream, uint8_t adc) {
   return true;
 }
 
+template <PztController::SpiEngine Engine>
 bool PztController::executeFrame(
     Ads7953Adc *first_adc, uint16_t first_command, uint16_t &first_response,
     Ads7953Adc *second_adc, uint16_t second_command,
-    uint16_t &second_response) {
+    uint16_t &second_response, uint32_t timeout_ticks, uint32_t service_ticks) {
   if (first_adc == nullptr && second_adc == nullptr) return true;
   if (first_adc != nullptr && second_adc != nullptr &&
       &first_adc->spiController() == &second_adc->spiController()) {
     return false;
   }
 
-  if (spi_engine_ == SPI_ENGINE_BLOCKING) {
+  if (Engine == SPI_ENGINE_BLOCKING) {
     if (first_adc != nullptr) {
       first_response = first_adc->transferBlocking(first_command);
     }
@@ -556,7 +575,7 @@ bool PztController::executeFrame(
   bool first_started = false;
   bool second_started = false;
 
-  if (spi_engine_ == SPI_ENGINE_DMA) {
+  if (Engine == SPI_ENGINE_DMA) {
     if (first_adc != nullptr) {
       first_started = first_spi->startDma16(
           first_adc->chipSelectPin(), first_command);
@@ -570,12 +589,12 @@ bool PztController::executeFrame(
   } else {
     if (first_adc != nullptr) {
       first_started = first_spi->startLpspi16(
-          first_adc->chipSelectPin(), first_command);
+          first_adc->chipSelect(), first_command);
       if (!first_started) ++lpspi_start_errors_;
     }
     if (second_adc != nullptr) {
       second_started = second_spi->startLpspi16(
-          second_adc->chipSelectPin(), second_command);
+          second_adc->chipSelect(), second_command);
       if (!second_started) ++lpspi_start_errors_;
     }
   }
@@ -583,51 +602,75 @@ bool PztController::executeFrame(
   if ((first_adc != nullptr && !first_started) ||
       (second_adc != nullptr && !second_started)) {
     if (first_started) {
-      if (spi_engine_ == SPI_ENGINE_DMA) first_spi->cancelDma16();
+      if (Engine == SPI_ENGINE_DMA) first_spi->cancelDma16();
       else first_spi->cancelLpspi16();
     }
     if (second_started) {
-      if (spi_engine_ == SPI_ENGINE_DMA) second_spi->cancelDma16();
+      if (Engine == SPI_ENGINE_DMA) second_spi->cancelDma16();
       else second_spi->cancelLpspi16();
     }
     return false;
   }
 
-  const uint32_t started_us = micros();
+  // Teensy startup enables DWT. The 1 ms bound is far below its wrap period;
+  // unsigned subtraction also handles a transfer spanning counter rollover.
+#if defined(__IMXRT1062__)
+  const uint32_t started = Engine == SPI_ENGINE_LPSPI ? ARM_DWT_CYCCNT : micros();
+#else
+  const uint32_t started = micros();
+#endif
+  uint32_t last_service = started;
   while (true) {
     const bool first_done = first_adc == nullptr ||
-        (spi_engine_ == SPI_ENGINE_DMA
+        (Engine == SPI_ENGINE_DMA
              ? first_spi->dmaComplete()
              : first_spi->lpspiComplete());
     const bool second_done = second_adc == nullptr ||
-        (spi_engine_ == SPI_ENGINE_DMA
+        (Engine == SPI_ENGINE_DMA
              ? second_spi->dmaComplete()
              : second_spi->lpspiComplete());
     if (first_done && second_done) break;
-    if (micros() - started_us >= testboard_config::kSpiTransferTimeoutUs) {
+#if defined(__IMXRT1062__)
+    const uint32_t now = Engine == SPI_ENGINE_LPSPI ? ARM_DWT_CYCCNT : micros();
+    const uint32_t timeout = Engine == SPI_ENGINE_LPSPI
+        ? timeout_ticks : testboard_config::kSpiTransferTimeoutUs;
+#else
+    const uint32_t now = micros();
+    const uint32_t timeout = testboard_config::kSpiTransferTimeoutUs;
+#endif
+    if (now - started >= timeout) {
       ++transfer_timeouts_;
       if (first_adc != nullptr) {
-        if (spi_engine_ == SPI_ENGINE_DMA) first_spi->cancelDma16();
+        if (Engine == SPI_ENGINE_DMA) first_spi->cancelDma16();
         else first_spi->cancelLpspi16();
       }
       if (second_adc != nullptr) {
-        if (spi_engine_ == SPI_ENGINE_DMA) second_spi->cancelDma16();
+        if (Engine == SPI_ENGINE_DMA) second_spi->cancelDma16();
         else second_spi->cancelLpspi16();
       }
       return false;
     }
+    // Interrupts stay enabled throughout. DMA keeps its per-poll EventResponder
+    // servicing; LPSPI services foreground work on extended waits only.
+#if defined(__IMXRT1062__)
+    if (Engine != SPI_ENGINE_LPSPI || now - last_service >= service_ticks) {
+      yield();
+      last_service = now;
+    }
+#else
     yield();
+#endif
   }
 
   bool success = true;
   if (first_adc != nullptr) {
-    success = (spi_engine_ == SPI_ENGINE_DMA
+    success = (Engine == SPI_ENGINE_DMA
                    ? first_spi->finishDma16(first_response)
                    : first_spi->finishLpspi16(first_response)) &&
               success;
   }
   if (second_adc != nullptr) {
-    success = (spi_engine_ == SPI_ENGINE_DMA
+    success = (Engine == SPI_ENGINE_DMA
                    ? second_spi->finishDma16(second_response)
                    : second_spi->finishLpspi16(second_response)) &&
               success;
@@ -706,8 +749,32 @@ void PztController::commitStreamState(const FrameStream &stream) {
   auto1_active_parked_[adc] = stream.auto_finished_parked;
 }
 
-bool PztController::executeStreams(
+bool PztController::executeStreams(FrameStream *first, FrameStream *second) {
+  // Dispatch once per stream pair; each generated word loop has a fixed engine.
+  switch (spi_engine_) {
+    case SPI_ENGINE_BLOCKING:
+      return executeStreamsForEngine<SPI_ENGINE_BLOCKING>(first, second);
+    case SPI_ENGINE_DMA:
+      return executeStreamsForEngine<SPI_ENGINE_DMA>(first, second);
+    case SPI_ENGINE_LPSPI:
+      return executeStreamsForEngine<SPI_ENGINE_LPSPI>(first, second);
+  }
+  return false;
+}
+
+template <PztController::SpiEngine Engine>
+bool PztController::executeStreamsForEngine(
     FrameStream *first, FrameStream *second) {
+  // Convert the CPU clock once per stream pair, outside the per-word loop.
+  uint32_t timeout_ticks = testboard_config::kSpiTransferTimeoutUs;
+  uint32_t service_ticks = 0;
+#if defined(__IMXRT1062__)
+  if (Engine == SPI_ENGINE_LPSPI) {
+    const uint32_t ticks_per_us = F_CPU_ACTUAL / 1000000u;
+    timeout_ticks *= ticks_per_us;
+    service_ticks = ticks_per_us * 10u;
+  }
+#endif
   while ((first != nullptr && first->cursor < first->count) ||
          (second != nullptr && second->cursor < second->count)) {
     FrameOp *first_op = first != nullptr && first->cursor < first->count
@@ -718,11 +785,12 @@ bool PztController::executeStreams(
         : nullptr;
     uint16_t first_response = 0;
     uint16_t second_response = 0;
-    if (!executeFrame(
+    if (!executeFrame<Engine>(
             first_op == nullptr ? nullptr : first->adc,
             first_op == nullptr ? 0 : first_op->command, first_response,
             second_op == nullptr ? nullptr : second->adc,
-            second_op == nullptr ? 0 : second_op->command, second_response)) {
+            second_op == nullptr ? 0 : second_op->command, second_response,
+            timeout_ticks, service_ticks)) {
       return false;
     }
     if (first_op != nullptr) {
@@ -775,14 +843,26 @@ bool PztController::parkActiveAdcs() {
 }
 
 bool PztController::captureBlock() {
+#if TESTBOARD_PROFILE
+  AcquisitionProfiler::Sweep profile_sweep(profile_);
+#endif
   const uint8_t plan_count = route_count_;
-  memset(sample_written_, 0, plan_count * sizeof(sample_written_[0]));
+  {
+    TB_PROFILE_SCOPE(mask_profile, Prepare);
+    memset(sample_written_, 0, plan_count * sizeof(sample_written_[0]));
+  }
   const uint32_t started = micros();
+#if TESTBOARD_PROFILE
+  profile_.acquisitionBegin(started);
+#endif
   LpspiSession sessions[2];
-  if (spi_engine_ == SPI_ENGINE_LPSPI &&
-      (!sessions[0].begin(active_buses_[0]) || !sessions[1].begin(active_buses_[1]))) {
-    ++lpspi_start_errors_;
-    return false;
+  {
+    TB_PROFILE_SCOPE(session_profile, Session);
+    if (spi_engine_ == SPI_ENGINE_LPSPI &&
+        (!sessions[0].begin(active_buses_[0]) || !sessions[1].begin(active_buses_[1]))) {
+      ++lpspi_start_errors_;
+      return false;
+    }
   }
 
   for (uint8_t position = 0; position < 2; ++position) {
@@ -790,34 +870,83 @@ bool PztController::captureBlock() {
     const uint8_t second_adc = position + 2;
     FrameStream *first = nullptr;
     FrameStream *second = nullptr;
-    if (first_adc < adc_count_ && adc_route_counts_[first_adc]) {
-      if (!prepareSweepStream(first_adc)) return false;
-      first = &streams_[first_adc];
+    {
+      TB_PROFILE_SCOPE(stream_profile, Prepare);
+      if (first_adc < adc_count_ && adc_route_counts_[first_adc]) {
+        if (!prepareSweepStream(first_adc)) return false;
+        first = &streams_[first_adc];
+      }
+      if (second_adc < adc_count_ && adc_route_counts_[second_adc]) {
+        if (!prepareSweepStream(second_adc)) return false;
+        second = &streams_[second_adc];
+      }
     }
-    if (second_adc < adc_count_ && adc_route_counts_[second_adc]) {
-      if (!prepareSweepStream(second_adc)) return false;
-      second = &streams_[second_adc];
+    {
+      TB_PROFILE_SCOPE(transfer_profile, Transfer);
+      if (!executeStreams(first, second)) return false;
     }
-    if (!executeStreams(first, second)) return false;
-    if (first != nullptr) commitStreamState(*first);
-    if (second != nullptr) commitStreamState(*second);
+    {
+      TB_PROFILE_SCOPE(commit_profile, Prepare);
+      if (first != nullptr) commitStreamState(*first);
+      if (second != nullptr) commitStreamState(*second);
+    }
   }
 
-  for (uint8_t index = 0; index < plan_count; ++index) {
-    if (!sample_written_[index]) return false;
+  {
+    TB_PROFILE_SCOPE(validate_profile, Validate);
+    for (uint8_t index = 0; index < plan_count; ++index) {
+      if (!sample_written_[index]) return false;
+    }
   }
-  sessions[0].close();
-  sessions[1].close();
+  {
+    TB_PROFILE_SCOPE(session_profile, Session);
+    sessions[0].close();
+    sessions[1].close();
+  }
   const uint32_t ended = micros();
-  const uint16_t average = plan_count
-      ? static_cast<uint16_t>(min(
-            (ended - started + plan_count / 2u) / plan_count, 65535u))
-      : 0;
-  const uint32_t bytes = api_protocol::encodeBinaryBlock(
-      g_wire_block, sizeof(g_wire_block), g_samples, plan_count, average,
-      started, ended);
-  if (!bytes) return false;
-  return usb_.writeBinaryBlock(g_wire_block, bytes);
+  if (sampling_sweeps_) {
+    const uint32_t period = started - sampling_previous_start_;
+    if (period > sampling_period_max_us_) sampling_period_max_us_ = period;
+    if (period > 1000) ++sampling_period_over_1ms_;
+  }
+  sampling_previous_start_ = started;
+  ++sampling_sweeps_;
+#if TESTBOARD_PROFILE
+  profile_.acquisitionEnd(ended);
+#endif
+  uint32_t bytes;
+  {
+    TB_PROFILE_SCOPE(encode_profile, Encode);
+    const uint16_t average = plan_count
+        ? static_cast<uint16_t>(min(
+              (ended - started + plan_count / 2u) / plan_count, 65535u))
+        : 0;
+    bytes = api_protocol::encodeBinaryBlock(
+        g_wire_block, sizeof(g_wire_block), g_samples, plan_count, average,
+        started, ended);
+    if (!bytes) return false;
+  }
+#if TESTBOARD_PROFILE
+  if (profile_.enabled()) {
+    TB_PROFILE_SCOPE(capacity_profile, Capacity);
+    profile_.noteCapacity(Serial.availableForWrite(), bytes);
+  }
+#endif
+  UsbSerialController::FrameWrite result;
+  {
+    TB_PROFILE_SCOPE(write_profile, UsbWrite);
+    result = usb_.tryWriteBinaryBlock(g_wire_block, bytes);
+  }
+  const bool written = result == UsbSerialController::FrameWrite::Sent;
+  const bool discarded = result == UsbSerialController::FrameWrite::Discarded;
+  if (written) ++usb_frames_sent_;
+  if (discarded) ++usb_frames_discarded_;
+#if TESTBOARD_PROFILE
+  profile_sweep.written(written, discarded);
+#endif
+  // A full/disconnected USB path is a transport omission, not an ADC failure.
+  // The completed sweep still updated the ADC pipelines and Vmid parking.
+  return written || discarded;
 }
 
 void PztController::service() {
@@ -916,6 +1045,12 @@ void PztController::printStatus() const {
   Serial.print(F("# returned_channel_errors="));
   Serial.println(returned_channel_errors_);
   Serial.print(F("# usb_write_errors=")); Serial.println(usb_.writeErrors());
+  Serial.println(F("# usb_stream_policy=discard_if_busy"));
+  Serial.print(F("# sampling_sweeps=")); Serial.println(sampling_sweeps_);
+  Serial.print(F("# usb_frames_sent=")); Serial.println(usb_frames_sent_);
+  Serial.print(F("# usb_frames_discarded=")); Serial.println(usb_frames_discarded_);
+  Serial.print(F("# sampling_period_max_us=")); Serial.println(sampling_period_max_us_);
+  Serial.print(F("# sampling_period_over_1ms=")); Serial.println(sampling_period_over_1ms_);
   Serial.print(F("# auto1_program_count="));
   Serial.println(auto1_program_count_);
   Serial.print(F("# auto1_resume_count="));
@@ -926,5 +1061,11 @@ void PztController::printStatus() const {
   }
   Serial.print(F("# running="));
   Serial.println(running_ ? F("true") : F("false"));
+#if TESTBOARD_PROFILE
+  profile_.printStatus(running_);
+#else
+  Serial.println(F("# profile_available=false"));
+  Serial.println(F("# profile_enabled=false"));
+#endif
   Serial.println(F("# --------------------------------------"));
 }

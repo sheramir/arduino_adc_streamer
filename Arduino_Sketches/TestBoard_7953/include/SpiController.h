@@ -8,10 +8,18 @@
 
 class SpiController {
  public:
+  struct ChipSelect {
+#if defined(__IMXRT1062__)
+    decltype(portSetRegister(0)) set = nullptr;
+    decltype(portClearRegister(0)) clear = nullptr;
+    uint32_t mask = 0;
+#endif
+  };
+
   SpiController(SPIClass &bus, uint8_t miso, uint8_t mosi, uint8_t sck);
 
   void begin();
-  void registerChipSelect(uint8_t cs_pin);
+  ChipSelect registerChipSelect(uint8_t cs_pin);
   bool setClockHz(uint32_t clock_hz);
   uint32_t clockHz() const;
   uint16_t transfer16(uint8_t cs_pin, uint16_t tx_word);
@@ -24,12 +32,60 @@ class SpiController {
   bool beginLpspiSession();
   void endLpspiSession();
   bool startLpspi16(uint8_t cs_pin, uint16_t tx_word);
-  bool lpspiComplete() const;
-  bool finishLpspi16(uint16_t &rx_word);
+  // ADCs resolve GPIO registers at begin(), not for each sampled word.
+  bool startLpspi16(const ChipSelect &cs, uint16_t tx_word) {
+#if defined(__IMXRT1062__)
+    if (transaction_active_ || lpspi_ == nullptr || cs.clear == nullptr) return false;
+    const bool single_word = !lpspi_session_active_;
+    if (single_word && !beginLpspiSession()) return false;
+    lpspi_single_word_ = single_word;
+    active_cs_set_ = cs.set;
+    active_cs_mask_ = cs.mask;
+    transaction_active_ = true;
+    // TCF is sticky: require a fresh completion as well as receive readiness.
+    lpspi_->SR = LPSPI_SR_TCF;
+    *cs.clear = cs.mask;
+    lpspi_->TDR = tx_word;
+    lpspi_active_ = true;
+    return true;
+#else
+    (void)cs;
+    (void)tx_word;
+    return false;
+#endif
+  }
+  bool lpspiComplete() const {
+#if defined(__IMXRT1062__)
+    return lpspi_active_ && lpspi_ != nullptr &&
+           !(lpspi_->RSR & LPSPI_RSR_RXEMPTY) && (lpspi_->SR & LPSPI_SR_TCF);
+#else
+    return false;
+#endif
+  }
+  bool finishLpspi16(uint16_t &rx_word) {
+#if defined(__IMXRT1062__)
+    if (!lpspiComplete()) return false;
+    rx_word = static_cast<uint16_t>(lpspi_->RDR);
+    lpspi_active_ = false;
+    releaseChipSelect();
+    transaction_active_ = false;
+    if (lpspi_single_word_) endLpspiSession();
+    return true;
+#else
+    (void)rx_word;
+    return false;
+#endif
+  }
   void cancelLpspi16();
 
  private:
-  void releaseChipSelect();
+  void releaseChipSelect() {
+#if defined(__IMXRT1062__)
+    if (active_cs_set_ != nullptr) *active_cs_set_ = active_cs_mask_;
+    active_cs_set_ = nullptr;
+#endif
+    delayNanoseconds(testboard_config::kCsHighTimeNs);
+  }
   void endActiveTransfer();
 
   SPIClass &bus_;
@@ -49,5 +105,7 @@ class SpiController {
   uint8_t *dma_rx_ = nullptr;
 #if defined(__IMXRT1062__)
   IMXRT_LPSPI_t *lpspi_ = nullptr;
+  decltype(portSetRegister(0)) active_cs_set_ = nullptr;
+  uint32_t active_cs_mask_ = 0;
 #endif
 };

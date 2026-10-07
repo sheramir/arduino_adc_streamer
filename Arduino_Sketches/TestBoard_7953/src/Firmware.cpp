@@ -44,6 +44,7 @@ void printHelp() {
   Serial.println(F("# PZT: spiclock 100000..30000000 Hz (above 20 MHz experimental)"));
   Serial.println(F("# PZT: channelrepeat 1|2|3, vmid 15|true|false"));
   Serial.println(F("# PZT: run [ms], ref 2.5|5, osr, gain"));
+  Serial.println(F("# PZT: profile off|on (on requires teensy41_profile build)"));
   Serial.println(F("# Legacy Vmid alias: ground ..."));
   Serial.println(F("# PZR: rb, rk, cf, rxmax, ascii (requires enabled 555 hardware)"));
   Serial.println(F("# scanorder controls payload order; the engine may acquire in parallel"));

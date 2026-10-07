@@ -25,6 +25,7 @@ import time
 from typing import Any, Iterable, Optional, Sequence
 
 try:
+    from .firmware_profile import save_profile
     from .benchmark_common import (
         BinaryFrame,
         BinaryFrameParser,
@@ -38,6 +39,7 @@ try:
     from .ghosting_analysis import analyze_window, chart_bounds, chart_indices, summarize_attempts, strongest_attempt
     from .ghosting_capture import ConsoleKeys, GhostingCapture, GhostingCaptureError, capture_ghosting_attempt
 except ImportError:  # Direct execution from this directory.
+    from firmware_profile import save_profile
     from benchmark_common import (  # type: ignore
         BinaryFrame,
         BinaryFrameParser,
@@ -58,7 +60,7 @@ DEFAULT_BIAS_MAP_PATH = SCRIPT_DIR / "testboard_7953_bias_resistors.json"
 DEFAULT_RESULTS_ROOT = SCRIPT_DIR / "results"
 GLOSSARY_PATH = SCRIPT_DIR / "OUTPUT_GLOSSARY.md"
 FIRMWARE_IDENTITY = "# TestBoard_7953"
-RUNNER_VERSION = "2.3"
+RUNNER_VERSION = "2.5"
 DEFAULT_SPI_CLOCK_HZ = 20_000_000
 MIN_SPI_CLOCK_HZ = 100_000
 MAX_SPI_CLOCK_HZ = 30_000_000
@@ -68,6 +70,10 @@ ERROR_COUNTERS = (
     "transfer_timeouts",
     "returned_channel_errors",
     "usb_write_errors",
+)
+LIVE_TRANSPORT_FIELDS = (
+    "sampling_sweeps", "usb_frames_sent", "usb_frames_discarded",
+    "sampling_period_max_us", "sampling_period_over_1ms",
 )
 
 
@@ -210,6 +216,7 @@ RESULT_FIELDS = [
     "discarded_bytes", "trailing_bytes", "capture_timed_out",
     "timestamp_regressions", "duplicate_frames", "invalid_timing_frames",
     "suspected_missing_frames",
+    "usb_stream_policy", *LIVE_TRANSPORT_FIELDS,
     "total_samples", "startup_min_raw", "sample_min_raw", "sample_p1_raw",
     "sample_p5_raw", "sample_mean_raw", "sample_median_raw",
     "sample_p95_raw", "sample_p99_raw", "sample_max_raw", "sample_stdev_raw",
@@ -536,7 +543,9 @@ class SerialProtocol:
         self.serial.flush()
 
     def capture_timed(self, duration_ms: int, expected_samples: int,
-                      grace_ms: int, idle_ms: int) -> CaptureResult:
+                      grace_ms: int, idle_ms: int, *, reader_pause_ms: int = 0,
+                      reader_pause_at_ms: int = 2000,
+                      defer_parsing: bool = False) -> CaptureResult:
         parser = BinaryFrameParser(expected_sample_count=expected_samples)
         raw = bytearray()
         frames: list[BinaryFrame] = []
@@ -545,24 +554,38 @@ class SerialProtocol:
         deadline_ns = minimum_end_ns + grace_ms * 1_000_000
         idle_ns = idle_ms * 1_000_000
         last_data_ns = started_ns
+        paused = False
+        chunks: list[tuple[bytes, int]] = []
 
         self.send_run(duration_ms)
         timed_out = True
         while time.monotonic_ns() < deadline_ns:
+            if (reader_pause_ms and not paused and
+                    time.monotonic_ns() >= started_ns + reader_pause_at_ms * 1_000_000):
+                self.log.write(f"READER_PAUSE {reader_pause_ms} ms (Windows may buffer data)")
+                time.sleep(reader_pause_ms / 1000)
+                paused = True
             waiting = int(getattr(self.serial, "in_waiting", 0))
             data = self.serial.read(waiting or 1)
             now_ns = time.monotonic_ns()
             if data:
                 raw.extend(data)
                 last_data_ns = now_ns
-                frames.extend(parser.feed(data, now_ns))
+                if defer_parsing:
+                    chunks.append((data, now_ns))
+                else:
+                    frames.extend(parser.feed(data, now_ns))
             elif now_ns >= minimum_end_ns and now_ns - last_data_ns >= idle_ns:
                 timed_out = False
                 break
 
+        capture_finished_ns = time.monotonic_ns()
+        if defer_parsing:
+            for data, received_ns in chunks:
+                frames.extend(parser.feed(data, received_ns))
         trailing = parser.finish()
         integrity = stream_integrity_counts(frames)
-        wall_ns = time.monotonic_ns() - started_ns
+        wall_ns = capture_finished_ns - started_ns
         self.log.write(
             "CAPTURE "
             f"duration_ms={duration_ms} frames={len(frames)} raw={len(raw)} "
@@ -643,6 +666,19 @@ def configure_test(protocol: SerialProtocol, config: TestConfig,
 def stop_after_capture(protocol: SerialProtocol) -> dict[str, str]:
     protocol.send_command("stop", timeout_s=5.0)
     return parse_status(protocol.send_command("status"))
+
+
+def configure_profile(protocol: SerialProtocol, initial_status: dict[str, str],
+                      requested: str) -> dict[str, str]:
+    if initial_status.get("profile_available") != "true":
+        if requested == "on":
+            raise BenchmarkError("Profiling requires a teensy41_profile firmware build")
+        return initial_status
+    protocol.send_command(f"profile {requested}")
+    status = parse_status(protocol.send_command("status"))
+    if status.get("profile_enabled") != ("true" if requested == "on" else "false"):
+        raise BenchmarkError("Firmware did not accept the requested profiling mode")
+    return status
 
 
 def measured_capture_after_warmup(
@@ -1050,6 +1086,9 @@ def result_row_for_capture(
         )
     )
     overall = "FAIL" if hard_failure else "WARN" if warning else "PASS"
+    if after_status.get("usb_stream_policy") == "discard_if_busy" and int(after_status.get("usb_frames_discarded", "0")):
+        notes = (f"{notes}; LIVE_OMISSIONS: {after_status['usb_frames_discarded']} acquired sweeps discarded; "
+                 "received gaps are not proof of sensor pauses").lstrip("; ")
     if any(integrity.values()) or capture.discarded_bytes or capture.resync_events:
         notes = f"{notes}; STREAM_INTEGRITY: {integrity}, discarded_bytes={capture.discarded_bytes}, resync_events={capture.resync_events}".lstrip("; ")
     return {
@@ -1083,6 +1122,8 @@ def result_row_for_capture(
         "capture_timed_out": str(capture.timed_out).lower(),
         **integrity,
         "suspected_missing_frames": metrics["suspected_missing_frames"],
+        "usb_stream_policy": after_status.get("usb_stream_policy", "legacy_blocking"),
+        **{key: after_status.get(key, "") for key in LIVE_TRANSPORT_FIELDS},
         "total_samples": sum(frame.sample_count for frame in capture.frames),
         "startup_min_raw": settling_summary["startup_min_raw"],
         "sample_min_raw": sample_summary["min"],
@@ -1131,6 +1172,22 @@ def result_row_for_capture(
         "baseline_test_ids": ";".join(sorted(baseline_ids)),
         "notes": notes,
     }
+
+
+def validate_live_transport(status: dict[str, str], received_frames: int) -> None:
+    """Reconcile whole-run sent/discarded counts, independent of profiling."""
+    if status.get("usb_stream_policy") != "discard_if_busy":
+        return  # Older firmware has no live counters.
+    try:
+        values = {key: int(status[key]) for key in LIVE_TRANSPORT_FIELDS}
+    except (KeyError, ValueError) as exc:
+        raise BenchmarkError("Missing/invalid live transport counters") from exc
+    if any(value < 0 for value in values.values()):
+        raise BenchmarkError("Negative live transport counters")
+    if values["sampling_sweeps"] != values["usb_frames_sent"] + values["usb_frames_discarded"]:
+        raise BenchmarkError("Acquired/sent/discarded sweep count mismatch")
+    if values["usb_frames_sent"] != received_frames:
+        raise BenchmarkError("USB sent/received whole-capture frame count mismatch")
 
 
 def sample_rows_for_capture(
@@ -1369,6 +1426,9 @@ def aggregate_result_rows(rows: Sequence[dict[str, str]]) -> list[dict[str, Any]
             "overall_status": "WARN" if any(row.get("overall_status") == "WARN" for row in group) else "PASS",
             "notes": f"Aggregate of {len(group)} valid repetitions",
         })
+        for key in LIVE_TRANSPORT_FIELDS:
+            values = numbers(key)
+            aggregate[key] = (max(values) if key == "sampling_period_max_us" else sum(values)) if values else ""
         aggregates.append(aggregate)
 
     by_comparison: dict[tuple[str, ...], dict[str, Any]] = {}
@@ -1542,7 +1602,10 @@ def run_measured_repetition(
     before_status = configure_test(protocol, scheduled.config, route_set)
     full_capture = protocol.capture_timed(
         args.warm_up_ms + args.window_ms,
-        len(route_set.routes), args.grace_ms, args.idle_ms
+        len(route_set.routes), args.grace_ms, args.idle_ms,
+        reader_pause_ms=args.reader_pause_ms,
+        reader_pause_at_ms=args.reader_pause_at_ms,
+        defer_parsing=args.defer_parsing,
     )
     raw_path = raw_dir / (
         f"{scheduled.test_id}__r{repetition}__attempt{attempt}.bin"
@@ -1550,6 +1613,17 @@ def run_measured_repetition(
     if not args.no_raw:
         raw_path.write_bytes(full_capture.raw)
     after_status = stop_after_capture(protocol)
+    (raw_dir.parent / f"{scheduled.test_id}__r{repetition}__attempt{attempt}__status.json").write_text(
+        json.dumps(after_status, indent=2), encoding="utf-8")
+    validate_live_transport(after_status, len(full_capture.frames))
+
+    try:
+        save_profile(raw_dir.parent / "firmware_profile.jsonl", after_status,
+                     received_frames=len(full_capture.frames), requested=args.profile,
+                     session_id=session_id, test_id=scheduled.test_id,
+                     repetition=repetition, attempt=attempt)
+    except ValueError as exc:
+        raise BenchmarkError(f"Firmware profile failed: {exc}") from exc
 
     if not full_capture.frames:
         preview = full_capture.raw[:120].decode("ascii", errors="replace")
@@ -2009,6 +2083,7 @@ def run_ghosting_session(args: argparse.Namespace, route_sets: dict[str, RouteSe
             raise BenchmarkError(f"Expected firmware {FIRMWARE_IDENTITY}")
         protocol.send_command("mode PZT")
         initial = parse_status(protocol.send_command("status"))
+        initial = configure_profile(protocol, initial, "off")
         metadata["firmware_status_initial"] = initial
         nonzero = {key: counter_value(initial, key) for key in ERROR_COUNTERS if counter_value(initial, key)}
         if nonzero and not args.allow_existing_errors:
@@ -2156,6 +2231,14 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--window-ms", type=int, default=5000)
     parser.add_argument("--warm-up-ms", type=int, default=1000)
     parser.add_argument("--repetitions", type=int, default=3)
+    parser.add_argument("--profile", choices=("off", "on"), default="off",
+                        help="Collect firmware phase profiling (on requires teensy41_profile build)")
+    parser.add_argument("--reader-pause-ms", type=int, default=0,
+                        help="Pause host reads once during each timing capture; Windows may buffer the pause")
+    parser.add_argument("--reader-pause-at-ms", type=int, default=2000,
+                        help="Elapsed time at which the host-read pause begins")
+    parser.add_argument("--defer-parsing", action="store_true",
+                        help="Drain raw bytes during capture and parse afterward to compare reader overhead")
     parser.add_argument("--grace-ms", type=int, default=3000)
     parser.add_argument("--idle-ms", type=int, default=250)
     parser.add_argument("--tests", action="append", default=[],
@@ -2213,6 +2296,8 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     ghost.add_argument("--ghost-correlation-min", type=float, default=0.8, help="Minimum positive Pearson correlation (default: 0.8)")
     tokens = list(argv) if argv is not None else sys.argv[1:]
     args = parser.parse_args(tokens)
+    if args.ghosting and args.profile != "off":
+        parser.error("--profile on is for the timing benchmark, not interactive ghosting")
     ghost_only = ("--ghost-adc", "--spi-engine", "--vmid", "--ghost-baseline-ms",
                   "--ghost-trigger-counts", "--ghost-trigger-samples", "--ghost-target-counts", "--ghost-trigger-sigma",
                   "--ghost-target-sigma", "--ghost-correlation-min")
@@ -2259,6 +2344,12 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         )
     if args.window_ms <= 0 or args.warm_up_ms <= 0 or args.repetitions <= 0:
         parser.error("window, warm-up, and repetitions must be positive")
+    if args.reader_pause_ms < 0 or args.reader_pause_at_ms < 0:
+        parser.error("reader pause durations must be nonnegative")
+    if args.reader_pause_ms and args.reader_pause_at_ms + args.reader_pause_ms >= args.warm_up_ms + args.window_ms:
+        parser.error("reader pause must finish before the timed run ends")
+    if args.ghosting and (args.reader_pause_ms or args.defer_parsing):
+        parser.error("reader stress options are for the timing benchmark only")
     if args.settling_tolerance_counts <= 0 or args.settling_stable_frames <= 0:
         parser.error("settling tolerance and stable-frame count must be positive")
     if args.warmup_export_frames <= 0:
@@ -2329,17 +2420,31 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     excel_path = output_dir / "benchmark_report.xlsx"
     if args.resume and not metadata_path.exists():
         raise SystemExit(f"Resume metadata does not exist: {metadata_path}")
+    previous_metadata = None
+    if args.resume:
+        previous_metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        if previous_metadata.get("firmware_profile_mode", "off") != args.profile:
+            raise SystemExit("Cannot resume with a different profiling mode; use a fresh output directory")
+        for key, value in (("reader_pause_ms", args.reader_pause_ms),
+                           ("reader_pause_at_ms", args.reader_pause_at_ms),
+                           ("defer_parsing", args.defer_parsing)):
+            if previous_metadata.get(key, False if key == "defer_parsing" else (2000 if key == "reader_pause_at_ms" else 0)) != value:
+                raise SystemExit("Cannot resume with different reader stress settings; use a fresh output directory")
     log = SessionLog(output_dir / "session_commands.log")
 
     existing_rows = load_existing_results(results_path)
     completed = completed_repetitions(existing_rows)
-    if args.resume and metadata_path.exists():
-        session_id = json.loads(metadata_path.read_text(encoding="utf-8"))["session_id"]
+    if previous_metadata is not None:
+        session_id = previous_metadata["session_id"]
     else:
         session_id = now.strftime("testboard7953-%Y%m%dT%H%M%SZ")
 
     metadata = {
         "session_id": session_id,
+        "firmware_profile_mode": args.profile,
+        "reader_pause_ms": args.reader_pause_ms,
+        "reader_pause_at_ms": args.reader_pause_at_ms,
+        "defer_parsing": args.defer_parsing,
         "runner_version": RUNNER_VERSION,
         "runner_path": str(Path(__file__).resolve()),
         "git_revision": git_revision(),
@@ -2400,6 +2505,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 f"Expected {FIRMWARE_IDENTITY!r}; received {identity_lines!r}"
             )
         initial_status = parse_status(protocol.send_command("status"))
+        initial_status = configure_profile(protocol, initial_status, args.profile)
         metadata["firmware_status_initial"] = initial_status
         atomic_write_json(metadata_path, metadata)
         nonzero_initial = {

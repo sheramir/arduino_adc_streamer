@@ -39,9 +39,14 @@ void SpiController::begin() {
   bus_.begin();
 }
 
-void SpiController::registerChipSelect(uint8_t cs_pin) {
+SpiController::ChipSelect SpiController::registerChipSelect(uint8_t cs_pin) {
   pinMode(cs_pin, OUTPUT);
   digitalWriteFast(cs_pin, HIGH);
+#if defined(__IMXRT1062__)
+  return {portSetRegister(cs_pin), portClearRegister(cs_pin), digitalPinToBitMask(cs_pin)};
+#else
+  return {};
+#endif
 }
 
 bool SpiController::setClockHz(uint32_t clock_hz) {
@@ -172,46 +177,12 @@ void SpiController::endLpspiSession() {
 
 bool SpiController::startLpspi16(uint8_t cs_pin, uint16_t tx_word) {
 #if defined(__IMXRT1062__)
-  if (transaction_active_ || lpspi_ == nullptr) return false;
-  const bool single_word = !lpspi_session_active_;
-  if (!beginLpspiSession()) return false;
-  lpspi_single_word_ = single_word;
-  active_cs_pin_ = cs_pin;
-  transaction_active_ = true;
-  // TCF is sticky. Clear the previous word's completion before submitting this
-  // one so GPIO CS cannot rise on stale completion or only an RX-ready edge.
-  lpspi_->SR = LPSPI_SR_TCF;
-  digitalWriteFast(cs_pin, LOW);
-  lpspi_->TDR = tx_word;
-  lpspi_active_ = true;
-  return true;
+  const ChipSelect cs = {portSetRegister(cs_pin), portClearRegister(cs_pin),
+                         digitalPinToBitMask(cs_pin)};
+  return startLpspi16(cs, tx_word);
 #else
   (void)cs_pin;
   (void)tx_word;
-  return false;
-#endif
-}
-
-bool SpiController::lpspiComplete() const {
-#if defined(__IMXRT1062__)
-  return lpspi_active_ && lpspi_ != nullptr &&
-         !(lpspi_->RSR & LPSPI_RSR_RXEMPTY) && (lpspi_->SR & LPSPI_SR_TCF);
-#else
-  return false;
-#endif
-}
-
-bool SpiController::finishLpspi16(uint16_t &rx_word) {
-#if defined(__IMXRT1062__)
-  if (!lpspiComplete()) return false;
-  rx_word = static_cast<uint16_t>(lpspi_->RDR);
-  lpspi_active_ = false;
-  releaseChipSelect();
-  transaction_active_ = false;
-  if (lpspi_single_word_) endLpspiSession();
-  return true;
-#else
-  (void)rx_word;
   return false;
 #endif
 }
@@ -231,12 +202,6 @@ void SpiController::cancelLpspi16() {
   releaseChipSelect();
   transaction_active_ = false;
   if (lpspi_single_word_) endLpspiSession();
-}
-
-void SpiController::releaseChipSelect() {
-  if (active_cs_pin_ != 0xFF) digitalWriteFast(active_cs_pin_, HIGH);
-  delayNanoseconds(testboard_config::kCsHighTimeNs);
-  active_cs_pin_ = 0xFF;
 }
 
 void SpiController::endActiveTransfer() {

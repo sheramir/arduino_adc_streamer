@@ -23,12 +23,14 @@ class Ads7953Adc final : public AdcDevice {
   uint8_t returnedChannel(uint16_t response) const;
   uint16_t returnedSample(uint16_t response) const;
   void recordError();
-  SpiController &spiController();
-  uint8_t chipSelectPin() const;
+  SpiController &spiController() { return spi_; }
+  uint8_t chipSelectPin() const { return cs_pin_; }
+  const SpiController::ChipSelect &chipSelect() const { return chip_select_; }
 
  private:
   SpiController &spi_;
   uint8_t cs_pin_;
+  SpiController::ChipSelect chip_select_;
   uint32_t errors_ = 0;
   bool range_2x_vref_;
 };

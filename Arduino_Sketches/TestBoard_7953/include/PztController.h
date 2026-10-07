@@ -3,6 +3,7 @@
 #include <Arduino.h>
 
 #include "Ads7953Adc.h"
+#include "AcquisitionProfiler.h"
 #include "ConfigurableParameters.h"
 #include "UsbSerialController.h"
 
@@ -94,9 +95,13 @@ class PztController {
   bool buildAuto1Stream(FrameStream &stream, uint8_t adc);
   bool buildParkStream(FrameStream &stream, uint8_t adc);
   bool executeStreams(FrameStream *first, FrameStream *second);
+  template <SpiEngine Engine>
+  bool executeStreamsForEngine(FrameStream *first, FrameStream *second);
+  template <SpiEngine Engine>
   bool executeFrame(Ads7953Adc *first_adc, uint16_t first_command,
                     uint16_t &first_response, Ads7953Adc *second_adc,
-                    uint16_t second_command, uint16_t &second_response);
+                    uint16_t second_command, uint16_t &second_response,
+                    uint32_t timeout_ticks, uint32_t service_ticks);
   bool consumeResponse(FrameStream &stream, const FrameOp &op,
                        uint16_t response, uint16_t op_index);
   void commitStreamState(const FrameStream &stream);
@@ -129,6 +134,10 @@ class PztController {
   bool timed_run_ = false;
   uint32_t run_started_ms_ = 0;
   uint32_t run_duration_ms_ = 0;
+  // Per-run live transport diagnostics; discarded sweeps were still acquired.
+  uint32_t sampling_sweeps_ = 0, usb_frames_sent_ = 0, usb_frames_discarded_ = 0;
+  uint32_t sampling_previous_start_ = 0, sampling_period_max_us_ = 0;
+  uint32_t sampling_period_over_1ms_ = 0;
   uint32_t dma_start_errors_ = 0;
   uint32_t lpspi_start_errors_ = 0;
   uint32_t transfer_timeouts_ = 0;
@@ -146,4 +155,7 @@ class PztController {
   bool auto1_mask_valid_[testboard_config::kAdcCount] = {};
   bool auto1_active_parked_[testboard_config::kAdcCount] = {};
   bool sample_written_[testboard_config::kMaxAdcRoutes];
+#if TESTBOARD_PROFILE
+  AcquisitionProfiler profile_;
+#endif
 };

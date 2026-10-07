@@ -2,6 +2,10 @@
 
 #include "ApiProtocol.h"
 
+// Provided by the project-local, audited Teensy core patch. No fallback to
+// Serial.write(): it can wait up to 120 ms when the host stops accepting data.
+extern "C" int usb_serial_try_write_frame(const void *buffer, uint32_t size);
+
 void UsbSerialController::begin(uint32_t baud) {
   Serial.begin(baud);
   input_.reserve(api_protocol::kMaxCommandLength);
@@ -45,6 +49,15 @@ bool UsbSerialController::writeBinaryBlock(const uint8_t *data, uint32_t length)
     return false;
   }
   return true;
+}
+
+UsbSerialController::FrameWrite UsbSerialController::tryWriteBinaryBlock(
+    const uint8_t *data, uint32_t length) {
+  const int written = usb_serial_try_write_frame(data, length);
+  if (written == static_cast<int>(length)) return FrameWrite::Sent;
+  if (written == 0) return FrameWrite::Discarded;
+  ++write_errors_;
+  return FrameWrite::Error;
 }
 
 void UsbSerialController::beginBinaryBlock(uint16_t sample_count) {

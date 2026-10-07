@@ -17,7 +17,7 @@ def replace_usb_core(build_env, node):
     destination.parent.mkdir(parents=True, exist_ok=True)
     if not destination.exists() or destination.read_text(encoding="utf-8") != patched:
         destination.write_text(patched, encoding="utf-8", newline="\n")
-    print("TestBoard USB core: ordered TX guards and protected explicit flush")
+    print("TestBoard USB core: ordered TX guards, protected flush, atomic nonblocking live frames")
     return build_env.File(str(destination))
 
 

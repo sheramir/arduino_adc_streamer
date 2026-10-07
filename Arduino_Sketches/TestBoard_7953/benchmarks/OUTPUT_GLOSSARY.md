@@ -11,6 +11,24 @@ and discarded bytes. `usb_write_errors` records the firmware counter delta for
 short binary writes. These counts are numeric columns in the Excel Results sheet.
 Use a new results directory for this schema; retain earlier sessions unchanged.
 
+Runner 2.5 adds live PZT transport diagnostics. These cover the whole run,
+including warm-up; per-run counts reset at run start. Aggregate counts sum
+repetitions and the aggregate sampling-period maximum takes their maximum.
+
+| Field | File | Meaning |
+| --- | --- | --- |
+| usb_stream_policy | Results | `discard_if_busy` for nonblocking live PZT; `legacy_blocking` for earlier firmware. |
+| sampling_sweeps | Results | Complete acquired sweeps, including sweeps discarded before USB submission. |
+| usb_frames_sent | Results | Complete frames accepted by USB; reconciled against all received frames including warm-up. |
+| usb_frames_discarded | Results | Whole acquired sweeps omitted because USB had no immediate capacity or was disconnected. Expected live omissions, not parser discarded bytes or write errors. |
+| sampling_period_max_us | Results | Largest actual sensor start-to-start period, including discarded sweeps and warm-up. |
+| sampling_period_over_1ms | Results | Actual sensor periods above 1 ms. Received gaps alone do not establish sensor pauses. |
+
+Profile version 2 separates `profile_discarded` from `profile_aborted`, includes
+discarded acquisitions in period statistics and retains accepted-write/received
+count checks. Version 1 remains supported. The runner also preserves each
+measured attempt's stopped status in `*__status.json`.
+
 The benchmark keeps CSV files for exact, resumable machine-readable data and
 also creates `benchmark_report.xlsx` for review and charts. Excel cannot contain
 the complete decoded sample stream for large sessions because one worksheet is
@@ -130,7 +148,7 @@ warm-up/baseline/window frames, excluding indefinite trigger-wait traffic.
 | duration_stdev_us | Results | Sample standard deviation of sweep acquisition duration. |
 | payload_throughput_sps | Results | Median `sample_count * 1,000,000 / acquisition_duration_us`. It is the ADC payload rate during acquisition and excludes the between-block USB/loop gap. |
 | sweep_rate_hz | Results | `1,000,000 / median block start-to-start period`. Because every block contains one value for every route, this is also the per-route sample rate. |
-| block_period_median_us | Results | Median device time from one `block_start_us` to the next. It includes acquisition plus USB transmission, loop overhead, and other between-sweep time. |
+| block_period_median_us | Results | Median device time between received frame starts. Includes intervening discarded sweeps on live firmware, so it is not necessarily the actual sensor cadence. |
 | inter_block_gap_median_us | Results | Median next block start minus previous block end; approximately the non-acquisition portion of the block period. |
 | host_arrival_period_median_us | Results | Median difference between host timestamps assigned when complete frames are decoded. USB reads can contain many frames, producing zero intervals; use this to observe host batching, not ADC cadence. |
 | speedup_vs_blocking | Results | Matched blocking median duration divided by this engine's median duration. `2.0` means twice as fast. It is reported only for `array both` with identical clock, routes, order, sequence, repeat, Vmid, and reference. |
@@ -256,6 +274,15 @@ warm-up/baseline/window frames, excluding indefinite trigger-wait traffic.
 | settling_time_us | Warmup Samples | Detected device-time settling interval. |
 
 ## Important interpretations
+
+`firmware_profile.jsonl` is an optional diagnostic sidecar (runner 2.4). Each
+measured attempt records its requested mode, received frame count, original
+`profile_*` status fields, and decoded summary or parsing/reconciliation error.
+It includes warm-up. Cycle-based means/maxima use the reported CPU frequency;
+period/gap ticks are microseconds. Histogram p95/p99 values are upper bounds,
+not exact percentiles; `null` means empty data or the quantile lies above the
+last bound (64 ms). Detailed field/scope definitions are in the
+[profiling guide](../../../docs/architecture/TESTBOARD_7953_PHASE_PROFILING.md).
 
 - `duration_median_us` answers “how long did the ADC sweep itself take?”
 - `block_period_median_us` answers “how often did complete sweeps actually

@@ -238,4 +238,4 @@ sequence. A shared Display Array selector stays enabled during capture. All
 signal views use absolute indices into the complete acquired payload. Analysis
 uses an independent source-aware selector. Decay characterization is gated when
 ADS7953 physical connection timing is unavailable; live voltage preview remains
-available. See [the array guide](../docs/user/ARRAY_CONFIGURATION_GUIDE.md).
+available. See [the array guide](../docs/guides/configuration/ARRAY_CONFIGURATION_GUIDE.md).

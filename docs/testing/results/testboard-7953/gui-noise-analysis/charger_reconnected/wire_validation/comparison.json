@@ -1,0 +1,715 @@
+{
+  "session": "C:\\Code\\arduino_adc_streamer\\Arduino_Sketches\\TestBoard_7953\\benchmarks\\results\\noise_charger_reconnected_20261008",
+  "session_metadata": {
+    "baud": 460800,
+    "bias_resistor_map": "C:\\Code\\arduino_adc_streamer\\Arduino_Sketches\\TestBoard_7953\\benchmarks\\testboard_7953_bias_resistors.json",
+    "bias_resistor_routes": 50,
+    "completed_utc": "2026-10-08T19:52:59.276433+00:00",
+    "cross_mode_floor": 128,
+    "cross_mode_mad_multiplier": 6.0,
+    "defer_parsing": true,
+    "drift_timing_tolerance_pct": 10.0,
+    "firmware_profile_mode": "off",
+    "firmware_status_initial": {
+      "active_adcs": "",
+      "active_spi_buses": "",
+      "adc1_errors": "0",
+      "adc2_errors": "0",
+      "adc3_errors": "0",
+      "adc4_errors": "0",
+      "adcchannels": "",
+      "adcseq": "manual",
+      "array": "both",
+      "auto1_program_count": "0",
+      "auto1_resume_count": "0",
+      "channelrepeat_effective": "3",
+      "channelrepeat_requested": "3",
+      "dma_start_errors": "0",
+      "lpspi_start_errors": "0",
+      "profile_available": "false",
+      "profile_enabled": "false",
+      "returned_channel_errors": "0",
+      "route_count": "0",
+      "running": "false",
+      "sampling_period_max_us": "0",
+      "sampling_period_over_1ms": "0",
+      "sampling_sweeps": "0",
+      "scanorder": "interleaved",
+      "spi_clock_hz": "20000000",
+      "spiengine": "blocking",
+      "transfer_timeouts": "0",
+      "usb_frames_discarded": "0",
+      "usb_frames_sent": "0",
+      "usb_stream_policy": "discard_if_busy",
+      "usb_write_errors": "0",
+      "vmid_between_channels_effective": "false",
+      "vmid_between_channels_requested": "false",
+      "vmid_channel": "15",
+      "vmid_parking": "mandatory",
+      "vref": "2.5"
+    },
+    "git_revision": "d48b4fe44e7a18de65c5aadf92322698f1ff2cc0",
+    "host_platform": "Windows-11-10.0.26200-SP0",
+    "noise_floor": 32,
+    "noise_mad_multiplier": 3.0,
+    "port": "COM3",
+    "python_version": "3.12.11 (main, Aug  6 2025, 22:55:49) [MSC v.1944 64 bit (AMD64)]",
+    "reader_pause_at_ms": 2000,
+    "reader_pause_ms": 0,
+    "repetitions": 1,
+    "route_manifest": "C:\\Code\\arduino_adc_streamer\\Arduino_Sketches\\TestBoard_7953\\benchmarks\\testboard_7953_routes.json",
+    "route_set_filters": [
+      "all_four_full"
+    ],
+    "runner_path": "C:\\Code\\arduino_adc_streamer\\Arduino_Sketches\\TestBoard_7953\\benchmarks\\testboard_7953_benchmark.py",
+    "runner_version": "2.5",
+    "scan_order_filters": [
+      "adc"
+    ],
+    "serial_port_info": {
+      "baudrate": 460800,
+      "name": "COM3",
+      "timeout": 0.02,
+      "write_timeout": 2.0
+    },
+    "session_id": "testboard7953-20261008T195208Z",
+    "settling_stable_frames": 5,
+    "settling_tolerance_counts": 64,
+    "spi_clocks_hz": [
+      10000000
+    ],
+    "started_utc": "2026-10-08T19:52:08.555392+00:00",
+    "status": "complete",
+    "test_ids": [
+      "all_four_full__adc__manual__blocking__repeat1__vmidoff__spi10000000hz"
+    ],
+    "vmid_code": 2048,
+    "vmid_severe_tolerance": 1024,
+    "vmid_warning_tolerance": 512,
+    "warm_up_ms": 1000,
+    "warmup_export_frames": 250,
+    "window_ms": 12000
+  },
+  "method": "Raw fixed-width wire decode; post-first-second complete 20 ms bins; per-channel standard deviation; no filtering",
+  "recurrence_method": "Strongest envelope autocorrelation between 0.5 and 2 s; weak maxima are not evidence of periodic bursts",
+  "independent_channel_csv_validation": "PASS: 50 channel medians",
+  "runs": [
+    {
+      "test_id": "all_four_full__adc__manual__blocking__repeat1__vmidoff__spi10000000hz",
+      "raw": "C:\\Code\\arduino_adc_streamer\\Arduino_Sketches\\TestBoard_7953\\benchmarks\\results\\noise_charger_reconnected_20261008\\raw\\all_four_full__adc__manual__blocking__repeat1__vmidoff__spi10000000hz__r1__attempt1.bin",
+      "raw_sha256": "aaf34943df4ef73f5a8447275e0db631099b96b1eb5e1e43547c443b5bc228d5",
+      "route_set": "all_four_full",
+      "engine": "blocking",
+      "spi_clock_hz": 10000000,
+      "active_adcs": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "routes": [
+        [
+          1,
+          0
+        ],
+        [
+          1,
+          1
+        ],
+        [
+          1,
+          2
+        ],
+        [
+          1,
+          3
+        ],
+        [
+          1,
+          4
+        ],
+        [
+          1,
+          5
+        ],
+        [
+          1,
+          6
+        ],
+        [
+          1,
+          7
+        ],
+        [
+          1,
+          8
+        ],
+        [
+          1,
+          9
+        ],
+        [
+          2,
+          0
+        ],
+        [
+          2,
+          1
+        ],
+        [
+          2,
+          2
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          4
+        ],
+        [
+          2,
+          5
+        ],
+        [
+          2,
+          6
+        ],
+        [
+          2,
+          7
+        ],
+        [
+          2,
+          8
+        ],
+        [
+          2,
+          9
+        ],
+        [
+          2,
+          10
+        ],
+        [
+          2,
+          11
+        ],
+        [
+          2,
+          12
+        ],
+        [
+          2,
+          13
+        ],
+        [
+          2,
+          14
+        ],
+        [
+          3,
+          0
+        ],
+        [
+          3,
+          1
+        ],
+        [
+          3,
+          2
+        ],
+        [
+          3,
+          3
+        ],
+        [
+          3,
+          4
+        ],
+        [
+          3,
+          5
+        ],
+        [
+          3,
+          6
+        ],
+        [
+          3,
+          7
+        ],
+        [
+          3,
+          8
+        ],
+        [
+          3,
+          9
+        ],
+        [
+          4,
+          0
+        ],
+        [
+          4,
+          1
+        ],
+        [
+          4,
+          2
+        ],
+        [
+          4,
+          3
+        ],
+        [
+          4,
+          4
+        ],
+        [
+          4,
+          5
+        ],
+        [
+          4,
+          6
+        ],
+        [
+          4,
+          7
+        ],
+        [
+          4,
+          8
+        ],
+        [
+          4,
+          9
+        ],
+        [
+          4,
+          10
+        ],
+        [
+          4,
+          11
+        ],
+        [
+          4,
+          12
+        ],
+        [
+          4,
+          13
+        ],
+        [
+          4,
+          14
+        ]
+      ],
+      "sweeps": 95578,
+      "measured_sweeps": 88230,
+      "duration_s": 12.999192,
+      "received_period_median_us": 135.99999999991397,
+      "received_period_max_us": 540.000000000096,
+      "acquisition_duration_median_us": 134.0,
+      "usb_frames_discarded": 8,
+      "sampling_period_max_us": 137,
+      "sampling_period_over_1ms": 0,
+      "firmware_errors": {
+        "adc1_errors": 0,
+        "adc2_errors": 0,
+        "adc3_errors": 0,
+        "adc4_errors": 0,
+        "returned_channel_errors": 0,
+        "transfer_timeouts": 0,
+        "usb_write_errors": 0,
+        "dma_start_errors": 0,
+        "lpspi_start_errors": 0
+      },
+      "wire_integrity": "PASS",
+      "all_routes_envelope": {
+        "std_p10_counts": 0.704397418238721,
+        "std_median_counts": 0.9304179644677271,
+        "std_p95_counts": 1.522499413713193,
+        "std_max_counts": 1.6273762024304443,
+        "period_s": 1.32,
+        "autocorrelation": 0.8673083852430533
+      },
+      "adcs": {
+        "1": {
+          "std_p10_counts": 0.817223745763095,
+          "std_median_counts": 1.1971671895355238,
+          "std_p95_counts": 1.9673527740998245,
+          "std_max_counts": 2.236687702146291,
+          "period_s": 1.32,
+          "autocorrelation": 0.862435357463162,
+          "channel_baseline_median_counts": 1998.0,
+          "channel0_median_counts": 1949.0,
+          "channel0_deficit_from_other_channels_counts": 51.0
+        },
+        "2": {
+          "std_p10_counts": 0.7441630132911318,
+          "std_median_counts": 1.0102909121365269,
+          "std_p95_counts": 1.7055168175563626,
+          "std_max_counts": 1.806861088929719,
+          "period_s": 1.32,
+          "autocorrelation": 0.8685005824274741,
+          "channel_baseline_median_counts": 2022.0,
+          "channel0_median_counts": 1985.0,
+          "channel0_deficit_from_other_channels_counts": 37.5,
+          "channel11_median_counts": 1956.0,
+          "channel11_deficit_from_other_channels_counts": 66.5
+        },
+        "3": {
+          "std_p10_counts": 0.6955060369499223,
+          "std_median_counts": 0.9178314733187634,
+          "std_p95_counts": 1.5241577757778828,
+          "std_max_counts": 1.624260174118921,
+          "period_s": 1.32,
+          "autocorrelation": 0.866069134463612,
+          "channel_baseline_median_counts": 2026.5,
+          "channel0_median_counts": 1994.0,
+          "channel0_deficit_from_other_channels_counts": 33.0
+        },
+        "4": {
+          "std_p10_counts": 0.6341917803471918,
+          "std_median_counts": 0.7899871953986707,
+          "std_p95_counts": 1.239639731653756,
+          "std_max_counts": 1.3112631513514272,
+          "period_s": 1.32,
+          "autocorrelation": 0.8697299675803206,
+          "channel_baseline_median_counts": 2034.0,
+          "channel0_median_counts": 2016.0,
+          "channel0_deficit_from_other_channels_counts": 18.0,
+          "channel11_median_counts": 1986.0,
+          "channel11_deficit_from_other_channels_counts": 48.0
+        }
+      },
+      "adc_envelope_correlation_order": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "adc_envelope_correlation_matrix": [
+        [
+          1.0,
+          0.9938158683279644,
+          0.9936609726926291,
+          0.9892434512576477
+        ],
+        [
+          0.9938158683279643,
+          0.9999999999999999,
+          0.9961072904828513,
+          0.9950851380756803
+        ],
+        [
+          0.993660972692629,
+          0.9961072904828513,
+          0.9999999999999998,
+          0.9943674476662404
+        ],
+        [
+          0.9892434512576477,
+          0.9950851380756802,
+          0.9943674476662405,
+          0.9999999999999999
+        ]
+      ],
+      "channel_baselines": [
+        {
+          "adc": 1,
+          "channel": 0,
+          "median_counts": 1949.0
+        },
+        {
+          "adc": 1,
+          "channel": 1,
+          "median_counts": 1988.0
+        },
+        {
+          "adc": 1,
+          "channel": 2,
+          "median_counts": 2002.0
+        },
+        {
+          "adc": 1,
+          "channel": 3,
+          "median_counts": 2000.0
+        },
+        {
+          "adc": 1,
+          "channel": 4,
+          "median_counts": 2005.0
+        },
+        {
+          "adc": 1,
+          "channel": 5,
+          "median_counts": 2005.0
+        },
+        {
+          "adc": 1,
+          "channel": 6,
+          "median_counts": 2001.0
+        },
+        {
+          "adc": 1,
+          "channel": 7,
+          "median_counts": 1995.0
+        },
+        {
+          "adc": 1,
+          "channel": 8,
+          "median_counts": 1991.0
+        },
+        {
+          "adc": 1,
+          "channel": 9,
+          "median_counts": 1996.0
+        },
+        {
+          "adc": 2,
+          "channel": 0,
+          "median_counts": 1985.0
+        },
+        {
+          "adc": 2,
+          "channel": 1,
+          "median_counts": 2019.0
+        },
+        {
+          "adc": 2,
+          "channel": 2,
+          "median_counts": 2029.0
+        },
+        {
+          "adc": 2,
+          "channel": 3,
+          "median_counts": 2023.0
+        },
+        {
+          "adc": 2,
+          "channel": 4,
+          "median_counts": 2023.0
+        },
+        {
+          "adc": 2,
+          "channel": 5,
+          "median_counts": 2027.0
+        },
+        {
+          "adc": 2,
+          "channel": 6,
+          "median_counts": 2023.0
+        },
+        {
+          "adc": 2,
+          "channel": 7,
+          "median_counts": 2021.0
+        },
+        {
+          "adc": 2,
+          "channel": 8,
+          "median_counts": 2022.0
+        },
+        {
+          "adc": 2,
+          "channel": 9,
+          "median_counts": 2022.0
+        },
+        {
+          "adc": 2,
+          "channel": 10,
+          "median_counts": 2036.0
+        },
+        {
+          "adc": 2,
+          "channel": 11,
+          "median_counts": 1956.0
+        },
+        {
+          "adc": 2,
+          "channel": 12,
+          "median_counts": 1990.0
+        },
+        {
+          "adc": 2,
+          "channel": 13,
+          "median_counts": 2019.0
+        },
+        {
+          "adc": 2,
+          "channel": 14,
+          "median_counts": 2029.0
+        },
+        {
+          "adc": 3,
+          "channel": 0,
+          "median_counts": 1994.0
+        },
+        {
+          "adc": 3,
+          "channel": 1,
+          "median_counts": 2021.0
+        },
+        {
+          "adc": 3,
+          "channel": 2,
+          "median_counts": 2029.0
+        },
+        {
+          "adc": 3,
+          "channel": 3,
+          "median_counts": 2028.0
+        },
+        {
+          "adc": 3,
+          "channel": 4,
+          "median_counts": 2029.0
+        },
+        {
+          "adc": 3,
+          "channel": 5,
+          "median_counts": 2028.0
+        },
+        {
+          "adc": 3,
+          "channel": 6,
+          "median_counts": 2026.0
+        },
+        {
+          "adc": 3,
+          "channel": 7,
+          "median_counts": 2024.0
+        },
+        {
+          "adc": 3,
+          "channel": 8,
+          "median_counts": 2025.0
+        },
+        {
+          "adc": 3,
+          "channel": 9,
+          "median_counts": 2027.0
+        },
+        {
+          "adc": 4,
+          "channel": 0,
+          "median_counts": 2016.0
+        },
+        {
+          "adc": 4,
+          "channel": 1,
+          "median_counts": 2033.0
+        },
+        {
+          "adc": 4,
+          "channel": 2,
+          "median_counts": 2039.0
+        },
+        {
+          "adc": 4,
+          "channel": 3,
+          "median_counts": 2034.0
+        },
+        {
+          "adc": 4,
+          "channel": 4,
+          "median_counts": 2033.0
+        },
+        {
+          "adc": 4,
+          "channel": 5,
+          "median_counts": 2036.0
+        },
+        {
+          "adc": 4,
+          "channel": 6,
+          "median_counts": 2036.0
+        },
+        {
+          "adc": 4,
+          "channel": 7,
+          "median_counts": 2034.0
+        },
+        {
+          "adc": 4,
+          "channel": 8,
+          "median_counts": 2033.0
+        },
+        {
+          "adc": 4,
+          "channel": 9,
+          "median_counts": 2034.0
+        },
+        {
+          "adc": 4,
+          "channel": 10,
+          "median_counts": 2037.0
+        },
+        {
+          "adc": 4,
+          "channel": 11,
+          "median_counts": 1986.0
+        },
+        {
+          "adc": 4,
+          "channel": 12,
+          "median_counts": 2027.0
+        },
+        {
+          "adc": 4,
+          "channel": 13,
+          "median_counts": 2034.0
+        },
+        {
+          "adc": 4,
+          "channel": 14,
+          "median_counts": 2035.0
+        }
+      ],
+      "firmware_status_after": {
+        "adcchannels": "1:0,1:1,1:2,1:3,1:4,1:5,1:6,1:7,1:8,1:9,2:0,2:1,2:2,2:3,2:4,2:5,2:6,2:7,2:8,2:9,2:10,2:11,2:12,2:13,2:14,3:0,3:1,3:2,3:3,3:4,3:5,3:6,3:7,3:8,3:9,4:0,4:1,4:2,4:3,4:4,4:5,4:6,4:7,4:8,4:9,4:10,4:11,4:12,4:13,4:14",
+        "array": "both",
+        "scanorder": "adc",
+        "adcseq": "manual",
+        "spiengine": "blocking",
+        "spi_clock_hz": "10000000",
+        "channelrepeat_requested": "1",
+        "channelrepeat_effective": "1",
+        "vmid_channel": "15",
+        "vmid_between_channels_requested": "false",
+        "vmid_between_channels_effective": "false",
+        "vmid_parking": "mandatory",
+        "route_count": "50",
+        "vref": "2.5",
+        "active_adcs": "1,2,3,4",
+        "active_spi_buses": "1,2",
+        "dma_start_errors": "0",
+        "lpspi_start_errors": "0",
+        "transfer_timeouts": "0",
+        "returned_channel_errors": "0",
+        "usb_write_errors": "0",
+        "usb_stream_policy": "discard_if_busy",
+        "sampling_sweeps": "95586",
+        "usb_frames_sent": "95578",
+        "usb_frames_discarded": "8",
+        "sampling_period_max_us": "137",
+        "sampling_period_over_1ms": "0",
+        "auto1_program_count": "0",
+        "auto1_resume_count": "0",
+        "adc1_errors": "0",
+        "adc2_errors": "0",
+        "adc3_errors": "0",
+        "adc4_errors": "0",
+        "running": "false",
+        "profile_available": "false",
+        "profile_enabled": "false"
+      }
+    }
+  ]
+}

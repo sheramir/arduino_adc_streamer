@@ -1,0 +1,2045 @@
+{
+  "hardware_state": "Both strips remain unplugged; ADC VA and OPA365 powered from USB through bead/capacitors; user reports laptop charger disconnected. Windows Win32_Battery reported BatteryStatus=1 (discharging), charge 98% before capture and 96% after benchmark/analysis.",
+  "method": "Same 10 MHz blocking manual repeat-1 50-route configuration; post-first-second complete 20 ms noise-envelope bins; no filtering/interpolation.",
+  "captures": {
+    "charger_connected_reference": {
+      "wire_validation": {
+        "test_id": "all_four_full__adc__manual__blocking__repeat1__vmidoff__spi10000000hz",
+        "raw": "C:\\Code\\arduino_adc_streamer\\Arduino_Sketches\\TestBoard_7953\\benchmarks\\results\\noise_engine_topology_20261008\\raw\\all_four_full__adc__manual__blocking__repeat1__vmidoff__spi10000000hz__r1__attempt1.bin",
+        "raw_sha256": "560d88bb5c7501613b2668eee1114bd2cff5ff0e26e2e0fd32bc7b6fb2175b5d",
+        "route_set": "all_four_full",
+        "engine": "blocking",
+        "spi_clock_hz": 10000000,
+        "active_adcs": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "routes": [
+          [
+            1,
+            0
+          ],
+          [
+            1,
+            1
+          ],
+          [
+            1,
+            2
+          ],
+          [
+            1,
+            3
+          ],
+          [
+            1,
+            4
+          ],
+          [
+            1,
+            5
+          ],
+          [
+            1,
+            6
+          ],
+          [
+            1,
+            7
+          ],
+          [
+            1,
+            8
+          ],
+          [
+            1,
+            9
+          ],
+          [
+            2,
+            0
+          ],
+          [
+            2,
+            1
+          ],
+          [
+            2,
+            2
+          ],
+          [
+            2,
+            3
+          ],
+          [
+            2,
+            4
+          ],
+          [
+            2,
+            5
+          ],
+          [
+            2,
+            6
+          ],
+          [
+            2,
+            7
+          ],
+          [
+            2,
+            8
+          ],
+          [
+            2,
+            9
+          ],
+          [
+            2,
+            10
+          ],
+          [
+            2,
+            11
+          ],
+          [
+            2,
+            12
+          ],
+          [
+            2,
+            13
+          ],
+          [
+            2,
+            14
+          ],
+          [
+            3,
+            0
+          ],
+          [
+            3,
+            1
+          ],
+          [
+            3,
+            2
+          ],
+          [
+            3,
+            3
+          ],
+          [
+            3,
+            4
+          ],
+          [
+            3,
+            5
+          ],
+          [
+            3,
+            6
+          ],
+          [
+            3,
+            7
+          ],
+          [
+            3,
+            8
+          ],
+          [
+            3,
+            9
+          ],
+          [
+            4,
+            0
+          ],
+          [
+            4,
+            1
+          ],
+          [
+            4,
+            2
+          ],
+          [
+            4,
+            3
+          ],
+          [
+            4,
+            4
+          ],
+          [
+            4,
+            5
+          ],
+          [
+            4,
+            6
+          ],
+          [
+            4,
+            7
+          ],
+          [
+            4,
+            8
+          ],
+          [
+            4,
+            9
+          ],
+          [
+            4,
+            10
+          ],
+          [
+            4,
+            11
+          ],
+          [
+            4,
+            12
+          ],
+          [
+            4,
+            13
+          ],
+          [
+            4,
+            14
+          ]
+        ],
+        "sweeps": 95589,
+        "measured_sweeps": 88235,
+        "duration_s": 12.9996,
+        "received_period_median_us": 135.99999999991397,
+        "received_period_max_us": 137.00000000049783,
+        "acquisition_duration_median_us": 134.0,
+        "usb_frames_discarded": 0,
+        "sampling_period_max_us": 137,
+        "sampling_period_over_1ms": 0,
+        "firmware_errors": {
+          "adc1_errors": 0,
+          "adc2_errors": 0,
+          "adc3_errors": 0,
+          "adc4_errors": 0,
+          "returned_channel_errors": 0,
+          "transfer_timeouts": 0,
+          "usb_write_errors": 0,
+          "dma_start_errors": 0,
+          "lpspi_start_errors": 0
+        },
+        "wire_integrity": "PASS",
+        "all_routes_envelope": {
+          "std_p10_counts": 0.6793096264418605,
+          "std_median_counts": 0.8811992506474486,
+          "std_p95_counts": 1.6458443942307317,
+          "std_max_counts": 1.7108931033190231,
+          "period_s": 1.32,
+          "autocorrelation": 0.8699420734106212
+        },
+        "adcs": {
+          "1": {
+            "std_p10_counts": 0.7810516298828113,
+            "std_median_counts": 1.1243183677031172,
+            "std_p95_counts": 2.160875877830351,
+            "std_max_counts": 2.2262716811985754,
+            "period_s": 1.32,
+            "autocorrelation": 0.8683802493084245,
+            "channel_baseline_median_counts": 1998.0,
+            "channel0_median_counts": 1950.0,
+            "channel0_deficit_from_other_channels_counts": 50.0
+          },
+          "2": {
+            "std_p10_counts": 0.7126922631003764,
+            "std_median_counts": 0.9728396182997269,
+            "std_p95_counts": 1.919675787059113,
+            "std_max_counts": 1.982943765484985,
+            "period_s": 1.32,
+            "autocorrelation": 0.8685260895886412,
+            "channel_baseline_median_counts": 2022.0,
+            "channel0_median_counts": 1985.0,
+            "channel0_deficit_from_other_channels_counts": 37.5,
+            "channel11_median_counts": 1955.0,
+            "channel11_deficit_from_other_channels_counts": 67.5
+          },
+          "3": {
+            "std_p10_counts": 0.6752671845243297,
+            "std_median_counts": 0.8718743793476182,
+            "std_p95_counts": 1.6416166108661843,
+            "std_max_counts": 1.694574301778399,
+            "period_s": 1.32,
+            "autocorrelation": 0.8698201196520358,
+            "channel_baseline_median_counts": 2026.5,
+            "channel0_median_counts": 1994.0,
+            "channel0_deficit_from_other_channels_counts": 33.0
+          },
+          "4": {
+            "std_p10_counts": 0.6107629690334537,
+            "std_median_counts": 0.7509196672475772,
+            "std_p95_counts": 1.3524259691823366,
+            "std_max_counts": 1.3904234680690875,
+            "period_s": 1.32,
+            "autocorrelation": 0.8708822845339538,
+            "channel_baseline_median_counts": 2034.0,
+            "channel0_median_counts": 2016.0,
+            "channel0_deficit_from_other_channels_counts": 18.0,
+            "channel11_median_counts": 1986.0,
+            "channel11_deficit_from_other_channels_counts": 48.0
+          }
+        },
+        "adc_envelope_correlation_order": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "adc_envelope_correlation_matrix": [
+          [
+            1.0,
+            0.993666393793886,
+            0.9949355456640476,
+            0.9887913979049183
+          ],
+          [
+            0.993666393793886,
+            1.0,
+            0.9970269186006485,
+            0.996342612079169
+          ],
+          [
+            0.9949355456640476,
+            0.9970269186006486,
+            0.9999999999999999,
+            0.9948998342410148
+          ],
+          [
+            0.9887913979049182,
+            0.996342612079169,
+            0.9948998342410149,
+            1.0
+          ]
+        ],
+        "channel_baselines": [
+          {
+            "adc": 1,
+            "channel": 0,
+            "median_counts": 1950.0
+          },
+          {
+            "adc": 1,
+            "channel": 1,
+            "median_counts": 1987.0
+          },
+          {
+            "adc": 1,
+            "channel": 2,
+            "median_counts": 2002.0
+          },
+          {
+            "adc": 1,
+            "channel": 3,
+            "median_counts": 2000.0
+          },
+          {
+            "adc": 1,
+            "channel": 4,
+            "median_counts": 2005.0
+          },
+          {
+            "adc": 1,
+            "channel": 5,
+            "median_counts": 2004.0
+          },
+          {
+            "adc": 1,
+            "channel": 6,
+            "median_counts": 2001.0
+          },
+          {
+            "adc": 1,
+            "channel": 7,
+            "median_counts": 1995.0
+          },
+          {
+            "adc": 1,
+            "channel": 8,
+            "median_counts": 1991.0
+          },
+          {
+            "adc": 1,
+            "channel": 9,
+            "median_counts": 1996.0
+          },
+          {
+            "adc": 2,
+            "channel": 0,
+            "median_counts": 1985.0
+          },
+          {
+            "adc": 2,
+            "channel": 1,
+            "median_counts": 2019.0
+          },
+          {
+            "adc": 2,
+            "channel": 2,
+            "median_counts": 2029.0
+          },
+          {
+            "adc": 2,
+            "channel": 3,
+            "median_counts": 2023.0
+          },
+          {
+            "adc": 2,
+            "channel": 4,
+            "median_counts": 2023.0
+          },
+          {
+            "adc": 2,
+            "channel": 5,
+            "median_counts": 2027.0
+          },
+          {
+            "adc": 2,
+            "channel": 6,
+            "median_counts": 2023.0
+          },
+          {
+            "adc": 2,
+            "channel": 7,
+            "median_counts": 2021.0
+          },
+          {
+            "adc": 2,
+            "channel": 8,
+            "median_counts": 2022.0
+          },
+          {
+            "adc": 2,
+            "channel": 9,
+            "median_counts": 2022.0
+          },
+          {
+            "adc": 2,
+            "channel": 10,
+            "median_counts": 2036.0
+          },
+          {
+            "adc": 2,
+            "channel": 11,
+            "median_counts": 1955.0
+          },
+          {
+            "adc": 2,
+            "channel": 12,
+            "median_counts": 1990.0
+          },
+          {
+            "adc": 2,
+            "channel": 13,
+            "median_counts": 2019.0
+          },
+          {
+            "adc": 2,
+            "channel": 14,
+            "median_counts": 2029.0
+          },
+          {
+            "adc": 3,
+            "channel": 0,
+            "median_counts": 1994.0
+          },
+          {
+            "adc": 3,
+            "channel": 1,
+            "median_counts": 2021.0
+          },
+          {
+            "adc": 3,
+            "channel": 2,
+            "median_counts": 2029.0
+          },
+          {
+            "adc": 3,
+            "channel": 3,
+            "median_counts": 2028.0
+          },
+          {
+            "adc": 3,
+            "channel": 4,
+            "median_counts": 2029.0
+          },
+          {
+            "adc": 3,
+            "channel": 5,
+            "median_counts": 2028.0
+          },
+          {
+            "adc": 3,
+            "channel": 6,
+            "median_counts": 2026.0
+          },
+          {
+            "adc": 3,
+            "channel": 7,
+            "median_counts": 2024.0
+          },
+          {
+            "adc": 3,
+            "channel": 8,
+            "median_counts": 2025.0
+          },
+          {
+            "adc": 3,
+            "channel": 9,
+            "median_counts": 2027.0
+          },
+          {
+            "adc": 4,
+            "channel": 0,
+            "median_counts": 2016.0
+          },
+          {
+            "adc": 4,
+            "channel": 1,
+            "median_counts": 2033.0
+          },
+          {
+            "adc": 4,
+            "channel": 2,
+            "median_counts": 2039.0
+          },
+          {
+            "adc": 4,
+            "channel": 3,
+            "median_counts": 2034.0
+          },
+          {
+            "adc": 4,
+            "channel": 4,
+            "median_counts": 2033.0
+          },
+          {
+            "adc": 4,
+            "channel": 5,
+            "median_counts": 2036.0
+          },
+          {
+            "adc": 4,
+            "channel": 6,
+            "median_counts": 2036.0
+          },
+          {
+            "adc": 4,
+            "channel": 7,
+            "median_counts": 2034.0
+          },
+          {
+            "adc": 4,
+            "channel": 8,
+            "median_counts": 2033.0
+          },
+          {
+            "adc": 4,
+            "channel": 9,
+            "median_counts": 2034.0
+          },
+          {
+            "adc": 4,
+            "channel": 10,
+            "median_counts": 2037.0
+          },
+          {
+            "adc": 4,
+            "channel": 11,
+            "median_counts": 1986.0
+          },
+          {
+            "adc": 4,
+            "channel": 12,
+            "median_counts": 2027.0
+          },
+          {
+            "adc": 4,
+            "channel": 13,
+            "median_counts": 2034.0
+          },
+          {
+            "adc": 4,
+            "channel": 14,
+            "median_counts": 2035.0
+          }
+        ],
+        "firmware_status_after": {
+          "adcchannels": "1:0,1:1,1:2,1:3,1:4,1:5,1:6,1:7,1:8,1:9,2:0,2:1,2:2,2:3,2:4,2:5,2:6,2:7,2:8,2:9,2:10,2:11,2:12,2:13,2:14,3:0,3:1,3:2,3:3,3:4,3:5,3:6,3:7,3:8,3:9,4:0,4:1,4:2,4:3,4:4,4:5,4:6,4:7,4:8,4:9,4:10,4:11,4:12,4:13,4:14",
+          "array": "both",
+          "scanorder": "adc",
+          "adcseq": "manual",
+          "spiengine": "blocking",
+          "spi_clock_hz": "10000000",
+          "channelrepeat_requested": "1",
+          "channelrepeat_effective": "1",
+          "vmid_channel": "15",
+          "vmid_between_channels_requested": "false",
+          "vmid_between_channels_effective": "false",
+          "vmid_parking": "mandatory",
+          "route_count": "50",
+          "vref": "2.5",
+          "active_adcs": "1,2,3,4",
+          "active_spi_buses": "1,2",
+          "dma_start_errors": "0",
+          "lpspi_start_errors": "0",
+          "transfer_timeouts": "0",
+          "returned_channel_errors": "0",
+          "usb_write_errors": "0",
+          "usb_stream_policy": "discard_if_busy",
+          "sampling_sweeps": "95589",
+          "usb_frames_sent": "95589",
+          "usb_frames_discarded": "0",
+          "sampling_period_max_us": "137",
+          "sampling_period_over_1ms": "0",
+          "auto1_program_count": "0",
+          "auto1_resume_count": "0",
+          "adc1_errors": "0",
+          "adc2_errors": "0",
+          "adc3_errors": "0",
+          "adc4_errors": "0",
+          "running": "false",
+          "profile_available": "false",
+          "profile_enabled": "false"
+        }
+      },
+      "array_analysis": {
+        "sweeps": 95589,
+        "values": 4779450,
+        "duration_s": 12.9996,
+        "received_period_median_us": 135.99999999991397,
+        "received_period_max_us": 137.00000000049783,
+        "received_omission_intervals": [],
+        "noise_envelope_bin_s": 0.02,
+        "array_envelope_std_median_counts": [
+          1.039477944710631,
+          0.7973841306850912
+        ],
+        "array_envelope_std_p95_counts": [
+          2.0288661859374195,
+          1.4337869567550665
+        ],
+        "array_envelope_correlation": 0.9966723157889777,
+        "array_envelope_recurrence": [
+          {
+            "period_s": 1.32,
+            "autocorrelation": 0.8704062374873976
+          },
+          {
+            "period_s": 1.32,
+            "autocorrelation": 0.8708039173034212
+          }
+        ],
+        "channel_baselines": [
+          {
+            "adc": 1,
+            "channel": 0,
+            "median_counts": 1950.0
+          },
+          {
+            "adc": 1,
+            "channel": 1,
+            "median_counts": 1987.0
+          },
+          {
+            "adc": 1,
+            "channel": 2,
+            "median_counts": 2002.0
+          },
+          {
+            "adc": 1,
+            "channel": 3,
+            "median_counts": 2000.0
+          },
+          {
+            "adc": 1,
+            "channel": 4,
+            "median_counts": 2005.0
+          },
+          {
+            "adc": 1,
+            "channel": 5,
+            "median_counts": 2004.0
+          },
+          {
+            "adc": 1,
+            "channel": 6,
+            "median_counts": 2001.0
+          },
+          {
+            "adc": 1,
+            "channel": 7,
+            "median_counts": 1995.0
+          },
+          {
+            "adc": 1,
+            "channel": 8,
+            "median_counts": 1991.0
+          },
+          {
+            "adc": 1,
+            "channel": 9,
+            "median_counts": 1996.0
+          },
+          {
+            "adc": 2,
+            "channel": 0,
+            "median_counts": 1985.0
+          },
+          {
+            "adc": 2,
+            "channel": 1,
+            "median_counts": 2019.0
+          },
+          {
+            "adc": 2,
+            "channel": 2,
+            "median_counts": 2029.0
+          },
+          {
+            "adc": 2,
+            "channel": 3,
+            "median_counts": 2023.0
+          },
+          {
+            "adc": 2,
+            "channel": 4,
+            "median_counts": 2023.0
+          },
+          {
+            "adc": 2,
+            "channel": 5,
+            "median_counts": 2027.0
+          },
+          {
+            "adc": 2,
+            "channel": 6,
+            "median_counts": 2023.0
+          },
+          {
+            "adc": 2,
+            "channel": 7,
+            "median_counts": 2021.0
+          },
+          {
+            "adc": 2,
+            "channel": 8,
+            "median_counts": 2022.0
+          },
+          {
+            "adc": 2,
+            "channel": 9,
+            "median_counts": 2022.0
+          },
+          {
+            "adc": 2,
+            "channel": 10,
+            "median_counts": 2036.0
+          },
+          {
+            "adc": 2,
+            "channel": 11,
+            "median_counts": 1955.0
+          },
+          {
+            "adc": 2,
+            "channel": 12,
+            "median_counts": 1990.0
+          },
+          {
+            "adc": 2,
+            "channel": 13,
+            "median_counts": 2019.0
+          },
+          {
+            "adc": 2,
+            "channel": 14,
+            "median_counts": 2029.0
+          },
+          {
+            "adc": 3,
+            "channel": 0,
+            "median_counts": 1994.0
+          },
+          {
+            "adc": 3,
+            "channel": 1,
+            "median_counts": 2021.0
+          },
+          {
+            "adc": 3,
+            "channel": 2,
+            "median_counts": 2029.0
+          },
+          {
+            "adc": 3,
+            "channel": 3,
+            "median_counts": 2028.0
+          },
+          {
+            "adc": 3,
+            "channel": 4,
+            "median_counts": 2029.0
+          },
+          {
+            "adc": 3,
+            "channel": 5,
+            "median_counts": 2028.0
+          },
+          {
+            "adc": 3,
+            "channel": 6,
+            "median_counts": 2026.0
+          },
+          {
+            "adc": 3,
+            "channel": 7,
+            "median_counts": 2024.0
+          },
+          {
+            "adc": 3,
+            "channel": 8,
+            "median_counts": 2025.0
+          },
+          {
+            "adc": 3,
+            "channel": 9,
+            "median_counts": 2027.0
+          },
+          {
+            "adc": 4,
+            "channel": 0,
+            "median_counts": 2016.0
+          },
+          {
+            "adc": 4,
+            "channel": 1,
+            "median_counts": 2033.0
+          },
+          {
+            "adc": 4,
+            "channel": 2,
+            "median_counts": 2039.0
+          },
+          {
+            "adc": 4,
+            "channel": 3,
+            "median_counts": 2034.0
+          },
+          {
+            "adc": 4,
+            "channel": 4,
+            "median_counts": 2033.0
+          },
+          {
+            "adc": 4,
+            "channel": 5,
+            "median_counts": 2036.0
+          },
+          {
+            "adc": 4,
+            "channel": 6,
+            "median_counts": 2036.0
+          },
+          {
+            "adc": 4,
+            "channel": 7,
+            "median_counts": 2034.0
+          },
+          {
+            "adc": 4,
+            "channel": 8,
+            "median_counts": 2033.0
+          },
+          {
+            "adc": 4,
+            "channel": 9,
+            "median_counts": 2034.0
+          },
+          {
+            "adc": 4,
+            "channel": 10,
+            "median_counts": 2037.0
+          },
+          {
+            "adc": 4,
+            "channel": 11,
+            "median_counts": 1986.0
+          },
+          {
+            "adc": 4,
+            "channel": 12,
+            "median_counts": 2027.0
+          },
+          {
+            "adc": 4,
+            "channel": 13,
+            "median_counts": 2034.0
+          },
+          {
+            "adc": 4,
+            "channel": 14,
+            "median_counts": 2035.0
+          }
+        ],
+        "pzt5_l": [
+          {
+            "adc": 2,
+            "channel": 11,
+            "median_counts": 1955.0,
+            "other_channel_baseline_median_counts": 2022.5,
+            "deficit_from_other_channels_counts": 67.5
+          },
+          {
+            "adc": 4,
+            "channel": 11,
+            "median_counts": 1986.0,
+            "other_channel_baseline_median_counts": 2034.0,
+            "deficit_from_other_channels_counts": 48.0
+          }
+        ],
+        "per_adc_envelope_std_p95_counts": {
+          "1": 2.160875877830351,
+          "2": 1.919675787059113,
+          "3": 1.6416166108661843,
+          "4": 1.3524259691823366
+        },
+        "per_adc_envelope_correlation_matrix": [
+          [
+            1.0,
+            0.993666393793886,
+            0.9949355456640476,
+            0.9887913979049183
+          ],
+          [
+            0.993666393793886,
+            1.0,
+            0.9970269186006485,
+            0.996342612079169
+          ],
+          [
+            0.9949355456640476,
+            0.9970269186006486,
+            0.9999999999999999,
+            0.9948998342410148
+          ],
+          [
+            0.9887913979049182,
+            0.996342612079169,
+            0.9948998342410149,
+            1.0
+          ]
+        ],
+        "array_envelope_autocorrelation_at_1_32s": [
+          0.8704062374873976,
+          0.8708039173034212
+        ]
+      }
+    },
+    "battery_user_reported": {
+      "wire_validation": {
+        "test_id": "all_four_full__adc__manual__blocking__repeat1__vmidoff__spi10000000hz",
+        "raw": "C:\\Code\\arduino_adc_streamer\\Arduino_Sketches\\TestBoard_7953\\benchmarks\\results\\noise_laptop_battery_20261008\\raw\\all_four_full__adc__manual__blocking__repeat1__vmidoff__spi10000000hz__r1__attempt1.bin",
+        "raw_sha256": "0daf42fbf23817a04bd1795a979870569dc35c73bdbfc42f2704ea8f62e55395",
+        "route_set": "all_four_full",
+        "engine": "blocking",
+        "spi_clock_hz": 10000000,
+        "active_adcs": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "routes": [
+          [
+            1,
+            0
+          ],
+          [
+            1,
+            1
+          ],
+          [
+            1,
+            2
+          ],
+          [
+            1,
+            3
+          ],
+          [
+            1,
+            4
+          ],
+          [
+            1,
+            5
+          ],
+          [
+            1,
+            6
+          ],
+          [
+            1,
+            7
+          ],
+          [
+            1,
+            8
+          ],
+          [
+            1,
+            9
+          ],
+          [
+            2,
+            0
+          ],
+          [
+            2,
+            1
+          ],
+          [
+            2,
+            2
+          ],
+          [
+            2,
+            3
+          ],
+          [
+            2,
+            4
+          ],
+          [
+            2,
+            5
+          ],
+          [
+            2,
+            6
+          ],
+          [
+            2,
+            7
+          ],
+          [
+            2,
+            8
+          ],
+          [
+            2,
+            9
+          ],
+          [
+            2,
+            10
+          ],
+          [
+            2,
+            11
+          ],
+          [
+            2,
+            12
+          ],
+          [
+            2,
+            13
+          ],
+          [
+            2,
+            14
+          ],
+          [
+            3,
+            0
+          ],
+          [
+            3,
+            1
+          ],
+          [
+            3,
+            2
+          ],
+          [
+            3,
+            3
+          ],
+          [
+            3,
+            4
+          ],
+          [
+            3,
+            5
+          ],
+          [
+            3,
+            6
+          ],
+          [
+            3,
+            7
+          ],
+          [
+            3,
+            8
+          ],
+          [
+            3,
+            9
+          ],
+          [
+            4,
+            0
+          ],
+          [
+            4,
+            1
+          ],
+          [
+            4,
+            2
+          ],
+          [
+            4,
+            3
+          ],
+          [
+            4,
+            4
+          ],
+          [
+            4,
+            5
+          ],
+          [
+            4,
+            6
+          ],
+          [
+            4,
+            7
+          ],
+          [
+            4,
+            8
+          ],
+          [
+            4,
+            9
+          ],
+          [
+            4,
+            10
+          ],
+          [
+            4,
+            11
+          ],
+          [
+            4,
+            12
+          ],
+          [
+            4,
+            13
+          ],
+          [
+            4,
+            14
+          ]
+        ],
+        "sweeps": 95561,
+        "measured_sweeps": 88207,
+        "duration_s": 12.999754,
+        "received_period_median_us": 135.99999999991397,
+        "received_period_max_us": 539.999999999985,
+        "acquisition_duration_median_us": 134.0,
+        "usb_frames_discarded": 33,
+        "sampling_period_max_us": 137,
+        "sampling_period_over_1ms": 0,
+        "firmware_errors": {
+          "adc1_errors": 0,
+          "adc2_errors": 0,
+          "adc3_errors": 0,
+          "adc4_errors": 0,
+          "returned_channel_errors": 0,
+          "transfer_timeouts": 0,
+          "usb_write_errors": 0,
+          "dma_start_errors": 0,
+          "lpspi_start_errors": 0
+        },
+        "wire_integrity": "PASS",
+        "all_routes_envelope": {
+          "std_p10_counts": 1.7431197661426732,
+          "std_median_counts": 1.8179926645100513,
+          "std_p95_counts": 1.9292073875331504,
+          "std_max_counts": 2.008526524805789,
+          "period_s": 1.82,
+          "autocorrelation": 0.20336534753908622
+        },
+        "adcs": {
+          "1": {
+            "std_p10_counts": 2.5857024490162495,
+            "std_median_counts": 2.7346771166090553,
+            "std_p95_counts": 2.9715034889937315,
+            "std_max_counts": 3.0940510721412564,
+            "period_s": 1.8800000000000001,
+            "autocorrelation": 0.2147359894349139,
+            "channel_baseline_median_counts": 1998.0,
+            "channel0_median_counts": 1949.0,
+            "channel0_deficit_from_other_channels_counts": 51.0
+          },
+          "2": {
+            "std_p10_counts": 1.8268899168034876,
+            "std_median_counts": 1.9047292886966125,
+            "std_p95_counts": 2.0284758653177914,
+            "std_max_counts": 2.1390050177017885,
+            "period_s": 1.92,
+            "autocorrelation": 0.1773354430900291,
+            "channel_baseline_median_counts": 2022.0,
+            "channel0_median_counts": 1985.0,
+            "channel0_deficit_from_other_channels_counts": 37.0,
+            "channel11_median_counts": 1955.0,
+            "channel11_deficit_from_other_channels_counts": 67.0
+          },
+          "3": {
+            "std_p10_counts": 1.7427876607824706,
+            "std_median_counts": 1.818816105077195,
+            "std_p95_counts": 1.9345074899940187,
+            "std_max_counts": 2.037492826211336,
+            "period_s": 1.86,
+            "autocorrelation": 0.1826783359531262,
+            "channel_baseline_median_counts": 2025.5,
+            "channel0_median_counts": 1993.0,
+            "channel0_deficit_from_other_channels_counts": 33.0
+          },
+          "4": {
+            "std_p10_counts": 1.2226163673210901,
+            "std_median_counts": 1.2614585236674178,
+            "std_p95_counts": 1.3259135629276284,
+            "std_max_counts": 1.3792868468012802,
+            "period_s": 1.26,
+            "autocorrelation": 0.1772709121123679,
+            "channel_baseline_median_counts": 2034.0,
+            "channel0_median_counts": 2016.0,
+            "channel0_deficit_from_other_channels_counts": 18.0,
+            "channel11_median_counts": 1986.0,
+            "channel11_deficit_from_other_channels_counts": 48.0
+          }
+        },
+        "adc_envelope_correlation_order": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "adc_envelope_correlation_matrix": [
+          [
+            1.0,
+            0.7726033755399622,
+            0.8303164184904652,
+            0.6814451247365049
+          ],
+          [
+            0.7726033755399622,
+            0.9999999999999998,
+            0.7235672932885618,
+            0.6672407683681041
+          ],
+          [
+            0.8303164184904653,
+            0.7235672932885618,
+            1.0,
+            0.633208670453046
+          ],
+          [
+            0.6814451247365049,
+            0.667240768368104,
+            0.633208670453046,
+            1.0
+          ]
+        ],
+        "channel_baselines": [
+          {
+            "adc": 1,
+            "channel": 0,
+            "median_counts": 1949.0
+          },
+          {
+            "adc": 1,
+            "channel": 1,
+            "median_counts": 1987.0
+          },
+          {
+            "adc": 1,
+            "channel": 2,
+            "median_counts": 2001.0
+          },
+          {
+            "adc": 1,
+            "channel": 3,
+            "median_counts": 2000.0
+          },
+          {
+            "adc": 1,
+            "channel": 4,
+            "median_counts": 2004.0
+          },
+          {
+            "adc": 1,
+            "channel": 5,
+            "median_counts": 2004.0
+          },
+          {
+            "adc": 1,
+            "channel": 6,
+            "median_counts": 2000.0
+          },
+          {
+            "adc": 1,
+            "channel": 7,
+            "median_counts": 1994.0
+          },
+          {
+            "adc": 1,
+            "channel": 8,
+            "median_counts": 1990.0
+          },
+          {
+            "adc": 1,
+            "channel": 9,
+            "median_counts": 1996.0
+          },
+          {
+            "adc": 2,
+            "channel": 0,
+            "median_counts": 1985.0
+          },
+          {
+            "adc": 2,
+            "channel": 1,
+            "median_counts": 2018.0
+          },
+          {
+            "adc": 2,
+            "channel": 2,
+            "median_counts": 2029.0
+          },
+          {
+            "adc": 2,
+            "channel": 3,
+            "median_counts": 2022.0
+          },
+          {
+            "adc": 2,
+            "channel": 4,
+            "median_counts": 2023.0
+          },
+          {
+            "adc": 2,
+            "channel": 5,
+            "median_counts": 2027.0
+          },
+          {
+            "adc": 2,
+            "channel": 6,
+            "median_counts": 2023.0
+          },
+          {
+            "adc": 2,
+            "channel": 7,
+            "median_counts": 2020.0
+          },
+          {
+            "adc": 2,
+            "channel": 8,
+            "median_counts": 2022.0
+          },
+          {
+            "adc": 2,
+            "channel": 9,
+            "median_counts": 2022.0
+          },
+          {
+            "adc": 2,
+            "channel": 10,
+            "median_counts": 2036.0
+          },
+          {
+            "adc": 2,
+            "channel": 11,
+            "median_counts": 1955.0
+          },
+          {
+            "adc": 2,
+            "channel": 12,
+            "median_counts": 1990.0
+          },
+          {
+            "adc": 2,
+            "channel": 13,
+            "median_counts": 2019.0
+          },
+          {
+            "adc": 2,
+            "channel": 14,
+            "median_counts": 2029.0
+          },
+          {
+            "adc": 3,
+            "channel": 0,
+            "median_counts": 1993.0
+          },
+          {
+            "adc": 3,
+            "channel": 1,
+            "median_counts": 2021.0
+          },
+          {
+            "adc": 3,
+            "channel": 2,
+            "median_counts": 2029.0
+          },
+          {
+            "adc": 3,
+            "channel": 3,
+            "median_counts": 2028.0
+          },
+          {
+            "adc": 3,
+            "channel": 4,
+            "median_counts": 2029.0
+          },
+          {
+            "adc": 3,
+            "channel": 5,
+            "median_counts": 2028.0
+          },
+          {
+            "adc": 3,
+            "channel": 6,
+            "median_counts": 2025.0
+          },
+          {
+            "adc": 3,
+            "channel": 7,
+            "median_counts": 2023.0
+          },
+          {
+            "adc": 3,
+            "channel": 8,
+            "median_counts": 2024.0
+          },
+          {
+            "adc": 3,
+            "channel": 9,
+            "median_counts": 2026.0
+          },
+          {
+            "adc": 4,
+            "channel": 0,
+            "median_counts": 2016.0
+          },
+          {
+            "adc": 4,
+            "channel": 1,
+            "median_counts": 2033.0
+          },
+          {
+            "adc": 4,
+            "channel": 2,
+            "median_counts": 2039.0
+          },
+          {
+            "adc": 4,
+            "channel": 3,
+            "median_counts": 2034.0
+          },
+          {
+            "adc": 4,
+            "channel": 4,
+            "median_counts": 2033.0
+          },
+          {
+            "adc": 4,
+            "channel": 5,
+            "median_counts": 2035.0
+          },
+          {
+            "adc": 4,
+            "channel": 6,
+            "median_counts": 2035.0
+          },
+          {
+            "adc": 4,
+            "channel": 7,
+            "median_counts": 2034.0
+          },
+          {
+            "adc": 4,
+            "channel": 8,
+            "median_counts": 2033.0
+          },
+          {
+            "adc": 4,
+            "channel": 9,
+            "median_counts": 2034.0
+          },
+          {
+            "adc": 4,
+            "channel": 10,
+            "median_counts": 2037.0
+          },
+          {
+            "adc": 4,
+            "channel": 11,
+            "median_counts": 1986.0
+          },
+          {
+            "adc": 4,
+            "channel": 12,
+            "median_counts": 2026.0
+          },
+          {
+            "adc": 4,
+            "channel": 13,
+            "median_counts": 2034.0
+          },
+          {
+            "adc": 4,
+            "channel": 14,
+            "median_counts": 2035.0
+          }
+        ],
+        "firmware_status_after": {
+          "adcchannels": "1:0,1:1,1:2,1:3,1:4,1:5,1:6,1:7,1:8,1:9,2:0,2:1,2:2,2:3,2:4,2:5,2:6,2:7,2:8,2:9,2:10,2:11,2:12,2:13,2:14,3:0,3:1,3:2,3:3,3:4,3:5,3:6,3:7,3:8,3:9,4:0,4:1,4:2,4:3,4:4,4:5,4:6,4:7,4:8,4:9,4:10,4:11,4:12,4:13,4:14",
+          "array": "both",
+          "scanorder": "adc",
+          "adcseq": "manual",
+          "spiengine": "blocking",
+          "spi_clock_hz": "10000000",
+          "channelrepeat_requested": "1",
+          "channelrepeat_effective": "1",
+          "vmid_channel": "15",
+          "vmid_between_channels_requested": "false",
+          "vmid_between_channels_effective": "false",
+          "vmid_parking": "mandatory",
+          "route_count": "50",
+          "vref": "2.5",
+          "active_adcs": "1,2,3,4",
+          "active_spi_buses": "1,2",
+          "dma_start_errors": "0",
+          "lpspi_start_errors": "0",
+          "transfer_timeouts": "0",
+          "returned_channel_errors": "0",
+          "usb_write_errors": "0",
+          "usb_stream_policy": "discard_if_busy",
+          "sampling_sweeps": "95594",
+          "usb_frames_sent": "95561",
+          "usb_frames_discarded": "33",
+          "sampling_period_max_us": "137",
+          "sampling_period_over_1ms": "0",
+          "auto1_program_count": "0",
+          "auto1_resume_count": "0",
+          "adc1_errors": "0",
+          "adc2_errors": "0",
+          "adc3_errors": "0",
+          "adc4_errors": "0",
+          "running": "false",
+          "profile_available": "false",
+          "profile_enabled": "false"
+        }
+      },
+      "array_analysis": {
+        "sweeps": 95561,
+        "values": 4778050,
+        "duration_s": 12.999754,
+        "received_period_median_us": 135.99999999991397,
+        "received_period_max_us": 539.999999999985,
+        "received_omission_intervals": [
+          {
+            "before_s": 1.910708,
+            "after_s": 1.911114,
+            "interval_us": 405.99999999990644
+          },
+          {
+            "before_s": 1.911385,
+            "after_s": 1.911656,
+            "interval_us": 271.0000000001322
+          },
+          {
+            "before_s": 1.912877,
+            "after_s": 1.913147,
+            "interval_us": 269.9999999999925
+          },
+          {
+            "before_s": 2.258159,
+            "after_s": 2.258429,
+            "interval_us": 269.9999999999925
+          },
+          {
+            "before_s": 2.258429,
+            "after_s": 2.258699,
+            "interval_us": 269.9999999999925
+          },
+          {
+            "before_s": 2.329687,
+            "after_s": 2.329958,
+            "interval_us": 271.0000000001322
+          },
+          {
+            "before_s": 2.345865,
+            "after_s": 2.346135,
+            "interval_us": 269.9999999999925
+          },
+          {
+            "before_s": 2.34627,
+            "after_s": 2.346676,
+            "interval_us": 405.99999999990644
+          },
+          {
+            "before_s": 2.346811,
+            "after_s": 2.347082,
+            "interval_us": 270.99999999968816
+          },
+          {
+            "before_s": 2.347217,
+            "after_s": 2.347487,
+            "interval_us": 269.9999999999925
+          },
+          {
+            "before_s": 2.347622,
+            "after_s": 2.347893,
+            "interval_us": 271.0000000001322
+          },
+          {
+            "before_s": 2.348028,
+            "after_s": 2.348299,
+            "interval_us": 271.0000000001322
+          },
+          {
+            "before_s": 2.348434,
+            "after_s": 2.348839,
+            "interval_us": 404.99999999976666
+          },
+          {
+            "before_s": 5.507679,
+            "after_s": 5.50795,
+            "interval_us": 270.99999999968816
+          },
+          {
+            "before_s": 5.512842,
+            "after_s": 5.513113,
+            "interval_us": 270.99999999968816
+          },
+          {
+            "before_s": 5.513248,
+            "after_s": 5.513518,
+            "interval_us": 270.00000000043656
+          },
+          {
+            "before_s": 5.516913,
+            "after_s": 5.517184,
+            "interval_us": 271.00000000057634
+          },
+          {
+            "before_s": 5.545728,
+            "after_s": 5.545998,
+            "interval_us": 269.9999999995484
+          },
+          {
+            "before_s": 5.576444,
+            "after_s": 5.576714,
+            "interval_us": 269.9999999995484
+          },
+          {
+            "before_s": 5.935316,
+            "after_s": 5.935722,
+            "interval_us": 405.99999999990644
+          },
+          {
+            "before_s": 5.941973,
+            "after_s": 5.942513,
+            "interval_us": 539.999999999985
+          },
+          {
+            "before_s": 5.942647,
+            "after_s": 5.942918,
+            "interval_us": 270.99999999968816
+          },
+          {
+            "before_s": 7.758795,
+            "after_s": 7.759065,
+            "interval_us": 269.9999999995484
+          },
+          {
+            "before_s": 8.958641,
+            "after_s": 8.958912,
+            "interval_us": 270.99999999968816
+          },
+          {
+            "before_s": 9.770911,
+            "after_s": 9.771182,
+            "interval_us": 270.99999999968816
+          },
+          {
+            "before_s": 9.881466,
+            "after_s": 9.881736,
+            "interval_us": 270.00000000043656
+          },
+          {
+            "before_s": 12.792095,
+            "after_s": 12.792365,
+            "interval_us": 270.00000000043656
+          }
+        ],
+        "noise_envelope_bin_s": 0.02,
+        "array_envelope_std_median_counts": [
+          2.0628915111165833,
+          1.354058017691086
+        ],
+        "array_envelope_std_p95_counts": [
+          2.2255683250581586,
+          1.4422950816699638
+        ],
+        "array_envelope_correlation": 0.7591434181332056,
+        "array_envelope_recurrence": [
+          {
+            "period_s": 1.9000000000000001,
+            "autocorrelation": 0.17879640557777338
+          },
+          {
+            "period_s": 1.98,
+            "autocorrelation": 0.17456562031557166
+          }
+        ],
+        "channel_baselines": [
+          {
+            "adc": 1,
+            "channel": 0,
+            "median_counts": 1949.0
+          },
+          {
+            "adc": 1,
+            "channel": 1,
+            "median_counts": 1987.0
+          },
+          {
+            "adc": 1,
+            "channel": 2,
+            "median_counts": 2001.0
+          },
+          {
+            "adc": 1,
+            "channel": 3,
+            "median_counts": 2000.0
+          },
+          {
+            "adc": 1,
+            "channel": 4,
+            "median_counts": 2004.0
+          },
+          {
+            "adc": 1,
+            "channel": 5,
+            "median_counts": 2004.0
+          },
+          {
+            "adc": 1,
+            "channel": 6,
+            "median_counts": 2000.0
+          },
+          {
+            "adc": 1,
+            "channel": 7,
+            "median_counts": 1994.0
+          },
+          {
+            "adc": 1,
+            "channel": 8,
+            "median_counts": 1990.0
+          },
+          {
+            "adc": 1,
+            "channel": 9,
+            "median_counts": 1996.0
+          },
+          {
+            "adc": 2,
+            "channel": 0,
+            "median_counts": 1985.0
+          },
+          {
+            "adc": 2,
+            "channel": 1,
+            "median_counts": 2018.0
+          },
+          {
+            "adc": 2,
+            "channel": 2,
+            "median_counts": 2029.0
+          },
+          {
+            "adc": 2,
+            "channel": 3,
+            "median_counts": 2022.0
+          },
+          {
+            "adc": 2,
+            "channel": 4,
+            "median_counts": 2023.0
+          },
+          {
+            "adc": 2,
+            "channel": 5,
+            "median_counts": 2027.0
+          },
+          {
+            "adc": 2,
+            "channel": 6,
+            "median_counts": 2023.0
+          },
+          {
+            "adc": 2,
+            "channel": 7,
+            "median_counts": 2020.0
+          },
+          {
+            "adc": 2,
+            "channel": 8,
+            "median_counts": 2022.0
+          },
+          {
+            "adc": 2,
+            "channel": 9,
+            "median_counts": 2022.0
+          },
+          {
+            "adc": 2,
+            "channel": 10,
+            "median_counts": 2036.0
+          },
+          {
+            "adc": 2,
+            "channel": 11,
+            "median_counts": 1955.0
+          },
+          {
+            "adc": 2,
+            "channel": 12,
+            "median_counts": 1990.0
+          },
+          {
+            "adc": 2,
+            "channel": 13,
+            "median_counts": 2019.0
+          },
+          {
+            "adc": 2,
+            "channel": 14,
+            "median_counts": 2029.0
+          },
+          {
+            "adc": 3,
+            "channel": 0,
+            "median_counts": 1993.0
+          },
+          {
+            "adc": 3,
+            "channel": 1,
+            "median_counts": 2021.0
+          },
+          {
+            "adc": 3,
+            "channel": 2,
+            "median_counts": 2029.0
+          },
+          {
+            "adc": 3,
+            "channel": 3,
+            "median_counts": 2028.0
+          },
+          {
+            "adc": 3,
+            "channel": 4,
+            "median_counts": 2029.0
+          },
+          {
+            "adc": 3,
+            "channel": 5,
+            "median_counts": 2028.0
+          },
+          {
+            "adc": 3,
+            "channel": 6,
+            "median_counts": 2025.0
+          },
+          {
+            "adc": 3,
+            "channel": 7,
+            "median_counts": 2023.0
+          },
+          {
+            "adc": 3,
+            "channel": 8,
+            "median_counts": 2024.0
+          },
+          {
+            "adc": 3,
+            "channel": 9,
+            "median_counts": 2026.0
+          },
+          {
+            "adc": 4,
+            "channel": 0,
+            "median_counts": 2016.0
+          },
+          {
+            "adc": 4,
+            "channel": 1,
+            "median_counts": 2033.0
+          },
+          {
+            "adc": 4,
+            "channel": 2,
+            "median_counts": 2039.0
+          },
+          {
+            "adc": 4,
+            "channel": 3,
+            "median_counts": 2034.0
+          },
+          {
+            "adc": 4,
+            "channel": 4,
+            "median_counts": 2033.0
+          },
+          {
+            "adc": 4,
+            "channel": 5,
+            "median_counts": 2035.0
+          },
+          {
+            "adc": 4,
+            "channel": 6,
+            "median_counts": 2035.0
+          },
+          {
+            "adc": 4,
+            "channel": 7,
+            "median_counts": 2034.0
+          },
+          {
+            "adc": 4,
+            "channel": 8,
+            "median_counts": 2033.0
+          },
+          {
+            "adc": 4,
+            "channel": 9,
+            "median_counts": 2034.0
+          },
+          {
+            "adc": 4,
+            "channel": 10,
+            "median_counts": 2037.0
+          },
+          {
+            "adc": 4,
+            "channel": 11,
+            "median_counts": 1986.0
+          },
+          {
+            "adc": 4,
+            "channel": 12,
+            "median_counts": 2026.0
+          },
+          {
+            "adc": 4,
+            "channel": 13,
+            "median_counts": 2034.0
+          },
+          {
+            "adc": 4,
+            "channel": 14,
+            "median_counts": 2035.0
+          }
+        ],
+        "pzt5_l": [
+          {
+            "adc": 2,
+            "channel": 11,
+            "median_counts": 1955.0,
+            "other_channel_baseline_median_counts": 2022.0,
+            "deficit_from_other_channels_counts": 67.0
+          },
+          {
+            "adc": 4,
+            "channel": 11,
+            "median_counts": 1986.0,
+            "other_channel_baseline_median_counts": 2034.0,
+            "deficit_from_other_channels_counts": 48.0
+          }
+        ],
+        "per_adc_envelope_std_p95_counts": {
+          "1": 2.9715034889937315,
+          "2": 2.0284758653177914,
+          "3": 1.9345074899940187,
+          "4": 1.3259135629276284
+        },
+        "per_adc_envelope_correlation_matrix": [
+          [
+            1.0,
+            0.7726033755399622,
+            0.8303164184904652,
+            0.6814451247365049
+          ],
+          [
+            0.7726033755399622,
+            0.9999999999999998,
+            0.7235672932885618,
+            0.6672407683681041
+          ],
+          [
+            0.8303164184904653,
+            0.7235672932885618,
+            1.0,
+            0.633208670453046
+          ],
+          [
+            0.6814451247365049,
+            0.667240768368104,
+            0.633208670453046,
+            1.0
+          ]
+        ],
+        "array_envelope_autocorrelation_at_1_32s": [
+          0.10968600432591294,
+          0.1376161882265094
+        ]
+      }
+    }
+  },
+  "limitations": "Separate runs, not an immediate charger A/B/A; battery condition reported by user, no simultaneous rail or USB traffic measurements. Autocorrelation maxima alone do not establish periodicity when weak."
+}

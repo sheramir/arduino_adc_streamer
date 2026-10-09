@@ -1,0 +1,172 @@
+[
+  {
+    "width": 50,
+    "target_rate": 12000,
+    "duration_s": 5.0,
+    "tab": "Time Series",
+    "filters": true,
+    "stall": false,
+    "expected": 60000,
+    "received": 60000,
+    "written": 60000,
+    "complete": true,
+    "interruption": null,
+    "heartbeat_p95_ms": 33.11156001873311,
+    "heartbeat_max_ms": 75.00939979217947,
+    "max_raw_bytes": 27360,
+    "max_decoded_sweeps": 600,
+    "max_archive_sweeps": 623,
+    "decoder": {
+      "raw": {
+        "items": 0,
+        "bytes": 0,
+        "sweeps": 0,
+        "oldest_age_s": 0.0
+      },
+      "read_interval_max_s": 0.2485821999143809,
+      "decode_age_max_s": 0.0031392001546919346,
+      "accepted_frames": 60000,
+      "parser_rejections": 0,
+      "trailing_capture_bytes": 0
+    },
+    "worker_duration_max_ms": 41.68829997070134,
+    "render_duration_ms": 19.804100040346384,
+    "reload_verified": null
+  },
+  {
+    "width": 50,
+    "target_rate": 17000,
+    "duration_s": 5.0,
+    "tab": "Time Series",
+    "filters": true,
+    "stall": false,
+    "expected": 85000,
+    "received": 85000,
+    "written": 85000,
+    "complete": true,
+    "interruption": null,
+    "heartbeat_p95_ms": 45.17510992009192,
+    "heartbeat_max_ms": 88.49200000986457,
+    "max_raw_bytes": 38760,
+    "max_decoded_sweeps": 680,
+    "max_archive_sweeps": 823,
+    "decoder": {
+      "raw": {
+        "items": 0,
+        "bytes": 0,
+        "sweeps": 0,
+        "oldest_age_s": 0.0
+      },
+      "read_interval_max_s": 0.23534520016983151,
+      "decode_age_max_s": 0.002887600101530552,
+      "accepted_frames": 85000,
+      "parser_rejections": 0,
+      "trailing_capture_bytes": 0
+    },
+    "worker_duration_max_ms": 52.34699998982251,
+    "render_duration_ms": 20.452999975532293,
+    "reload_verified": null
+  },
+  {
+    "width": 10,
+    "target_rate": 60000,
+    "duration_s": 5.0,
+    "tab": "Time Series",
+    "filters": true,
+    "stall": false,
+    "expected": 300000,
+    "received": 300000,
+    "written": 300000,
+    "complete": true,
+    "interruption": null,
+    "heartbeat_p95_ms": 25.968129967804998,
+    "heartbeat_max_ms": 70.07659994997084,
+    "max_raw_bytes": 40800,
+    "max_decoded_sweeps": 1500,
+    "max_archive_sweeps": 1500,
+    "decoder": {
+      "raw": {
+        "items": 0,
+        "bytes": 0,
+        "sweeps": 0,
+        "oldest_age_s": 0.0
+      },
+      "read_interval_max_s": 0.24777269992046058,
+      "decode_age_max_s": 0.005165300099179149,
+      "accepted_frames": 300000,
+      "parser_rejections": 0,
+      "trailing_capture_bytes": 0
+    },
+    "worker_duration_max_ms": 53.7922999355942,
+    "render_duration_ms": 8.154500043019652,
+    "reload_verified": null
+  },
+  {
+    "width": 50,
+    "target_rate": 20000,
+    "duration_s": 5.0,
+    "tab": "Time Series",
+    "filters": true,
+    "stall": false,
+    "expected": 100000,
+    "received": 100000,
+    "written": 100000,
+    "complete": true,
+    "interruption": null,
+    "heartbeat_p95_ms": 42.08992992062122,
+    "heartbeat_max_ms": 96.31929988972843,
+    "max_raw_bytes": 45600,
+    "max_decoded_sweeps": 800,
+    "max_archive_sweeps": 1143,
+    "decoder": {
+      "raw": {
+        "items": 0,
+        "bytes": 0,
+        "sweeps": 0,
+        "oldest_age_s": 0.0
+      },
+      "read_interval_max_s": 0.25740640005096793,
+      "decode_age_max_s": 0.007146900054067373,
+      "accepted_frames": 100000,
+      "parser_rejections": 0,
+      "trailing_capture_bytes": 0
+    },
+    "worker_duration_max_ms": 57.09789996035397,
+    "render_duration_ms": 29.155900003388524,
+    "reload_verified": null
+  },
+  {
+    "width": 10,
+    "target_rate": 75000,
+    "duration_s": 5.0,
+    "tab": "Time Series",
+    "filters": true,
+    "stall": false,
+    "expected": 375000,
+    "received": 375000,
+    "written": 375000,
+    "complete": true,
+    "interruption": null,
+    "heartbeat_p95_ms": 34.24952006898822,
+    "heartbeat_max_ms": 67.64609995298088,
+    "max_raw_bytes": 127500,
+    "max_decoded_sweeps": 3750,
+    "max_archive_sweeps": 1500,
+    "decoder": {
+      "raw": {
+        "items": 0,
+        "bytes": 0,
+        "sweeps": 0,
+        "oldest_age_s": 0.0
+      },
+      "read_interval_max_s": 0.24974439991638064,
+      "decode_age_max_s": 0.006152000045403838,
+      "accepted_frames": 375000,
+      "parser_rejections": 0,
+      "trailing_capture_bytes": 0
+    },
+    "worker_duration_max_ms": 61.432299902662635,
+    "render_duration_ms": 12.85729999653995,
+    "reload_verified": null
+  }
+]

@@ -1,0 +1,338 @@
+[
+  {
+    "setting": "both_strips_connected",
+    "sweeps": 152107,
+    "duration_s": 20.686523,
+    "array_envelope_p50_p95_max_counts": [
+      [
+        0.4884272493379288,
+        0.4679654968815002
+      ],
+      [
+        0.6222266046020393,
+        0.5233036566196045
+      ],
+      [
+        0.7433111162394346,
+        0.6119062213642638
+      ]
+    ],
+    "cross_array_envelope_correlation": 0.9024835267253227,
+    "ADC2_ADC4_channel11_medians": [
+      1946.0,
+      1978.0
+    ],
+    "other_ADC2_ADC4_channel_medians": [
+      2039.0,
+      2040.5
+    ],
+    "per_adc": [
+      {
+        "adc": 1,
+        "bias_resistor_ohms": 1000000,
+        "envelope_p50_p95_max_counts": [
+          0.5217286543211028,
+          0.7356789401192911,
+          0.8836634754457886
+        ],
+        "median_channel_baseline_counts": 2027.5,
+        "channel0_baseline_counts": 2022.0,
+        "channel11_baseline_counts": null,
+        "recurrence_s": 1.32,
+        "recurrence_correlation": 0.8351758766141316
+      },
+      {
+        "adc": 2,
+        "bias_resistor_ohms": 470000,
+        "envelope_p50_p95_max_counts": [
+          0.46104418120563706,
+          0.5688007043113985,
+          0.69262660840807
+        ],
+        "median_channel_baseline_counts": 2039.0,
+        "channel0_baseline_counts": 2037.0,
+        "channel11_baseline_counts": 1946.0,
+        "recurrence_s": 1.32,
+        "recurrence_correlation": 0.8161403779301366
+      },
+      {
+        "adc": 3,
+        "bias_resistor_ohms": 470000,
+        "envelope_p50_p95_max_counts": [
+          0.49509165115938825,
+          0.5997002455257783,
+          0.7075320163037464
+        ],
+        "median_channel_baseline_counts": 2039.5,
+        "channel0_baseline_counts": 2035.0,
+        "channel11_baseline_counts": null,
+        "recurrence_s": 1.32,
+        "recurrence_correlation": 0.8223781265686875
+      },
+      {
+        "adc": 4,
+        "bias_resistor_ohms": 249000,
+        "envelope_p50_p95_max_counts": [
+          0.4354738784762522,
+          0.49653537797992947,
+          0.5338246734962343
+        ],
+        "median_channel_baseline_counts": 2040.0,
+        "channel0_baseline_counts": 2042.0,
+        "channel11_baseline_counts": 1978.0,
+        "recurrence_s": 1.32,
+        "recurrence_correlation": 0.6760495884014184
+      }
+    ],
+    "adc_envelope_correlations": [
+      [
+        1.0,
+        0.9092737283022608,
+        0.9160442938029185,
+        0.8127874789536437
+      ],
+      [
+        0.9092737283022608,
+        1.0,
+        0.9232877034055076,
+        0.8087840125317152
+      ],
+      [
+        0.9160442938029185,
+        0.9232877034055076,
+        1.0,
+        0.8039980276913244
+      ],
+      [
+        0.8127874789536436,
+        0.8087840125317152,
+        0.8039980276913244,
+        0.9999999999999998
+      ]
+    ]
+  },
+  {
+    "setting": "array1_strip_disconnected",
+    "sweeps": 167552,
+    "duration_s": 22.786707,
+    "array_envelope_p50_p95_max_counts": [
+      [
+        1.0713089735380508,
+        0.472917650629925
+      ],
+      [
+        1.8044380044313748,
+        0.5039772120091428
+      ],
+      [
+        1.8616534115289929,
+        0.5243133436609081
+      ]
+    ],
+    "cross_array_envelope_correlation": 0.8265222803457501,
+    "ADC2_ADC4_channel11_medians": [
+      1956.0,
+      1978.0
+    ],
+    "other_ADC2_ADC4_channel_medians": [
+      2022.5,
+      2040.5
+    ],
+    "per_adc": [
+      {
+        "adc": 1,
+        "bias_resistor_ohms": 1000000,
+        "envelope_p50_p95_max_counts": [
+          1.1829640856609838,
+          1.9444465810606333,
+          2.0359371649399556
+        ],
+        "median_channel_baseline_counts": 1998.0,
+        "channel0_baseline_counts": 1950.0,
+        "channel11_baseline_counts": null,
+        "recurrence_s": 1.32,
+        "recurrence_correlation": 0.917832504619114
+      },
+      {
+        "adc": 2,
+        "bias_resistor_ohms": 470000,
+        "envelope_p50_p95_max_counts": [
+          0.999906807697481,
+          1.7116853211892933,
+          1.768178741495552
+        ],
+        "median_channel_baseline_counts": 2022.0,
+        "channel0_baseline_counts": 1985.0,
+        "channel11_baseline_counts": 1956.0,
+        "recurrence_s": 1.32,
+        "recurrence_correlation": 0.9193452761478251
+      },
+      {
+        "adc": 3,
+        "bias_resistor_ohms": 470000,
+        "envelope_p50_p95_max_counts": [
+          0.5026484558366906,
+          0.5671287516622079,
+          0.6004912275765022
+        ],
+        "median_channel_baseline_counts": 2040.0,
+        "channel0_baseline_counts": 2035.0,
+        "channel11_baseline_counts": null,
+        "recurrence_s": 1.32,
+        "recurrence_correlation": 0.7453304731031682
+      },
+      {
+        "adc": 4,
+        "bias_resistor_ohms": 249000,
+        "envelope_p50_p95_max_counts": [
+          0.4231005452395176,
+          0.4790063342323583,
+          0.49909059036298503
+        ],
+        "median_channel_baseline_counts": 2040.0,
+        "channel0_baseline_counts": 2042.0,
+        "channel11_baseline_counts": 1978.0,
+        "recurrence_s": 1.32,
+        "recurrence_correlation": 0.6884736795093919
+      }
+    ],
+    "adc_envelope_correlations": [
+      [
+        0.9999999999999999,
+        0.9938699213109526,
+        0.887801160141399,
+        0.7993440772717847
+      ],
+      [
+        0.9938699213109526,
+        1.0,
+        0.8678389283984713,
+        0.7767831159604338
+      ],
+      [
+        0.8878011601413989,
+        0.8678389283984713,
+        0.9999999999999998,
+        0.8056166713531658
+      ],
+      [
+        0.7993440772717846,
+        0.7767831159604338,
+        0.8056166713531658,
+        1.0
+      ]
+    ]
+  },
+  {
+    "setting": "both_strips_disconnected",
+    "sweeps": 147191,
+    "duration_s": 20.020179,
+    "array_envelope_p50_p95_max_counts": [
+      [
+        1.0958193528355926,
+        0.8358409758957146
+      ],
+      [
+        1.8995729925814406,
+        1.3555164108277198
+      ],
+      [
+        1.939635101194322,
+        1.4053892039748803
+      ]
+    ],
+    "cross_array_envelope_correlation": 0.9955782610322518,
+    "ADC2_ADC4_channel11_medians": [
+      1955.0,
+      1986.0
+    ],
+    "other_ADC2_ADC4_channel_medians": [
+      2022.5,
+      2034.0
+    ],
+    "per_adc": [
+      {
+        "adc": 1,
+        "bias_resistor_ohms": 1000000,
+        "envelope_p50_p95_max_counts": [
+          1.2017000135109877,
+          2.0278710336879846,
+          2.0884141810428547
+        ],
+        "median_channel_baseline_counts": 1998.0,
+        "channel0_baseline_counts": 1950.0,
+        "channel11_baseline_counts": null,
+        "recurrence_s": 1.32,
+        "recurrence_correlation": 0.9079223736730963
+      },
+      {
+        "adc": 2,
+        "bias_resistor_ohms": 470000,
+        "envelope_p50_p95_max_counts": [
+          1.039253798520486,
+          1.7956215708911913,
+          1.8689473799471386
+        ],
+        "median_channel_baseline_counts": 2022.0,
+        "channel0_baseline_counts": 1985.0,
+        "channel11_baseline_counts": 1955.0,
+        "recurrence_s": 1.32,
+        "recurrence_correlation": 0.9087756334034213
+      },
+      {
+        "adc": 3,
+        "bias_resistor_ohms": 470000,
+        "envelope_p50_p95_max_counts": [
+          0.9237286863611492,
+          1.55468731294645,
+          1.5959677806465926
+        ],
+        "median_channel_baseline_counts": 2026.5,
+        "channel0_baseline_counts": 1994.0,
+        "channel11_baseline_counts": null,
+        "recurrence_s": 1.32,
+        "recurrence_correlation": 0.9086357919469458
+      },
+      {
+        "adc": 4,
+        "bias_resistor_ohms": 249000,
+        "envelope_p50_p95_max_counts": [
+          0.7958048610968016,
+          1.2839010189590223,
+          1.3314682697076508
+        ],
+        "median_channel_baseline_counts": 2034.0,
+        "channel0_baseline_counts": 2016.0,
+        "channel11_baseline_counts": 1986.0,
+        "recurrence_s": 1.32,
+        "recurrence_correlation": 0.908048834229757
+      }
+    ],
+    "adc_envelope_correlations": [
+      [
+        0.9999999999999999,
+        0.9921118303883113,
+        0.9934914822942709,
+        0.9857642097981097
+      ],
+      [
+        0.9921118303883112,
+        0.9999999999999999,
+        0.9967066605610578,
+        0.9951944268438213
+      ],
+      [
+        0.9934914822942709,
+        0.9967066605610577,
+        1.0,
+        0.9939700906791613
+      ],
+      [
+        0.9857642097981097,
+        0.9951944268438213,
+        0.9939700906791613,
+        1.0
+      ]
+    ]
+  }
+]

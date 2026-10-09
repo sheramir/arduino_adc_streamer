@@ -1,0 +1,125 @@
+{
+  "test_id": "hold_adc3__adc__manual__blocking__repeat1__vmidon__spi5000000hz",
+  "raw": "C:\\Code\\arduino_adc_streamer\\Arduino_Sketches\\TestBoard_7953\\benchmarks\\results\\channel11_four_adc_20261009\\raw\\hold_adc3__adc__manual__blocking__repeat1__vmidon__spi5000000hz__r1__attempt1.bin",
+  "raw_sha256": "a25b6614de8ac6192186ebce5a9882521863aa14b37ba46364791bab2eae27ad",
+  "route_set": "hold_adc3",
+  "engine": "blocking",
+  "spi_clock_hz": 5000000,
+  "active_adcs": [
+    3
+  ],
+  "routes": [
+    [
+      3,
+      11
+    ]
+  ],
+  "sweeps": 974558,
+  "measured_sweeps": 899589,
+  "duration_s": 12.999518,
+  "received_period_median_us": 13.000000000040757,
+  "received_period_max_us": 18.000000000739647,
+  "acquisition_duration_median_us": 12.0,
+  "usb_frames_discarded": 0,
+  "sampling_period_max_us": 18,
+  "sampling_period_over_1ms": 0,
+  "firmware_errors": {
+    "adc1_errors": 0,
+    "adc2_errors": 0,
+    "adc3_errors": 0,
+    "adc4_errors": 0,
+    "returned_channel_errors": 0,
+    "transfer_timeouts": 0,
+    "usb_write_errors": 0,
+    "dma_start_errors": 0,
+    "lpspi_start_errors": 0
+  },
+  "wire_integrity": "PASS",
+  "all_routes_envelope": {
+    "std_p10_counts": 1.072894085531571,
+    "std_median_counts": 1.2932868227797265,
+    "std_p95_counts": 2.2081409510049,
+    "std_max_counts": 2.2670412792178882,
+    "period_s": 1.32,
+    "autocorrelation": 0.8728320321536248
+  },
+  "adcs": {
+    "3": {
+      "std_p10_counts": 1.072894085531571,
+      "std_median_counts": 1.2932868227797265,
+      "std_p95_counts": 2.2081409510049,
+      "std_max_counts": 2.2670412792178882,
+      "period_s": 1.32,
+      "autocorrelation": 0.8728320321536248,
+      "channel_baseline_median_counts": 1924.0,
+      "channel11_median_counts": 1924.0,
+      "channel11_deficit_from_other_channels_counts": null
+    }
+  },
+  "adc_envelope_correlation_order": [
+    3
+  ],
+  "adc_envelope_correlation_matrix": null,
+  "channel_baselines": [
+    {
+      "adc": 3,
+      "channel": 11,
+      "median_counts": 1924.0
+    }
+  ],
+  "firmware_status_after": {
+    "diagnostic_reference_routes": "true",
+    "adcchannels": "3:11",
+    "array": "both",
+    "scanorder": "adc",
+    "adcseq": "manual",
+    "spiengine": "blocking",
+    "spi_clock_hz": "5000000",
+    "channelrepeat_requested": "1",
+    "channelrepeat_effective": "1",
+    "vmid_channel": "15",
+    "vmid_between_channels_requested": "true",
+    "vmid_between_channels_effective": "true",
+    "vmid_parking": "mandatory",
+    "route_count": "1",
+    "vref": "2.5",
+    "active_adcs": "3",
+    "active_spi_buses": "2",
+    "dma_start_errors": "0",
+    "lpspi_start_errors": "0",
+    "transfer_timeouts": "0",
+    "returned_channel_errors": "0",
+    "usb_write_errors": "0",
+    "usb_stream_policy": "discard_if_busy",
+    "sampling_sweeps": "974558",
+    "usb_frames_sent": "974558",
+    "usb_frames_discarded": "0",
+    "sampling_period_max_us": "18",
+    "sampling_period_over_1ms": "0",
+    "auto1_program_count": "0",
+    "auto1_resume_count": "0",
+    "adc1_errors": "0",
+    "adc2_errors": "0",
+    "adc3_errors": "0",
+    "adc4_errors": "0",
+    "running": "false",
+    "profile_available": "false",
+    "profile_enabled": "false"
+  },
+  "group": "hold_adc3",
+  "vmid": true,
+  "sequence_number": 11,
+  "channels_mV": [
+    {
+      "adc": 3,
+      "channel": 11,
+      "median_mV": 1174.31640625,
+      "mean_mV": 1174.7107622289873,
+      "ac_rms_mV": 0.949324779597946,
+      "pp_mV": 6.7138671875,
+      "p05_mV": 1173.095703125,
+      "p95_mV": 1176.1474609375
+    }
+  ],
+  "independent_frame_sample_validation": "PASS: every sample equals benchmark parser output"
+}

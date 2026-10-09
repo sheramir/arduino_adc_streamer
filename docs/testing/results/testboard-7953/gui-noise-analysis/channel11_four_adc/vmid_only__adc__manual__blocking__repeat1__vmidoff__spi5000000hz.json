@@ -1,0 +1,238 @@
+{
+  "test_id": "vmid_only__adc__manual__blocking__repeat1__vmidoff__spi5000000hz",
+  "raw": "C:\\Code\\arduino_adc_streamer\\Arduino_Sketches\\TestBoard_7953\\benchmarks\\results\\channel11_four_adc_20261009\\raw\\vmid_only__adc__manual__blocking__repeat1__vmidoff__spi5000000hz__r1__attempt1.bin",
+  "raw_sha256": "d2deecd6d5a9e4a625ac95c18d7ad6c27b7a84f6255da36b846988eda9142d19",
+  "route_set": "vmid_only",
+  "engine": "blocking",
+  "spi_clock_hz": 5000000,
+  "active_adcs": [
+    1,
+    2,
+    3,
+    4
+  ],
+  "routes": [
+    [
+      1,
+      15
+    ],
+    [
+      2,
+      15
+    ],
+    [
+      3,
+      15
+    ],
+    [
+      4,
+      15
+    ]
+  ],
+  "sweeps": 265969,
+  "measured_sweeps": 245509,
+  "duration_s": 12.999909,
+  "received_period_median_us": 48.99999999974369,
+  "received_period_max_us": 54.00000000044258,
+  "acquisition_duration_median_us": 48.0,
+  "usb_frames_discarded": 0,
+  "sampling_period_max_us": 54,
+  "sampling_period_over_1ms": 0,
+  "firmware_errors": {
+    "adc1_errors": 0,
+    "adc2_errors": 0,
+    "adc3_errors": 0,
+    "adc4_errors": 0,
+    "returned_channel_errors": 0,
+    "transfer_timeouts": 0,
+    "usb_write_errors": 0,
+    "dma_start_errors": 0,
+    "lpspi_start_errors": 0
+  },
+  "wire_integrity": "PASS",
+  "all_routes_envelope": {
+    "std_p10_counts": 0.4420107925758934,
+    "std_median_counts": 0.452767400369552,
+    "std_p95_counts": 0.46535001760457806,
+    "std_max_counts": 0.48002731278991867,
+    "period_s": 1.3,
+    "autocorrelation": 0.1813086108014196
+  },
+  "adcs": {
+    "1": {
+      "std_p10_counts": 0.469627324673669,
+      "std_median_counts": 0.4789544680080256,
+      "std_p95_counts": 0.488616275920282,
+      "std_max_counts": 0.4946378177867053,
+      "period_s": 1.74,
+      "autocorrelation": 0.09923409313683211,
+      "channel_baseline_median_counts": 2046.0
+    },
+    "2": {
+      "std_p10_counts": 0.40965489638012853,
+      "std_median_counts": 0.42736750443137866,
+      "std_p95_counts": 0.4489228362755346,
+      "std_max_counts": 0.4725556934961034,
+      "period_s": 1.3,
+      "autocorrelation": 0.15154696547340915,
+      "channel_baseline_median_counts": 2046.0
+    },
+    "3": {
+      "std_p10_counts": 0.5381754097969735,
+      "std_median_counts": 0.556107002152157,
+      "std_p95_counts": 0.584014845688844,
+      "std_max_counts": 0.6010880716968506,
+      "period_s": 1.34,
+      "autocorrelation": 0.11171013019531431,
+      "channel_baseline_median_counts": 2046.0
+    },
+    "4": {
+      "std_p10_counts": 0.19802950859533486,
+      "std_median_counts": 0.2373154345291232,
+      "std_p95_counts": 0.28801007940557444,
+      "std_max_counts": 0.3391847033755777,
+      "period_s": 1.32,
+      "autocorrelation": 0.32062727998169593,
+      "channel_baseline_median_counts": 2047.0
+    }
+  },
+  "adc_envelope_correlation_order": [
+    1,
+    2,
+    3,
+    4
+  ],
+  "adc_envelope_correlation_matrix": [
+    [
+      1.0,
+      0.1389791325429308,
+      0.07076216931138445,
+      0.17664707138788738
+    ],
+    [
+      0.1389791325429308,
+      0.9999999999999999,
+      0.10285206419694636,
+      0.29566348022771455
+    ],
+    [
+      0.07076216931138445,
+      0.10285206419694636,
+      1.0,
+      0.2092149903211119
+    ],
+    [
+      0.17664707138788738,
+      0.2956634802277145,
+      0.20921499032111193,
+      1.0
+    ]
+  ],
+  "channel_baselines": [
+    {
+      "adc": 1,
+      "channel": 15,
+      "median_counts": 2046.0
+    },
+    {
+      "adc": 2,
+      "channel": 15,
+      "median_counts": 2046.0
+    },
+    {
+      "adc": 3,
+      "channel": 15,
+      "median_counts": 2046.0
+    },
+    {
+      "adc": 4,
+      "channel": 15,
+      "median_counts": 2047.0
+    }
+  ],
+  "firmware_status_after": {
+    "diagnostic_reference_routes": "true",
+    "adcchannels": "1:15,2:15,3:15,4:15",
+    "array": "both",
+    "scanorder": "adc",
+    "adcseq": "manual",
+    "spiengine": "blocking",
+    "spi_clock_hz": "5000000",
+    "channelrepeat_requested": "1",
+    "channelrepeat_effective": "1",
+    "vmid_channel": "15",
+    "vmid_between_channels_requested": "false",
+    "vmid_between_channels_effective": "false",
+    "vmid_parking": "mandatory",
+    "route_count": "4",
+    "vref": "2.5",
+    "active_adcs": "1,2,3,4",
+    "active_spi_buses": "1,2",
+    "dma_start_errors": "0",
+    "lpspi_start_errors": "0",
+    "transfer_timeouts": "0",
+    "returned_channel_errors": "0",
+    "usb_write_errors": "0",
+    "usb_stream_policy": "discard_if_busy",
+    "sampling_sweeps": "265969",
+    "usb_frames_sent": "265969",
+    "usb_frames_discarded": "0",
+    "sampling_period_max_us": "54",
+    "sampling_period_over_1ms": "0",
+    "auto1_program_count": "0",
+    "auto1_resume_count": "0",
+    "adc1_errors": "0",
+    "adc2_errors": "0",
+    "adc3_errors": "0",
+    "adc4_errors": "0",
+    "running": "false",
+    "profile_available": "false",
+    "profile_enabled": "false"
+  },
+  "group": "vmid_only",
+  "vmid": false,
+  "sequence_number": 5,
+  "channels_mV": [
+    {
+      "adc": 1,
+      "channel": 15,
+      "median_mV": 1248.779296875,
+      "mean_mV": 1248.995348435387,
+      "ac_rms_mV": 0.29187236544143835,
+      "pp_mV": 0.6103515625,
+      "p05_mV": 1248.779296875,
+      "p95_mV": 1249.3896484375
+    },
+    {
+      "adc": 2,
+      "channel": 15,
+      "median_mV": 1248.779296875,
+      "mean_mV": 1248.9256217440093,
+      "ac_rms_mV": 0.2606033298134514,
+      "pp_mV": 1.220703125,
+      "p05_mV": 1248.779296875,
+      "p95_mV": 1249.3896484375
+    },
+    {
+      "adc": 3,
+      "channel": 15,
+      "median_mV": 1248.779296875,
+      "mean_mV": 1249.0934386530573,
+      "ac_rms_mV": 0.3399784500198643,
+      "pp_mV": 1.220703125,
+      "p05_mV": 1248.779296875,
+      "p95_mV": 1249.3896484375
+    },
+    {
+      "adc": 4,
+      "channel": 15,
+      "median_mV": 1249.3896484375,
+      "mean_mV": 1249.3868317247916,
+      "ac_rms_mV": 0.14682845048932253,
+      "pp_mV": 1.220703125,
+      "p05_mV": 1249.3896484375,
+      "p95_mV": 1249.3896484375
+    }
+  ],
+  "independent_frame_sample_validation": "PASS: every sample equals benchmark parser output"
+}

@@ -1,0 +1,6651 @@
+{
+  "session": "C:\\Code\\arduino_adc_streamer\\Arduino_Sketches\\TestBoard_7953\\benchmarks\\results\\noise_engine_topology_20261008",
+  "session_metadata": {
+    "baud": 460800,
+    "bias_resistor_map": "C:\\Code\\arduino_adc_streamer\\Arduino_Sketches\\TestBoard_7953\\benchmarks\\testboard_7953_bias_resistors.json",
+    "bias_resistor_routes": 50,
+    "completed_utc": "2026-10-08T17:46:04.352278+00:00",
+    "cross_mode_floor": 128,
+    "cross_mode_mad_multiplier": 6.0,
+    "defer_parsing": true,
+    "drift_timing_tolerance_pct": 10.0,
+    "firmware_profile_mode": "off",
+    "firmware_status_initial": {
+      "active_adcs": "1,2,3,4",
+      "active_spi_buses": "1,2",
+      "adc1_errors": "0",
+      "adc2_errors": "0",
+      "adc3_errors": "0",
+      "adc4_errors": "0",
+      "adcchannels": "1:0,1:1,1:2,1:3,1:4,1:5,1:6,1:7,1:8,1:9,2:0,2:1,2:2,2:3,2:4,2:5,2:6,2:7,2:8,2:9,2:10,2:11,2:12,2:13,2:14,3:0,3:1,3:2,3:3,3:4,3:5,3:6,3:7,3:8,3:9,4:0,4:1,4:2,4:3,4:4,4:5,4:6,4:7,4:8,4:9,4:10,4:11,4:12,4:13,4:14",
+      "adcseq": "manual",
+      "array": "both",
+      "auto1_program_count": "0",
+      "auto1_resume_count": "0",
+      "channelrepeat_effective": "1",
+      "channelrepeat_requested": "1",
+      "dma_start_errors": "0",
+      "lpspi_start_errors": "0",
+      "profile_available": "false",
+      "profile_enabled": "false",
+      "returned_channel_errors": "0",
+      "route_count": "50",
+      "running": "false",
+      "sampling_period_max_us": "137",
+      "sampling_period_over_1ms": "0",
+      "sampling_sweeps": "154411",
+      "scanorder": "adc",
+      "spi_clock_hz": "10000000",
+      "spiengine": "blocking",
+      "transfer_timeouts": "0",
+      "usb_frames_discarded": "4",
+      "usb_frames_sent": "154407",
+      "usb_stream_policy": "discard_if_busy",
+      "usb_write_errors": "0",
+      "vmid_between_channels_effective": "false",
+      "vmid_between_channels_requested": "false",
+      "vmid_channel": "15",
+      "vmid_parking": "mandatory",
+      "vref": "2.5"
+    },
+    "git_revision": "d48b4fe44e7a18de65c5aadf92322698f1ff2cc0",
+    "host_platform": "Windows-11-10.0.26200-SP0",
+    "noise_floor": 32,
+    "noise_mad_multiplier": 3.0,
+    "port": "COM3",
+    "python_version": "3.12.11 (main, Aug  6 2025, 22:55:49) [MSC v.1944 64 bit (AMD64)]",
+    "reader_pause_at_ms": 2000,
+    "reader_pause_ms": 0,
+    "repetitions": 1,
+    "route_manifest": "C:\\Code\\arduino_adc_streamer\\docs\\architecture\\TESTBOARD_7953_GUI_NOISE_ANALYSIS\\engine_topology\\routes.json",
+    "route_set_filters": [
+      "single_adc1",
+      "single_adc2",
+      "single_adc3",
+      "single_adc4",
+      "full_array1",
+      "full_array2",
+      "all_four_full"
+    ],
+    "runner_path": "C:\\Code\\arduino_adc_streamer\\Arduino_Sketches\\TestBoard_7953\\benchmarks\\testboard_7953_benchmark.py",
+    "runner_version": "2.5",
+    "scan_order_filters": [
+      "adc"
+    ],
+    "serial_port_info": {
+      "baudrate": 460800,
+      "name": "COM3",
+      "timeout": 0.02,
+      "write_timeout": 2.0
+    },
+    "session_id": "testboard7953-20261008T172940Z",
+    "settling_stable_frames": 5,
+    "settling_tolerance_counts": 64,
+    "spi_clocks_hz": [
+      10000000
+    ],
+    "started_utc": "2026-10-08T17:29:40.865930+00:00",
+    "status": "complete",
+    "test_ids": [
+      "all_four_full__adc__manual__lpspi__repeat1__vmidoff__spi10000000hz",
+      "full_array1__adc__manual__blocking__repeat1__vmidoff__spi10000000hz",
+      "full_array1__adc__manual__lpspi__repeat1__vmidoff__spi10000000hz",
+      "single_adc3__adc__manual__lpspi__repeat1__vmidoff__spi10000000hz",
+      "single_adc3__adc__manual__dma__repeat1__vmidoff__spi10000000hz",
+      "single_adc4__adc__manual__blocking__repeat1__vmidoff__spi10000000hz",
+      "full_array2__adc__manual__dma__repeat1__vmidoff__spi10000000hz",
+      "single_adc1__adc__manual__dma__repeat1__vmidoff__spi10000000hz",
+      "single_adc2__adc__manual__dma__repeat1__vmidoff__spi10000000hz",
+      "all_four_full__adc__manual__dma__repeat1__vmidoff__spi10000000hz",
+      "single_adc2__adc__manual__lpspi__repeat1__vmidoff__spi10000000hz",
+      "all_four_full__adc__manual__blocking__repeat1__vmidoff__spi10000000hz",
+      "single_adc1__adc__manual__blocking__repeat1__vmidoff__spi10000000hz",
+      "single_adc4__adc__manual__dma__repeat1__vmidoff__spi10000000hz",
+      "single_adc4__adc__manual__lpspi__repeat1__vmidoff__spi10000000hz",
+      "full_array2__adc__manual__blocking__repeat1__vmidoff__spi10000000hz",
+      "single_adc3__adc__manual__blocking__repeat1__vmidoff__spi10000000hz",
+      "single_adc1__adc__manual__lpspi__repeat1__vmidoff__spi10000000hz",
+      "single_adc2__adc__manual__blocking__repeat1__vmidoff__spi10000000hz",
+      "full_array2__adc__manual__lpspi__repeat1__vmidoff__spi10000000hz",
+      "full_array1__adc__manual__dma__repeat1__vmidoff__spi10000000hz"
+    ],
+    "vmid_code": 2048,
+    "vmid_severe_tolerance": 1024,
+    "vmid_warning_tolerance": 512,
+    "warm_up_ms": 1000,
+    "warmup_export_frames": 250,
+    "window_ms": 12000
+  },
+  "method": "Raw fixed-width wire decode; post-first-second complete 20 ms bins; per-channel standard deviation; no filtering",
+  "recurrence_method": "Strongest envelope autocorrelation between 0.5 and 2 s; weak maxima are not evidence of periodic bursts",
+  "independent_channel_csv_validation": "PASS: 450 channel medians",
+  "runs": [
+    {
+      "test_id": "all_four_full__adc__manual__blocking__repeat1__vmidoff__spi10000000hz",
+      "raw": "C:\\Code\\arduino_adc_streamer\\Arduino_Sketches\\TestBoard_7953\\benchmarks\\results\\noise_engine_topology_20261008\\raw\\all_four_full__adc__manual__blocking__repeat1__vmidoff__spi10000000hz__r1__attempt1.bin",
+      "raw_sha256": "560d88bb5c7501613b2668eee1114bd2cff5ff0e26e2e0fd32bc7b6fb2175b5d",
+      "route_set": "all_four_full",
+      "engine": "blocking",
+      "spi_clock_hz": 10000000,
+      "active_adcs": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "routes": [
+        [
+          1,
+          0
+        ],
+        [
+          1,
+          1
+        ],
+        [
+          1,
+          2
+        ],
+        [
+          1,
+          3
+        ],
+        [
+          1,
+          4
+        ],
+        [
+          1,
+          5
+        ],
+        [
+          1,
+          6
+        ],
+        [
+          1,
+          7
+        ],
+        [
+          1,
+          8
+        ],
+        [
+          1,
+          9
+        ],
+        [
+          2,
+          0
+        ],
+        [
+          2,
+          1
+        ],
+        [
+          2,
+          2
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          4
+        ],
+        [
+          2,
+          5
+        ],
+        [
+          2,
+          6
+        ],
+        [
+          2,
+          7
+        ],
+        [
+          2,
+          8
+        ],
+        [
+          2,
+          9
+        ],
+        [
+          2,
+          10
+        ],
+        [
+          2,
+          11
+        ],
+        [
+          2,
+          12
+        ],
+        [
+          2,
+          13
+        ],
+        [
+          2,
+          14
+        ],
+        [
+          3,
+          0
+        ],
+        [
+          3,
+          1
+        ],
+        [
+          3,
+          2
+        ],
+        [
+          3,
+          3
+        ],
+        [
+          3,
+          4
+        ],
+        [
+          3,
+          5
+        ],
+        [
+          3,
+          6
+        ],
+        [
+          3,
+          7
+        ],
+        [
+          3,
+          8
+        ],
+        [
+          3,
+          9
+        ],
+        [
+          4,
+          0
+        ],
+        [
+          4,
+          1
+        ],
+        [
+          4,
+          2
+        ],
+        [
+          4,
+          3
+        ],
+        [
+          4,
+          4
+        ],
+        [
+          4,
+          5
+        ],
+        [
+          4,
+          6
+        ],
+        [
+          4,
+          7
+        ],
+        [
+          4,
+          8
+        ],
+        [
+          4,
+          9
+        ],
+        [
+          4,
+          10
+        ],
+        [
+          4,
+          11
+        ],
+        [
+          4,
+          12
+        ],
+        [
+          4,
+          13
+        ],
+        [
+          4,
+          14
+        ]
+      ],
+      "sweeps": 95589,
+      "measured_sweeps": 88235,
+      "duration_s": 12.9996,
+      "received_period_median_us": 135.99999999991397,
+      "received_period_max_us": 137.00000000049783,
+      "acquisition_duration_median_us": 134.0,
+      "usb_frames_discarded": 0,
+      "sampling_period_max_us": 137,
+      "sampling_period_over_1ms": 0,
+      "firmware_errors": {
+        "adc1_errors": 0,
+        "adc2_errors": 0,
+        "adc3_errors": 0,
+        "adc4_errors": 0,
+        "returned_channel_errors": 0,
+        "transfer_timeouts": 0,
+        "usb_write_errors": 0,
+        "dma_start_errors": 0,
+        "lpspi_start_errors": 0
+      },
+      "wire_integrity": "PASS",
+      "all_routes_envelope": {
+        "std_p10_counts": 0.6793096264418605,
+        "std_median_counts": 0.8811992506474486,
+        "std_p95_counts": 1.6458443942307317,
+        "std_max_counts": 1.7108931033190231,
+        "period_s": 1.32,
+        "autocorrelation": 0.8699420734106212
+      },
+      "adcs": {
+        "1": {
+          "std_p10_counts": 0.7810516298828113,
+          "std_median_counts": 1.1243183677031172,
+          "std_p95_counts": 2.160875877830351,
+          "std_max_counts": 2.2262716811985754,
+          "period_s": 1.32,
+          "autocorrelation": 0.8683802493084245,
+          "channel_baseline_median_counts": 1998.0,
+          "channel0_median_counts": 1950.0,
+          "channel0_deficit_from_other_channels_counts": 50.0
+        },
+        "2": {
+          "std_p10_counts": 0.7126922631003764,
+          "std_median_counts": 0.9728396182997269,
+          "std_p95_counts": 1.919675787059113,
+          "std_max_counts": 1.982943765484985,
+          "period_s": 1.32,
+          "autocorrelation": 0.8685260895886412,
+          "channel_baseline_median_counts": 2022.0,
+          "channel0_median_counts": 1985.0,
+          "channel0_deficit_from_other_channels_counts": 37.5,
+          "channel11_median_counts": 1955.0,
+          "channel11_deficit_from_other_channels_counts": 67.5
+        },
+        "3": {
+          "std_p10_counts": 0.6752671845243297,
+          "std_median_counts": 0.8718743793476182,
+          "std_p95_counts": 1.6416166108661843,
+          "std_max_counts": 1.694574301778399,
+          "period_s": 1.32,
+          "autocorrelation": 0.8698201196520358,
+          "channel_baseline_median_counts": 2026.5,
+          "channel0_median_counts": 1994.0,
+          "channel0_deficit_from_other_channels_counts": 33.0
+        },
+        "4": {
+          "std_p10_counts": 0.6107629690334537,
+          "std_median_counts": 0.7509196672475772,
+          "std_p95_counts": 1.3524259691823366,
+          "std_max_counts": 1.3904234680690875,
+          "period_s": 1.32,
+          "autocorrelation": 0.8708822845339538,
+          "channel_baseline_median_counts": 2034.0,
+          "channel0_median_counts": 2016.0,
+          "channel0_deficit_from_other_channels_counts": 18.0,
+          "channel11_median_counts": 1986.0,
+          "channel11_deficit_from_other_channels_counts": 48.0
+        }
+      },
+      "adc_envelope_correlation_order": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "adc_envelope_correlation_matrix": [
+        [
+          1.0,
+          0.993666393793886,
+          0.9949355456640476,
+          0.9887913979049183
+        ],
+        [
+          0.993666393793886,
+          1.0,
+          0.9970269186006485,
+          0.996342612079169
+        ],
+        [
+          0.9949355456640476,
+          0.9970269186006486,
+          0.9999999999999999,
+          0.9948998342410148
+        ],
+        [
+          0.9887913979049182,
+          0.996342612079169,
+          0.9948998342410149,
+          1.0
+        ]
+      ],
+      "channel_baselines": [
+        {
+          "adc": 1,
+          "channel": 0,
+          "median_counts": 1950.0
+        },
+        {
+          "adc": 1,
+          "channel": 1,
+          "median_counts": 1987.0
+        },
+        {
+          "adc": 1,
+          "channel": 2,
+          "median_counts": 2002.0
+        },
+        {
+          "adc": 1,
+          "channel": 3,
+          "median_counts": 2000.0
+        },
+        {
+          "adc": 1,
+          "channel": 4,
+          "median_counts": 2005.0
+        },
+        {
+          "adc": 1,
+          "channel": 5,
+          "median_counts": 2004.0
+        },
+        {
+          "adc": 1,
+          "channel": 6,
+          "median_counts": 2001.0
+        },
+        {
+          "adc": 1,
+          "channel": 7,
+          "median_counts": 1995.0
+        },
+        {
+          "adc": 1,
+          "channel": 8,
+          "median_counts": 1991.0
+        },
+        {
+          "adc": 1,
+          "channel": 9,
+          "median_counts": 1996.0
+        },
+        {
+          "adc": 2,
+          "channel": 0,
+          "median_counts": 1985.0
+        },
+        {
+          "adc": 2,
+          "channel": 1,
+          "median_counts": 2019.0
+        },
+        {
+          "adc": 2,
+          "channel": 2,
+          "median_counts": 2029.0
+        },
+        {
+          "adc": 2,
+          "channel": 3,
+          "median_counts": 2023.0
+        },
+        {
+          "adc": 2,
+          "channel": 4,
+          "median_counts": 2023.0
+        },
+        {
+          "adc": 2,
+          "channel": 5,
+          "median_counts": 2027.0
+        },
+        {
+          "adc": 2,
+          "channel": 6,
+          "median_counts": 2023.0
+        },
+        {
+          "adc": 2,
+          "channel": 7,
+          "median_counts": 2021.0
+        },
+        {
+          "adc": 2,
+          "channel": 8,
+          "median_counts": 2022.0
+        },
+        {
+          "adc": 2,
+          "channel": 9,
+          "median_counts": 2022.0
+        },
+        {
+          "adc": 2,
+          "channel": 10,
+          "median_counts": 2036.0
+        },
+        {
+          "adc": 2,
+          "channel": 11,
+          "median_counts": 1955.0
+        },
+        {
+          "adc": 2,
+          "channel": 12,
+          "median_counts": 1990.0
+        },
+        {
+          "adc": 2,
+          "channel": 13,
+          "median_counts": 2019.0
+        },
+        {
+          "adc": 2,
+          "channel": 14,
+          "median_counts": 2029.0
+        },
+        {
+          "adc": 3,
+          "channel": 0,
+          "median_counts": 1994.0
+        },
+        {
+          "adc": 3,
+          "channel": 1,
+          "median_counts": 2021.0
+        },
+        {
+          "adc": 3,
+          "channel": 2,
+          "median_counts": 2029.0
+        },
+        {
+          "adc": 3,
+          "channel": 3,
+          "median_counts": 2028.0
+        },
+        {
+          "adc": 3,
+          "channel": 4,
+          "median_counts": 2029.0
+        },
+        {
+          "adc": 3,
+          "channel": 5,
+          "median_counts": 2028.0
+        },
+        {
+          "adc": 3,
+          "channel": 6,
+          "median_counts": 2026.0
+        },
+        {
+          "adc": 3,
+          "channel": 7,
+          "median_counts": 2024.0
+        },
+        {
+          "adc": 3,
+          "channel": 8,
+          "median_counts": 2025.0
+        },
+        {
+          "adc": 3,
+          "channel": 9,
+          "median_counts": 2027.0
+        },
+        {
+          "adc": 4,
+          "channel": 0,
+          "median_counts": 2016.0
+        },
+        {
+          "adc": 4,
+          "channel": 1,
+          "median_counts": 2033.0
+        },
+        {
+          "adc": 4,
+          "channel": 2,
+          "median_counts": 2039.0
+        },
+        {
+          "adc": 4,
+          "channel": 3,
+          "median_counts": 2034.0
+        },
+        {
+          "adc": 4,
+          "channel": 4,
+          "median_counts": 2033.0
+        },
+        {
+          "adc": 4,
+          "channel": 5,
+          "median_counts": 2036.0
+        },
+        {
+          "adc": 4,
+          "channel": 6,
+          "median_counts": 2036.0
+        },
+        {
+          "adc": 4,
+          "channel": 7,
+          "median_counts": 2034.0
+        },
+        {
+          "adc": 4,
+          "channel": 8,
+          "median_counts": 2033.0
+        },
+        {
+          "adc": 4,
+          "channel": 9,
+          "median_counts": 2034.0
+        },
+        {
+          "adc": 4,
+          "channel": 10,
+          "median_counts": 2037.0
+        },
+        {
+          "adc": 4,
+          "channel": 11,
+          "median_counts": 1986.0
+        },
+        {
+          "adc": 4,
+          "channel": 12,
+          "median_counts": 2027.0
+        },
+        {
+          "adc": 4,
+          "channel": 13,
+          "median_counts": 2034.0
+        },
+        {
+          "adc": 4,
+          "channel": 14,
+          "median_counts": 2035.0
+        }
+      ],
+      "firmware_status_after": {
+        "adcchannels": "1:0,1:1,1:2,1:3,1:4,1:5,1:6,1:7,1:8,1:9,2:0,2:1,2:2,2:3,2:4,2:5,2:6,2:7,2:8,2:9,2:10,2:11,2:12,2:13,2:14,3:0,3:1,3:2,3:3,3:4,3:5,3:6,3:7,3:8,3:9,4:0,4:1,4:2,4:3,4:4,4:5,4:6,4:7,4:8,4:9,4:10,4:11,4:12,4:13,4:14",
+        "array": "both",
+        "scanorder": "adc",
+        "adcseq": "manual",
+        "spiengine": "blocking",
+        "spi_clock_hz": "10000000",
+        "channelrepeat_requested": "1",
+        "channelrepeat_effective": "1",
+        "vmid_channel": "15",
+        "vmid_between_channels_requested": "false",
+        "vmid_between_channels_effective": "false",
+        "vmid_parking": "mandatory",
+        "route_count": "50",
+        "vref": "2.5",
+        "active_adcs": "1,2,3,4",
+        "active_spi_buses": "1,2",
+        "dma_start_errors": "0",
+        "lpspi_start_errors": "0",
+        "transfer_timeouts": "0",
+        "returned_channel_errors": "0",
+        "usb_write_errors": "0",
+        "usb_stream_policy": "discard_if_busy",
+        "sampling_sweeps": "95589",
+        "usb_frames_sent": "95589",
+        "usb_frames_discarded": "0",
+        "sampling_period_max_us": "137",
+        "sampling_period_over_1ms": "0",
+        "auto1_program_count": "0",
+        "auto1_resume_count": "0",
+        "adc1_errors": "0",
+        "adc2_errors": "0",
+        "adc3_errors": "0",
+        "adc4_errors": "0",
+        "running": "false",
+        "profile_available": "false",
+        "profile_enabled": "false"
+      }
+    },
+    {
+      "test_id": "all_four_full__adc__manual__dma__repeat1__vmidoff__spi10000000hz",
+      "raw": "C:\\Code\\arduino_adc_streamer\\Arduino_Sketches\\TestBoard_7953\\benchmarks\\results\\noise_engine_topology_20261008\\raw\\all_four_full__adc__manual__dma__repeat1__vmidoff__spi10000000hz__r1__attempt1.bin",
+      "raw_sha256": "995439710eb0a20dedbd868dbe3a0c4814bb962f211f096733dee9abceffc9e8",
+      "route_set": "all_four_full",
+      "engine": "dma",
+      "spi_clock_hz": 10000000,
+      "active_adcs": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "routes": [
+        [
+          1,
+          0
+        ],
+        [
+          1,
+          1
+        ],
+        [
+          1,
+          2
+        ],
+        [
+          1,
+          3
+        ],
+        [
+          1,
+          4
+        ],
+        [
+          1,
+          5
+        ],
+        [
+          1,
+          6
+        ],
+        [
+          1,
+          7
+        ],
+        [
+          1,
+          8
+        ],
+        [
+          1,
+          9
+        ],
+        [
+          2,
+          0
+        ],
+        [
+          2,
+          1
+        ],
+        [
+          2,
+          2
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          4
+        ],
+        [
+          2,
+          5
+        ],
+        [
+          2,
+          6
+        ],
+        [
+          2,
+          7
+        ],
+        [
+          2,
+          8
+        ],
+        [
+          2,
+          9
+        ],
+        [
+          2,
+          10
+        ],
+        [
+          2,
+          11
+        ],
+        [
+          2,
+          12
+        ],
+        [
+          2,
+          13
+        ],
+        [
+          2,
+          14
+        ],
+        [
+          3,
+          0
+        ],
+        [
+          3,
+          1
+        ],
+        [
+          3,
+          2
+        ],
+        [
+          3,
+          3
+        ],
+        [
+          3,
+          4
+        ],
+        [
+          3,
+          5
+        ],
+        [
+          3,
+          6
+        ],
+        [
+          3,
+          7
+        ],
+        [
+          3,
+          8
+        ],
+        [
+          3,
+          9
+        ],
+        [
+          4,
+          0
+        ],
+        [
+          4,
+          1
+        ],
+        [
+          4,
+          2
+        ],
+        [
+          4,
+          3
+        ],
+        [
+          4,
+          4
+        ],
+        [
+          4,
+          5
+        ],
+        [
+          4,
+          6
+        ],
+        [
+          4,
+          7
+        ],
+        [
+          4,
+          8
+        ],
+        [
+          4,
+          9
+        ],
+        [
+          4,
+          10
+        ],
+        [
+          4,
+          11
+        ],
+        [
+          4,
+          12
+        ],
+        [
+          4,
+          13
+        ],
+        [
+          4,
+          14
+        ]
+      ],
+      "sweeps": 78541,
+      "measured_sweeps": 72499,
+      "duration_s": 12.999477,
+      "received_period_median_us": 165.99999999833415,
+      "received_period_max_us": 331.00000000008123,
+      "acquisition_duration_median_us": 164.0,
+      "usb_frames_discarded": 1,
+      "sampling_period_max_us": 166,
+      "sampling_period_over_1ms": 0,
+      "firmware_errors": {
+        "adc1_errors": 0,
+        "adc2_errors": 0,
+        "adc3_errors": 0,
+        "adc4_errors": 0,
+        "returned_channel_errors": 0,
+        "transfer_timeouts": 0,
+        "usb_write_errors": 0,
+        "dma_start_errors": 0,
+        "lpspi_start_errors": 0
+      },
+      "wire_integrity": "PASS",
+      "all_routes_envelope": {
+        "std_p10_counts": 0.6840329959953745,
+        "std_median_counts": 0.8715553834078853,
+        "std_p95_counts": 1.7894206098552858,
+        "std_max_counts": 1.864093903597809,
+        "period_s": 1.32,
+        "autocorrelation": 0.8666430260948138
+      },
+      "adcs": {
+        "1": {
+          "std_p10_counts": 0.831282205140753,
+          "std_median_counts": 1.0945063277643854,
+          "std_p95_counts": 2.536360954852242,
+          "std_max_counts": 2.68679902973986,
+          "period_s": 1.32,
+          "autocorrelation": 0.8605996016743594,
+          "channel_baseline_median_counts": 1985.0,
+          "channel0_median_counts": 1953.0,
+          "channel0_deficit_from_other_channels_counts": 34.0
+        },
+        "2": {
+          "std_p10_counts": 0.7222917792617278,
+          "std_median_counts": 0.9653786422254306,
+          "std_p95_counts": 1.9282386974230172,
+          "std_max_counts": 2.049390153191917,
+          "period_s": 1.32,
+          "autocorrelation": 0.8661457761357215,
+          "channel_baseline_median_counts": 2008.0,
+          "channel0_median_counts": 1983.0,
+          "channel0_deficit_from_other_channels_counts": 25.0,
+          "channel11_median_counts": 1946.0,
+          "channel11_deficit_from_other_channels_counts": 62.0
+        },
+        "3": {
+          "std_p10_counts": 0.6747239673406328,
+          "std_median_counts": 0.8592529519882108,
+          "std_p95_counts": 1.7728359888380592,
+          "std_max_counts": 1.8470249958656955,
+          "period_s": 1.32,
+          "autocorrelation": 0.8672640035141257,
+          "channel_baseline_median_counts": 2014.5,
+          "channel0_median_counts": 1991.0,
+          "channel0_deficit_from_other_channels_counts": 24.0
+        },
+        "4": {
+          "std_p10_counts": 0.6093388007845167,
+          "std_median_counts": 0.7615953966571535,
+          "std_p95_counts": 1.346611424427938,
+          "std_max_counts": 1.3897995178170524,
+          "period_s": 1.32,
+          "autocorrelation": 0.8681628153554726,
+          "channel_baseline_median_counts": 2024.0,
+          "channel0_median_counts": 2013.0,
+          "channel0_deficit_from_other_channels_counts": 11.0,
+          "channel11_median_counts": 1979.0,
+          "channel11_deficit_from_other_channels_counts": 45.0
+        }
+      },
+      "adc_envelope_correlation_order": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "adc_envelope_correlation_matrix": [
+        [
+          1.0,
+          0.9932436364442003,
+          0.9972247319960632,
+          0.9908931014872865
+        ],
+        [
+          0.9932436364442004,
+          1.0,
+          0.9953462151874355,
+          0.9966659449978758
+        ],
+        [
+          0.9972247319960633,
+          0.9953462151874355,
+          1.0,
+          0.9938010603781815
+        ],
+        [
+          0.9908931014872864,
+          0.9966659449978758,
+          0.9938010603781813,
+          1.0
+        ]
+      ],
+      "channel_baselines": [
+        {
+          "adc": 1,
+          "channel": 0,
+          "median_counts": 1953.0
+        },
+        {
+          "adc": 1,
+          "channel": 1,
+          "median_counts": 1981.0
+        },
+        {
+          "adc": 1,
+          "channel": 2,
+          "median_counts": 1991.0
+        },
+        {
+          "adc": 1,
+          "channel": 3,
+          "median_counts": 1987.0
+        },
+        {
+          "adc": 1,
+          "channel": 4,
+          "median_counts": 1991.0
+        },
+        {
+          "adc": 1,
+          "channel": 5,
+          "median_counts": 1991.0
+        },
+        {
+          "adc": 1,
+          "channel": 6,
+          "median_counts": 1988.0
+        },
+        {
+          "adc": 1,
+          "channel": 7,
+          "median_counts": 1982.0
+        },
+        {
+          "adc": 1,
+          "channel": 8,
+          "median_counts": 1977.0
+        },
+        {
+          "adc": 1,
+          "channel": 9,
+          "median_counts": 1983.0
+        },
+        {
+          "adc": 2,
+          "channel": 0,
+          "median_counts": 1983.0
+        },
+        {
+          "adc": 2,
+          "channel": 1,
+          "median_counts": 2007.0
+        },
+        {
+          "adc": 2,
+          "channel": 2,
+          "median_counts": 2009.0
+        },
+        {
+          "adc": 2,
+          "channel": 3,
+          "median_counts": 2007.0
+        },
+        {
+          "adc": 2,
+          "channel": 4,
+          "median_counts": 2009.0
+        },
+        {
+          "adc": 2,
+          "channel": 5,
+          "median_counts": 2012.0
+        },
+        {
+          "adc": 2,
+          "channel": 6,
+          "median_counts": 2008.0
+        },
+        {
+          "adc": 2,
+          "channel": 7,
+          "median_counts": 2006.0
+        },
+        {
+          "adc": 2,
+          "channel": 8,
+          "median_counts": 2007.0
+        },
+        {
+          "adc": 2,
+          "channel": 9,
+          "median_counts": 2008.0
+        },
+        {
+          "adc": 2,
+          "channel": 10,
+          "median_counts": 2022.0
+        },
+        {
+          "adc": 2,
+          "channel": 11,
+          "median_counts": 1946.0
+        },
+        {
+          "adc": 2,
+          "channel": 12,
+          "median_counts": 1984.0
+        },
+        {
+          "adc": 2,
+          "channel": 13,
+          "median_counts": 2010.0
+        },
+        {
+          "adc": 2,
+          "channel": 14,
+          "median_counts": 2018.0
+        },
+        {
+          "adc": 3,
+          "channel": 0,
+          "median_counts": 1991.0
+        },
+        {
+          "adc": 3,
+          "channel": 1,
+          "median_counts": 2013.0
+        },
+        {
+          "adc": 3,
+          "channel": 2,
+          "median_counts": 2018.0
+        },
+        {
+          "adc": 3,
+          "channel": 3,
+          "median_counts": 2016.0
+        },
+        {
+          "adc": 3,
+          "channel": 4,
+          "median_counts": 2017.0
+        },
+        {
+          "adc": 3,
+          "channel": 5,
+          "median_counts": 2017.0
+        },
+        {
+          "adc": 3,
+          "channel": 6,
+          "median_counts": 2014.0
+        },
+        {
+          "adc": 3,
+          "channel": 7,
+          "median_counts": 2012.0
+        },
+        {
+          "adc": 3,
+          "channel": 8,
+          "median_counts": 2012.0
+        },
+        {
+          "adc": 3,
+          "channel": 9,
+          "median_counts": 2015.0
+        },
+        {
+          "adc": 4,
+          "channel": 0,
+          "median_counts": 2013.0
+        },
+        {
+          "adc": 4,
+          "channel": 1,
+          "median_counts": 2024.0
+        },
+        {
+          "adc": 4,
+          "channel": 2,
+          "median_counts": 2025.0
+        },
+        {
+          "adc": 4,
+          "channel": 3,
+          "median_counts": 2024.0
+        },
+        {
+          "adc": 4,
+          "channel": 4,
+          "median_counts": 2023.0
+        },
+        {
+          "adc": 4,
+          "channel": 5,
+          "median_counts": 2026.0
+        },
+        {
+          "adc": 4,
+          "channel": 6,
+          "median_counts": 2025.0
+        },
+        {
+          "adc": 4,
+          "channel": 7,
+          "median_counts": 2024.0
+        },
+        {
+          "adc": 4,
+          "channel": 8,
+          "median_counts": 2023.0
+        },
+        {
+          "adc": 4,
+          "channel": 9,
+          "median_counts": 2024.0
+        },
+        {
+          "adc": 4,
+          "channel": 10,
+          "median_counts": 2027.0
+        },
+        {
+          "adc": 4,
+          "channel": 11,
+          "median_counts": 1979.0
+        },
+        {
+          "adc": 4,
+          "channel": 12,
+          "median_counts": 2019.0
+        },
+        {
+          "adc": 4,
+          "channel": 13,
+          "median_counts": 2025.0
+        },
+        {
+          "adc": 4,
+          "channel": 14,
+          "median_counts": 2026.0
+        }
+      ],
+      "firmware_status_after": {
+        "adcchannels": "1:0,1:1,1:2,1:3,1:4,1:5,1:6,1:7,1:8,1:9,2:0,2:1,2:2,2:3,2:4,2:5,2:6,2:7,2:8,2:9,2:10,2:11,2:12,2:13,2:14,3:0,3:1,3:2,3:3,3:4,3:5,3:6,3:7,3:8,3:9,4:0,4:1,4:2,4:3,4:4,4:5,4:6,4:7,4:8,4:9,4:10,4:11,4:12,4:13,4:14",
+        "array": "both",
+        "scanorder": "adc",
+        "adcseq": "manual",
+        "spiengine": "dma",
+        "spi_clock_hz": "10000000",
+        "channelrepeat_requested": "1",
+        "channelrepeat_effective": "1",
+        "vmid_channel": "15",
+        "vmid_between_channels_requested": "false",
+        "vmid_between_channels_effective": "false",
+        "vmid_parking": "mandatory",
+        "route_count": "50",
+        "vref": "2.5",
+        "active_adcs": "1,2,3,4",
+        "active_spi_buses": "1,2",
+        "dma_start_errors": "0",
+        "lpspi_start_errors": "0",
+        "transfer_timeouts": "0",
+        "returned_channel_errors": "0",
+        "usb_write_errors": "0",
+        "usb_stream_policy": "discard_if_busy",
+        "sampling_sweeps": "78542",
+        "usb_frames_sent": "78541",
+        "usb_frames_discarded": "1",
+        "sampling_period_max_us": "166",
+        "sampling_period_over_1ms": "0",
+        "auto1_program_count": "0",
+        "auto1_resume_count": "0",
+        "adc1_errors": "0",
+        "adc2_errors": "0",
+        "adc3_errors": "0",
+        "adc4_errors": "0",
+        "running": "false",
+        "profile_available": "false",
+        "profile_enabled": "false"
+      }
+    },
+    {
+      "test_id": "all_four_full__adc__manual__lpspi__repeat1__vmidoff__spi10000000hz",
+      "raw": "C:\\Code\\arduino_adc_streamer\\Arduino_Sketches\\TestBoard_7953\\benchmarks\\results\\noise_engine_topology_20261008\\raw\\all_four_full__adc__manual__lpspi__repeat1__vmidoff__spi10000000hz__r1__attempt1.bin",
+      "raw_sha256": "14462cb0afaca301df56cc6439af0e8b20bd37e86f4ff21fb0de5bcac31bdadc",
+      "route_set": "all_four_full",
+      "engine": "lpspi",
+      "spi_clock_hz": 10000000,
+      "active_adcs": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "routes": [
+        [
+          1,
+          0
+        ],
+        [
+          1,
+          1
+        ],
+        [
+          1,
+          2
+        ],
+        [
+          1,
+          3
+        ],
+        [
+          1,
+          4
+        ],
+        [
+          1,
+          5
+        ],
+        [
+          1,
+          6
+        ],
+        [
+          1,
+          7
+        ],
+        [
+          1,
+          8
+        ],
+        [
+          1,
+          9
+        ],
+        [
+          2,
+          0
+        ],
+        [
+          2,
+          1
+        ],
+        [
+          2,
+          2
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          4
+        ],
+        [
+          2,
+          5
+        ],
+        [
+          2,
+          6
+        ],
+        [
+          2,
+          7
+        ],
+        [
+          2,
+          8
+        ],
+        [
+          2,
+          9
+        ],
+        [
+          2,
+          10
+        ],
+        [
+          2,
+          11
+        ],
+        [
+          2,
+          12
+        ],
+        [
+          2,
+          13
+        ],
+        [
+          2,
+          14
+        ],
+        [
+          3,
+          0
+        ],
+        [
+          3,
+          1
+        ],
+        [
+          3,
+          2
+        ],
+        [
+          3,
+          3
+        ],
+        [
+          3,
+          4
+        ],
+        [
+          3,
+          5
+        ],
+        [
+          3,
+          6
+        ],
+        [
+          3,
+          7
+        ],
+        [
+          3,
+          8
+        ],
+        [
+          3,
+          9
+        ],
+        [
+          4,
+          0
+        ],
+        [
+          4,
+          1
+        ],
+        [
+          4,
+          2
+        ],
+        [
+          4,
+          3
+        ],
+        [
+          4,
+          4
+        ],
+        [
+          4,
+          5
+        ],
+        [
+          4,
+          6
+        ],
+        [
+          4,
+          7
+        ],
+        [
+          4,
+          8
+        ],
+        [
+          4,
+          9
+        ],
+        [
+          4,
+          10
+        ],
+        [
+          4,
+          11
+        ],
+        [
+          4,
+          12
+        ],
+        [
+          4,
+          13
+        ],
+        [
+          4,
+          14
+        ]
+      ],
+      "sweeps": 158508,
+      "measured_sweeps": 146313,
+      "duration_s": 12.999395,
+      "received_period_median_us": 81.99999999991547,
+      "received_period_max_us": 326.0000000002705,
+      "acquisition_duration_median_us": 81.0,
+      "usb_frames_discarded": 19,
+      "sampling_period_max_us": 84,
+      "sampling_period_over_1ms": 0,
+      "firmware_errors": {
+        "adc1_errors": 0,
+        "adc2_errors": 0,
+        "adc3_errors": 0,
+        "adc4_errors": 0,
+        "returned_channel_errors": 0,
+        "transfer_timeouts": 0,
+        "usb_write_errors": 0,
+        "dma_start_errors": 0,
+        "lpspi_start_errors": 0
+      },
+      "wire_integrity": "PASS",
+      "all_routes_envelope": {
+        "std_p10_counts": 0.7286515267342418,
+        "std_median_counts": 0.9050805231719626,
+        "std_p95_counts": 2.0845413002378526,
+        "std_max_counts": 2.151749295878071,
+        "period_s": 1.32,
+        "autocorrelation": 0.8870130248910175
+      },
+      "adcs": {
+        "1": {
+          "std_p10_counts": 0.8650124122611816,
+          "std_median_counts": 1.0980521082864656,
+          "std_p95_counts": 2.925410437982824,
+          "std_max_counts": 3.0250033622023054,
+          "period_s": 1.32,
+          "autocorrelation": 0.8891389034480709,
+          "channel_baseline_median_counts": 1980.5,
+          "channel0_median_counts": 1925.0,
+          "channel0_deficit_from_other_channels_counts": 57.0
+        },
+        "2": {
+          "std_p10_counts": 0.7453538776652567,
+          "std_median_counts": 0.9575416025055552,
+          "std_p95_counts": 2.257643473612586,
+          "std_max_counts": 2.3329718978747596,
+          "period_s": 1.32,
+          "autocorrelation": 0.8828715155343354,
+          "channel_baseline_median_counts": 2008.0,
+          "channel0_median_counts": 1953.0,
+          "channel0_deficit_from_other_channels_counts": 55.5,
+          "channel11_median_counts": 1921.0,
+          "channel11_deficit_from_other_channels_counts": 87.5
+        },
+        "3": {
+          "std_p10_counts": 0.7247661409511785,
+          "std_median_counts": 0.8876345539577495,
+          "std_p95_counts": 2.0591774588888776,
+          "std_max_counts": 2.139328229323296,
+          "period_s": 1.32,
+          "autocorrelation": 0.8864745225453667,
+          "channel_baseline_median_counts": 2016.5,
+          "channel0_median_counts": 1975.0,
+          "channel0_deficit_from_other_channels_counts": 42.0
+        },
+        "4": {
+          "std_p10_counts": 0.6561994189739805,
+          "std_median_counts": 0.7665949475003223,
+          "std_p95_counts": 1.5378341766823307,
+          "std_max_counts": 1.567409728748388,
+          "period_s": 1.32,
+          "autocorrelation": 0.8809311234310526,
+          "channel_baseline_median_counts": 2024.0,
+          "channel0_median_counts": 1991.0,
+          "channel0_deficit_from_other_channels_counts": 33.0,
+          "channel11_median_counts": 1943.0,
+          "channel11_deficit_from_other_channels_counts": 81.0
+        }
+      },
+      "adc_envelope_correlation_order": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "adc_envelope_correlation_matrix": [
+        [
+          1.0,
+          0.9956178478075635,
+          0.9983014415008286,
+          0.9938048539039991
+        ],
+        [
+          0.9956178478075633,
+          1.0,
+          0.9974037116395312,
+          0.9985901272831584
+        ],
+        [
+          0.9983014415008286,
+          0.9974037116395313,
+          1.0,
+          0.9966143377630124
+        ],
+        [
+          0.993804853903999,
+          0.9985901272831584,
+          0.9966143377630124,
+          1.0
+        ]
+      ],
+      "channel_baselines": [
+        {
+          "adc": 1,
+          "channel": 0,
+          "median_counts": 1925.0
+        },
+        {
+          "adc": 1,
+          "channel": 1,
+          "median_counts": 1965.0
+        },
+        {
+          "adc": 1,
+          "channel": 2,
+          "median_counts": 1982.0
+        },
+        {
+          "adc": 1,
+          "channel": 3,
+          "median_counts": 1983.0
+        },
+        {
+          "adc": 1,
+          "channel": 4,
+          "median_counts": 1991.0
+        },
+        {
+          "adc": 1,
+          "channel": 5,
+          "median_counts": 1992.0
+        },
+        {
+          "adc": 1,
+          "channel": 6,
+          "median_counts": 1988.0
+        },
+        {
+          "adc": 1,
+          "channel": 7,
+          "median_counts": 1979.0
+        },
+        {
+          "adc": 1,
+          "channel": 8,
+          "median_counts": 1971.0
+        },
+        {
+          "adc": 1,
+          "channel": 9,
+          "median_counts": 1977.0
+        },
+        {
+          "adc": 2,
+          "channel": 0,
+          "median_counts": 1953.0
+        },
+        {
+          "adc": 2,
+          "channel": 1,
+          "median_counts": 1997.0
+        },
+        {
+          "adc": 2,
+          "channel": 2,
+          "median_counts": 2009.0
+        },
+        {
+          "adc": 2,
+          "channel": 3,
+          "median_counts": 2008.0
+        },
+        {
+          "adc": 2,
+          "channel": 4,
+          "median_counts": 2011.0
+        },
+        {
+          "adc": 2,
+          "channel": 5,
+          "median_counts": 2017.0
+        },
+        {
+          "adc": 2,
+          "channel": 6,
+          "median_counts": 2010.0
+        },
+        {
+          "adc": 2,
+          "channel": 7,
+          "median_counts": 2006.0
+        },
+        {
+          "adc": 2,
+          "channel": 8,
+          "median_counts": 2008.0
+        },
+        {
+          "adc": 2,
+          "channel": 9,
+          "median_counts": 2009.0
+        },
+        {
+          "adc": 2,
+          "channel": 10,
+          "median_counts": 2031.0
+        },
+        {
+          "adc": 2,
+          "channel": 11,
+          "median_counts": 1921.0
+        },
+        {
+          "adc": 2,
+          "channel": 12,
+          "median_counts": 1955.0
+        },
+        {
+          "adc": 2,
+          "channel": 13,
+          "median_counts": 2006.0
+        },
+        {
+          "adc": 2,
+          "channel": 14,
+          "median_counts": 2020.0
+        },
+        {
+          "adc": 3,
+          "channel": 0,
+          "median_counts": 1975.0
+        },
+        {
+          "adc": 3,
+          "channel": 1,
+          "median_counts": 2005.0
+        },
+        {
+          "adc": 3,
+          "channel": 2,
+          "median_counts": 2017.0
+        },
+        {
+          "adc": 3,
+          "channel": 3,
+          "median_counts": 2018.0
+        },
+        {
+          "adc": 3,
+          "channel": 4,
+          "median_counts": 2021.0
+        },
+        {
+          "adc": 3,
+          "channel": 5,
+          "median_counts": 2021.0
+        },
+        {
+          "adc": 3,
+          "channel": 6,
+          "median_counts": 2017.0
+        },
+        {
+          "adc": 3,
+          "channel": 7,
+          "median_counts": 2013.0
+        },
+        {
+          "adc": 3,
+          "channel": 8,
+          "median_counts": 2013.0
+        },
+        {
+          "adc": 3,
+          "channel": 9,
+          "median_counts": 2016.0
+        },
+        {
+          "adc": 4,
+          "channel": 0,
+          "median_counts": 1991.0
+        },
+        {
+          "adc": 4,
+          "channel": 1,
+          "median_counts": 2018.0
+        },
+        {
+          "adc": 4,
+          "channel": 2,
+          "median_counts": 2025.0
+        },
+        {
+          "adc": 4,
+          "channel": 3,
+          "median_counts": 2024.0
+        },
+        {
+          "adc": 4,
+          "channel": 4,
+          "median_counts": 2023.0
+        },
+        {
+          "adc": 4,
+          "channel": 5,
+          "median_counts": 2026.0
+        },
+        {
+          "adc": 4,
+          "channel": 6,
+          "median_counts": 2026.0
+        },
+        {
+          "adc": 4,
+          "channel": 7,
+          "median_counts": 2023.0
+        },
+        {
+          "adc": 4,
+          "channel": 8,
+          "median_counts": 2022.0
+        },
+        {
+          "adc": 4,
+          "channel": 9,
+          "median_counts": 2024.0
+        },
+        {
+          "adc": 4,
+          "channel": 10,
+          "median_counts": 2030.0
+        },
+        {
+          "adc": 4,
+          "channel": 11,
+          "median_counts": 1943.0
+        },
+        {
+          "adc": 4,
+          "channel": 12,
+          "median_counts": 2004.0
+        },
+        {
+          "adc": 4,
+          "channel": 13,
+          "median_counts": 2028.0
+        },
+        {
+          "adc": 4,
+          "channel": 14,
+          "median_counts": 2028.0
+        }
+      ],
+      "firmware_status_after": {
+        "adcchannels": "1:0,1:1,1:2,1:3,1:4,1:5,1:6,1:7,1:8,1:9,2:0,2:1,2:2,2:3,2:4,2:5,2:6,2:7,2:8,2:9,2:10,2:11,2:12,2:13,2:14,3:0,3:1,3:2,3:3,3:4,3:5,3:6,3:7,3:8,3:9,4:0,4:1,4:2,4:3,4:4,4:5,4:6,4:7,4:8,4:9,4:10,4:11,4:12,4:13,4:14",
+        "array": "both",
+        "scanorder": "adc",
+        "adcseq": "manual",
+        "spiengine": "lpspi",
+        "spi_clock_hz": "10000000",
+        "channelrepeat_requested": "1",
+        "channelrepeat_effective": "1",
+        "vmid_channel": "15",
+        "vmid_between_channels_requested": "false",
+        "vmid_between_channels_effective": "false",
+        "vmid_parking": "mandatory",
+        "route_count": "50",
+        "vref": "2.5",
+        "active_adcs": "1,2,3,4",
+        "active_spi_buses": "1,2",
+        "dma_start_errors": "0",
+        "lpspi_start_errors": "0",
+        "transfer_timeouts": "0",
+        "returned_channel_errors": "0",
+        "usb_write_errors": "0",
+        "usb_stream_policy": "discard_if_busy",
+        "sampling_sweeps": "158527",
+        "usb_frames_sent": "158508",
+        "usb_frames_discarded": "19",
+        "sampling_period_max_us": "84",
+        "sampling_period_over_1ms": "0",
+        "auto1_program_count": "0",
+        "auto1_resume_count": "0",
+        "adc1_errors": "0",
+        "adc2_errors": "0",
+        "adc3_errors": "0",
+        "adc4_errors": "0",
+        "running": "false",
+        "profile_available": "false",
+        "profile_enabled": "false"
+      }
+    },
+    {
+      "test_id": "full_array1__adc__manual__blocking__repeat1__vmidoff__spi10000000hz",
+      "raw": "C:\\Code\\arduino_adc_streamer\\Arduino_Sketches\\TestBoard_7953\\benchmarks\\results\\noise_engine_topology_20261008\\raw\\full_array1__adc__manual__blocking__repeat1__vmidoff__spi10000000hz__r1__attempt1.bin",
+      "raw_sha256": "e5426370137510cb8f40245af9c9de50cbc890d71713ff6535ac4da742909989",
+      "route_set": "full_array1",
+      "engine": "blocking",
+      "spi_clock_hz": 10000000,
+      "active_adcs": [
+        1,
+        2
+      ],
+      "routes": [
+        [
+          1,
+          0
+        ],
+        [
+          1,
+          1
+        ],
+        [
+          1,
+          2
+        ],
+        [
+          1,
+          3
+        ],
+        [
+          1,
+          4
+        ],
+        [
+          1,
+          5
+        ],
+        [
+          1,
+          6
+        ],
+        [
+          1,
+          7
+        ],
+        [
+          1,
+          8
+        ],
+        [
+          1,
+          9
+        ],
+        [
+          2,
+          0
+        ],
+        [
+          2,
+          1
+        ],
+        [
+          2,
+          2
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          4
+        ],
+        [
+          2,
+          5
+        ],
+        [
+          2,
+          6
+        ],
+        [
+          2,
+          7
+        ],
+        [
+          2,
+          8
+        ],
+        [
+          2,
+          9
+        ],
+        [
+          2,
+          10
+        ],
+        [
+          2,
+          11
+        ],
+        [
+          2,
+          12
+        ],
+        [
+          2,
+          13
+        ],
+        [
+          2,
+          14
+        ]
+      ],
+      "sweeps": 191485,
+      "measured_sweeps": 176754,
+      "duration_s": 12.998983,
+      "received_period_median_us": 67.99999999995698,
+      "received_period_max_us": 70.00000000090267,
+      "acquisition_duration_median_us": 67.0,
+      "usb_frames_discarded": 0,
+      "sampling_period_max_us": 70,
+      "sampling_period_over_1ms": 0,
+      "firmware_errors": {
+        "adc1_errors": 0,
+        "adc2_errors": 0,
+        "adc3_errors": 0,
+        "adc4_errors": 0,
+        "returned_channel_errors": 0,
+        "transfer_timeouts": 0,
+        "usb_write_errors": 0,
+        "dma_start_errors": 0,
+        "lpspi_start_errors": 0
+      },
+      "wire_integrity": "PASS",
+      "all_routes_envelope": {
+        "std_p10_counts": 0.7013436856733207,
+        "std_median_counts": 0.825151963746435,
+        "std_p95_counts": 1.2235327282372495,
+        "std_max_counts": 1.4019169488196181,
+        "period_s": 1.32,
+        "autocorrelation": 0.8718224150806506
+      },
+      "adcs": {
+        "1": {
+          "std_p10_counts": 0.732140706452182,
+          "std_median_counts": 0.8730109634029748,
+          "std_p95_counts": 1.357048219872983,
+          "std_max_counts": 1.6327054479922851,
+          "period_s": 1.32,
+          "autocorrelation": 0.8688044756139198,
+          "channel_baseline_median_counts": 1972.5,
+          "channel0_median_counts": 1922.0,
+          "channel0_deficit_from_other_channels_counts": 53.0
+        },
+        "2": {
+          "std_p10_counts": 0.6754912673356961,
+          "std_median_counts": 0.790490484481072,
+          "std_p95_counts": 1.1888927730774028,
+          "std_max_counts": 1.3134899971816463,
+          "period_s": 1.32,
+          "autocorrelation": 0.8710815616687553,
+          "channel_baseline_median_counts": 1999.0,
+          "channel0_median_counts": 1945.0,
+          "channel0_deficit_from_other_channels_counts": 54.0,
+          "channel11_median_counts": 1905.0,
+          "channel11_deficit_from_other_channels_counts": 94.0
+        }
+      },
+      "adc_envelope_correlation_order": [
+        1,
+        2
+      ],
+      "adc_envelope_correlation_matrix": [
+        [
+          1.0,
+          0.9798915524887358
+        ],
+        [
+          0.9798915524887358,
+          1.0
+        ]
+      ],
+      "channel_baselines": [
+        {
+          "adc": 1,
+          "channel": 0,
+          "median_counts": 1922.0
+        },
+        {
+          "adc": 1,
+          "channel": 1,
+          "median_counts": 1958.0
+        },
+        {
+          "adc": 1,
+          "channel": 2,
+          "median_counts": 1975.0
+        },
+        {
+          "adc": 1,
+          "channel": 3,
+          "median_counts": 1975.0
+        },
+        {
+          "adc": 1,
+          "channel": 4,
+          "median_counts": 1983.0
+        },
+        {
+          "adc": 1,
+          "channel": 5,
+          "median_counts": 1984.0
+        },
+        {
+          "adc": 1,
+          "channel": 6,
+          "median_counts": 1980.0
+        },
+        {
+          "adc": 1,
+          "channel": 7,
+          "median_counts": 1970.0
+        },
+        {
+          "adc": 1,
+          "channel": 8,
+          "median_counts": 1963.0
+        },
+        {
+          "adc": 1,
+          "channel": 9,
+          "median_counts": 1969.0
+        },
+        {
+          "adc": 2,
+          "channel": 0,
+          "median_counts": 1945.0
+        },
+        {
+          "adc": 2,
+          "channel": 1,
+          "median_counts": 1987.0
+        },
+        {
+          "adc": 2,
+          "channel": 2,
+          "median_counts": 1999.0
+        },
+        {
+          "adc": 2,
+          "channel": 3,
+          "median_counts": 1998.0
+        },
+        {
+          "adc": 2,
+          "channel": 4,
+          "median_counts": 2002.0
+        },
+        {
+          "adc": 2,
+          "channel": 5,
+          "median_counts": 2009.0
+        },
+        {
+          "adc": 2,
+          "channel": 6,
+          "median_counts": 2002.0
+        },
+        {
+          "adc": 2,
+          "channel": 7,
+          "median_counts": 1997.0
+        },
+        {
+          "adc": 2,
+          "channel": 8,
+          "median_counts": 1999.0
+        },
+        {
+          "adc": 2,
+          "channel": 9,
+          "median_counts": 2000.0
+        },
+        {
+          "adc": 2,
+          "channel": 10,
+          "median_counts": 2024.0
+        },
+        {
+          "adc": 2,
+          "channel": 11,
+          "median_counts": 1905.0
+        },
+        {
+          "adc": 2,
+          "channel": 12,
+          "median_counts": 1937.0
+        },
+        {
+          "adc": 2,
+          "channel": 13,
+          "median_counts": 1986.0
+        },
+        {
+          "adc": 2,
+          "channel": 14,
+          "median_counts": 2009.0
+        }
+      ],
+      "firmware_status_after": {
+        "adcchannels": "1:0,1:1,1:2,1:3,1:4,1:5,1:6,1:7,1:8,1:9,2:0,2:1,2:2,2:3,2:4,2:5,2:6,2:7,2:8,2:9,2:10,2:11,2:12,2:13,2:14",
+        "array": "1",
+        "scanorder": "adc",
+        "adcseq": "manual",
+        "spiengine": "blocking",
+        "spi_clock_hz": "10000000",
+        "channelrepeat_requested": "1",
+        "channelrepeat_effective": "1",
+        "vmid_channel": "15",
+        "vmid_between_channels_requested": "false",
+        "vmid_between_channels_effective": "false",
+        "vmid_parking": "mandatory",
+        "route_count": "25",
+        "vref": "2.5",
+        "active_adcs": "1,2",
+        "active_spi_buses": "1",
+        "dma_start_errors": "0",
+        "lpspi_start_errors": "0",
+        "transfer_timeouts": "0",
+        "returned_channel_errors": "0",
+        "usb_write_errors": "0",
+        "usb_stream_policy": "discard_if_busy",
+        "sampling_sweeps": "191485",
+        "usb_frames_sent": "191485",
+        "usb_frames_discarded": "0",
+        "sampling_period_max_us": "70",
+        "sampling_period_over_1ms": "0",
+        "auto1_program_count": "0",
+        "auto1_resume_count": "0",
+        "adc1_errors": "0",
+        "adc2_errors": "0",
+        "adc3_errors": "0",
+        "adc4_errors": "0",
+        "running": "false",
+        "profile_available": "false",
+        "profile_enabled": "false"
+      }
+    },
+    {
+      "test_id": "full_array1__adc__manual__dma__repeat1__vmidoff__spi10000000hz",
+      "raw": "C:\\Code\\arduino_adc_streamer\\Arduino_Sketches\\TestBoard_7953\\benchmarks\\results\\noise_engine_topology_20261008\\raw\\full_array1__adc__manual__dma__repeat1__vmidoff__spi10000000hz__r1__attempt1.bin",
+      "raw_sha256": "5a44da141ef323589fd90949a067b8fab636682b54635d2ec55b4d316a6be7e5",
+      "route_set": "full_array1",
+      "engine": "dma",
+      "spi_clock_hz": 10000000,
+      "active_adcs": [
+        1,
+        2
+      ],
+      "routes": [
+        [
+          1,
+          0
+        ],
+        [
+          1,
+          1
+        ],
+        [
+          1,
+          2
+        ],
+        [
+          1,
+          3
+        ],
+        [
+          1,
+          4
+        ],
+        [
+          1,
+          5
+        ],
+        [
+          1,
+          6
+        ],
+        [
+          1,
+          7
+        ],
+        [
+          1,
+          8
+        ],
+        [
+          1,
+          9
+        ],
+        [
+          2,
+          0
+        ],
+        [
+          2,
+          1
+        ],
+        [
+          2,
+          2
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          4
+        ],
+        [
+          2,
+          5
+        ],
+        [
+          2,
+          6
+        ],
+        [
+          2,
+          7
+        ],
+        [
+          2,
+          8
+        ],
+        [
+          2,
+          9
+        ],
+        [
+          2,
+          10
+        ],
+        [
+          2,
+          11
+        ],
+        [
+          2,
+          12
+        ],
+        [
+          2,
+          13
+        ],
+        [
+          2,
+          14
+        ]
+      ],
+      "sweeps": 108047,
+      "measured_sweeps": 99735,
+      "duration_s": 12.999188,
+      "received_period_median_us": 120.00000000034206,
+      "received_period_max_us": 240.0000000006841,
+      "acquisition_duration_median_us": 119.0,
+      "usb_frames_discarded": 2,
+      "sampling_period_max_us": 121,
+      "sampling_period_over_1ms": 0,
+      "firmware_errors": {
+        "adc1_errors": 0,
+        "adc2_errors": 0,
+        "adc3_errors": 0,
+        "adc4_errors": 0,
+        "returned_channel_errors": 0,
+        "transfer_timeouts": 0,
+        "usb_write_errors": 0,
+        "dma_start_errors": 0,
+        "lpspi_start_errors": 0
+      },
+      "wire_integrity": "PASS",
+      "all_routes_envelope": {
+        "std_p10_counts": 0.7021848237058143,
+        "std_median_counts": 0.942215080994566,
+        "std_p95_counts": 2.2616700582807625,
+        "std_max_counts": 2.3823140523133497,
+        "period_s": 1.32,
+        "autocorrelation": 0.8735259471120569
+      },
+      "adcs": {
+        "1": {
+          "std_p10_counts": 0.7239709306650534,
+          "std_median_counts": 1.0448895525597957,
+          "std_p95_counts": 2.938169414765152,
+          "std_max_counts": 3.056629589544892,
+          "period_s": 1.32,
+          "autocorrelation": 0.875547677662475,
+          "channel_baseline_median_counts": 1968.0,
+          "channel0_median_counts": 1937.0,
+          "channel0_deficit_from_other_channels_counts": 34.0
+        },
+        "2": {
+          "std_p10_counts": 0.6854293581840462,
+          "std_median_counts": 0.8862257782159362,
+          "std_p95_counts": 2.1091327502705055,
+          "std_max_counts": 2.204255055710215,
+          "period_s": 1.32,
+          "autocorrelation": 0.8724221869340262,
+          "channel_baseline_median_counts": 1990.0,
+          "channel0_median_counts": 1959.0,
+          "channel0_deficit_from_other_channels_counts": 31.5,
+          "channel11_median_counts": 1913.0,
+          "channel11_deficit_from_other_channels_counts": 77.5
+        }
+      },
+      "adc_envelope_correlation_order": [
+        1,
+        2
+      ],
+      "adc_envelope_correlation_matrix": [
+        [
+          0.9999999999999999,
+          0.9968700337111946
+        ],
+        [
+          0.9968700337111946,
+          1.0
+        ]
+      ],
+      "channel_baselines": [
+        {
+          "adc": 1,
+          "channel": 0,
+          "median_counts": 1937.0
+        },
+        {
+          "adc": 1,
+          "channel": 1,
+          "median_counts": 1963.0
+        },
+        {
+          "adc": 1,
+          "channel": 2,
+          "median_counts": 1974.0
+        },
+        {
+          "adc": 1,
+          "channel": 3,
+          "median_counts": 1971.0
+        },
+        {
+          "adc": 1,
+          "channel": 4,
+          "median_counts": 1977.0
+        },
+        {
+          "adc": 1,
+          "channel": 5,
+          "median_counts": 1976.0
+        },
+        {
+          "adc": 1,
+          "channel": 6,
+          "median_counts": 1972.0
+        },
+        {
+          "adc": 1,
+          "channel": 7,
+          "median_counts": 1965.0
+        },
+        {
+          "adc": 1,
+          "channel": 8,
+          "median_counts": 1958.0
+        },
+        {
+          "adc": 1,
+          "channel": 9,
+          "median_counts": 1965.0
+        },
+        {
+          "adc": 2,
+          "channel": 0,
+          "median_counts": 1959.0
+        },
+        {
+          "adc": 2,
+          "channel": 1,
+          "median_counts": 1986.0
+        },
+        {
+          "adc": 2,
+          "channel": 2,
+          "median_counts": 1991.0
+        },
+        {
+          "adc": 2,
+          "channel": 3,
+          "median_counts": 1988.0
+        },
+        {
+          "adc": 2,
+          "channel": 4,
+          "median_counts": 2001.0
+        },
+        {
+          "adc": 2,
+          "channel": 5,
+          "median_counts": 1998.0
+        },
+        {
+          "adc": 2,
+          "channel": 6,
+          "median_counts": 1991.0
+        },
+        {
+          "adc": 2,
+          "channel": 7,
+          "median_counts": 1988.0
+        },
+        {
+          "adc": 2,
+          "channel": 8,
+          "median_counts": 1989.0
+        },
+        {
+          "adc": 2,
+          "channel": 9,
+          "median_counts": 1990.0
+        },
+        {
+          "adc": 2,
+          "channel": 10,
+          "median_counts": 2010.0
+        },
+        {
+          "adc": 2,
+          "channel": 11,
+          "median_counts": 1913.0
+        },
+        {
+          "adc": 2,
+          "channel": 12,
+          "median_counts": 1955.0
+        },
+        {
+          "adc": 2,
+          "channel": 13,
+          "median_counts": 1992.0
+        },
+        {
+          "adc": 2,
+          "channel": 14,
+          "median_counts": 2005.0
+        }
+      ],
+      "firmware_status_after": {
+        "adcchannels": "1:0,1:1,1:2,1:3,1:4,1:5,1:6,1:7,1:8,1:9,2:0,2:1,2:2,2:3,2:4,2:5,2:6,2:7,2:8,2:9,2:10,2:11,2:12,2:13,2:14",
+        "array": "1",
+        "scanorder": "adc",
+        "adcseq": "manual",
+        "spiengine": "dma",
+        "spi_clock_hz": "10000000",
+        "channelrepeat_requested": "1",
+        "channelrepeat_effective": "1",
+        "vmid_channel": "15",
+        "vmid_between_channels_requested": "false",
+        "vmid_between_channels_effective": "false",
+        "vmid_parking": "mandatory",
+        "route_count": "25",
+        "vref": "2.5",
+        "active_adcs": "1,2",
+        "active_spi_buses": "1",
+        "dma_start_errors": "0",
+        "lpspi_start_errors": "0",
+        "transfer_timeouts": "0",
+        "returned_channel_errors": "0",
+        "usb_write_errors": "0",
+        "usb_stream_policy": "discard_if_busy",
+        "sampling_sweeps": "108049",
+        "usb_frames_sent": "108047",
+        "usb_frames_discarded": "2",
+        "sampling_period_max_us": "121",
+        "sampling_period_over_1ms": "0",
+        "auto1_program_count": "0",
+        "auto1_resume_count": "0",
+        "adc1_errors": "0",
+        "adc2_errors": "0",
+        "adc3_errors": "0",
+        "adc4_errors": "0",
+        "running": "false",
+        "profile_available": "false",
+        "profile_enabled": "false"
+      }
+    },
+    {
+      "test_id": "full_array1__adc__manual__lpspi__repeat1__vmidoff__spi10000000hz",
+      "raw": "C:\\Code\\arduino_adc_streamer\\Arduino_Sketches\\TestBoard_7953\\benchmarks\\results\\noise_engine_topology_20261008\\raw\\full_array1__adc__manual__lpspi__repeat1__vmidoff__spi10000000hz__r1__attempt1.bin",
+      "raw_sha256": "0a7b210daa3382254b53f907636c9848f94439bb3f91124da691a4c770a4ca93",
+      "route_set": "full_array1",
+      "engine": "lpspi",
+      "spi_clock_hz": 10000000,
+      "active_adcs": [
+        1,
+        2
+      ],
+      "routes": [
+        [
+          1,
+          0
+        ],
+        [
+          1,
+          1
+        ],
+        [
+          1,
+          2
+        ],
+        [
+          1,
+          3
+        ],
+        [
+          1,
+          4
+        ],
+        [
+          1,
+          5
+        ],
+        [
+          1,
+          6
+        ],
+        [
+          1,
+          7
+        ],
+        [
+          1,
+          8
+        ],
+        [
+          1,
+          9
+        ],
+        [
+          2,
+          0
+        ],
+        [
+          2,
+          1
+        ],
+        [
+          2,
+          2
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          4
+        ],
+        [
+          2,
+          5
+        ],
+        [
+          2,
+          6
+        ],
+        [
+          2,
+          7
+        ],
+        [
+          2,
+          8
+        ],
+        [
+          2,
+          9
+        ],
+        [
+          2,
+          10
+        ],
+        [
+          2,
+          11
+        ],
+        [
+          2,
+          12
+        ],
+        [
+          2,
+          13
+        ],
+        [
+          2,
+          14
+        ]
+      ],
+      "sweeps": 200601,
+      "measured_sweeps": 185169,
+      "duration_s": 12.99926,
+      "received_period_median_us": 64.9999999997597,
+      "received_period_max_us": 67.00000000137152,
+      "acquisition_duration_median_us": 64.0,
+      "usb_frames_discarded": 0,
+      "sampling_period_max_us": 67,
+      "sampling_period_over_1ms": 0,
+      "firmware_errors": {
+        "adc1_errors": 0,
+        "adc2_errors": 0,
+        "adc3_errors": 0,
+        "adc4_errors": 0,
+        "returned_channel_errors": 0,
+        "transfer_timeouts": 0,
+        "usb_write_errors": 0,
+        "dma_start_errors": 0,
+        "lpspi_start_errors": 0
+      },
+      "wire_integrity": "PASS",
+      "all_routes_envelope": {
+        "std_p10_counts": 0.7232546990709116,
+        "std_median_counts": 0.8639664507325685,
+        "std_p95_counts": 1.2442809894926397,
+        "std_max_counts": 1.3884178829179936,
+        "period_s": 1.32,
+        "autocorrelation": 0.8661029023158868
+      },
+      "adcs": {
+        "1": {
+          "std_p10_counts": 0.7444176996014013,
+          "std_median_counts": 0.9016157684024964,
+          "std_p95_counts": 1.4129991007110345,
+          "std_max_counts": 1.6605001508687676,
+          "period_s": 1.32,
+          "autocorrelation": 0.8679242592754397,
+          "channel_baseline_median_counts": 1972.5,
+          "channel0_median_counts": 1918.0,
+          "channel0_deficit_from_other_channels_counts": 56.0
+        },
+        "2": {
+          "std_p10_counts": 0.6942927247061185,
+          "std_median_counts": 0.8294175219981224,
+          "std_p95_counts": 1.1913708670821719,
+          "std_max_counts": 1.3178582263322083,
+          "period_s": 1.32,
+          "autocorrelation": 0.8688559910963091,
+          "channel_baseline_median_counts": 2000.0,
+          "channel0_median_counts": 1942.0,
+          "channel0_deficit_from_other_channels_counts": 58.5,
+          "channel11_median_counts": 1905.0,
+          "channel11_deficit_from_other_channels_counts": 95.5
+        }
+      },
+      "adc_envelope_correlation_order": [
+        1,
+        2
+      ],
+      "adc_envelope_correlation_matrix": [
+        [
+          1.0,
+          0.9653183843012272
+        ],
+        [
+          0.9653183843012272,
+          1.0
+        ]
+      ],
+      "channel_baselines": [
+        {
+          "adc": 1,
+          "channel": 0,
+          "median_counts": 1918.0
+        },
+        {
+          "adc": 1,
+          "channel": 1,
+          "median_counts": 1957.0
+        },
+        {
+          "adc": 1,
+          "channel": 2,
+          "median_counts": 1974.0
+        },
+        {
+          "adc": 1,
+          "channel": 3,
+          "median_counts": 1975.0
+        },
+        {
+          "adc": 1,
+          "channel": 4,
+          "median_counts": 1983.0
+        },
+        {
+          "adc": 1,
+          "channel": 5,
+          "median_counts": 1984.0
+        },
+        {
+          "adc": 1,
+          "channel": 6,
+          "median_counts": 1980.0
+        },
+        {
+          "adc": 1,
+          "channel": 7,
+          "median_counts": 1971.0
+        },
+        {
+          "adc": 1,
+          "channel": 8,
+          "median_counts": 1963.0
+        },
+        {
+          "adc": 1,
+          "channel": 9,
+          "median_counts": 1969.0
+        },
+        {
+          "adc": 2,
+          "channel": 0,
+          "median_counts": 1942.0
+        },
+        {
+          "adc": 2,
+          "channel": 1,
+          "median_counts": 1987.0
+        },
+        {
+          "adc": 2,
+          "channel": 2,
+          "median_counts": 2000.0
+        },
+        {
+          "adc": 2,
+          "channel": 3,
+          "median_counts": 1999.0
+        },
+        {
+          "adc": 2,
+          "channel": 4,
+          "median_counts": 2003.0
+        },
+        {
+          "adc": 2,
+          "channel": 5,
+          "median_counts": 2010.0
+        },
+        {
+          "adc": 2,
+          "channel": 6,
+          "median_counts": 2004.0
+        },
+        {
+          "adc": 2,
+          "channel": 7,
+          "median_counts": 1999.0
+        },
+        {
+          "adc": 2,
+          "channel": 8,
+          "median_counts": 2001.0
+        },
+        {
+          "adc": 2,
+          "channel": 9,
+          "median_counts": 2002.0
+        },
+        {
+          "adc": 2,
+          "channel": 10,
+          "median_counts": 2027.0
+        },
+        {
+          "adc": 2,
+          "channel": 11,
+          "median_counts": 1905.0
+        },
+        {
+          "adc": 2,
+          "channel": 12,
+          "median_counts": 1935.0
+        },
+        {
+          "adc": 2,
+          "channel": 13,
+          "median_counts": 1985.0
+        },
+        {
+          "adc": 2,
+          "channel": 14,
+          "median_counts": 2009.0
+        }
+      ],
+      "firmware_status_after": {
+        "adcchannels": "1:0,1:1,1:2,1:3,1:4,1:5,1:6,1:7,1:8,1:9,2:0,2:1,2:2,2:3,2:4,2:5,2:6,2:7,2:8,2:9,2:10,2:11,2:12,2:13,2:14",
+        "array": "1",
+        "scanorder": "adc",
+        "adcseq": "manual",
+        "spiengine": "lpspi",
+        "spi_clock_hz": "10000000",
+        "channelrepeat_requested": "1",
+        "channelrepeat_effective": "1",
+        "vmid_channel": "15",
+        "vmid_between_channels_requested": "false",
+        "vmid_between_channels_effective": "false",
+        "vmid_parking": "mandatory",
+        "route_count": "25",
+        "vref": "2.5",
+        "active_adcs": "1,2",
+        "active_spi_buses": "1",
+        "dma_start_errors": "0",
+        "lpspi_start_errors": "0",
+        "transfer_timeouts": "0",
+        "returned_channel_errors": "0",
+        "usb_write_errors": "0",
+        "usb_stream_policy": "discard_if_busy",
+        "sampling_sweeps": "200601",
+        "usb_frames_sent": "200601",
+        "usb_frames_discarded": "0",
+        "sampling_period_max_us": "67",
+        "sampling_period_over_1ms": "0",
+        "auto1_program_count": "0",
+        "auto1_resume_count": "0",
+        "adc1_errors": "0",
+        "adc2_errors": "0",
+        "adc3_errors": "0",
+        "adc4_errors": "0",
+        "running": "false",
+        "profile_available": "false",
+        "profile_enabled": "false"
+      }
+    },
+    {
+      "test_id": "full_array2__adc__manual__blocking__repeat1__vmidoff__spi10000000hz",
+      "raw": "C:\\Code\\arduino_adc_streamer\\Arduino_Sketches\\TestBoard_7953\\benchmarks\\results\\noise_engine_topology_20261008\\raw\\full_array2__adc__manual__blocking__repeat1__vmidoff__spi10000000hz__r1__attempt1.bin",
+      "raw_sha256": "6ae6940bbdb625dddc8eb8e5296c77d47f34d4b4a92dadd36f085822bed34bff",
+      "route_set": "full_array2",
+      "engine": "blocking",
+      "spi_clock_hz": 10000000,
+      "active_adcs": [
+        3,
+        4
+      ],
+      "routes": [
+        [
+          3,
+          0
+        ],
+        [
+          3,
+          1
+        ],
+        [
+          3,
+          2
+        ],
+        [
+          3,
+          3
+        ],
+        [
+          3,
+          4
+        ],
+        [
+          3,
+          5
+        ],
+        [
+          3,
+          6
+        ],
+        [
+          3,
+          7
+        ],
+        [
+          3,
+          8
+        ],
+        [
+          3,
+          9
+        ],
+        [
+          4,
+          0
+        ],
+        [
+          4,
+          1
+        ],
+        [
+          4,
+          2
+        ],
+        [
+          4,
+          3
+        ],
+        [
+          4,
+          4
+        ],
+        [
+          4,
+          5
+        ],
+        [
+          4,
+          6
+        ],
+        [
+          4,
+          7
+        ],
+        [
+          4,
+          8
+        ],
+        [
+          4,
+          9
+        ],
+        [
+          4,
+          10
+        ],
+        [
+          4,
+          11
+        ],
+        [
+          4,
+          12
+        ],
+        [
+          4,
+          13
+        ],
+        [
+          4,
+          14
+        ]
+      ],
+      "sweeps": 191419,
+      "measured_sweeps": 176694,
+      "duration_s": 12.999647,
+      "received_period_median_us": 67.99999999995698,
+      "received_period_max_us": 70.00000000090267,
+      "acquisition_duration_median_us": 67.0,
+      "usb_frames_discarded": 0,
+      "sampling_period_max_us": 70,
+      "sampling_period_over_1ms": 0,
+      "firmware_errors": {
+        "adc1_errors": 0,
+        "adc2_errors": 0,
+        "adc3_errors": 0,
+        "adc4_errors": 0,
+        "returned_channel_errors": 0,
+        "transfer_timeouts": 0,
+        "usb_write_errors": 0,
+        "dma_start_errors": 0,
+        "lpspi_start_errors": 0
+      },
+      "wire_integrity": "PASS",
+      "all_routes_envelope": {
+        "std_p10_counts": 0.617849526760791,
+        "std_median_counts": 0.7763659887622992,
+        "std_p95_counts": 1.410418136903668,
+        "std_max_counts": 1.4878954847241221,
+        "period_s": 1.32,
+        "autocorrelation": 0.8711670453735824
+      },
+      "adcs": {
+        "3": {
+          "std_p10_counts": 0.6592808467774438,
+          "std_median_counts": 0.8400148784534817,
+          "std_p95_counts": 1.738759907187748,
+          "std_max_counts": 1.8393291159444212,
+          "period_s": 1.32,
+          "autocorrelation": 0.8698818839000853,
+          "channel_baseline_median_counts": 2010.0,
+          "channel0_median_counts": 1970.0,
+          "channel0_deficit_from_other_channels_counts": 40.0
+        },
+        "4": {
+          "std_p10_counts": 0.5957446211313546,
+          "std_median_counts": 0.7437292509186141,
+          "std_p95_counts": 1.3585190581455453,
+          "std_max_counts": 1.4270613487733064,
+          "period_s": 1.32,
+          "autocorrelation": 0.8701213608867261,
+          "channel_baseline_median_counts": 2015.0,
+          "channel0_median_counts": 1983.0,
+          "channel0_deficit_from_other_channels_counts": 32.5,
+          "channel11_median_counts": 1923.0,
+          "channel11_deficit_from_other_channels_counts": 92.5
+        }
+      },
+      "adc_envelope_correlation_order": [
+        3,
+        4
+      ],
+      "adc_envelope_correlation_matrix": [
+        [
+          1.0,
+          0.9970407508358978
+        ],
+        [
+          0.9970407508358979,
+          0.9999999999999998
+        ]
+      ],
+      "channel_baselines": [
+        {
+          "adc": 3,
+          "channel": 0,
+          "median_counts": 1970.0
+        },
+        {
+          "adc": 3,
+          "channel": 1,
+          "median_counts": 1999.0
+        },
+        {
+          "adc": 3,
+          "channel": 2,
+          "median_counts": 2011.0
+        },
+        {
+          "adc": 3,
+          "channel": 3,
+          "median_counts": 2011.0
+        },
+        {
+          "adc": 3,
+          "channel": 4,
+          "median_counts": 2014.0
+        },
+        {
+          "adc": 3,
+          "channel": 5,
+          "median_counts": 2014.0
+        },
+        {
+          "adc": 3,
+          "channel": 6,
+          "median_counts": 2010.0
+        },
+        {
+          "adc": 3,
+          "channel": 7,
+          "median_counts": 2007.0
+        },
+        {
+          "adc": 3,
+          "channel": 8,
+          "median_counts": 2007.0
+        },
+        {
+          "adc": 3,
+          "channel": 9,
+          "median_counts": 2010.0
+        },
+        {
+          "adc": 4,
+          "channel": 0,
+          "median_counts": 1983.0
+        },
+        {
+          "adc": 4,
+          "channel": 1,
+          "median_counts": 2009.0
+        },
+        {
+          "adc": 4,
+          "channel": 2,
+          "median_counts": 2017.0
+        },
+        {
+          "adc": 4,
+          "channel": 3,
+          "median_counts": 2015.0
+        },
+        {
+          "adc": 4,
+          "channel": 4,
+          "median_counts": 2014.0
+        },
+        {
+          "adc": 4,
+          "channel": 5,
+          "median_counts": 2019.0
+        },
+        {
+          "adc": 4,
+          "channel": 6,
+          "median_counts": 2019.0
+        },
+        {
+          "adc": 4,
+          "channel": 7,
+          "median_counts": 2016.0
+        },
+        {
+          "adc": 4,
+          "channel": 8,
+          "median_counts": 2014.0
+        },
+        {
+          "adc": 4,
+          "channel": 9,
+          "median_counts": 2016.0
+        },
+        {
+          "adc": 4,
+          "channel": 10,
+          "median_counts": 2023.0
+        },
+        {
+          "adc": 4,
+          "channel": 11,
+          "median_counts": 1923.0
+        },
+        {
+          "adc": 4,
+          "channel": 12,
+          "median_counts": 1990.0
+        },
+        {
+          "adc": 4,
+          "channel": 13,
+          "median_counts": 2012.0
+        },
+        {
+          "adc": 4,
+          "channel": 14,
+          "median_counts": 2019.0
+        }
+      ],
+      "firmware_status_after": {
+        "adcchannels": "3:0,3:1,3:2,3:3,3:4,3:5,3:6,3:7,3:8,3:9,4:0,4:1,4:2,4:3,4:4,4:5,4:6,4:7,4:8,4:9,4:10,4:11,4:12,4:13,4:14",
+        "array": "2",
+        "scanorder": "adc",
+        "adcseq": "manual",
+        "spiengine": "blocking",
+        "spi_clock_hz": "10000000",
+        "channelrepeat_requested": "1",
+        "channelrepeat_effective": "1",
+        "vmid_channel": "15",
+        "vmid_between_channels_requested": "false",
+        "vmid_between_channels_effective": "false",
+        "vmid_parking": "mandatory",
+        "route_count": "25",
+        "vref": "2.5",
+        "active_adcs": "3,4",
+        "active_spi_buses": "2",
+        "dma_start_errors": "0",
+        "lpspi_start_errors": "0",
+        "transfer_timeouts": "0",
+        "returned_channel_errors": "0",
+        "usb_write_errors": "0",
+        "usb_stream_policy": "discard_if_busy",
+        "sampling_sweeps": "191419",
+        "usb_frames_sent": "191419",
+        "usb_frames_discarded": "0",
+        "sampling_period_max_us": "70",
+        "sampling_period_over_1ms": "0",
+        "auto1_program_count": "0",
+        "auto1_resume_count": "0",
+        "adc1_errors": "0",
+        "adc2_errors": "0",
+        "adc3_errors": "0",
+        "adc4_errors": "0",
+        "running": "false",
+        "profile_available": "false",
+        "profile_enabled": "false"
+      }
+    },
+    {
+      "test_id": "full_array2__adc__manual__dma__repeat1__vmidoff__spi10000000hz",
+      "raw": "C:\\Code\\arduino_adc_streamer\\Arduino_Sketches\\TestBoard_7953\\benchmarks\\results\\noise_engine_topology_20261008\\raw\\full_array2__adc__manual__dma__repeat1__vmidoff__spi10000000hz__r1__attempt1.bin",
+      "raw_sha256": "b211ddd6e1ec062c25caf2a651655e1922c508094c5c29d3dd00408bd226738c",
+      "route_set": "full_array2",
+      "engine": "dma",
+      "spi_clock_hz": 10000000,
+      "active_adcs": [
+        3,
+        4
+      ],
+      "routes": [
+        [
+          3,
+          0
+        ],
+        [
+          3,
+          1
+        ],
+        [
+          3,
+          2
+        ],
+        [
+          3,
+          3
+        ],
+        [
+          3,
+          4
+        ],
+        [
+          3,
+          5
+        ],
+        [
+          3,
+          6
+        ],
+        [
+          3,
+          7
+        ],
+        [
+          3,
+          8
+        ],
+        [
+          3,
+          9
+        ],
+        [
+          4,
+          0
+        ],
+        [
+          4,
+          1
+        ],
+        [
+          4,
+          2
+        ],
+        [
+          4,
+          3
+        ],
+        [
+          4,
+          4
+        ],
+        [
+          4,
+          5
+        ],
+        [
+          4,
+          6
+        ],
+        [
+          4,
+          7
+        ],
+        [
+          4,
+          8
+        ],
+        [
+          4,
+          9
+        ],
+        [
+          4,
+          10
+        ],
+        [
+          4,
+          11
+        ],
+        [
+          4,
+          12
+        ],
+        [
+          4,
+          13
+        ],
+        [
+          4,
+          14
+        ]
+      ],
+      "sweeps": 107437,
+      "measured_sweeps": 99172,
+      "duration_s": 12.999875,
+      "received_period_median_us": 121.00000000003774,
+      "received_period_max_us": 242.0000000000755,
+      "acquisition_duration_median_us": 120.0,
+      "usb_frames_discarded": 1,
+      "sampling_period_max_us": 121,
+      "sampling_period_over_1ms": 0,
+      "firmware_errors": {
+        "adc1_errors": 0,
+        "adc2_errors": 0,
+        "adc3_errors": 0,
+        "adc4_errors": 0,
+        "returned_channel_errors": 0,
+        "transfer_timeouts": 0,
+        "usb_write_errors": 0,
+        "dma_start_errors": 0,
+        "lpspi_start_errors": 0
+      },
+      "wire_integrity": "PASS",
+      "all_routes_envelope": {
+        "std_p10_counts": 0.6093619960028895,
+        "std_median_counts": 0.7565462153607225,
+        "std_p95_counts": 1.5395614349999829,
+        "std_max_counts": 1.6117638490485433,
+        "period_s": 1.32,
+        "autocorrelation": 0.8734018166907239
+      },
+      "adcs": {
+        "3": {
+          "std_p10_counts": 0.6240779159130247,
+          "std_median_counts": 0.7901021062426976,
+          "std_p95_counts": 1.9678072327642842,
+          "std_max_counts": 2.033278238623218,
+          "period_s": 1.32,
+          "autocorrelation": 0.8742070168165367,
+          "channel_baseline_median_counts": 2002.0,
+          "channel0_median_counts": 1978.0,
+          "channel0_deficit_from_other_channels_counts": 24.0
+        },
+        "4": {
+          "std_p10_counts": 0.5979017287610252,
+          "std_median_counts": 0.7326924744662426,
+          "std_p95_counts": 1.4581779263218897,
+          "std_max_counts": 1.4955208772912623,
+          "period_s": 1.32,
+          "autocorrelation": 0.8743080117118619,
+          "channel_baseline_median_counts": 2010.0,
+          "channel0_median_counts": 1994.0,
+          "channel0_deficit_from_other_channels_counts": 16.5,
+          "channel11_median_counts": 1944.0,
+          "channel11_deficit_from_other_channels_counts": 66.5
+        }
+      },
+      "adc_envelope_correlation_order": [
+        3,
+        4
+      ],
+      "adc_envelope_correlation_matrix": [
+        [
+          0.9999999999999999,
+          0.9967566301815929
+        ],
+        [
+          0.996756630181593,
+          1.0
+        ]
+      ],
+      "channel_baselines": [
+        {
+          "adc": 3,
+          "channel": 0,
+          "median_counts": 1978.0
+        },
+        {
+          "adc": 3,
+          "channel": 1,
+          "median_counts": 2000.0
+        },
+        {
+          "adc": 3,
+          "channel": 2,
+          "median_counts": 2007.0
+        },
+        {
+          "adc": 3,
+          "channel": 3,
+          "median_counts": 2005.0
+        },
+        {
+          "adc": 3,
+          "channel": 4,
+          "median_counts": 2006.0
+        },
+        {
+          "adc": 3,
+          "channel": 5,
+          "median_counts": 2005.0
+        },
+        {
+          "adc": 3,
+          "channel": 6,
+          "median_counts": 2002.0
+        },
+        {
+          "adc": 3,
+          "channel": 7,
+          "median_counts": 1999.0
+        },
+        {
+          "adc": 3,
+          "channel": 8,
+          "median_counts": 2000.0
+        },
+        {
+          "adc": 3,
+          "channel": 9,
+          "median_counts": 2002.0
+        },
+        {
+          "adc": 4,
+          "channel": 0,
+          "median_counts": 1994.0
+        },
+        {
+          "adc": 4,
+          "channel": 1,
+          "median_counts": 2008.0
+        },
+        {
+          "adc": 4,
+          "channel": 2,
+          "median_counts": 2011.0
+        },
+        {
+          "adc": 4,
+          "channel": 3,
+          "median_counts": 2009.0
+        },
+        {
+          "adc": 4,
+          "channel": 4,
+          "median_counts": 2016.0
+        },
+        {
+          "adc": 4,
+          "channel": 5,
+          "median_counts": 2013.0
+        },
+        {
+          "adc": 4,
+          "channel": 6,
+          "median_counts": 2011.0
+        },
+        {
+          "adc": 4,
+          "channel": 7,
+          "median_counts": 2009.0
+        },
+        {
+          "adc": 4,
+          "channel": 8,
+          "median_counts": 2008.0
+        },
+        {
+          "adc": 4,
+          "channel": 9,
+          "median_counts": 2010.0
+        },
+        {
+          "adc": 4,
+          "channel": 10,
+          "median_counts": 2015.0
+        },
+        {
+          "adc": 4,
+          "channel": 11,
+          "median_counts": 1944.0
+        },
+        {
+          "adc": 4,
+          "channel": 12,
+          "median_counts": 2000.0
+        },
+        {
+          "adc": 4,
+          "channel": 13,
+          "median_counts": 2012.0
+        },
+        {
+          "adc": 4,
+          "channel": 14,
+          "median_counts": 2014.0
+        }
+      ],
+      "firmware_status_after": {
+        "adcchannels": "3:0,3:1,3:2,3:3,3:4,3:5,3:6,3:7,3:8,3:9,4:0,4:1,4:2,4:3,4:4,4:5,4:6,4:7,4:8,4:9,4:10,4:11,4:12,4:13,4:14",
+        "array": "2",
+        "scanorder": "adc",
+        "adcseq": "manual",
+        "spiengine": "dma",
+        "spi_clock_hz": "10000000",
+        "channelrepeat_requested": "1",
+        "channelrepeat_effective": "1",
+        "vmid_channel": "15",
+        "vmid_between_channels_requested": "false",
+        "vmid_between_channels_effective": "false",
+        "vmid_parking": "mandatory",
+        "route_count": "25",
+        "vref": "2.5",
+        "active_adcs": "3,4",
+        "active_spi_buses": "2",
+        "dma_start_errors": "0",
+        "lpspi_start_errors": "0",
+        "transfer_timeouts": "0",
+        "returned_channel_errors": "0",
+        "usb_write_errors": "0",
+        "usb_stream_policy": "discard_if_busy",
+        "sampling_sweeps": "107438",
+        "usb_frames_sent": "107437",
+        "usb_frames_discarded": "1",
+        "sampling_period_max_us": "121",
+        "sampling_period_over_1ms": "0",
+        "auto1_program_count": "0",
+        "auto1_resume_count": "0",
+        "adc1_errors": "0",
+        "adc2_errors": "0",
+        "adc3_errors": "0",
+        "adc4_errors": "0",
+        "running": "false",
+        "profile_available": "false",
+        "profile_enabled": "false"
+      }
+    },
+    {
+      "test_id": "full_array2__adc__manual__lpspi__repeat1__vmidoff__spi10000000hz",
+      "raw": "C:\\Code\\arduino_adc_streamer\\Arduino_Sketches\\TestBoard_7953\\benchmarks\\results\\noise_engine_topology_20261008\\raw\\full_array2__adc__manual__lpspi__repeat1__vmidoff__spi10000000hz__r1__attempt1.bin",
+      "raw_sha256": "dc6ce3dba18831780edaac957331ceb05efadf3f0db2235b4a9a274d8062977b",
+      "route_set": "full_array2",
+      "engine": "lpspi",
+      "spi_clock_hz": 10000000,
+      "active_adcs": [
+        3,
+        4
+      ],
+      "routes": [
+        [
+          3,
+          0
+        ],
+        [
+          3,
+          1
+        ],
+        [
+          3,
+          2
+        ],
+        [
+          3,
+          3
+        ],
+        [
+          3,
+          4
+        ],
+        [
+          3,
+          5
+        ],
+        [
+          3,
+          6
+        ],
+        [
+          3,
+          7
+        ],
+        [
+          3,
+          8
+        ],
+        [
+          3,
+          9
+        ],
+        [
+          4,
+          0
+        ],
+        [
+          4,
+          1
+        ],
+        [
+          4,
+          2
+        ],
+        [
+          4,
+          3
+        ],
+        [
+          4,
+          4
+        ],
+        [
+          4,
+          5
+        ],
+        [
+          4,
+          6
+        ],
+        [
+          4,
+          7
+        ],
+        [
+          4,
+          8
+        ],
+        [
+          4,
+          9
+        ],
+        [
+          4,
+          10
+        ],
+        [
+          4,
+          11
+        ],
+        [
+          4,
+          12
+        ],
+        [
+          4,
+          13
+        ],
+        [
+          4,
+          14
+        ]
+      ],
+      "sweeps": 199724,
+      "measured_sweeps": 184359,
+      "duration_s": 12.999244,
+      "received_period_median_us": 65.00000000020378,
+      "received_period_max_us": 67.00000000137152,
+      "acquisition_duration_median_us": 64.0,
+      "usb_frames_discarded": 0,
+      "sampling_period_max_us": 67,
+      "sampling_period_over_1ms": 0,
+      "firmware_errors": {
+        "adc1_errors": 0,
+        "adc2_errors": 0,
+        "adc3_errors": 0,
+        "adc4_errors": 0,
+        "returned_channel_errors": 0,
+        "transfer_timeouts": 0,
+        "usb_write_errors": 0,
+        "dma_start_errors": 0,
+        "lpspi_start_errors": 0
+      },
+      "wire_integrity": "PASS",
+      "all_routes_envelope": {
+        "std_p10_counts": 0.6179767524498657,
+        "std_median_counts": 0.7693249689317351,
+        "std_p95_counts": 1.4082500816584254,
+        "std_max_counts": 1.4547440666677622,
+        "period_s": 1.32,
+        "autocorrelation": 0.8703086484346572
+      },
+      "adcs": {
+        "3": {
+          "std_p10_counts": 0.6577566046674059,
+          "std_median_counts": 0.8686899234003265,
+          "std_p95_counts": 1.828808389182834,
+          "std_max_counts": 1.8952824953201841,
+          "period_s": 1.32,
+          "autocorrelation": 0.8666102132042006,
+          "channel_baseline_median_counts": 2011.0,
+          "channel0_median_counts": 1969.0,
+          "channel0_deficit_from_other_channels_counts": 42.0
+        },
+        "4": {
+          "std_p10_counts": 0.5952878188178374,
+          "std_median_counts": 0.738169378293616,
+          "std_p95_counts": 1.3566232250775108,
+          "std_max_counts": 1.4006390822855372,
+          "period_s": 1.32,
+          "autocorrelation": 0.8705077322434698,
+          "channel_baseline_median_counts": 2017.0,
+          "channel0_median_counts": 1981.0,
+          "channel0_deficit_from_other_channels_counts": 36.0,
+          "channel11_median_counts": 1923.0,
+          "channel11_deficit_from_other_channels_counts": 94.0
+        }
+      },
+      "adc_envelope_correlation_order": [
+        3,
+        4
+      ],
+      "adc_envelope_correlation_matrix": [
+        [
+          1.0,
+          0.9965179089227832
+        ],
+        [
+          0.9965179089227832,
+          0.9999999999999998
+        ]
+      ],
+      "channel_baselines": [
+        {
+          "adc": 3,
+          "channel": 0,
+          "median_counts": 1969.0
+        },
+        {
+          "adc": 3,
+          "channel": 1,
+          "median_counts": 1998.0
+        },
+        {
+          "adc": 3,
+          "channel": 2,
+          "median_counts": 2011.0
+        },
+        {
+          "adc": 3,
+          "channel": 3,
+          "median_counts": 2012.0
+        },
+        {
+          "adc": 3,
+          "channel": 4,
+          "median_counts": 2015.0
+        },
+        {
+          "adc": 3,
+          "channel": 5,
+          "median_counts": 2015.0
+        },
+        {
+          "adc": 3,
+          "channel": 6,
+          "median_counts": 2011.0
+        },
+        {
+          "adc": 3,
+          "channel": 7,
+          "median_counts": 2007.0
+        },
+        {
+          "adc": 3,
+          "channel": 8,
+          "median_counts": 2007.0
+        },
+        {
+          "adc": 3,
+          "channel": 9,
+          "median_counts": 2011.0
+        },
+        {
+          "adc": 4,
+          "channel": 0,
+          "median_counts": 1981.0
+        },
+        {
+          "adc": 4,
+          "channel": 1,
+          "median_counts": 2009.0
+        },
+        {
+          "adc": 4,
+          "channel": 2,
+          "median_counts": 2018.0
+        },
+        {
+          "adc": 4,
+          "channel": 3,
+          "median_counts": 2017.0
+        },
+        {
+          "adc": 4,
+          "channel": 4,
+          "median_counts": 2016.0
+        },
+        {
+          "adc": 4,
+          "channel": 5,
+          "median_counts": 2021.0
+        },
+        {
+          "adc": 4,
+          "channel": 6,
+          "median_counts": 2020.0
+        },
+        {
+          "adc": 4,
+          "channel": 7,
+          "median_counts": 2017.0
+        },
+        {
+          "adc": 4,
+          "channel": 8,
+          "median_counts": 2016.0
+        },
+        {
+          "adc": 4,
+          "channel": 9,
+          "median_counts": 2018.0
+        },
+        {
+          "adc": 4,
+          "channel": 10,
+          "median_counts": 2025.0
+        },
+        {
+          "adc": 4,
+          "channel": 11,
+          "median_counts": 1923.0
+        },
+        {
+          "adc": 4,
+          "channel": 12,
+          "median_counts": 1989.0
+        },
+        {
+          "adc": 4,
+          "channel": 13,
+          "median_counts": 2012.0
+        },
+        {
+          "adc": 4,
+          "channel": 14,
+          "median_counts": 2020.0
+        }
+      ],
+      "firmware_status_after": {
+        "adcchannels": "3:0,3:1,3:2,3:3,3:4,3:5,3:6,3:7,3:8,3:9,4:0,4:1,4:2,4:3,4:4,4:5,4:6,4:7,4:8,4:9,4:10,4:11,4:12,4:13,4:14",
+        "array": "2",
+        "scanorder": "adc",
+        "adcseq": "manual",
+        "spiengine": "lpspi",
+        "spi_clock_hz": "10000000",
+        "channelrepeat_requested": "1",
+        "channelrepeat_effective": "1",
+        "vmid_channel": "15",
+        "vmid_between_channels_requested": "false",
+        "vmid_between_channels_effective": "false",
+        "vmid_parking": "mandatory",
+        "route_count": "25",
+        "vref": "2.5",
+        "active_adcs": "3,4",
+        "active_spi_buses": "2",
+        "dma_start_errors": "0",
+        "lpspi_start_errors": "0",
+        "transfer_timeouts": "0",
+        "returned_channel_errors": "0",
+        "usb_write_errors": "0",
+        "usb_stream_policy": "discard_if_busy",
+        "sampling_sweeps": "199724",
+        "usb_frames_sent": "199724",
+        "usb_frames_discarded": "0",
+        "sampling_period_max_us": "67",
+        "sampling_period_over_1ms": "0",
+        "auto1_program_count": "0",
+        "auto1_resume_count": "0",
+        "adc1_errors": "0",
+        "adc2_errors": "0",
+        "adc3_errors": "0",
+        "adc4_errors": "0",
+        "running": "false",
+        "profile_available": "false",
+        "profile_enabled": "false"
+      }
+    },
+    {
+      "test_id": "single_adc1__adc__manual__blocking__repeat1__vmidoff__spi10000000hz",
+      "raw": "C:\\Code\\arduino_adc_streamer\\Arduino_Sketches\\TestBoard_7953\\benchmarks\\results\\noise_engine_topology_20261008\\raw\\single_adc1__adc__manual__blocking__repeat1__vmidoff__spi10000000hz__r1__attempt1.bin",
+      "raw_sha256": "448c63039f1087fdcb9e490d1974f7bdb498ca6fd1f6bf17d15bd3204894051f",
+      "route_set": "single_adc1",
+      "engine": "blocking",
+      "spi_clock_hz": 10000000,
+      "active_adcs": [
+        1
+      ],
+      "routes": [
+        [
+          1,
+          0
+        ],
+        [
+          1,
+          1
+        ],
+        [
+          1,
+          2
+        ],
+        [
+          1,
+          3
+        ],
+        [
+          1,
+          4
+        ],
+        [
+          1,
+          5
+        ],
+        [
+          1,
+          6
+        ],
+        [
+          1,
+          7
+        ],
+        [
+          1,
+          8
+        ],
+        [
+          1,
+          9
+        ]
+      ],
+      "sweeps": 445874,
+      "measured_sweeps": 411574,
+      "duration_s": 12.999632,
+      "received_period_median_us": 29.000000000001247,
+      "received_period_max_us": 34.00000000119974,
+      "acquisition_duration_median_us": 28.0,
+      "usb_frames_discarded": 0,
+      "sampling_period_max_us": 34,
+      "sampling_period_over_1ms": 0,
+      "firmware_errors": {
+        "adc1_errors": 0,
+        "adc2_errors": 0,
+        "adc3_errors": 0,
+        "adc4_errors": 0,
+        "returned_channel_errors": 0,
+        "transfer_timeouts": 0,
+        "usb_write_errors": 0,
+        "dma_start_errors": 0,
+        "lpspi_start_errors": 0
+      },
+      "wire_integrity": "PASS",
+      "all_routes_envelope": {
+        "std_p10_counts": 0.8096057930811857,
+        "std_median_counts": 1.0203357796449037,
+        "std_p95_counts": 2.1421413800140052,
+        "std_max_counts": 2.2501462323592936,
+        "period_s": 1.32,
+        "autocorrelation": 0.8715853228197704
+      },
+      "adcs": {
+        "1": {
+          "std_p10_counts": 0.8096057930811857,
+          "std_median_counts": 1.0203357796449037,
+          "std_p95_counts": 2.1421413800140052,
+          "std_max_counts": 2.2501462323592936,
+          "period_s": 1.32,
+          "autocorrelation": 0.8715853228197704,
+          "channel_baseline_median_counts": 1982.5,
+          "channel0_median_counts": 1978.0,
+          "channel0_deficit_from_other_channels_counts": 5.0
+        }
+      },
+      "adc_envelope_correlation_order": [
+        1
+      ],
+      "adc_envelope_correlation_matrix": null,
+      "channel_baselines": [
+        {
+          "adc": 1,
+          "channel": 0,
+          "median_counts": 1978.0
+        },
+        {
+          "adc": 1,
+          "channel": 1,
+          "median_counts": 1984.0
+        },
+        {
+          "adc": 1,
+          "channel": 2,
+          "median_counts": 1987.0
+        },
+        {
+          "adc": 1,
+          "channel": 3,
+          "median_counts": 1982.0
+        },
+        {
+          "adc": 1,
+          "channel": 4,
+          "median_counts": 1987.0
+        },
+        {
+          "adc": 1,
+          "channel": 5,
+          "median_counts": 1987.0
+        },
+        {
+          "adc": 1,
+          "channel": 6,
+          "median_counts": 1983.0
+        },
+        {
+          "adc": 1,
+          "channel": 7,
+          "median_counts": 1973.0
+        },
+        {
+          "adc": 1,
+          "channel": 8,
+          "median_counts": 1965.0
+        },
+        {
+          "adc": 1,
+          "channel": 9,
+          "median_counts": 1969.0
+        }
+      ],
+      "firmware_status_after": {
+        "adcchannels": "1:0,1:1,1:2,1:3,1:4,1:5,1:6,1:7,1:8,1:9",
+        "array": "1",
+        "scanorder": "adc",
+        "adcseq": "manual",
+        "spiengine": "blocking",
+        "spi_clock_hz": "10000000",
+        "channelrepeat_requested": "1",
+        "channelrepeat_effective": "1",
+        "vmid_channel": "15",
+        "vmid_between_channels_requested": "false",
+        "vmid_between_channels_effective": "false",
+        "vmid_parking": "mandatory",
+        "route_count": "10",
+        "vref": "2.5",
+        "active_adcs": "1",
+        "active_spi_buses": "1",
+        "dma_start_errors": "0",
+        "lpspi_start_errors": "0",
+        "transfer_timeouts": "0",
+        "returned_channel_errors": "0",
+        "usb_write_errors": "0",
+        "usb_stream_policy": "discard_if_busy",
+        "sampling_sweeps": "445874",
+        "usb_frames_sent": "445874",
+        "usb_frames_discarded": "0",
+        "sampling_period_max_us": "34",
+        "sampling_period_over_1ms": "0",
+        "auto1_program_count": "0",
+        "auto1_resume_count": "0",
+        "adc1_errors": "0",
+        "adc2_errors": "0",
+        "adc3_errors": "0",
+        "adc4_errors": "0",
+        "running": "false",
+        "profile_available": "false",
+        "profile_enabled": "false"
+      }
+    },
+    {
+      "test_id": "single_adc1__adc__manual__dma__repeat1__vmidoff__spi10000000hz",
+      "raw": "C:\\Code\\arduino_adc_streamer\\Arduino_Sketches\\TestBoard_7953\\benchmarks\\results\\noise_engine_topology_20261008\\raw\\single_adc1__adc__manual__dma__repeat1__vmidoff__spi10000000hz__r1__attempt1.bin",
+      "raw_sha256": "f1584cb18233ac70145ab83b4df8748adc07a83d42939b5573e044e3c1df865d",
+      "route_set": "single_adc1",
+      "engine": "dma",
+      "spi_clock_hz": 10000000,
+      "active_adcs": [
+        1
+      ],
+      "routes": [
+        [
+          1,
+          0
+        ],
+        [
+          1,
+          1
+        ],
+        [
+          1,
+          2
+        ],
+        [
+          1,
+          3
+        ],
+        [
+          1,
+          4
+        ],
+        [
+          1,
+          5
+        ],
+        [
+          1,
+          6
+        ],
+        [
+          1,
+          7
+        ],
+        [
+          1,
+          8
+        ],
+        [
+          1,
+          9
+        ]
+      ],
+      "sweeps": 258169,
+      "measured_sweeps": 238308,
+      "duration_s": 12.998966,
+      "received_period_median_us": 49.99999999988347,
+      "received_period_max_us": 55.00000000147054,
+      "acquisition_duration_median_us": 49.0,
+      "usb_frames_discarded": 0,
+      "sampling_period_max_us": 55,
+      "sampling_period_over_1ms": 0,
+      "firmware_errors": {
+        "adc1_errors": 0,
+        "adc2_errors": 0,
+        "adc3_errors": 0,
+        "adc4_errors": 0,
+        "returned_channel_errors": 0,
+        "transfer_timeouts": 0,
+        "usb_write_errors": 0,
+        "dma_start_errors": 0,
+        "lpspi_start_errors": 0
+      },
+      "wire_integrity": "PASS",
+      "all_routes_envelope": {
+        "std_p10_counts": 0.874245694426875,
+        "std_median_counts": 1.0815280574673867,
+        "std_p95_counts": 2.804061267063345,
+        "std_max_counts": 2.865546550263403,
+        "period_s": 1.32,
+        "autocorrelation": 0.8759857273856
+      },
+      "adcs": {
+        "1": {
+          "std_p10_counts": 0.874245694426875,
+          "std_median_counts": 1.0815280574673867,
+          "std_p95_counts": 2.804061267063345,
+          "std_max_counts": 2.865546550263403,
+          "period_s": 1.32,
+          "autocorrelation": 0.8759857273856,
+          "channel_baseline_median_counts": 1976.0,
+          "channel0_median_counts": 1975.0,
+          "channel0_deficit_from_other_channels_counts": 2.0
+        }
+      },
+      "adc_envelope_correlation_order": [
+        1
+      ],
+      "adc_envelope_correlation_matrix": null,
+      "channel_baselines": [
+        {
+          "adc": 1,
+          "channel": 0,
+          "median_counts": 1975.0
+        },
+        {
+          "adc": 1,
+          "channel": 1,
+          "median_counts": 1979.0
+        },
+        {
+          "adc": 1,
+          "channel": 2,
+          "median_counts": 1982.0
+        },
+        {
+          "adc": 1,
+          "channel": 3,
+          "median_counts": 1977.0
+        },
+        {
+          "adc": 1,
+          "channel": 4,
+          "median_counts": 1981.0
+        },
+        {
+          "adc": 1,
+          "channel": 5,
+          "median_counts": 1980.0
+        },
+        {
+          "adc": 1,
+          "channel": 6,
+          "median_counts": 1975.0
+        },
+        {
+          "adc": 1,
+          "channel": 7,
+          "median_counts": 1967.0
+        },
+        {
+          "adc": 1,
+          "channel": 8,
+          "median_counts": 1961.0
+        },
+        {
+          "adc": 1,
+          "channel": 9,
+          "median_counts": 1966.0
+        }
+      ],
+      "firmware_status_after": {
+        "adcchannels": "1:0,1:1,1:2,1:3,1:4,1:5,1:6,1:7,1:8,1:9",
+        "array": "1",
+        "scanorder": "adc",
+        "adcseq": "manual",
+        "spiengine": "dma",
+        "spi_clock_hz": "10000000",
+        "channelrepeat_requested": "1",
+        "channelrepeat_effective": "1",
+        "vmid_channel": "15",
+        "vmid_between_channels_requested": "false",
+        "vmid_between_channels_effective": "false",
+        "vmid_parking": "mandatory",
+        "route_count": "10",
+        "vref": "2.5",
+        "active_adcs": "1",
+        "active_spi_buses": "1",
+        "dma_start_errors": "0",
+        "lpspi_start_errors": "0",
+        "transfer_timeouts": "0",
+        "returned_channel_errors": "0",
+        "usb_write_errors": "0",
+        "usb_stream_policy": "discard_if_busy",
+        "sampling_sweeps": "258169",
+        "usb_frames_sent": "258169",
+        "usb_frames_discarded": "0",
+        "sampling_period_max_us": "55",
+        "sampling_period_over_1ms": "0",
+        "auto1_program_count": "0",
+        "auto1_resume_count": "0",
+        "adc1_errors": "0",
+        "adc2_errors": "0",
+        "adc3_errors": "0",
+        "adc4_errors": "0",
+        "running": "false",
+        "profile_available": "false",
+        "profile_enabled": "false"
+      }
+    },
+    {
+      "test_id": "single_adc1__adc__manual__lpspi__repeat1__vmidoff__spi10000000hz",
+      "raw": "C:\\Code\\arduino_adc_streamer\\Arduino_Sketches\\TestBoard_7953\\benchmarks\\results\\noise_engine_topology_20261008\\raw\\single_adc1__adc__manual__lpspi__repeat1__vmidoff__spi10000000hz__r1__attempt1.bin",
+      "raw_sha256": "7f248b2f4d2266861743d6ed33840a710c02e44e5ab7f3aa8dc22184c75d5ec8",
+      "route_set": "single_adc1",
+      "engine": "lpspi",
+      "spi_clock_hz": 10000000,
+      "active_adcs": [
+        1
+      ],
+      "routes": [
+        [
+          1,
+          0
+        ],
+        [
+          1,
+          1
+        ],
+        [
+          1,
+          2
+        ],
+        [
+          1,
+          3
+        ],
+        [
+          1,
+          4
+        ],
+        [
+          1,
+          5
+        ],
+        [
+          1,
+          6
+        ],
+        [
+          1,
+          7
+        ],
+        [
+          1,
+          8
+        ],
+        [
+          1,
+          9
+        ]
+      ],
+      "sweeps": 462648,
+      "measured_sweeps": 427057,
+      "duration_s": 12.999213,
+      "received_period_median_us": 28.00000000036107,
+      "received_period_max_us": 33.00000000017178,
+      "acquisition_duration_median_us": 27.0,
+      "usb_frames_discarded": 0,
+      "sampling_period_max_us": 33,
+      "sampling_period_over_1ms": 0,
+      "firmware_errors": {
+        "adc1_errors": 0,
+        "adc2_errors": 0,
+        "adc3_errors": 0,
+        "adc4_errors": 0,
+        "returned_channel_errors": 0,
+        "transfer_timeouts": 0,
+        "usb_write_errors": 0,
+        "dma_start_errors": 0,
+        "lpspi_start_errors": 0
+      },
+      "wire_integrity": "PASS",
+      "all_routes_envelope": {
+        "std_p10_counts": 0.7721659393993935,
+        "std_median_counts": 1.1039519359227192,
+        "std_p95_counts": 1.4917520158423965,
+        "std_max_counts": 1.5284431967214696,
+        "period_s": 1.32,
+        "autocorrelation": 0.8741230245194406
+      },
+      "adcs": {
+        "1": {
+          "std_p10_counts": 0.7721659393993935,
+          "std_median_counts": 1.1039519359227192,
+          "std_p95_counts": 1.4917520158423965,
+          "std_max_counts": 1.5284431967214696,
+          "period_s": 1.32,
+          "autocorrelation": 0.8741230245194406,
+          "channel_baseline_median_counts": 1983.0,
+          "channel0_median_counts": 1979.0,
+          "channel0_deficit_from_other_channels_counts": 4.0
+        }
+      },
+      "adc_envelope_correlation_order": [
+        1
+      ],
+      "adc_envelope_correlation_matrix": null,
+      "channel_baselines": [
+        {
+          "adc": 1,
+          "channel": 0,
+          "median_counts": 1979.0
+        },
+        {
+          "adc": 1,
+          "channel": 1,
+          "median_counts": 1985.0
+        },
+        {
+          "adc": 1,
+          "channel": 2,
+          "median_counts": 1988.0
+        },
+        {
+          "adc": 1,
+          "channel": 3,
+          "median_counts": 1983.0
+        },
+        {
+          "adc": 1,
+          "channel": 4,
+          "median_counts": 1988.0
+        },
+        {
+          "adc": 1,
+          "channel": 5,
+          "median_counts": 1988.0
+        },
+        {
+          "adc": 1,
+          "channel": 6,
+          "median_counts": 1983.0
+        },
+        {
+          "adc": 1,
+          "channel": 7,
+          "median_counts": 1974.0
+        },
+        {
+          "adc": 1,
+          "channel": 8,
+          "median_counts": 1966.0
+        },
+        {
+          "adc": 1,
+          "channel": 9,
+          "median_counts": 1970.0
+        }
+      ],
+      "firmware_status_after": {
+        "adcchannels": "1:0,1:1,1:2,1:3,1:4,1:5,1:6,1:7,1:8,1:9",
+        "array": "1",
+        "scanorder": "adc",
+        "adcseq": "manual",
+        "spiengine": "lpspi",
+        "spi_clock_hz": "10000000",
+        "channelrepeat_requested": "1",
+        "channelrepeat_effective": "1",
+        "vmid_channel": "15",
+        "vmid_between_channels_requested": "false",
+        "vmid_between_channels_effective": "false",
+        "vmid_parking": "mandatory",
+        "route_count": "10",
+        "vref": "2.5",
+        "active_adcs": "1",
+        "active_spi_buses": "1",
+        "dma_start_errors": "0",
+        "lpspi_start_errors": "0",
+        "transfer_timeouts": "0",
+        "returned_channel_errors": "0",
+        "usb_write_errors": "0",
+        "usb_stream_policy": "discard_if_busy",
+        "sampling_sweeps": "462648",
+        "usb_frames_sent": "462648",
+        "usb_frames_discarded": "0",
+        "sampling_period_max_us": "33",
+        "sampling_period_over_1ms": "0",
+        "auto1_program_count": "0",
+        "auto1_resume_count": "0",
+        "adc1_errors": "0",
+        "adc2_errors": "0",
+        "adc3_errors": "0",
+        "adc4_errors": "0",
+        "running": "false",
+        "profile_available": "false",
+        "profile_enabled": "false"
+      }
+    },
+    {
+      "test_id": "single_adc2__adc__manual__blocking__repeat1__vmidoff__spi10000000hz",
+      "raw": "C:\\Code\\arduino_adc_streamer\\Arduino_Sketches\\TestBoard_7953\\benchmarks\\results\\noise_engine_topology_20261008\\raw\\single_adc2__adc__manual__blocking__repeat1__vmidoff__spi10000000hz__r1__attempt1.bin",
+      "raw_sha256": "7beb96cd5d00f4f71c0a611489483eafda658eb073369efc8248bdd634256246",
+      "route_set": "single_adc2",
+      "engine": "blocking",
+      "spi_clock_hz": 10000000,
+      "active_adcs": [
+        2
+      ],
+      "routes": [
+        [
+          2,
+          0
+        ],
+        [
+          2,
+          1
+        ],
+        [
+          2,
+          2
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          4
+        ],
+        [
+          2,
+          5
+        ],
+        [
+          2,
+          6
+        ],
+        [
+          2,
+          7
+        ],
+        [
+          2,
+          8
+        ],
+        [
+          2,
+          9
+        ],
+        [
+          2,
+          10
+        ],
+        [
+          2,
+          11
+        ],
+        [
+          2,
+          12
+        ],
+        [
+          2,
+          13
+        ],
+        [
+          2,
+          14
+        ]
+      ],
+      "sweeps": 320068,
+      "measured_sweeps": 295446,
+      "duration_s": 12.999596,
+      "received_period_median_us": 40.99999999951365,
+      "received_period_max_us": 45.00000000007276,
+      "acquisition_duration_median_us": 39.0,
+      "usb_frames_discarded": 0,
+      "sampling_period_max_us": 45,
+      "sampling_period_over_1ms": 0,
+      "firmware_errors": {
+        "adc1_errors": 0,
+        "adc2_errors": 0,
+        "adc3_errors": 0,
+        "adc4_errors": 0,
+        "returned_channel_errors": 0,
+        "transfer_timeouts": 0,
+        "usb_write_errors": 0,
+        "dma_start_errors": 0,
+        "lpspi_start_errors": 0
+      },
+      "wire_integrity": "PASS",
+      "all_routes_envelope": {
+        "std_p10_counts": 0.6970449096507524,
+        "std_median_counts": 0.8238553283435014,
+        "std_p95_counts": 1.5276794960854094,
+        "std_max_counts": 1.5664374069325566,
+        "period_s": 1.32,
+        "autocorrelation": 0.8682155131415032
+      },
+      "adcs": {
+        "2": {
+          "std_p10_counts": 0.6970449096507524,
+          "std_median_counts": 0.8238553283435014,
+          "std_p95_counts": 1.5276794960854094,
+          "std_max_counts": 1.5664374069325566,
+          "period_s": 1.32,
+          "autocorrelation": 0.8682155131415032,
+          "channel_baseline_median_counts": 2001.0,
+          "channel0_median_counts": 1991.0,
+          "channel0_deficit_from_other_channels_counts": 11.0,
+          "channel11_median_counts": 1906.0,
+          "channel11_deficit_from_other_channels_counts": 96.0
+        }
+      },
+      "adc_envelope_correlation_order": [
+        2
+      ],
+      "adc_envelope_correlation_matrix": null,
+      "channel_baselines": [
+        {
+          "adc": 2,
+          "channel": 0,
+          "median_counts": 1991.0
+        },
+        {
+          "adc": 2,
+          "channel": 1,
+          "median_counts": 2003.0
+        },
+        {
+          "adc": 2,
+          "channel": 2,
+          "median_counts": 2005.0
+        },
+        {
+          "adc": 2,
+          "channel": 3,
+          "median_counts": 2000.0
+        },
+        {
+          "adc": 2,
+          "channel": 4,
+          "median_counts": 2003.0
+        },
+        {
+          "adc": 2,
+          "channel": 5,
+          "median_counts": 2010.0
+        },
+        {
+          "adc": 2,
+          "channel": 6,
+          "median_counts": 2003.0
+        },
+        {
+          "adc": 2,
+          "channel": 7,
+          "median_counts": 1998.0
+        },
+        {
+          "adc": 2,
+          "channel": 8,
+          "median_counts": 2000.0
+        },
+        {
+          "adc": 2,
+          "channel": 9,
+          "median_counts": 2001.0
+        },
+        {
+          "adc": 2,
+          "channel": 10,
+          "median_counts": 2025.0
+        },
+        {
+          "adc": 2,
+          "channel": 11,
+          "median_counts": 1906.0
+        },
+        {
+          "adc": 2,
+          "channel": 12,
+          "median_counts": 1938.0
+        },
+        {
+          "adc": 2,
+          "channel": 13,
+          "median_counts": 1987.0
+        },
+        {
+          "adc": 2,
+          "channel": 14,
+          "median_counts": 2013.0
+        }
+      ],
+      "firmware_status_after": {
+        "adcchannels": "2:0,2:1,2:2,2:3,2:4,2:5,2:6,2:7,2:8,2:9,2:10,2:11,2:12,2:13,2:14",
+        "array": "1",
+        "scanorder": "adc",
+        "adcseq": "manual",
+        "spiengine": "blocking",
+        "spi_clock_hz": "10000000",
+        "channelrepeat_requested": "1",
+        "channelrepeat_effective": "1",
+        "vmid_channel": "15",
+        "vmid_between_channels_requested": "false",
+        "vmid_between_channels_effective": "false",
+        "vmid_parking": "mandatory",
+        "route_count": "15",
+        "vref": "2.5",
+        "active_adcs": "2",
+        "active_spi_buses": "1",
+        "dma_start_errors": "0",
+        "lpspi_start_errors": "0",
+        "transfer_timeouts": "0",
+        "returned_channel_errors": "0",
+        "usb_write_errors": "0",
+        "usb_stream_policy": "discard_if_busy",
+        "sampling_sweeps": "320068",
+        "usb_frames_sent": "320068",
+        "usb_frames_discarded": "0",
+        "sampling_period_max_us": "45",
+        "sampling_period_over_1ms": "0",
+        "auto1_program_count": "0",
+        "auto1_resume_count": "0",
+        "adc1_errors": "0",
+        "adc2_errors": "0",
+        "adc3_errors": "0",
+        "adc4_errors": "0",
+        "running": "false",
+        "profile_available": "false",
+        "profile_enabled": "false"
+      }
+    },
+    {
+      "test_id": "single_adc2__adc__manual__dma__repeat1__vmidoff__spi10000000hz",
+      "raw": "C:\\Code\\arduino_adc_streamer\\Arduino_Sketches\\TestBoard_7953\\benchmarks\\results\\noise_engine_topology_20261008\\raw\\single_adc2__adc__manual__dma__repeat1__vmidoff__spi10000000hz__r1__attempt1.bin",
+      "raw_sha256": "da385011e9ef7b67a56cefd8b74a6a173d2ed1e1bde39ff4db7ff9c109494164",
+      "route_set": "single_adc2",
+      "engine": "dma",
+      "spi_clock_hz": 10000000,
+      "active_adcs": [
+        2
+      ],
+      "routes": [
+        [
+          2,
+          0
+        ],
+        [
+          2,
+          1
+        ],
+        [
+          2,
+          2
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          4
+        ],
+        [
+          2,
+          5
+        ],
+        [
+          2,
+          6
+        ],
+        [
+          2,
+          7
+        ],
+        [
+          2,
+          8
+        ],
+        [
+          2,
+          9
+        ],
+        [
+          2,
+          10
+        ],
+        [
+          2,
+          11
+        ],
+        [
+          2,
+          12
+        ],
+        [
+          2,
+          13
+        ],
+        [
+          2,
+          14
+        ]
+      ],
+      "sweeps": 183772,
+      "measured_sweeps": 169635,
+      "duration_s": 12.999564,
+      "received_period_median_us": 71.00000000001549,
+      "received_period_max_us": 75.99999999996498,
+      "acquisition_duration_median_us": 69.0,
+      "usb_frames_discarded": 0,
+      "sampling_period_max_us": 76,
+      "sampling_period_over_1ms": 0,
+      "firmware_errors": {
+        "adc1_errors": 0,
+        "adc2_errors": 0,
+        "adc3_errors": 0,
+        "adc4_errors": 0,
+        "returned_channel_errors": 0,
+        "transfer_timeouts": 0,
+        "usb_write_errors": 0,
+        "dma_start_errors": 0,
+        "lpspi_start_errors": 0
+      },
+      "wire_integrity": "PASS",
+      "all_routes_envelope": {
+        "std_p10_counts": 0.6806087466162463,
+        "std_median_counts": 0.9942823284008857,
+        "std_p95_counts": 2.0566738947589895,
+        "std_max_counts": 2.1151179116462715,
+        "period_s": 1.32,
+        "autocorrelation": 0.8725543432352132
+      },
+      "adcs": {
+        "2": {
+          "std_p10_counts": 0.6806087466162463,
+          "std_median_counts": 0.9942823284008857,
+          "std_p95_counts": 2.0566738947589895,
+          "std_max_counts": 2.1151179116462715,
+          "period_s": 1.32,
+          "autocorrelation": 0.8725543432352132,
+          "channel_baseline_median_counts": 1992.0,
+          "channel0_median_counts": 1985.0,
+          "channel0_deficit_from_other_channels_counts": 7.0,
+          "channel11_median_counts": 1914.0,
+          "channel11_deficit_from_other_channels_counts": 78.0
+        }
+      },
+      "adc_envelope_correlation_order": [
+        2
+      ],
+      "adc_envelope_correlation_matrix": null,
+      "channel_baselines": [
+        {
+          "adc": 2,
+          "channel": 0,
+          "median_counts": 1985.0
+        },
+        {
+          "adc": 2,
+          "channel": 1,
+          "median_counts": 1992.0
+        },
+        {
+          "adc": 2,
+          "channel": 2,
+          "median_counts": 1993.0
+        },
+        {
+          "adc": 2,
+          "channel": 3,
+          "median_counts": 1990.0
+        },
+        {
+          "adc": 2,
+          "channel": 4,
+          "median_counts": 1992.0
+        },
+        {
+          "adc": 2,
+          "channel": 5,
+          "median_counts": 1997.0
+        },
+        {
+          "adc": 2,
+          "channel": 6,
+          "median_counts": 1991.0
+        },
+        {
+          "adc": 2,
+          "channel": 7,
+          "median_counts": 1989.0
+        },
+        {
+          "adc": 2,
+          "channel": 8,
+          "median_counts": 1991.0
+        },
+        {
+          "adc": 2,
+          "channel": 9,
+          "median_counts": 1992.0
+        },
+        {
+          "adc": 2,
+          "channel": 10,
+          "median_counts": 2012.0
+        },
+        {
+          "adc": 2,
+          "channel": 11,
+          "median_counts": 1914.0
+        },
+        {
+          "adc": 2,
+          "channel": 12,
+          "median_counts": 1956.0
+        },
+        {
+          "adc": 2,
+          "channel": 13,
+          "median_counts": 1993.0
+        },
+        {
+          "adc": 2,
+          "channel": 14,
+          "median_counts": 2007.0
+        }
+      ],
+      "firmware_status_after": {
+        "adcchannels": "2:0,2:1,2:2,2:3,2:4,2:5,2:6,2:7,2:8,2:9,2:10,2:11,2:12,2:13,2:14",
+        "array": "1",
+        "scanorder": "adc",
+        "adcseq": "manual",
+        "spiengine": "dma",
+        "spi_clock_hz": "10000000",
+        "channelrepeat_requested": "1",
+        "channelrepeat_effective": "1",
+        "vmid_channel": "15",
+        "vmid_between_channels_requested": "false",
+        "vmid_between_channels_effective": "false",
+        "vmid_parking": "mandatory",
+        "route_count": "15",
+        "vref": "2.5",
+        "active_adcs": "2",
+        "active_spi_buses": "1",
+        "dma_start_errors": "0",
+        "lpspi_start_errors": "0",
+        "transfer_timeouts": "0",
+        "returned_channel_errors": "0",
+        "usb_write_errors": "0",
+        "usb_stream_policy": "discard_if_busy",
+        "sampling_sweeps": "183772",
+        "usb_frames_sent": "183772",
+        "usb_frames_discarded": "0",
+        "sampling_period_max_us": "76",
+        "sampling_period_over_1ms": "0",
+        "auto1_program_count": "0",
+        "auto1_resume_count": "0",
+        "adc1_errors": "0",
+        "adc2_errors": "0",
+        "adc3_errors": "0",
+        "adc4_errors": "0",
+        "running": "false",
+        "profile_available": "false",
+        "profile_enabled": "false"
+      }
+    },
+    {
+      "test_id": "single_adc2__adc__manual__lpspi__repeat1__vmidoff__spi10000000hz",
+      "raw": "C:\\Code\\arduino_adc_streamer\\Arduino_Sketches\\TestBoard_7953\\benchmarks\\results\\noise_engine_topology_20261008\\raw\\single_adc2__adc__manual__lpspi__repeat1__vmidoff__spi10000000hz__r1__attempt1.bin",
+      "raw_sha256": "3c9a0e62d1e473530439018917ad208b229bc05b37fa47ef5ebac559fd6d3101",
+      "route_set": "single_adc2",
+      "engine": "lpspi",
+      "spi_clock_hz": 10000000,
+      "active_adcs": [
+        2
+      ],
+      "routes": [
+        [
+          2,
+          0
+        ],
+        [
+          2,
+          1
+        ],
+        [
+          2,
+          2
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          4
+        ],
+        [
+          2,
+          5
+        ],
+        [
+          2,
+          6
+        ],
+        [
+          2,
+          7
+        ],
+        [
+          2,
+          8
+        ],
+        [
+          2,
+          9
+        ],
+        [
+          2,
+          10
+        ],
+        [
+          2,
+          11
+        ],
+        [
+          2,
+          12
+        ],
+        [
+          2,
+          13
+        ],
+        [
+          2,
+          14
+        ]
+      ],
+      "sweeps": 333886,
+      "measured_sweeps": 308200,
+      "duration_s": 12.999041,
+      "received_period_median_us": 39.00000000001125,
+      "received_period_max_us": 44.00000000082116,
+      "acquisition_duration_median_us": 38.0,
+      "usb_frames_discarded": 0,
+      "sampling_period_max_us": 44,
+      "sampling_period_over_1ms": 0,
+      "firmware_errors": {
+        "adc1_errors": 0,
+        "adc2_errors": 0,
+        "adc3_errors": 0,
+        "adc4_errors": 0,
+        "returned_channel_errors": 0,
+        "transfer_timeouts": 0,
+        "usb_write_errors": 0,
+        "dma_start_errors": 0,
+        "lpspi_start_errors": 0
+      },
+      "wire_integrity": "PASS",
+      "all_routes_envelope": {
+        "std_p10_counts": 0.7082778789092902,
+        "std_median_counts": 0.879167118929328,
+        "std_p95_counts": 1.2618134832006955,
+        "std_max_counts": 1.3848447276276226,
+        "period_s": 1.32,
+        "autocorrelation": 0.8720336574861343
+      },
+      "adcs": {
+        "2": {
+          "std_p10_counts": 0.7082778789092902,
+          "std_median_counts": 0.879167118929328,
+          "std_p95_counts": 1.2618134832006955,
+          "std_max_counts": 1.3848447276276226,
+          "period_s": 1.32,
+          "autocorrelation": 0.8720336574861343,
+          "channel_baseline_median_counts": 2003.0,
+          "channel0_median_counts": 1991.0,
+          "channel0_deficit_from_other_channels_counts": 12.5,
+          "channel11_median_counts": 1906.0,
+          "channel11_deficit_from_other_channels_counts": 97.5
+        }
+      },
+      "adc_envelope_correlation_order": [
+        2
+      ],
+      "adc_envelope_correlation_matrix": null,
+      "channel_baselines": [
+        {
+          "adc": 2,
+          "channel": 0,
+          "median_counts": 1991.0
+        },
+        {
+          "adc": 2,
+          "channel": 1,
+          "median_counts": 2004.0
+        },
+        {
+          "adc": 2,
+          "channel": 2,
+          "median_counts": 2007.0
+        },
+        {
+          "adc": 2,
+          "channel": 3,
+          "median_counts": 2002.0
+        },
+        {
+          "adc": 2,
+          "channel": 4,
+          "median_counts": 2005.0
+        },
+        {
+          "adc": 2,
+          "channel": 5,
+          "median_counts": 2012.0
+        },
+        {
+          "adc": 2,
+          "channel": 6,
+          "median_counts": 2005.0
+        },
+        {
+          "adc": 2,
+          "channel": 7,
+          "median_counts": 2000.0
+        },
+        {
+          "adc": 2,
+          "channel": 8,
+          "median_counts": 2002.0
+        },
+        {
+          "adc": 2,
+          "channel": 9,
+          "median_counts": 2003.0
+        },
+        {
+          "adc": 2,
+          "channel": 10,
+          "median_counts": 2028.0
+        },
+        {
+          "adc": 2,
+          "channel": 11,
+          "median_counts": 1906.0
+        },
+        {
+          "adc": 2,
+          "channel": 12,
+          "median_counts": 1936.0
+        },
+        {
+          "adc": 2,
+          "channel": 13,
+          "median_counts": 1986.0
+        },
+        {
+          "adc": 2,
+          "channel": 14,
+          "median_counts": 2014.0
+        }
+      ],
+      "firmware_status_after": {
+        "adcchannels": "2:0,2:1,2:2,2:3,2:4,2:5,2:6,2:7,2:8,2:9,2:10,2:11,2:12,2:13,2:14",
+        "array": "1",
+        "scanorder": "adc",
+        "adcseq": "manual",
+        "spiengine": "lpspi",
+        "spi_clock_hz": "10000000",
+        "channelrepeat_requested": "1",
+        "channelrepeat_effective": "1",
+        "vmid_channel": "15",
+        "vmid_between_channels_requested": "false",
+        "vmid_between_channels_effective": "false",
+        "vmid_parking": "mandatory",
+        "route_count": "15",
+        "vref": "2.5",
+        "active_adcs": "2",
+        "active_spi_buses": "1",
+        "dma_start_errors": "0",
+        "lpspi_start_errors": "0",
+        "transfer_timeouts": "0",
+        "returned_channel_errors": "0",
+        "usb_write_errors": "0",
+        "usb_stream_policy": "discard_if_busy",
+        "sampling_sweeps": "333886",
+        "usb_frames_sent": "333886",
+        "usb_frames_discarded": "0",
+        "sampling_period_max_us": "44",
+        "sampling_period_over_1ms": "0",
+        "auto1_program_count": "0",
+        "auto1_resume_count": "0",
+        "adc1_errors": "0",
+        "adc2_errors": "0",
+        "adc3_errors": "0",
+        "adc4_errors": "0",
+        "running": "false",
+        "profile_available": "false",
+        "profile_enabled": "false"
+      }
+    },
+    {
+      "test_id": "single_adc3__adc__manual__blocking__repeat1__vmidoff__spi10000000hz",
+      "raw": "C:\\Code\\arduino_adc_streamer\\Arduino_Sketches\\TestBoard_7953\\benchmarks\\results\\noise_engine_topology_20261008\\raw\\single_adc3__adc__manual__blocking__repeat1__vmidoff__spi10000000hz__r1__attempt1.bin",
+      "raw_sha256": "eea437a4826cfff9833bc82daa00ddeb59c438504f83b563fc675363eb6e3c39",
+      "route_set": "single_adc3",
+      "engine": "blocking",
+      "spi_clock_hz": 10000000,
+      "active_adcs": [
+        3
+      ],
+      "routes": [
+        [
+          3,
+          0
+        ],
+        [
+          3,
+          1
+        ],
+        [
+          3,
+          2
+        ],
+        [
+          3,
+          3
+        ],
+        [
+          3,
+          4
+        ],
+        [
+          3,
+          5
+        ],
+        [
+          3,
+          6
+        ],
+        [
+          3,
+          7
+        ],
+        [
+          3,
+          8
+        ],
+        [
+          3,
+          9
+        ]
+      ],
+      "sweeps": 445741,
+      "measured_sweeps": 411452,
+      "duration_s": 12.999715,
+      "received_period_median_us": 29.000000000001247,
+      "received_period_max_us": 34.00000000119974,
+      "acquisition_duration_median_us": 28.0,
+      "usb_frames_discarded": 0,
+      "sampling_period_max_us": 34,
+      "sampling_period_over_1ms": 0,
+      "firmware_errors": {
+        "adc1_errors": 0,
+        "adc2_errors": 0,
+        "adc3_errors": 0,
+        "adc4_errors": 0,
+        "returned_channel_errors": 0,
+        "transfer_timeouts": 0,
+        "usb_write_errors": 0,
+        "dma_start_errors": 0,
+        "lpspi_start_errors": 0
+      },
+      "wire_integrity": "PASS",
+      "all_routes_envelope": {
+        "std_p10_counts": 0.6900056638613078,
+        "std_median_counts": 0.8695178818128851,
+        "std_p95_counts": 1.2382670338730517,
+        "std_max_counts": 1.2683953609122958,
+        "period_s": 1.32,
+        "autocorrelation": 0.8726315625035547
+      },
+      "adcs": {
+        "3": {
+          "std_p10_counts": 0.6900056638613078,
+          "std_median_counts": 0.8695178818128851,
+          "std_p95_counts": 1.2382670338730517,
+          "std_max_counts": 1.2683953609122958,
+          "period_s": 1.32,
+          "autocorrelation": 0.8726315625035547,
+          "channel_baseline_median_counts": 2015.5,
+          "channel0_median_counts": 2014.0,
+          "channel0_deficit_from_other_channels_counts": 3.0
+        }
+      },
+      "adc_envelope_correlation_order": [
+        3
+      ],
+      "adc_envelope_correlation_matrix": null,
+      "channel_baselines": [
+        {
+          "adc": 3,
+          "channel": 0,
+          "median_counts": 2014.0
+        },
+        {
+          "adc": 3,
+          "channel": 1,
+          "median_counts": 2020.0
+        },
+        {
+          "adc": 3,
+          "channel": 2,
+          "median_counts": 2022.0
+        },
+        {
+          "adc": 3,
+          "channel": 3,
+          "median_counts": 2017.0
+        },
+        {
+          "adc": 3,
+          "channel": 4,
+          "median_counts": 2017.0
+        },
+        {
+          "adc": 3,
+          "channel": 5,
+          "median_counts": 2017.0
+        },
+        {
+          "adc": 3,
+          "channel": 6,
+          "median_counts": 2013.0
+        },
+        {
+          "adc": 3,
+          "channel": 7,
+          "median_counts": 2009.0
+        },
+        {
+          "adc": 3,
+          "channel": 8,
+          "median_counts": 2008.0
+        },
+        {
+          "adc": 3,
+          "channel": 9,
+          "median_counts": 2010.0
+        }
+      ],
+      "firmware_status_after": {
+        "adcchannels": "3:0,3:1,3:2,3:3,3:4,3:5,3:6,3:7,3:8,3:9",
+        "array": "2",
+        "scanorder": "adc",
+        "adcseq": "manual",
+        "spiengine": "blocking",
+        "spi_clock_hz": "10000000",
+        "channelrepeat_requested": "1",
+        "channelrepeat_effective": "1",
+        "vmid_channel": "15",
+        "vmid_between_channels_requested": "false",
+        "vmid_between_channels_effective": "false",
+        "vmid_parking": "mandatory",
+        "route_count": "10",
+        "vref": "2.5",
+        "active_adcs": "3",
+        "active_spi_buses": "2",
+        "dma_start_errors": "0",
+        "lpspi_start_errors": "0",
+        "transfer_timeouts": "0",
+        "returned_channel_errors": "0",
+        "usb_write_errors": "0",
+        "usb_stream_policy": "discard_if_busy",
+        "sampling_sweeps": "445741",
+        "usb_frames_sent": "445741",
+        "usb_frames_discarded": "0",
+        "sampling_period_max_us": "34",
+        "sampling_period_over_1ms": "0",
+        "auto1_program_count": "0",
+        "auto1_resume_count": "0",
+        "adc1_errors": "0",
+        "adc2_errors": "0",
+        "adc3_errors": "0",
+        "adc4_errors": "0",
+        "running": "false",
+        "profile_available": "false",
+        "profile_enabled": "false"
+      }
+    },
+    {
+      "test_id": "single_adc3__adc__manual__dma__repeat1__vmidoff__spi10000000hz",
+      "raw": "C:\\Code\\arduino_adc_streamer\\Arduino_Sketches\\TestBoard_7953\\benchmarks\\results\\noise_engine_topology_20261008\\raw\\single_adc3__adc__manual__dma__repeat1__vmidoff__spi10000000hz__r1__attempt1.bin",
+      "raw_sha256": "bc43504c76c7f2128549d800c508666a4914f5a31b2257ea299a0cb1177a1ec4",
+      "route_set": "single_adc3",
+      "engine": "dma",
+      "spi_clock_hz": 10000000,
+      "active_adcs": [
+        3
+      ],
+      "routes": [
+        [
+          3,
+          0
+        ],
+        [
+          3,
+          1
+        ],
+        [
+          3,
+          2
+        ],
+        [
+          3,
+          3
+        ],
+        [
+          3,
+          4
+        ],
+        [
+          3,
+          5
+        ],
+        [
+          3,
+          6
+        ],
+        [
+          3,
+          7
+        ],
+        [
+          3,
+          8
+        ],
+        [
+          3,
+          9
+        ]
+      ],
+      "sweeps": 256200,
+      "measured_sweeps": 236491,
+      "duration_s": 12.999154,
+      "received_period_median_us": 51.00000000002325,
+      "received_period_max_us": 55.00000000147054,
+      "acquisition_duration_median_us": 49.0,
+      "usb_frames_discarded": 0,
+      "sampling_period_max_us": 55,
+      "sampling_period_over_1ms": 0,
+      "firmware_errors": {
+        "adc1_errors": 0,
+        "adc2_errors": 0,
+        "adc3_errors": 0,
+        "adc4_errors": 0,
+        "returned_channel_errors": 0,
+        "transfer_timeouts": 0,
+        "usb_write_errors": 0,
+        "dma_start_errors": 0,
+        "lpspi_start_errors": 0
+      },
+      "wire_integrity": "PASS",
+      "all_routes_envelope": {
+        "std_p10_counts": 0.6780342812413016,
+        "std_median_counts": 0.8111136348095584,
+        "std_p95_counts": 1.9026560368758398,
+        "std_max_counts": 1.9369677925736135,
+        "period_s": 1.32,
+        "autocorrelation": 0.8733837474211478
+      },
+      "adcs": {
+        "3": {
+          "std_p10_counts": 0.6780342812413016,
+          "std_median_counts": 0.8111136348095584,
+          "std_p95_counts": 1.9026560368758398,
+          "std_max_counts": 1.9369677925736135,
+          "period_s": 1.32,
+          "autocorrelation": 0.8733837474211478,
+          "channel_baseline_median_counts": 2007.5,
+          "channel0_median_counts": 2008.0,
+          "channel0_deficit_from_other_channels_counts": -1.0
+        }
+      },
+      "adc_envelope_correlation_order": [
+        3
+      ],
+      "adc_envelope_correlation_matrix": null,
+      "channel_baselines": [
+        {
+          "adc": 3,
+          "channel": 0,
+          "median_counts": 2008.0
+        },
+        {
+          "adc": 3,
+          "channel": 1,
+          "median_counts": 2011.0
+        },
+        {
+          "adc": 3,
+          "channel": 2,
+          "median_counts": 2012.0
+        },
+        {
+          "adc": 3,
+          "channel": 3,
+          "median_counts": 2008.0
+        },
+        {
+          "adc": 3,
+          "channel": 4,
+          "median_counts": 2008.0
+        },
+        {
+          "adc": 3,
+          "channel": 5,
+          "median_counts": 2007.0
+        },
+        {
+          "adc": 3,
+          "channel": 6,
+          "median_counts": 2003.0
+        },
+        {
+          "adc": 3,
+          "channel": 7,
+          "median_counts": 2001.0
+        },
+        {
+          "adc": 3,
+          "channel": 8,
+          "median_counts": 2001.0
+        },
+        {
+          "adc": 3,
+          "channel": 9,
+          "median_counts": 2003.0
+        }
+      ],
+      "firmware_status_after": {
+        "adcchannels": "3:0,3:1,3:2,3:3,3:4,3:5,3:6,3:7,3:8,3:9",
+        "array": "2",
+        "scanorder": "adc",
+        "adcseq": "manual",
+        "spiengine": "dma",
+        "spi_clock_hz": "10000000",
+        "channelrepeat_requested": "1",
+        "channelrepeat_effective": "1",
+        "vmid_channel": "15",
+        "vmid_between_channels_requested": "false",
+        "vmid_between_channels_effective": "false",
+        "vmid_parking": "mandatory",
+        "route_count": "10",
+        "vref": "2.5",
+        "active_adcs": "3",
+        "active_spi_buses": "2",
+        "dma_start_errors": "0",
+        "lpspi_start_errors": "0",
+        "transfer_timeouts": "0",
+        "returned_channel_errors": "0",
+        "usb_write_errors": "0",
+        "usb_stream_policy": "discard_if_busy",
+        "sampling_sweeps": "256200",
+        "usb_frames_sent": "256200",
+        "usb_frames_discarded": "0",
+        "sampling_period_max_us": "55",
+        "sampling_period_over_1ms": "0",
+        "auto1_program_count": "0",
+        "auto1_resume_count": "0",
+        "adc1_errors": "0",
+        "adc2_errors": "0",
+        "adc3_errors": "0",
+        "adc4_errors": "0",
+        "running": "false",
+        "profile_available": "false",
+        "profile_enabled": "false"
+      }
+    },
+    {
+      "test_id": "single_adc3__adc__manual__lpspi__repeat1__vmidoff__spi10000000hz",
+      "raw": "C:\\Code\\arduino_adc_streamer\\Arduino_Sketches\\TestBoard_7953\\benchmarks\\results\\noise_engine_topology_20261008\\raw\\single_adc3__adc__manual__lpspi__repeat1__vmidoff__spi10000000hz__r1__attempt1.bin",
+      "raw_sha256": "5992cdbeedf219162db1c78753742ecb32dd67d509a7754567530fb307466a7d",
+      "route_set": "single_adc3",
+      "engine": "lpspi",
+      "spi_clock_hz": 10000000,
+      "active_adcs": [
+        3
+      ],
+      "routes": [
+        [
+          3,
+          0
+        ],
+        [
+          3,
+          1
+        ],
+        [
+          3,
+          2
+        ],
+        [
+          3,
+          3
+        ],
+        [
+          3,
+          4
+        ],
+        [
+          3,
+          5
+        ],
+        [
+          3,
+          6
+        ],
+        [
+          3,
+          7
+        ],
+        [
+          3,
+          8
+        ],
+        [
+          3,
+          9
+        ]
+      ],
+      "sweeps": 460772,
+      "measured_sweeps": 425327,
+      "duration_s": 12.999819,
+      "received_period_median_us": 28.00000000036107,
+      "received_period_max_us": 33.00000000017178,
+      "acquisition_duration_median_us": 27.0,
+      "usb_frames_discarded": 0,
+      "sampling_period_max_us": 33,
+      "sampling_period_over_1ms": 0,
+      "firmware_errors": {
+        "adc1_errors": 0,
+        "adc2_errors": 0,
+        "adc3_errors": 0,
+        "adc4_errors": 0,
+        "returned_channel_errors": 0,
+        "transfer_timeouts": 0,
+        "usb_write_errors": 0,
+        "dma_start_errors": 0,
+        "lpspi_start_errors": 0
+      },
+      "wire_integrity": "PASS",
+      "all_routes_envelope": {
+        "std_p10_counts": 0.7217600946108346,
+        "std_median_counts": 0.8648316421335254,
+        "std_p95_counts": 1.7006766423386508,
+        "std_max_counts": 1.7193192649435827,
+        "period_s": 1.32,
+        "autocorrelation": 0.873301153563099
+      },
+      "adcs": {
+        "3": {
+          "std_p10_counts": 0.7217600946108346,
+          "std_median_counts": 0.8648316421335254,
+          "std_p95_counts": 1.7006766423386508,
+          "std_max_counts": 1.7193192649435827,
+          "period_s": 1.32,
+          "autocorrelation": 0.873301153563099,
+          "channel_baseline_median_counts": 2017.0,
+          "channel0_median_counts": 2016.0,
+          "channel0_deficit_from_other_channels_counts": 2.0
+        }
+      },
+      "adc_envelope_correlation_order": [
+        3
+      ],
+      "adc_envelope_correlation_matrix": null,
+      "channel_baselines": [
+        {
+          "adc": 3,
+          "channel": 0,
+          "median_counts": 2016.0
+        },
+        {
+          "adc": 3,
+          "channel": 1,
+          "median_counts": 2021.0
+        },
+        {
+          "adc": 3,
+          "channel": 2,
+          "median_counts": 2023.0
+        },
+        {
+          "adc": 3,
+          "channel": 3,
+          "median_counts": 2018.0
+        },
+        {
+          "adc": 3,
+          "channel": 4,
+          "median_counts": 2019.0
+        },
+        {
+          "adc": 3,
+          "channel": 5,
+          "median_counts": 2018.0
+        },
+        {
+          "adc": 3,
+          "channel": 6,
+          "median_counts": 2014.0
+        },
+        {
+          "adc": 3,
+          "channel": 7,
+          "median_counts": 2009.0
+        },
+        {
+          "adc": 3,
+          "channel": 8,
+          "median_counts": 2009.0
+        },
+        {
+          "adc": 3,
+          "channel": 9,
+          "median_counts": 2011.0
+        }
+      ],
+      "firmware_status_after": {
+        "adcchannels": "3:0,3:1,3:2,3:3,3:4,3:5,3:6,3:7,3:8,3:9",
+        "array": "2",
+        "scanorder": "adc",
+        "adcseq": "manual",
+        "spiengine": "lpspi",
+        "spi_clock_hz": "10000000",
+        "channelrepeat_requested": "1",
+        "channelrepeat_effective": "1",
+        "vmid_channel": "15",
+        "vmid_between_channels_requested": "false",
+        "vmid_between_channels_effective": "false",
+        "vmid_parking": "mandatory",
+        "route_count": "10",
+        "vref": "2.5",
+        "active_adcs": "3",
+        "active_spi_buses": "2",
+        "dma_start_errors": "0",
+        "lpspi_start_errors": "0",
+        "transfer_timeouts": "0",
+        "returned_channel_errors": "0",
+        "usb_write_errors": "0",
+        "usb_stream_policy": "discard_if_busy",
+        "sampling_sweeps": "460772",
+        "usb_frames_sent": "460772",
+        "usb_frames_discarded": "0",
+        "sampling_period_max_us": "33",
+        "sampling_period_over_1ms": "0",
+        "auto1_program_count": "0",
+        "auto1_resume_count": "0",
+        "adc1_errors": "0",
+        "adc2_errors": "0",
+        "adc3_errors": "0",
+        "adc4_errors": "0",
+        "running": "false",
+        "profile_available": "false",
+        "profile_enabled": "false"
+      }
+    },
+    {
+      "test_id": "single_adc4__adc__manual__blocking__repeat1__vmidoff__spi10000000hz",
+      "raw": "C:\\Code\\arduino_adc_streamer\\Arduino_Sketches\\TestBoard_7953\\benchmarks\\results\\noise_engine_topology_20261008\\raw\\single_adc4__adc__manual__blocking__repeat1__vmidoff__spi10000000hz__r1__attempt1.bin",
+      "raw_sha256": "a63257f8d82b3be3b9e0f6115189c8c94e55c79b307f206508751336499b42bd",
+      "route_set": "single_adc4",
+      "engine": "blocking",
+      "spi_clock_hz": 10000000,
+      "active_adcs": [
+        4
+      ],
+      "routes": [
+        [
+          4,
+          0
+        ],
+        [
+          4,
+          1
+        ],
+        [
+          4,
+          2
+        ],
+        [
+          4,
+          3
+        ],
+        [
+          4,
+          4
+        ],
+        [
+          4,
+          5
+        ],
+        [
+          4,
+          6
+        ],
+        [
+          4,
+          7
+        ],
+        [
+          4,
+          8
+        ],
+        [
+          4,
+          9
+        ],
+        [
+          4,
+          10
+        ],
+        [
+          4,
+          11
+        ],
+        [
+          4,
+          12
+        ],
+        [
+          4,
+          13
+        ],
+        [
+          4,
+          14
+        ]
+      ],
+      "sweeps": 320101,
+      "measured_sweeps": 295477,
+      "duration_s": 12.999573,
+      "received_period_median_us": 40.99999999951365,
+      "received_period_max_us": 45.00000000007276,
+      "acquisition_duration_median_us": 39.0,
+      "usb_frames_discarded": 0,
+      "sampling_period_max_us": 45,
+      "sampling_period_over_1ms": 0,
+      "firmware_errors": {
+        "adc1_errors": 0,
+        "adc2_errors": 0,
+        "adc3_errors": 0,
+        "adc4_errors": 0,
+        "returned_channel_errors": 0,
+        "transfer_timeouts": 0,
+        "usb_write_errors": 0,
+        "dma_start_errors": 0,
+        "lpspi_start_errors": 0
+      },
+      "wire_integrity": "PASS",
+      "all_routes_envelope": {
+        "std_p10_counts": 0.6196777848606799,
+        "std_median_counts": 0.7622190813050791,
+        "std_p95_counts": 0.9722746370621277,
+        "std_max_counts": 1.0553850620737912,
+        "period_s": 1.32,
+        "autocorrelation": 0.8679085339344512
+      },
+      "adcs": {
+        "4": {
+          "std_p10_counts": 0.6196777848606799,
+          "std_median_counts": 0.7622190813050791,
+          "std_p95_counts": 0.9722746370621277,
+          "std_max_counts": 1.0553850620737912,
+          "period_s": 1.32,
+          "autocorrelation": 0.8679085339344512,
+          "channel_baseline_median_counts": 2016.0,
+          "channel0_median_counts": 2011.0,
+          "channel0_deficit_from_other_channels_counts": 5.5,
+          "channel11_median_counts": 1924.0,
+          "channel11_deficit_from_other_channels_counts": 92.5
+        }
+      },
+      "adc_envelope_correlation_order": [
+        4
+      ],
+      "adc_envelope_correlation_matrix": null,
+      "channel_baselines": [
+        {
+          "adc": 4,
+          "channel": 0,
+          "median_counts": 2011.0
+        },
+        {
+          "adc": 4,
+          "channel": 1,
+          "median_counts": 2017.0
+        },
+        {
+          "adc": 4,
+          "channel": 2,
+          "median_counts": 2020.0
+        },
+        {
+          "adc": 4,
+          "channel": 3,
+          "median_counts": 2016.0
+        },
+        {
+          "adc": 4,
+          "channel": 4,
+          "median_counts": 2015.0
+        },
+        {
+          "adc": 4,
+          "channel": 5,
+          "median_counts": 2020.0
+        },
+        {
+          "adc": 4,
+          "channel": 6,
+          "median_counts": 2019.0
+        },
+        {
+          "adc": 4,
+          "channel": 7,
+          "median_counts": 2016.0
+        },
+        {
+          "adc": 4,
+          "channel": 8,
+          "median_counts": 2015.0
+        },
+        {
+          "adc": 4,
+          "channel": 9,
+          "median_counts": 2017.0
+        },
+        {
+          "adc": 4,
+          "channel": 10,
+          "median_counts": 2024.0
+        },
+        {
+          "adc": 4,
+          "channel": 11,
+          "median_counts": 1924.0
+        },
+        {
+          "adc": 4,
+          "channel": 12,
+          "median_counts": 1990.0
+        },
+        {
+          "adc": 4,
+          "channel": 13,
+          "median_counts": 2013.0
+        },
+        {
+          "adc": 4,
+          "channel": 14,
+          "median_counts": 2020.0
+        }
+      ],
+      "firmware_status_after": {
+        "adcchannels": "4:0,4:1,4:2,4:3,4:4,4:5,4:6,4:7,4:8,4:9,4:10,4:11,4:12,4:13,4:14",
+        "array": "2",
+        "scanorder": "adc",
+        "adcseq": "manual",
+        "spiengine": "blocking",
+        "spi_clock_hz": "10000000",
+        "channelrepeat_requested": "1",
+        "channelrepeat_effective": "1",
+        "vmid_channel": "15",
+        "vmid_between_channels_requested": "false",
+        "vmid_between_channels_effective": "false",
+        "vmid_parking": "mandatory",
+        "route_count": "15",
+        "vref": "2.5",
+        "active_adcs": "4",
+        "active_spi_buses": "2",
+        "dma_start_errors": "0",
+        "lpspi_start_errors": "0",
+        "transfer_timeouts": "0",
+        "returned_channel_errors": "0",
+        "usb_write_errors": "0",
+        "usb_stream_policy": "discard_if_busy",
+        "sampling_sweeps": "320101",
+        "usb_frames_sent": "320101",
+        "usb_frames_discarded": "0",
+        "sampling_period_max_us": "45",
+        "sampling_period_over_1ms": "0",
+        "auto1_program_count": "0",
+        "auto1_resume_count": "0",
+        "adc1_errors": "0",
+        "adc2_errors": "0",
+        "adc3_errors": "0",
+        "adc4_errors": "0",
+        "running": "false",
+        "profile_available": "false",
+        "profile_enabled": "false"
+      }
+    },
+    {
+      "test_id": "single_adc4__adc__manual__dma__repeat1__vmidoff__spi10000000hz",
+      "raw": "C:\\Code\\arduino_adc_streamer\\Arduino_Sketches\\TestBoard_7953\\benchmarks\\results\\noise_engine_topology_20261008\\raw\\single_adc4__adc__manual__dma__repeat1__vmidoff__spi10000000hz__r1__attempt1.bin",
+      "raw_sha256": "881444fc1c1b94cbd88187319f2ad7eabcf235b3079ed15fbe5b0e88039df114",
+      "route_set": "single_adc4",
+      "engine": "dma",
+      "spi_clock_hz": 10000000,
+      "active_adcs": [
+        4
+      ],
+      "routes": [
+        [
+          4,
+          0
+        ],
+        [
+          4,
+          1
+        ],
+        [
+          4,
+          2
+        ],
+        [
+          4,
+          3
+        ],
+        [
+          4,
+          4
+        ],
+        [
+          4,
+          5
+        ],
+        [
+          4,
+          6
+        ],
+        [
+          4,
+          7
+        ],
+        [
+          4,
+          8
+        ],
+        [
+          4,
+          9
+        ],
+        [
+          4,
+          10
+        ],
+        [
+          4,
+          11
+        ],
+        [
+          4,
+          12
+        ],
+        [
+          4,
+          13
+        ],
+        [
+          4,
+          14
+        ]
+      ],
+      "sweeps": 182356,
+      "measured_sweeps": 168327,
+      "duration_s": 12.999303,
+      "received_period_median_us": 71.00000000015427,
+      "received_period_max_us": 76.00000000174134,
+      "acquisition_duration_median_us": 70.0,
+      "usb_frames_discarded": 0,
+      "sampling_period_max_us": 76,
+      "sampling_period_over_1ms": 0,
+      "firmware_errors": {
+        "adc1_errors": 0,
+        "adc2_errors": 0,
+        "adc3_errors": 0,
+        "adc4_errors": 0,
+        "returned_channel_errors": 0,
+        "transfer_timeouts": 0,
+        "usb_write_errors": 0,
+        "dma_start_errors": 0,
+        "lpspi_start_errors": 0
+      },
+      "wire_integrity": "PASS",
+      "all_routes_envelope": {
+        "std_p10_counts": 0.60134569636648,
+        "std_median_counts": 0.7450565773871662,
+        "std_p95_counts": 1.4212841495117539,
+        "std_max_counts": 1.4715830541656707,
+        "period_s": 1.32,
+        "autocorrelation": 0.6676356531862097
+      },
+      "adcs": {
+        "4": {
+          "std_p10_counts": 0.60134569636648,
+          "std_median_counts": 0.7450565773871662,
+          "std_p95_counts": 1.4212841495117539,
+          "std_max_counts": 1.4715830541656707,
+          "period_s": 1.32,
+          "autocorrelation": 0.6676356531862097,
+          "channel_baseline_median_counts": 2011.0,
+          "channel0_median_counts": 2007.0,
+          "channel0_deficit_from_other_channels_counts": 4.0,
+          "channel11_median_counts": 1944.0,
+          "channel11_deficit_from_other_channels_counts": 67.0
+        }
+      },
+      "adc_envelope_correlation_order": [
+        4
+      ],
+      "adc_envelope_correlation_matrix": null,
+      "channel_baselines": [
+        {
+          "adc": 4,
+          "channel": 0,
+          "median_counts": 2007.0
+        },
+        {
+          "adc": 4,
+          "channel": 1,
+          "median_counts": 2011.0
+        },
+        {
+          "adc": 4,
+          "channel": 2,
+          "median_counts": 2012.0
+        },
+        {
+          "adc": 4,
+          "channel": 3,
+          "median_counts": 2010.0
+        },
+        {
+          "adc": 4,
+          "channel": 4,
+          "median_counts": 2009.0
+        },
+        {
+          "adc": 4,
+          "channel": 5,
+          "median_counts": 2012.0
+        },
+        {
+          "adc": 4,
+          "channel": 6,
+          "median_counts": 2011.0
+        },
+        {
+          "adc": 4,
+          "channel": 7,
+          "median_counts": 2009.0
+        },
+        {
+          "adc": 4,
+          "channel": 8,
+          "median_counts": 2009.0
+        },
+        {
+          "adc": 4,
+          "channel": 9,
+          "median_counts": 2011.0
+        },
+        {
+          "adc": 4,
+          "channel": 10,
+          "median_counts": 2015.0
+        },
+        {
+          "adc": 4,
+          "channel": 11,
+          "median_counts": 1944.0
+        },
+        {
+          "adc": 4,
+          "channel": 12,
+          "median_counts": 2001.0
+        },
+        {
+          "adc": 4,
+          "channel": 13,
+          "median_counts": 2013.0
+        },
+        {
+          "adc": 4,
+          "channel": 14,
+          "median_counts": 2015.0
+        }
+      ],
+      "firmware_status_after": {
+        "adcchannels": "4:0,4:1,4:2,4:3,4:4,4:5,4:6,4:7,4:8,4:9,4:10,4:11,4:12,4:13,4:14",
+        "array": "2",
+        "scanorder": "adc",
+        "adcseq": "manual",
+        "spiengine": "dma",
+        "spi_clock_hz": "10000000",
+        "channelrepeat_requested": "1",
+        "channelrepeat_effective": "1",
+        "vmid_channel": "15",
+        "vmid_between_channels_requested": "false",
+        "vmid_between_channels_effective": "false",
+        "vmid_parking": "mandatory",
+        "route_count": "15",
+        "vref": "2.5",
+        "active_adcs": "4",
+        "active_spi_buses": "2",
+        "dma_start_errors": "0",
+        "lpspi_start_errors": "0",
+        "transfer_timeouts": "0",
+        "returned_channel_errors": "0",
+        "usb_write_errors": "0",
+        "usb_stream_policy": "discard_if_busy",
+        "sampling_sweeps": "182356",
+        "usb_frames_sent": "182356",
+        "usb_frames_discarded": "0",
+        "sampling_period_max_us": "76",
+        "sampling_period_over_1ms": "0",
+        "auto1_program_count": "0",
+        "auto1_resume_count": "0",
+        "adc1_errors": "0",
+        "adc2_errors": "0",
+        "adc3_errors": "0",
+        "adc4_errors": "0",
+        "running": "false",
+        "profile_available": "false",
+        "profile_enabled": "false"
+      }
+    },
+    {
+      "test_id": "single_adc4__adc__manual__lpspi__repeat1__vmidoff__spi10000000hz",
+      "raw": "C:\\Code\\arduino_adc_streamer\\Arduino_Sketches\\TestBoard_7953\\benchmarks\\results\\noise_engine_topology_20261008\\raw\\single_adc4__adc__manual__lpspi__repeat1__vmidoff__spi10000000hz__r1__attempt1.bin",
+      "raw_sha256": "bb9cb11ac918e339f50b4853097855009d43aa4616d377368238900f296b7d5c",
+      "route_set": "single_adc4",
+      "engine": "lpspi",
+      "spi_clock_hz": 10000000,
+      "active_adcs": [
+        4
+      ],
+      "routes": [
+        [
+          4,
+          0
+        ],
+        [
+          4,
+          1
+        ],
+        [
+          4,
+          2
+        ],
+        [
+          4,
+          3
+        ],
+        [
+          4,
+          4
+        ],
+        [
+          4,
+          5
+        ],
+        [
+          4,
+          6
+        ],
+        [
+          4,
+          7
+        ],
+        [
+          4,
+          8
+        ],
+        [
+          4,
+          9
+        ],
+        [
+          4,
+          10
+        ],
+        [
+          4,
+          11
+        ],
+        [
+          4,
+          12
+        ],
+        [
+          4,
+          13
+        ],
+        [
+          4,
+          14
+        ]
+      ],
+      "sweeps": 332521,
+      "measured_sweeps": 306941,
+      "duration_s": 12.999503,
+      "received_period_median_us": 39.00000000012227,
+      "received_period_max_us": 44.00000000082116,
+      "acquisition_duration_median_us": 38.0,
+      "usb_frames_discarded": 0,
+      "sampling_period_max_us": 44,
+      "sampling_period_over_1ms": 0,
+      "firmware_errors": {
+        "adc1_errors": 0,
+        "adc2_errors": 0,
+        "adc3_errors": 0,
+        "adc4_errors": 0,
+        "returned_channel_errors": 0,
+        "transfer_timeouts": 0,
+        "usb_write_errors": 0,
+        "dma_start_errors": 0,
+        "lpspi_start_errors": 0
+      },
+      "wire_integrity": "PASS",
+      "all_routes_envelope": {
+        "std_p10_counts": 0.6216888808554134,
+        "std_median_counts": 0.7370279240141684,
+        "std_p95_counts": 1.0222971990745262,
+        "std_max_counts": 1.0409584595133876,
+        "period_s": 1.32,
+        "autocorrelation": 0.8709738921379019
+      },
+      "adcs": {
+        "4": {
+          "std_p10_counts": 0.6216888808554134,
+          "std_median_counts": 0.7370279240141684,
+          "std_p95_counts": 1.0222971990745262,
+          "std_max_counts": 1.0409584595133876,
+          "period_s": 1.32,
+          "autocorrelation": 0.8709738921379019,
+          "channel_baseline_median_counts": 2018.0,
+          "channel0_median_counts": 2012.0,
+          "channel0_deficit_from_other_channels_counts": 6.0,
+          "channel11_median_counts": 1923.0,
+          "channel11_deficit_from_other_channels_counts": 95.0
+        }
+      },
+      "adc_envelope_correlation_order": [
+        4
+      ],
+      "adc_envelope_correlation_matrix": null,
+      "channel_baselines": [
+        {
+          "adc": 4,
+          "channel": 0,
+          "median_counts": 2012.0
+        },
+        {
+          "adc": 4,
+          "channel": 1,
+          "median_counts": 2018.0
+        },
+        {
+          "adc": 4,
+          "channel": 2,
+          "median_counts": 2021.0
+        },
+        {
+          "adc": 4,
+          "channel": 3,
+          "median_counts": 2018.0
+        },
+        {
+          "adc": 4,
+          "channel": 4,
+          "median_counts": 2016.0
+        },
+        {
+          "adc": 4,
+          "channel": 5,
+          "median_counts": 2021.0
+        },
+        {
+          "adc": 4,
+          "channel": 6,
+          "median_counts": 2021.0
+        },
+        {
+          "adc": 4,
+          "channel": 7,
+          "median_counts": 2018.0
+        },
+        {
+          "adc": 4,
+          "channel": 8,
+          "median_counts": 2016.0
+        },
+        {
+          "adc": 4,
+          "channel": 9,
+          "median_counts": 2018.0
+        },
+        {
+          "adc": 4,
+          "channel": 10,
+          "median_counts": 2026.0
+        },
+        {
+          "adc": 4,
+          "channel": 11,
+          "median_counts": 1923.0
+        },
+        {
+          "adc": 4,
+          "channel": 12,
+          "median_counts": 1990.0
+        },
+        {
+          "adc": 4,
+          "channel": 13,
+          "median_counts": 2013.0
+        },
+        {
+          "adc": 4,
+          "channel": 14,
+          "median_counts": 2022.0
+        }
+      ],
+      "firmware_status_after": {
+        "adcchannels": "4:0,4:1,4:2,4:3,4:4,4:5,4:6,4:7,4:8,4:9,4:10,4:11,4:12,4:13,4:14",
+        "array": "2",
+        "scanorder": "adc",
+        "adcseq": "manual",
+        "spiengine": "lpspi",
+        "spi_clock_hz": "10000000",
+        "channelrepeat_requested": "1",
+        "channelrepeat_effective": "1",
+        "vmid_channel": "15",
+        "vmid_between_channels_requested": "false",
+        "vmid_between_channels_effective": "false",
+        "vmid_parking": "mandatory",
+        "route_count": "15",
+        "vref": "2.5",
+        "active_adcs": "4",
+        "active_spi_buses": "2",
+        "dma_start_errors": "0",
+        "lpspi_start_errors": "0",
+        "transfer_timeouts": "0",
+        "returned_channel_errors": "0",
+        "usb_write_errors": "0",
+        "usb_stream_policy": "discard_if_busy",
+        "sampling_sweeps": "332521",
+        "usb_frames_sent": "332521",
+        "usb_frames_discarded": "0",
+        "sampling_period_max_us": "44",
+        "sampling_period_over_1ms": "0",
+        "auto1_program_count": "0",
+        "auto1_resume_count": "0",
+        "adc1_errors": "0",
+        "adc2_errors": "0",
+        "adc3_errors": "0",
+        "adc4_errors": "0",
+        "running": "false",
+        "profile_available": "false",
+        "profile_enabled": "false"
+      }
+    }
+  ],
+  "restored_configuration_status": {
+    "adcchannels": "1:0,1:1,1:2,1:3,1:4,1:5,1:6,1:7,1:8,1:9,2:0,2:1,2:2,2:3,2:4,2:5,2:6,2:7,2:8,2:9,2:10,2:11,2:12,2:13,2:14,3:0,3:1,3:2,3:3,3:4,3:5,3:6,3:7,3:8,3:9,4:0,4:1,4:2,4:3,4:4,4:5,4:6,4:7,4:8,4:9,4:10,4:11,4:12,4:13,4:14",
+    "array": "both",
+    "scanorder": "adc",
+    "adcseq": "manual",
+    "spiengine": "blocking",
+    "spi_clock_hz": "10000000",
+    "channelrepeat_requested": "1",
+    "channelrepeat_effective": "1",
+    "vmid_channel": "15",
+    "vmid_between_channels_requested": "false",
+    "vmid_between_channels_effective": "false",
+    "vmid_parking": "mandatory",
+    "route_count": "50",
+    "vref": "2.5",
+    "active_adcs": "1,2,3,4",
+    "active_spi_buses": "1,2",
+    "dma_start_errors": "0",
+    "lpspi_start_errors": "0",
+    "transfer_timeouts": "0",
+    "returned_channel_errors": "0",
+    "usb_write_errors": "0",
+    "usb_stream_policy": "discard_if_busy",
+    "sampling_sweeps": "108049",
+    "usb_frames_sent": "108047",
+    "usb_frames_discarded": "2",
+    "sampling_period_max_us": "121",
+    "sampling_period_over_1ms": "0",
+    "auto1_program_count": "0",
+    "auto1_resume_count": "0",
+    "adc1_errors": "0",
+    "adc2_errors": "0",
+    "adc3_errors": "0",
+    "adc4_errors": "0",
+    "running": "false",
+    "profile_available": "false",
+    "profile_enabled": "false"
+  }
+}

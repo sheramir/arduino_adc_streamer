@@ -1,0 +1,85 @@
+{
+  "nominal_reference_v": 2.5,
+  "mv_per_count": 0.6103515625,
+  "method": "Complete 20 ms windows after first second. Per-channel sample standard deviation (ddof=1), then median across 25 channels per array. Quiet=p10, typical=p50, high=p95 across windows. Peak-to-peak uses each channel window maximum minus minimum with the same aggregations.",
+  "captures": {
+    "charger_connected_reference": {
+      "raw": "C:\\Code\\arduino_adc_streamer\\Arduino_Sketches\\TestBoard_7953\\benchmarks\\results\\noise_engine_topology_20261008\\raw\\all_four_full__adc__manual__blocking__repeat1__vmidoff__spi10000000hz__r1__attempt1.bin",
+      "windows": 599,
+      "noise_std_mv": {
+        "10": [
+          0.4594899640356826,
+          0.3909523788298982
+        ],
+        "50": [
+          0.6344469877384222,
+          0.4866846500763496
+        ],
+        "95": [
+          1.2383216466903195,
+          0.8751141093475747
+        ]
+      },
+      "window_peak_to_peak_mv": {
+        "10": [
+          1.8310546875,
+          1.8310546875
+        ],
+        "50": [
+          3.0517578125,
+          2.44140625
+        ],
+        "95": [
+          4.2724609375,
+          3.0517578125
+        ]
+      }
+    },
+    "battery_user_reported": {
+      "raw": "C:\\Code\\arduino_adc_streamer\\Arduino_Sketches\\TestBoard_7953\\benchmarks\\results\\noise_laptop_battery_20261008\\raw\\all_four_full__adc__manual__blocking__repeat1__vmidoff__spi10000000hz__r1__attempt1.bin",
+      "windows": 599,
+      "noise_std_mv": {
+        "10": [
+          1.2031150507883583,
+          0.7969932551139244
+        ],
+        "50": [
+          1.2590890570779927,
+          0.8264514268134069
+        ],
+        "95": [
+          1.358379104649755,
+          0.8803070566833275
+        ]
+      },
+      "window_peak_to_peak_mv": {
+        "10": [
+          4.8828125,
+          3.0517578125
+        ],
+        "50": [
+          4.8828125,
+          3.0517578125
+        ],
+        "95": [
+          4.8828125,
+          3.662109375
+        ]
+      }
+    }
+  },
+  "ratios": {
+    "charger_high_to_charger_quiet": [
+      2.6949917160631505,
+      2.23841612619611
+    ],
+    "battery_typical_to_charger_quiet": [
+      2.7401883732551244,
+      2.1139439777472044
+    ],
+    "battery_typical_to_charger_typical": [
+      1.984545724720354,
+      1.6981251138365587
+    ]
+  }
+}

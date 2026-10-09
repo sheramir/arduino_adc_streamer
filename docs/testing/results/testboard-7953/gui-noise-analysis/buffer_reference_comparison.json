@@ -1,0 +1,49 @@
+{
+  "user_reported_hardware": {
+    "buffer": "OPA365",
+    "reference": "REF2025",
+    "Vmid_nominal_V": 1.25,
+    "Vref_nominal_V": 2.5
+  },
+  "lsb_V": 0.0006103515625,
+  "nominal_midscale_code": 2048,
+  "opa365_25C_limits": {
+    "input_bias_current_A": 1e-11,
+    "input_offset_V": 0.0002
+  },
+  "per_adc": [
+    {
+      "adc": 1,
+      "bias_resistor_ohms": 1000000,
+      "median_channel_baseline_counts": 1998.0,
+      "nominal_input_deficit_mV": 30.517578125,
+      "opa365_max_25C_bias_resistor_drop_uV": 10.0
+    },
+    {
+      "adc": 2,
+      "bias_resistor_ohms": 470000,
+      "median_channel_baseline_counts": 2022.0,
+      "nominal_input_deficit_mV": 15.869140625,
+      "opa365_max_25C_bias_resistor_drop_uV": 4.7
+    },
+    {
+      "adc": 3,
+      "bias_resistor_ohms": 470000,
+      "median_channel_baseline_counts": 2026.5,
+      "nominal_input_deficit_mV": 13.12255859375,
+      "opa365_max_25C_bias_resistor_drop_uV": 4.7
+    },
+    {
+      "adc": 4,
+      "bias_resistor_ohms": 249000,
+      "median_channel_baseline_counts": 2034.0,
+      "nominal_input_deficit_mV": 8.544921875,
+      "opa365_max_25C_bias_resistor_drop_uV": 2.4899999999999998
+    }
+  ],
+  "channel11_nominal_deficits_mV": [
+    56.7626953125,
+    37.841796875
+  ],
+  "note": "Voltages are nominal ADC-equivalent differences; Vmid, Vref and buffer outputs have not been independently measured."
+}

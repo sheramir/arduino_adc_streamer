@@ -1,0 +1,69 @@
+[
+  {
+    "width": 10,
+    "target_rate": 75000,
+    "duration_s": 5.0,
+    "tab": "Time Series",
+    "filters": true,
+    "stall": true,
+    "isolated_reader": true,
+    "fragmented_reads": true,
+    "expected": 375000,
+    "received": 375000,
+    "written": 375000,
+    "complete": true,
+    "interruption": null,
+    "heartbeat_p95_ms": 14.525259984657165,
+    "heartbeat_max_ms": 511.5600998979062,
+    "max_raw_bytes": 21080,
+    "max_decoded_sweeps": 22183,
+    "max_archive_sweeps": 1500,
+    "decoder": {
+      "raw": {
+        "items": 0,
+        "bytes": 0,
+        "sweeps": 0,
+        "oldest_age_s": 0.0,
+        "estimated_sweeps": null
+      },
+      "read_interval_max_s": 0.5055108999367803,
+      "native_read_interval_max_s": 0.50461469986476,
+      "decode_age_max_s": 0.4445883999578655,
+      "accepted_frames": 375000,
+      "parser_rejections": 0,
+      "rejection_examples": [],
+      "driver_rx_buffer_requested_bytes": null,
+      "driver_rx_buffer_request_error": null,
+      "transport": {
+        "kind": "isolated_process",
+        "pending": {
+          "items": 0,
+          "bytes": 0,
+          "sweeps": 0,
+          "oldest_age_s": 0.0
+        },
+        "budget_bytes": 16777216,
+        "launcher_pid": 122340,
+        "reader_pid": 43188,
+        "child_budget_bytes": 16777216,
+        "child_pending_bytes_last": 177,
+        "child_peak_bytes": 2248250,
+        "connection_received_bytes": 12750181,
+        "connection_native_reads": 750002,
+        "connection_pipe_chunks": 1467,
+        "chunk_interval_s": 0.002,
+        "delivery_age_max_s": 0.4445486997719854,
+        "error": null
+      },
+      "trailing_capture_bytes": 0
+    },
+    "worker_duration_max_ms": 39.31280015967786,
+    "render_duration_ms": 5.724200047552586,
+    "reload_verified": null,
+    "max_visible_adc_curves": 10,
+    "stall_to_fresh_render_ms": 201.2050999328494,
+    "pipeline_catchup_ms": 174.36509998515248,
+    "render_recovery_after_catchup_ms": 26.839999947696924,
+    "decode_to_render_age_ms": 33.35989988408983
+  }
+]

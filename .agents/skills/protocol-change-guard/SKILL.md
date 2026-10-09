@@ -17,7 +17,7 @@ Read these first:
 
 If the change involves arrays or sensor routing, also read:
 
-- `docs/user/ARRAY_CONFIGURATION_GUIDE.md`
+- `docs/guides/configuration/ARRAY_CONFIGURATION_GUIDE.md`
 
 ## Workflow
 

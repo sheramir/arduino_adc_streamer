@@ -282,7 +282,7 @@ It includes warm-up. Cycle-based means/maxima use the reported CPU frequency;
 period/gap ticks are microseconds. Histogram p95/p99 values are upper bounds,
 not exact percentiles; `null` means empty data or the quantile lies above the
 last bound (64 ms). Detailed field/scope definitions are in the
-[profiling guide](../../../docs/architecture/TESTBOARD_7953_PHASE_PROFILING.md).
+[profiling guide](../../../docs/architecture/firmware/TESTBOARD_7953_PHASE_PROFILING.md).
 
 - `duration_median_us` answers “how long did the ADC sweep itself take?”
 - `block_period_median_us` answers “how often did complete sweeps actually

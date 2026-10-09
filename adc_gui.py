@@ -465,6 +465,13 @@ class ADCStreamerGUI(
         self.shutdown_adc_connect_worker()
         self.shutdown_force_connect_worker()
 
+        for name in ('_acquisition_render_timer', '_archive_completion_timer', '_pzt_decay_preview_timer'):
+            timer = getattr(self, name, None)
+            if timer is not None:
+                timer.stop()
+        from serial_communication.capture_awake import set_capture_awake
+        set_capture_awake(False)
+
         event.accept()
     
     # ========================================================================

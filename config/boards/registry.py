@@ -42,6 +42,11 @@ class BoardRegistry:
                 self.aliases[normalized] = data['id']
         self.families = index['compatibility_families']
         self.fallback = index['fallback']
+        self.standalone_firmware = freeze(index.get('standalone_firmware', {}))
+        self._standalone_names = {name.strip().casefold(): reason for name, reason in self.standalone_firmware.items()}
+        if any(not name or name in self.aliases or not isinstance(reason, str) or not reason
+               for name, reason in self._standalone_names.items()):
+            raise ValueError('Invalid standalone firmware identity/reason')
         if self.fallback not in self.profiles:
             raise ValueError('Unknown fallback profile')
         priorities = set()
@@ -60,6 +65,8 @@ class BoardRegistry:
 
     def resolve(self, mcu_name=None):
         name = (mcu_name or '').strip().casefold()
+        if name in self._standalone_names:
+            raise ValueError(f'{mcu_name}: {self._standalone_names[name]}')
         profile = self.aliases.get(name, name if name in self.profiles else None)
         if profile is None:
             for family in self.families:

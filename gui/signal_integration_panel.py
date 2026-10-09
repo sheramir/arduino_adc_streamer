@@ -1502,7 +1502,7 @@ class PressureMapPanelMixin:
         multiplier = SENSOR_POLARITY_NORMAL_MULTIPLIER
         if hasattr(self, "is_active_sensor_reverse_polarity") and self.is_active_sensor_reverse_polarity():
             multiplier = SENSOR_POLARITY_REVERSED_MULTIPLIER
-        descriptor = self.get_testboard_descriptor() if hasattr(self, 'get_testboard_descriptor') else None
+        descriptor = self.get_array_descriptor() if hasattr(self, 'get_array_descriptor') else None
         if descriptor:
             multiplier = SENSOR_POLARITY_REVERSED_MULTIPLIER if descriptor['sensor_configuration'].get('reverse_polarity') else SENSOR_POLARITY_NORMAL_MULTIPLIER
         batch = ForceBlockBatch(
@@ -3652,7 +3652,7 @@ class PressureMapPanelMixin:
 
     def _get_array_sensor_grid_positions(self) -> dict[str, tuple[int, int]]:
         active_config = self.get_active_sensor_configuration() if hasattr(self, "get_active_sensor_configuration") else {}
-        descriptor = self.get_testboard_descriptor() if hasattr(self, "get_testboard_descriptor") else None
+        descriptor = self.get_array_descriptor() if hasattr(self, "get_array_descriptor") else None
         if descriptor:
             active_config = descriptor['sensor_configuration']
         array_layout = active_config.get("array_layout", {}) if isinstance(active_config, dict) else {}
@@ -3712,7 +3712,7 @@ class PressureMapPanelMixin:
         Force Display layout must instead remain the complete configured PZT
         array so inactive packages render as zero-valued package fields.
         """
-        descriptor = self.get_testboard_descriptor() if hasattr(self, 'get_testboard_descriptor') else None
+        descriptor = self.get_array_descriptor() if hasattr(self, 'get_array_descriptor') else None
         if descriptor:
             cells = descriptor['sensor_configuration']['array_layout']['cells']
             return {f'A{array}_{sensor}': (row, col) for array in descriptor['sampled_arrays']
@@ -4154,8 +4154,11 @@ class PressureMapPanelMixin:
         channel_times = (timestamps_array.reshape(-1, 1) + time_offsets.reshape(1, -1)).reshape(-1)
 
         channel_data = self._convert_signal_integration_counts_to_voltage(channel_counts)
-        channel_data = self._remove_signal_integration_dc_bias(channel_data, channel_times)
-        channel_data = self._integrate_signal_integration_voltage_samples(channel_data)
+        from data_processing.acquisition_timing import gap_indices, peak_envelope
+        boundaries = np.unique(np.concatenate(([0], gap_indices(channel_times), [len(channel_data)]))).astype(int)
+        for start, end in zip(boundaries[:-1], boundaries[1:]):
+            segment = self._remove_signal_integration_dc_bias(channel_data[start:end], channel_times[start:end])
+            channel_data[start:end] = self._integrate_signal_integration_voltage_samples(segment)
         channel_data = self._apply_signal_integration_sensor_polarity(channel_data)
 
         if visible_start_time_sec is not None:
@@ -4165,10 +4168,8 @@ class PressureMapPanelMixin:
 
         latest_value = float(channel_data[-1]) if channel_data.size > 0 else None
 
-        if len(channel_data) > max_samples_per_series:
-            downsample_factor = max(1, len(channel_data) // max_samples_per_series)
-            channel_data = channel_data[::downsample_factor]
-            channel_times = channel_times[::downsample_factor]
+        channel_times, channel_data = peak_envelope(channel_times, channel_data, max_samples_per_series,
+            nominal=getattr(self, '_received_sweep_period_s', None))
 
         return channel_data, channel_times, latest_value
 
@@ -4320,7 +4321,7 @@ class PressureMapPanelMixin:
         curve = self._get_or_create_signal_integration_curve(curve_key, name, pen)
         curve.setVisible(True)
         curve.setPen(pen)
-        curve.setData(x=x_data, y=y_data)
+        curve.setData(x=x_data, y=y_data, connect='finite')
 
     def _plot_signal_integration_rosette_series(
         self,

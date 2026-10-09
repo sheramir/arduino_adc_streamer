@@ -32,6 +32,7 @@ def freeze_owner_context(owner):
     context = context_for(owner)
     status = getattr(owner, 'arduino_status', None)
     reported = asdict(status) if is_dataclass(status) else {}
+    reported.pop('stream_diagnostics', None)
     layout = owner.get_active_sensor_configuration() if hasattr(owner, 'get_active_sensor_configuration') else None
     owner.board_capture_context = context.capture_snapshot(parameter_values(owner.config), reported, layout)
     owner.board_capture_context['acquisition'] = deepcopy(parameter_values(owner.config))
@@ -43,7 +44,7 @@ def freeze_owner_context(owner):
 
 def adc_resolution_bits(owner):
     saved = getattr(owner, 'board_capture_context', None)
-    descriptor = getattr(owner, 'testboard_capture_descriptor', None)
+    descriptor = getattr(owner, 'array_capture_descriptor', None)
     if descriptor:
         return descriptor['adc_resolution_bits']
     if saved:
@@ -52,7 +53,7 @@ def adc_resolution_bits(owner):
 
 
 def full_scale_volts(owner):
-    descriptor = owner.get_testboard_descriptor() if hasattr(owner, 'get_testboard_descriptor') else None
+    descriptor = owner.get_array_descriptor() if hasattr(owner, 'get_array_descriptor') else None
     if descriptor:
         return float(descriptor.get('full_scale_volts', descriptor['reference']))
     saved = getattr(owner, 'board_capture_context', None)

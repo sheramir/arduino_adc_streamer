@@ -599,7 +599,7 @@ class DataExporterMixin:
             metadata_path = directory / f"{filename}_{timestamp}_metadata.json"
 
             is_555_mode = (getattr(self, 'board_capture_context', None) or {}).get('interpretation', {}).get('device_mode', getattr(self, 'device_mode', 'adc')) == '555'
-            descriptor = getattr(self, 'testboard_capture_descriptor', None)
+            descriptor = getattr(self, 'array_capture_descriptor', None)
             repeat_count = 1 if descriptor else max(1, int(capture_config.get('repeat', 1)))
             if descriptor or capture_context.get('channel_specs') or captured_mux or captured_combined:
                 all_specs = list(capture_context.get("channel_specs") or getattr(self, "get_acquisition_channel_specs", self.get_display_channel_specs)())
@@ -757,6 +757,7 @@ class DataExporterMixin:
             metadata = {
                 "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 "mcu_type": self.current_mcu if self.current_mcu else "Unknown",
+                "capture_summary": getattr(self, 'capture_summary', None),
                 "total_captured_sweeps": self.sweep_count,
                 "saved_sweeps": saved_index,
                 "sweep_range": sweep_range_text,
@@ -880,7 +881,7 @@ class DataExporterMixin:
                 metadata["notes"] = notes
 
             # Save metadata as JSON
-            descriptor = getattr(self, 'testboard_capture_descriptor', None)
+            descriptor = getattr(self, 'array_capture_descriptor', None)
             if descriptor:
                 metadata['testboard_acquisition'] = descriptor
                 metadata['mcu_type'] = descriptor['mcu']

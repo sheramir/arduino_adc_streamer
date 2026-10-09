@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from config.channel_utils import unique_channels_in_order
-from config.testboard_scan import format_testboard_routes
+from config.array_scan import format_array_routes, order_array_routes, selected_arrays
 from config.buffer_utils import validate_and_limit_sweeps_per_block
 from constants.serial import INTER_COMMAND_DELAY
 from constants.serial import DEFAULT_CONFIG_BUFFER_SIZE
@@ -23,9 +23,7 @@ from constants.pzt_rs import (
 from serial_communication.adc_connection_state import ArduinoStatus, build_default_arduino_status
 
 
-def _testboard_default(key):
-    from config.boards import get_board_registry
-    return get_board_registry().profiles['testboard_7953'].mode().parameters[key].default
+from config.legacy_array_api import legacy_array_default as _testboard_default
 
 
 @dataclass(slots=True)
@@ -65,6 +63,12 @@ class ADCConfigurationRequest:
     parameters: dict | None = None
     board_context: object | None = None
     sensor_configuration: dict | None = None
+
+    @property
+    def is_lane_aware(self):
+        from config.boards import get_board_registry
+        context = self.board_context or get_board_registry().context(self.current_mcu, self.array_operation_mode)
+        return context.mode.definition['adapters']['acquisition'] == 'multi_array'
 
 
 @dataclass(slots=True)
@@ -182,7 +186,7 @@ class ADCConfigurationService:
         arduino_status = build_default_arduino_status()
 
         resolved_device_mode = request.device_mode
-        if request.is_array_pzt_pzr_mode and not request.is_testboard_7953:
+        if request.is_array_pzt_pzr_mode and not request.is_lane_aware:
             selected_mode = (request.array_operation_mode or "PZT").strip().upper()
             resolved_device_mode = "555" if selected_mode == "PZR" else "adc"
             success, received = self._send_command_and_wait_ack(f"mode {selected_mode}", selected_mode)
@@ -427,15 +431,16 @@ class ADCConfigurationService:
 
     def _verify_configuration(self, request: ADCConfigurationRequest, arduino_status: ArduinoStatus, resolved_device_mode: str) -> list[str]:
         messages: list[str] = []
-        if request.is_testboard_7953:
-            from config.testboard_scan import order_testboard_routes
+        if request.is_lane_aware:
             from config.boards import get_board_registry
+            from config.boards.sensors import default_sensor_layout
             context = request.board_context or get_board_registry().context(request.current_mcu, request.array_operation_mode)
+            layout = request.sensor_configuration or default_sensor_layout(context.profile)
             values = context.mode.resolve_settings(dict(reference=request.reference,
                          spi_clock_hz=request.testboard_spi_clock_hz, settling_conversions=request.testboard_channel_repeat,
                          sequence=request.testboard_sequence, vmid_sampling=request.use_ground))
             expected = {
-                "reference": "5" if request.reference == "5.0" else request.reference,
+                "reference": values.requested['reference'],
                 "testboard_array": request.testboard_array_selection,
                 "testboard_scan_order": request.testboard_scan_order,
                 "testboard_sequence": values.requested['sequence'],
@@ -452,7 +457,7 @@ class ADCConfigurationService:
                 if actual != value:
                     messages.append(f"MISMATCH: Expected {key}={value}, got {actual}")
             actual_routes = arduino_status.testboard_routes
-            if actual_routes is None or order_testboard_routes(actual_routes, request.testboard_scan_order) != order_testboard_routes(request.testboard_adc_routes, request.testboard_scan_order):
+            if actual_routes is None or order_array_routes(actual_routes, request.testboard_scan_order, layout) != order_array_routes(request.testboard_adc_routes, request.testboard_scan_order, layout):
                 messages.append("MISMATCH: TestBoard ADC route membership/order")
             if arduino_status.testboard_engine not in ("blocking", "dma", "lpspi"):
                 messages.append("MISMATCH: Missing or invalid TestBoard SPI engine status")
@@ -496,7 +501,7 @@ class ADCConfigurationService:
 
         actual_repeat = arduino_status.repeat
         if (
-            not request.is_testboard_7953
+            not request.is_lane_aware
             and actual_repeat is not None
             and actual_repeat != request.repeat
         ):
@@ -513,7 +518,7 @@ class ADCConfigurationService:
         return context.mode
 
     def _normalize_adc_buffer_size(self, request: ADCConfigurationRequest) -> int:
-        if request.is_testboard_7953:
+        if request.is_lane_aware:
             return 1
         if (
             request.is_array_pzt_pzr_mode
@@ -525,7 +530,7 @@ class ADCConfigurationService:
         else:
             channel_count = (
                 len(request.testboard_adc_routes)
-                if request.is_testboard_7953
+                if request.is_lane_aware
                 else len(request.channels_to_send) * max(1, int(request.effective_channel_multiplier))
             )
         limits = self._request_mode(request).definition.get('buffer_limits', {})
@@ -544,24 +549,24 @@ class ADCConfigurationService:
 
     def _send_testboard_config(self, request):
         from config.boards import get_board_registry
-        from config.testboard_7953_board import default_layout
-        from config.testboard_acquisition import normalize_settings
-        from config.testboard_scan import normalize_testboard_scan_order, selected_testboard_arrays
+        from config.boards.sensors import default_sensor_layout
+        from config.array_acquisition import normalize_settings
         context = request.board_context or get_board_registry().context(request.current_mcu, request.array_operation_mode)
-        layout = request.sensor_configuration or default_layout()
+        layout = request.sensor_configuration or default_sensor_layout(context.profile)
         reference, clock, repeat, sequence, vmid = normalize_settings(
             request.reference, request.testboard_spi_clock_hz, request.testboard_channel_repeat,
             request.testboard_sequence, request.use_ground, context)
-        normalize_testboard_scan_order(request.testboard_scan_order)
-        allowed = {lane for array in selected_testboard_arrays(request.testboard_array_selection)
+        context.mode.parameters['scan_order'].normalize(request.testboard_scan_order)
+        allowed = {lane for array in selected_arrays(request.testboard_array_selection, layout)
                    for lane in layout['arrays'][str(array)]['adc_lanes']}
         routes = request.testboard_adc_routes
         hardware = context.profile.hardware
         if not routes or len(set(routes)) != len(routes) or any(lane not in allowed or not 0 <= ch < hardware['inputs_per_adc'] or ch in hardware['reserved_inputs'].values() for lane, ch in routes):
             raise ValueError("Invalid or empty TestBoard ADC routes")
-        commands = [("mode", "PZT"), ("ref", reference), ("spiclock", str(clock)),
+        reference_wire = context.mode.parameters['reference'].wire_value(reference)
+        commands = [("mode", context.mode.id), ("ref", reference_wire), ("spiclock", str(clock)),
                     ("array", request.testboard_array_selection), ("scanorder", request.testboard_scan_order),
-                    ("adcchannels", format_testboard_routes(routes)), ("channelrepeat", str(repeat)),
+                    ("adcchannels", format_array_routes(routes)), ("channelrepeat", str(repeat)),
                     ("vmid", str(vmid).lower()), ("adcseq", sequence)]
         messages = []
         for name, value in commands:

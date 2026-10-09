@@ -28,7 +28,7 @@ class DummyForceEngine:
         pass
 
     def package_results(self):
-        return ["rendered"]
+        return [SimpleNamespace(sensor_id='PZT6')]
 
     def array_result(self):
         return None

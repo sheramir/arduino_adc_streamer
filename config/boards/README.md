@@ -5,6 +5,12 @@ channel order, PZT-to-ADC routes and array-to-ADC associations have one owner:
 `sensors_library/sensor_configurations.json` (or the user's saved sensor library).
 Python holds the shared algorithms, registered adapters and existing GUI layout.
 
+Acquisition and rendering use the shared `acquisition_runtime`,
+`array_acquisition`, `array_scan`, `acquisition_worker`, `live_acquisition` and
+`array_panel` modules. ADC counts and physical array IDs derive from the selected
+profile and sensor layout. Board-named modules are compatibility facades; they
+do not implement a separate acquisition pipeline.
+
 `registry.json` lists the profiles and discovery transport. Resolution trims and
 case-folds identity, checks exact aliases, then applies explicitly ordered family
 matches, then uses `generic_adc`. Stable profile IDs also work in sensor JSON.
@@ -66,6 +72,16 @@ format, including combined PZT_RS, whose wire samples are also uint16.
 
 ## Capture and preferences
 
+Modes may define `streaming: {"pipeline": "batched_timed_sweeps",
+"render_interval_ms": 200}`. This selects the existing high-rate reader/decoder/
+worker/archive pipeline without checking a PCB name. Batched timed-u16 capture
+requires `multi_array` acquisition, a compatible timed-u16 codec, one emitted
+result per route and one sweep per frame; startup validation enforces those
+constraints. Omitted streaming settings select `legacy_blocks`. Queue/batch
+budgets remain shared transport safeguards, and the ADS7953 configuration keeps
+the verified values and render cadence. Stopped diagnostics belong to the
+protocol adapter. See [architecture and measured replay results](../../docs/architecture/gui/GUI_GENERIC_ACQUISITION_REFACTOR.md).
+
 Preferences live at `~/.adc_streamer/last_used_board_settings.json`, grouped by
 profile ID and mode, using the existing JSON persistence helpers. TestBoard
 intentionally returns to accepted defaults on reconnect; other modes preserve
@@ -101,6 +117,11 @@ they do not require another dataclass field. The former Python
    raw sensor mappings can have another number of positions.
 5. Run `python -m config.boards.audit` and focused tests. Restart the GUI, check
    controls, then verify Configure/status, capture, display and export on hardware.
+
+`registry.json.standalone_firmware` records identities with standalone tools but
+no implemented desktop GUI profile/protocol. The connection workflow rejects
+these explicitly and releases the port. Remove an entry when adding its audited
+GUI support; do not let unsupported firmware inherit generic ADC settings.
 
 `tests/test_board_registry.py` demonstrates a JSON-only future board with a new
 reference/wire token, different repeat bounds, 16-bit ADC, additional scalar

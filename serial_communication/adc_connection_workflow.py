@@ -27,6 +27,8 @@ class ADCConnectionWorkflow:
         session.connect(port_name)
         try:
             mcu_name = session.detect_mcu(mcu_detection_timeout)
+            from config.boards import get_board_registry
+            get_board_registry().resolve(mcu_name)
         except Exception:
             # The port is already open at this point; tear it down so a failed
             # detection does not leave the port locked for the next attempt.

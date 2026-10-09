@@ -80,13 +80,13 @@ class SignalIntegrationProcessorTests(unittest.TestCase):
 
         self.assertEqual(indices, {0: [3, 7]})
 
-    def test_testboard_pressure_mapping_uses_fixed_blcrt_channel_order(self):
+    def test_lane_aware_pressure_mapping_uses_active_sensor_channel_order(self):
         harness = SignalIntegrationProcessorHarness()
-        harness.is_testboard_7953_mode = lambda: True
-
-        channel_map = harness._build_signal_integration_channel_map()
-
-        self.assertEqual(channel_map, {0: "B", 1: "L", 2: "C", 3: "R", 4: "T"})
+        harness.is_multi_array_mode = lambda: True
+        for labels in (['B', 'L', 'C', 'R', 'T'], ['T', 'R', 'C', 'L', 'B']):
+            with self.subTest(labels=labels):
+                harness.get_active_channel_sensor_map = lambda: labels
+                self.assertEqual(harness._build_signal_integration_channel_map(), dict(enumerate(labels)))
 
     def _process_block(
         self,

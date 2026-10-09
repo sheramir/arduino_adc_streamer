@@ -67,6 +67,10 @@ class PztDecayPanelMixin:
         self._pzt_decay_watchdog = QTimer(self)
         self._pzt_decay_watchdog.setInterval(250)
         self._pzt_decay_watchdog.timeout.connect(self._check_pzt_decay_watchdog)
+        self._pzt_decay_preview_timer = QTimer(self)
+        self._pzt_decay_preview_timer.setInterval(200)
+        self._pzt_decay_preview_timer.timeout.connect(self.refresh_live_decay_preview)
+        self._pzt_decay_preview_timer.start()
 
     def create_pzt_decay_tab(self) -> QWidget:
         tab = QWidget(); layout = QHBoxLayout(tab)
@@ -212,7 +216,7 @@ class PztDecayPanelMixin:
             return
         current = self.pzt_decay_signal_combo.currentText(); self.pzt_decay_signal_combo.blockSignals(True); self.pzt_decay_signal_combo.clear()
         config = self.get_active_sensor_configuration() if hasattr(self, "get_active_sensor_configuration") else {}
-        descriptor = self.get_testboard_descriptor() if hasattr(self, 'get_testboard_descriptor') else None
+        descriptor = self.get_array_descriptor() if hasattr(self, 'get_array_descriptor') else None
         if descriptor:
             for spec in self.get_display_channel_specs():
                 self.pzt_decay_signal_combo.addItem(spec['label'])
@@ -231,7 +235,7 @@ class PztDecayPanelMixin:
         return resolve_pzt_decay_signal_mapping(config, self.pzt_decay_signal_combo.currentText())
 
     def _update_pzt_decay_mapping_label(self, *_args) -> None:
-        descriptor = self.get_testboard_descriptor() if hasattr(self, 'get_testboard_descriptor') else None
+        descriptor = self.get_array_descriptor() if hasattr(self, 'get_array_descriptor') else None
         if descriptor:
             self._set_pzt_decay_measurement_controls(False)
             self.pzt_decay_calculate_vmid_btn.setEnabled(False)
@@ -505,18 +509,8 @@ class PztDecayPanelMixin:
             self._finish_pzt_decay_capture(error=str(exc))
 
     def process_pzt_decay_block(self, block_samples: np.ndarray, sweep_timestamps_s: np.ndarray) -> None:
-        descriptor = self.get_testboard_descriptor() if hasattr(self, 'get_testboard_descriptor') else None
+        descriptor = self.get_array_descriptor() if hasattr(self, 'get_array_descriptor') else None
         if descriptor and not self.pzt_decay_active:
-            selected = self.pzt_decay_signal_combo.currentText()
-            spec = next((s for s in self.get_display_channel_specs() if s['label'] == selected), None)
-            if spec and hasattr(self, '_get_ordered_active_buffer_snapshot'):
-                snapshot = self._get_ordered_active_buffer_snapshot(recent_window_sec=5.0)
-                if snapshot is not None:
-                    data, times, _dt = snapshot
-                    index = spec['sample_indices'][0]
-                    self._pzt_decay_measured_curve.setData(times[-5000:],
-                        data[-5000:, index] / ((2 ** descriptor['adc_resolution_bits']) - 1) * float(descriptor.get('full_scale_volts', descriptor['reference'])))
-                    self.pzt_decay_plot.setTitle(selected)
             return
         if not self.pzt_decay_active or self.pzt_decay_analyzer is None: return
         self._pzt_decay_last_sample_monotonic = time.monotonic()
@@ -567,6 +561,36 @@ class PztDecayPanelMixin:
                 break
         if time.monotonic() - self._pzt_decay_last_plot_s > 0.05:
             self._pzt_decay_last_plot_s = time.monotonic(); self._update_pzt_decay_plot()
+
+    def refresh_live_decay_preview(self):
+        if self.pzt_decay_active or not hasattr(self, 'visualization_tabs'):
+            return
+        if self.visualization_tabs.tabText(self.visualization_tabs.currentIndex()) != PZT_DECAY_TAB_NAME:
+            return
+        if not self.visualization_tabs.currentWidget().isVisible():
+            return
+        descriptor = self.get_array_descriptor()
+        if not descriptor or self.raw_data_buffer is None:
+            return
+        from data_processing.circular_buffer import recent_window_slices, take_recent
+        from data_processing.acquisition_timing import peak_envelope
+        selected = self.pzt_decay_signal_combo.currentText()
+        spec = next((s for s in self.get_display_channel_specs() if s['label'] == selected), None)
+        if spec is None:
+            return
+        with self.buffer_lock:
+            slices = recent_window_slices(self.sweep_count, self.buffer_write_index, 5000, self.MAX_SWEEPS_BUFFER)
+            times = take_recent(self.sweep_timestamps_buffer, slices)
+            values = take_recent(self.get_active_data_buffer()[:, spec['sample_indices'][0]], slices)
+        if not len(times):
+            return
+        mask = times >= times[-1] - 5.0
+        values = values[mask] / ((2 ** descriptor['adc_resolution_bits']) - 1) * float(descriptor.get('full_scale_volts', descriptor['reference']))
+        times, values = peak_envelope(times[mask], values, 2000, nominal=getattr(self, '_received_sweep_period_s', None))
+        self._pzt_decay_measured_curve.setData(times, values, connect='finite')
+        if getattr(self, '_pzt_preview_title', None) != selected:
+            self.pzt_decay_plot.setTitle(selected)
+            self._pzt_preview_title = selected
 
     def _pzt_decay_display_samples(self):
         """Return the bounded, selected event and its plotting origin.

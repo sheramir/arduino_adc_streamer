@@ -4,6 +4,12 @@ Software audit: 2026-10-02. Active identities come from
 `Arduino_Sketches/README.md`; historical entries preserve host/test contracts.
 No firmware files changed. Hardware checks remain manual.
 
+9 October 2026 update: the shared acquisition refactor supports profile-defined
+ADC capacities and sensor-defined array IDs. ADC124 is explicitly listed as
+standalone firmware in the registry; it is not counted as desktop GUI support.
+The current audit validates 13 GUI profiles, seven active GUI identities and
+one standalone firmware identity. See [refactor validation](../../docs/architecture/gui/GUI_GENERIC_ACQUISITION_REFACTOR.md).
+
 Implementation verification: 900 tests and 34 subtests passed. The registry audit
 validated all 13 profiles and seven active sketch-map identities. An offscreen GUI
 smoke check passed startup and all 18 profile/mode transitions.

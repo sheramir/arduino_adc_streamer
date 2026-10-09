@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Any
 from config.boards import get_board_registry
+from config.legacy_array_api import legacy_array_default
 
 
 def _default(profile, parameter):
@@ -28,11 +29,11 @@ class ADCConfigurationState:
     channel_selection_source: str = "none"
     selected_array_sensors: list[str] = field(default_factory=list)
     array_operation_mode: str = "PZT"
-    testboard_array_selection: str = field(default_factory=lambda: _default("testboard_7953", "array_selection"))
-    testboard_scan_order: str = field(default_factory=lambda: _default("testboard_7953", "scan_order"))
-    testboard_spi_clock_hz: int = field(default_factory=lambda: _default("testboard_7953", "spi_clock_hz"))
-    testboard_channel_repeat: int = field(default_factory=lambda: _default("testboard_7953", "settling_conversions"))
-    testboard_sequence: str = field(default_factory=lambda: _default("testboard_7953", "sequence"))
+    testboard_array_selection: str = field(default_factory=lambda: legacy_array_default("array_selection"))
+    testboard_scan_order: str = field(default_factory=lambda: legacy_array_default("scan_order"))
+    testboard_spi_clock_hz: int = field(default_factory=lambda: legacy_array_default("spi_clock_hz"))
+    testboard_channel_repeat: int = field(default_factory=lambda: legacy_array_default("settling_conversions"))
+    testboard_sequence: str = field(default_factory=lambda: legacy_array_default("sequence"))
     repeat: int = field(default_factory=lambda: _default("generic_adc", "samples_per_channel"))
     ground_pin: int = -1
     use_ground: bool = False

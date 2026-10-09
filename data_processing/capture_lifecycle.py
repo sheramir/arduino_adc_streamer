@@ -27,6 +27,10 @@ class CaptureLifecycleMixin:
 
     def _reset_capture_buffer_state(self, *, reset_samples_per_sweep=False, zero_buffers=False):
         """Reset rolling capture buffers and cached full-view arrays."""
+        worker = getattr(self, '_acquisition_worker', None)
+        if worker is not None and worker.is_alive():
+            raise RuntimeError('Previous acquisition worker is still draining')
+        self._acquisition_worker = None
         with self.buffer_lock:
             self.raw_data = []
             self.sweep_timestamps = []
@@ -41,8 +45,8 @@ class CaptureLifecycleMixin:
                 self.processed_data_buffer.fill(0)
             if zero_buffers and self.sweep_timestamps_buffer is not None:
                 self.sweep_timestamps_buffer.fill(0)
-        if hasattr(self, "freeze_testboard_capture_descriptor"):
-            self.freeze_testboard_capture_descriptor()
+        if hasattr(self, "freeze_array_capture_descriptor"):
+            self.freeze_array_capture_descriptor()
         self.plot_baselines = {}
         self.channel_plot_baselines = {}
         self.rosette_plot_baselines = {}
@@ -70,6 +74,8 @@ class CaptureLifecycleMixin:
 
     def _reset_timing_measurements(self, *, log_timestamp_clear=False, reset_labels=False):
         """Reset capture timing fields, histories, and optional UI labels."""
+        if hasattr(self, '_device_timeline'):
+            del self._device_timeline
         if hasattr(self, 'first_sweep_timestamp_us'):
             if log_timestamp_clear:
                 self.log_status(f"Clearing first_sweep_timestamp_us (was {self.first_sweep_timestamp_us} µs)")
@@ -87,8 +93,8 @@ class CaptureLifecycleMixin:
 
     def _reset_signal_processing_state(self, *, reset_shear=False):
         """Reset filter pipeline state and optionally shear processing."""
-        self._testboard_heatmap_processors = {}
-        self._testboard_cop_history = {}
+        self._array_heatmap_processors = {}
+        self._array_cop_history = {}
         self.filter_apply_pending = True
         self.reset_filter_states()
         if hasattr(self, '_invalidate_timeseries_filter_cache'):
@@ -118,6 +124,9 @@ class CaptureLifecycleMixin:
 
     def start_capture(self):
         """Start data capture."""
+        if getattr(self, '_acquisition_worker', None) is not None and self._acquisition_worker.is_alive():
+            self.log_status('Previous capture is still draining; wait before restarting')
+            return
         if not self.config['channels']:
             QMessageBox.warning(
                 self,
@@ -125,6 +134,11 @@ class CaptureLifecycleMixin:
                 "Please configure channels before starting capture."
             )
             return
+
+        self._capture_generation = getattr(self, '_capture_generation', 0) + 1
+        self._capture_incomplete_reason = None
+        self.capture_summary = None
+        self._archive_stop_requested = False
 
         self.plot_baselines = {}
         self.channel_plot_baselines = {}
@@ -162,6 +176,11 @@ class CaptureLifecycleMixin:
 
         self.plot_widget.setMouseEnabled(x=False, y=False)
         self.plot_widget.setMenuEnabled(False)
+        # A stopped plot may have been panned/zoomed. Clipping the new live
+        # curves to that old viewport can leave only one point and no line.
+        self.plot_widget.enableAutoRange(axis='x', enable=True)
+        self._plot_y_range_signature = None
+        self.apply_y_axis_range()
 
         save_dir = Path(self.dir_input.text()) if hasattr(self, 'dir_input') else Path.cwd()
         save_dir.mkdir(parents=True, exist_ok=True)
@@ -169,7 +188,7 @@ class CaptureLifecycleMixin:
         cache_dir.mkdir(parents=True, exist_ok=True)
         self._cache_dir_path = str(cache_dir)
         base_name = self.filename_input.text().strip() if hasattr(self, 'filename_input') else 'adc_data'
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M')
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
         archive_name = f"{base_name}_{timestamp}.jsonl"
         archive_path = cache_dir / archive_name
         timing_name = f"{base_name}_{timestamp}_block_timing.csv"
@@ -202,8 +221,8 @@ class CaptureLifecycleMixin:
                 capture_metadata['pzt_mux_connected_time_s'] = self.adc_mux_timing.sensor_connected_s
                 capture_metadata['pzt_mux_connected_time_source'] = 'adc_mux_timing.t_connected_s'
             archive_metadata = {'metadata': capture_metadata}
-            if getattr(self, "testboard_capture_descriptor", None):
-                capture_metadata['testboard_acquisition'] = self.testboard_capture_descriptor
+            if getattr(self, "array_capture_descriptor", None):
+                capture_metadata['testboard_acquisition'] = self.array_capture_descriptor
             self._archive_writer = ArchiveWriterThread(str(archive_path), archive_metadata)
             self._archive_writer.start()
             self._archive_path = str(archive_path)
@@ -230,6 +249,16 @@ class CaptureLifecycleMixin:
             self.log_status(f"WARNING: Could not open block timing file: {e}")
 
         self.is_capturing = True
+        self._capture_host_start = time.perf_counter()
+        self.timing_state.capture_start_time = time.time()
+        get_force_runtime_state(self).start_time = self.timing_state.capture_start_time
+        try:
+            self._start_acquisition_pipeline()
+        except Exception as exc:
+            self._capture_incomplete_reason = str(exc)
+            self.log_status(f'Capture could not start: {exc}')
+            self.on_capture_finished()
+            return
         if hasattr(self, "update_analysis_availability"):
             self.update_analysis_availability()
         if self.serial_thread:
@@ -242,7 +271,9 @@ class CaptureLifecycleMixin:
             duration_ms = self.timed_run_spin.value()
             self.send_command(f"run {duration_ms}")
             self.log_status(f"Starting timed capture for {duration_ms} ms")
-            QTimer.singleShot(duration_ms + 500, self.on_capture_finished)
+            generation = getattr(self, '_capture_generation', 0)
+            QTimer.singleShot(duration_ms + 500, lambda: self.on_capture_finished()
+                if self.is_capturing and generation == getattr(self, '_capture_generation', 0) else None)
         else:
             self.send_command("run")
             self.log_status("Starting continuous capture")
@@ -272,20 +303,27 @@ class CaptureLifecycleMixin:
 
         if not success:
             self.log_status("WARNING: Stop command not acknowledged; halting locally")
+            if getattr(self, '_acquisition_worker', None) is not None:
+                self._capture_incomplete_reason = getattr(self, '_capture_incomplete_reason', None) or 'Stop was not acknowledged'
 
-        if self.serial_thread:
+        if self.serial_thread and getattr(self, '_acquisition_worker', None) is None:
             self.serial_thread.set_capturing(False)
 
         self.is_capturing = False
         if hasattr(self, "update_analysis_availability"):
             self.update_analysis_availability()
 
-        self.drain_serial_input(0.15)
+        if getattr(self, '_acquisition_worker', None) is None:
+            self.drain_serial_input(0.15)
 
         self.on_capture_finished()
 
     def on_capture_finished(self):
         """Handle capture finished (either stopped or timed out)."""
+        if getattr(self, '_acquisition_worker', None) is not None:
+            if getattr(self, '_capture_finishing', False):
+                return
+            self._finish_acquisition_pipeline()
         timing = self.timing_state
         timing.capture_end_time = time.time()
 
@@ -309,7 +347,8 @@ class CaptureLifecycleMixin:
         if timing.arduino_sample_times:
             avg_sample_time = sum(timing.arduino_sample_times) / len(timing.arduino_sample_times)
             total_rate = 1000000.0 / avg_sample_time if avg_sample_time > 0 else 0
-            self.log_status(f"Capture complete - Sample interval: {avg_sample_time:.2f} µs, Total rate: {total_rate:.2f} Hz")
+            outcome = 'Capture incomplete' if getattr(self, '_capture_incomplete_reason', None) else 'Capture complete'
+            self.log_status(f"{outcome} - Sample interval: {avg_sample_time:.2f} µs, Total rate: {total_rate:.2f} Hz")
 
         if timing.buffer_gap_times:
             avg_gap = sum(timing.buffer_gap_times) / len(timing.buffer_gap_times)
@@ -323,7 +362,8 @@ class CaptureLifecycleMixin:
         if hasattr(self, 'set_pzt_ghost_controls_enabled'):
             self.set_pzt_ghost_controls_enabled(True)
 
-        self.drain_serial_input(0.02)
+        if getattr(self, '_acquisition_worker', None) is None:
+            self.drain_serial_input(0.02)
 
         if not self.is_full_view:
             self.full_view_btn.setEnabled(True)
@@ -352,6 +392,10 @@ class CaptureLifecycleMixin:
 
         try:
             if getattr(self, '_archive_writer', None):
+                if getattr(self, '_capture_incomplete_reason', None) and getattr(self, 'capture_summary', None) is None:
+                    self.capture_summary = dict(complete=False, interruption=self._capture_incomplete_reason,
+                                                generation=self._capture_generation, received_sweeps=int(self.sweep_count))
+                    self._archive_writer.final_summary = self.capture_summary
                 snapshot = self._archive_writer.stop_nowait()
                 self.log_status(
                     "Archive saving in background: "
@@ -375,6 +419,8 @@ class CaptureLifecycleMixin:
             pass
 
         self.log_status(f"Capture finished. Total sweeps: {self.sweep_count}, Total samples: {total_samples}, Force samples: {force_samples}")
+        if getattr(self, '_capture_incomplete_reason', None):
+            self.statusBar().showMessage(f'Capture incomplete: {self._capture_incomplete_reason}')
 
     def set_controls_enabled(self, enabled: bool):
         """Enable or disable configuration controls."""
@@ -405,11 +451,11 @@ class CaptureLifecycleMixin:
             self.timed_run_spin.setEnabled(False)
 
         self.window_size_spin.setEnabled(enabled)
-        for name in ("testboard_array_combo", "testboard_spi_clock_spin"):
+        for name in ("sampled_array_combo", "board_spi_clock_spin"):
             if hasattr(self, name):
                 getattr(self, name).setEnabled(enabled)
-        if hasattr(self, "refresh_testboard_sequence_controls"):
-            self.refresh_testboard_sequence_controls()
+        if hasattr(self, "refresh_array_sequence_controls"):
+            self.refresh_array_sequence_controls()
         if hasattr(self, "refresh_display_array_control"):
             self.refresh_display_array_control()
         if hasattr(self, '_board_parameter_controls'):

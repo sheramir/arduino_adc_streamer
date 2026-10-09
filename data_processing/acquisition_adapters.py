@@ -11,7 +11,7 @@ class AcquisitionAdapter:
     def descriptor(self, context, settings, layout, reported=None):
         if not self.multi_array:
             raise ValueError(f'{self.id} uses channel specs rather than an array descriptor')
-        from config.testboard_acquisition import build_descriptor
+        from config.array_acquisition import build_descriptor
         return build_descriptor(context.reported_mcu, settings, layout, reported, context)
 
     def channel_specs(self, owner):

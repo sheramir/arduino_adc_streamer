@@ -6,9 +6,13 @@ Background threads for reading serial data without blocking the GUI.
 
 import re
 import time
+import struct
+import threading
 
 import numpy as np
 from PyQt6.QtCore import QThread, pyqtSignal
+from data_processing.acquisition_queue import AcquisitionQueue, AcquisitionOverrun
+from serial_communication.isolated_reader import IsolatedRawReader, supports_isolation
 
 from constants.serial import (
     FORCE_READER_IDLE_MS,
@@ -24,6 +28,11 @@ from constants.serial import (
     SERIAL_PACKET_SPAN_TOLERANCE_US,
     SERIAL_READER_DEBUG_LOG_LIMIT,
     SERIAL_READER_IDLE_MS,
+    SERIAL_READER_WAIT_TIMEOUT_SEC,
+    SERIAL_READER_READ_MAX_BYTES,
+    SERIAL_DRIVER_RX_BUFFER_BYTES,
+    SERIAL_DRIVER_TX_BUFFER_BYTES,
+    SERIAL_REJECTION_CONTEXT_BYTES,
 )
 
 
@@ -86,23 +95,243 @@ class SerialReaderThread(QThread):
         self._debug_binary_rejections = 0
         self._accepted_packets_total = 0
         self._rejected_packets_total = 0
-        self._last_data_time = time.monotonic()
+        self._rejection_examples = []
+        self._last_data_time = time.perf_counter()
         self._last_idle_log_time = 0.0
+        self.raw_queue = AcquisitionQueue()
+        self._decoder = None
+        self.batch_consumer = None
+        self.capture_generation = 0
+        self._batch_frames = []
+        self._batch_sweeps = 0
+        self._batch_started = time.perf_counter()
+        self._chunk_arrival = self._batch_started
+        self._reader_failed = False
+        self._read_interval_max_s = 0.0
+        self._native_read_interval_max_s = 0.0
+        self._decode_age_max_s = 0.0
+        self._last_read = None
+        self._trailing_capture_bytes = 0
+        self._driver_rx_buffer_requested_bytes = None
+        self._driver_rx_buffer_request_error = None
+        self._isolated_reader = None
+        self._isolation_requested = False
+        self._isolation_ready = threading.Event()
+        self._isolation_error = None
+
+    @property
+    def shutdown_wait_ms(self):
+        return 5000 if self._isolation_requested else 0
+
+    def _decode_loop(self):
+        while self.running or self.raw_queue.snapshot()['items']:
+            item = self.raw_queue.get(timeout=0.01)
+            try:
+                if callable(item):
+                    item()
+                elif item is not None:
+                    data, self._chunk_arrival = item
+                    self._decode_age_max_s = max(self._decode_age_max_s, time.perf_counter() - self._chunk_arrival)
+                    self.binary_buffer.extend(data)
+                    self.process_binary_data(self.binary_buffer)
+                if self._batch_frames and time.perf_counter() - self._batch_started >= 0.02:
+                    self._flush_batch()
+            except Exception as exc:
+                self._reader_failed = True
+                self.batch_consumer = None
+                self._batch_frames = []
+                self._batch_sweeps = 0
+                self.error_occurred.emit(f"Acquisition pipeline error: decoder: {exc}")
+
+    def _flush_batch(self):
+        if not self._batch_frames:
+            return
+        frames, self._batch_frames = self._batch_frames, []
+        self._batch_sweeps = 0
+        self._batch_started = time.perf_counter()
+        if self.batch_consumer is not None:
+            self.batch_consumer(dict(
+                generation=self.capture_generation,
+                samples=np.concatenate([f[0] for f in frames]),
+                avg_us=np.concatenate([f[1] for f in frames]),
+                starts=np.concatenate([f[2] for f in frames]),
+                ends=np.concatenate([f[3] for f in frames]),
+                arrival=frames[0][4], decoded=time.perf_counter()))
+
+    def _decode_timed_sweep_run(self, buffer, offset):
+        """Vector-validate consecutive fixed-width frames; retain scalar resync.
+
+        Only the opt-in one-sweep consumer uses this path. Every header, width
+        and timing footer is checked with the same limits as the scalar parser.
+        Owned field arrays are copied before releasing/resizing the bytearray.
+        """
+        width = self.expected_samples_per_sweep
+        packet_size = 14 + 2 * width
+        limit = min(1500, max(1, 262144 // packet_size))
+        count = min((len(buffer) - offset) // packet_size, limit - self._batch_sweeps)
+        if count <= 0:
+            return 0
+        dtype = np.dtype([('magic', 'u1', 2), ('count', '<u2'), ('samples', '<u2', width),
+                          ('avg', '<u2'), ('start', '<u4'), ('end', '<u4')])
+        records = np.frombuffer(buffer, dtype=dtype, count=count, offset=offset)
+        average = records['avg'].astype(np.int64)
+        span = (records['end'].astype(np.int64) - records['start'].astype(np.int64)) & 0xFFFFFFFF
+        expected_span = (width - 1) * average
+        valid = ((records['magic'][:, 0] == 0xAA) & (records['magic'][:, 1] == 0x55)
+                 & (records['count'] == width) & (average >= SERIAL_PACKET_AVG_SAMPLE_TIME_MIN_US)
+                 & (average <= SERIAL_PACKET_AVG_SAMPLE_TIME_MAX_US)
+                 & (span >= np.maximum(0, (expected_span * SERIAL_PACKET_SPAN_MIN_FACTOR).astype(np.int64) - SERIAL_PACKET_SPAN_TOLERANCE_US))
+                 & (span <= (expected_span * SERIAL_PACKET_SPAN_MAX_FACTOR).astype(np.int64) + SERIAL_PACKET_SPAN_TOLERANCE_US))
+        bad = np.flatnonzero(~valid)
+        if len(bad):
+            count = int(bad[0])
+        if count:
+            if not self._batch_frames:
+                self._batch_started = time.perf_counter()
+            self._batch_frames.append((records['samples'][:count].copy(), records['avg'][:count].copy(),
+                records['start'][:count].copy(), records['end'][:count].copy(), self._chunk_arrival))
+            self._batch_sweeps += count
+            self._accepted_packets_total += count
+        del records
+        if self._batch_sweeps >= limit:
+            self._flush_batch()
+        return count * packet_size
+
+    def _decoder_control(self, action):
+        if not self.running and self._decoder is not None:
+            self._decoder.join(5)
+            if self._decoder.is_alive():
+                raise AcquisitionOverrun('decoder shutdown did not drain')
+        if self._decoder is None or not self._decoder.is_alive():
+            action()
+            return
+        done = threading.Event()
+        def apply():
+            try:
+                action()
+            finally:
+                done.set()
+        self.raw_queue.put(apply)
+        if not done.wait(5):
+            raise AcquisitionOverrun("decoder did not drain within five seconds")
+
+    def configure_batch_consumer(self, consumer, generation):
+        def apply():
+            self._flush_batch()
+            self.batch_consumer = consumer
+            self.capture_generation = generation
+        self._decoder_control(apply)
+        if consumer is not None and supports_isolation(self.serial_port):
+            # The read thread switches owners at a read boundary. Wait for the
+            # child to be ready before the GUI can issue run*: startup must not
+            # consume the device's small streaming headroom.
+            self._isolation_requested = True
+            if self.isRunning():
+                if not self._isolation_ready.wait(5):
+                    raise AcquisitionOverrun('isolated raw reader was not ready before capture')
+                if self._isolation_error is not None:
+                    raise AcquisitionOverrun(f'isolated raw reader startup: {self._isolation_error}')
+
+    def pipeline_status(self):
+        raw = self.raw_queue.snapshot()
+        width = self.expected_samples_per_sweep
+        raw['estimated_sweeps'] = raw['bytes'] // (14 + 2 * width) if width else None
+        return dict(raw=raw, read_interval_max_s=self._read_interval_max_s,
+                    native_read_interval_max_s=self._native_read_interval_max_s,
+                    decode_age_max_s=self._decode_age_max_s,
+                    accepted_frames=self._accepted_packets_total, parser_rejections=self._rejected_packets_total,
+                    rejection_examples=[dict(item) for item in self._rejection_examples],
+                    driver_rx_buffer_requested_bytes=self._driver_rx_buffer_requested_bytes,
+                    driver_rx_buffer_request_error=self._driver_rx_buffer_request_error,
+                    transport=self._isolated_reader.snapshot() if self._isolated_reader is not None else dict(kind='thread'),
+                    trailing_capture_bytes=self._trailing_capture_bytes)
+
+    def _record_rejection(self, reason, *, raw_buffer=None, raw_offset=0, **details):
+        self._rejected_packets_total += 1
+        if self.is_capturing and len(self._rejection_examples) < SERIAL_READER_DEBUG_LOG_LIMIT:
+            if raw_buffer is not None:
+                start = max(0, raw_offset - 16)
+                details['raw_context_hex'] = bytes(raw_buffer[start:start + SERIAL_REJECTION_CONTEXT_BYTES]).hex()
+                details['candidate_offset_in_context'] = raw_offset - start
+            self._rejection_examples.append(dict(reason=reason, **details))
 
     def run(self):
         """Continuously read from serial port and emit signals."""
+        port = self.serial_port
+        original_timeout = getattr(port, 'timeout', 0)
+        timeout_changed = False
+        self._decoder = threading.Thread(target=self._decode_loop, name='ADCDecoder', daemon=True)
+        self._decoder.start()
+        try:
+            # pySerial requests only 4 KiB by default on Windows (~2 ms of
+            # this stream). Request bounded burst headroom for brief host work.
+            # SetupComm is advisory: the driver may ignore the requested size.
+            set_buffer_size = getattr(port, 'set_buffer_size', None)
+            if callable(set_buffer_size):
+                try:
+                    set_buffer_size(rx_size=SERIAL_DRIVER_RX_BUFFER_BYTES, tx_size=SERIAL_DRIVER_TX_BUFFER_BYTES)
+                    self._driver_rx_buffer_requested_bytes = SERIAL_DRIVER_RX_BUFFER_BYTES
+                except Exception as exc:
+                    self._driver_rx_buffer_request_error = str(exc)
+                    self.error_occurred.emit(f'Serial buffer warning: {exc}')
+            # A bounded one-byte read wakes on actual USB arrival, rather than
+            # polling an empty port on a timer. Keep stop/disconnect responsive.
+            if port and hasattr(port, 'timeout') and (original_timeout is None or original_timeout > SERIAL_READER_WAIT_TIMEOUT_SEC):
+                port.timeout = SERIAL_READER_WAIT_TIMEOUT_SEC
+                timeout_changed = True
+            self._read_loop()
+        except Exception as exc:
+            self.error_occurred.emit(f'Serial read error: {exc}')
+        finally:
+            self.running = False
+            if self._isolated_reader is not None:
+                self._isolated_reader.stop()
+            self._isolation_ready.set()
+            self._decoder.join()
+            try:
+                self._flush_batch()
+            except Exception as exc:
+                self.error_occurred.emit(f"Acquisition pipeline error: {exc}")
+            if timeout_changed and port.is_open:
+                try:
+                    port.timeout = original_timeout
+                except Exception:
+                    pass  # Device removal may invalidate the port during stop.
+
+    def _read_loop(self):
         while self.running:
             try:
                 if self.serial_port and self.serial_port.is_open:
-                    bytes_waiting = self.serial_port.in_waiting
-                    if bytes_waiting > 0:
-                        data = self.serial_port.read(bytes_waiting)
-                        self._last_data_time = time.monotonic()
-                        
-                        # Always process as binary buffer to handle mixed binary/ASCII data
-                        # This prevents "Unexpected ASCII" errors when MCU sends binary packets
-                        self.binary_buffer.extend(data)
-                        self.binary_buffer = self.process_binary_data(self.binary_buffer)
+                    if self._isolation_requested and self._isolated_reader is None:
+                        try:
+                            self._isolated_reader = IsolatedRawReader(self.serial_port)
+                        except Exception as exc:
+                            self._isolation_error = exc
+                            raise
+                        finally:
+                            self._isolation_ready.set()
+                    # read_chunk is also used by the isolated replay fixture;
+                    # production writes keep using the original COM object.
+                    source = self._isolated_reader or self.serial_port
+                    read_chunk = getattr(source, 'read_chunk', None)
+                    if callable(read_chunk):
+                        chunk = read_chunk(SERIAL_READER_WAIT_TIMEOUT_SEC)
+                        data, arrival = chunk if chunk is not None else (b'', None)
+                        can_wait = True
+                    else:
+                        bytes_waiting = self.serial_port.in_waiting
+                        timeout = getattr(self.serial_port, 'timeout', 0)
+                        can_wait = timeout is not None and 0 < timeout <= SERIAL_READER_WAIT_TIMEOUT_SEC
+                        data = self.serial_port.read(min(bytes_waiting or 1, SERIAL_READER_READ_MAX_BYTES)) if bytes_waiting > 0 or can_wait else b''
+                        arrival = time.perf_counter()
+                    if data:
+                        self._last_data_time = arrival
+                        if self.is_capturing and self._last_read is not None:
+                            self._read_interval_max_s = max(self._read_interval_max_s, self._last_data_time - self._last_read)
+                            self._native_read_interval_max_s = max(self._native_read_interval_max_s,
+                                getattr(source, 'last_native_read_interval_max_s', self._last_data_time - self._last_read))
+                        self._last_read = self._last_data_time
+                        self.raw_queue.put((data, self._last_data_time), size=len(data), arrival=self._last_data_time)
                         # Data was available, keep draining aggressively without artificial delay.
                         continue
 
@@ -110,10 +339,14 @@ class SerialReaderThread(QThread):
                 else:
                     break
 
-                self.msleep(SERIAL_READER_IDLE_MS)  # Keep reads responsive at higher channel counts
+                # Nonblocking ports/test sources need a fallback wait. Real
+                # blocking ports already waited above and must rearm promptly.
+                if not can_wait:
+                    time.sleep(SERIAL_READER_IDLE_MS / 1000.0)
 
             except Exception as e:
-                self.error_occurred.emit(f"Serial read error: {e}")
+                prefix = "Acquisition pipeline error:" if isinstance(e, AcquisitionOverrun) else "Serial read error:"
+                self.error_occurred.emit(f"{prefix} raw reader: {e}" if isinstance(e, AcquisitionOverrun) else f"{prefix} {e}")
                 break
 
     def process_binary_data(self, buffer):
@@ -144,6 +377,11 @@ class SerialReaderThread(QThread):
             # Binary block packet (0xAA 0x55 header)
             # ----------------------------------------------------------------
             if b0 == 0xAA and b1 == 0x55:
+                if self.is_capturing and self.batch_consumer is not None and self.expected_samples_per_sweep:
+                    consumed = self._decode_timed_sweep_run(buffer, buf_start)
+                    if consumed:
+                        buf_start += consumed
+                        continue
                 if buf_len - buf_start < SERIAL_PACKET_HEADER_BYTES:
                     break  # Need more data for header
 
@@ -155,7 +393,7 @@ class SerialReaderThread(QThread):
                     continue
 
                 if sample_count > SERIAL_PACKET_SAMPLE_COUNT_MAX:
-                    self._rejected_packets_total += 1
+                    self._record_rejection('sample_count_max', raw_buffer=buffer, raw_offset=buf_start, sample_count=sample_count)
                     if self.is_capturing and self._debug_binary_rejections < SERIAL_READER_DEBUG_LOG_LIMIT:
                         self._debug_binary_rejections += 1
                         self.error_occurred.emit(
@@ -166,7 +404,7 @@ class SerialReaderThread(QThread):
 
                 if expected and sample_count % expected != 0:
                     # False header match or desynced stream.
-                    self._rejected_packets_total += 1
+                    self._record_rejection('sample_count_width', raw_buffer=buffer, raw_offset=buf_start, sample_count=sample_count, expected_width=expected)
                     if self.is_capturing and self._debug_binary_rejections < SERIAL_READER_DEBUG_LOG_LIMIT:
                         self._debug_binary_rejections += 1
                         self.error_occurred.emit(
@@ -187,7 +425,6 @@ class SerialReaderThread(QThread):
                     break  # Need more data for complete packet
 
                 if self.is_capturing:
-                    self._accepted_packets_total += 1
                     if self._debug_binary_packets_seen < SERIAL_READER_DEBUG_LOG_LIMIT:
                         self._debug_binary_packets_seen += 1
                         self.error_occurred.emit(
@@ -202,21 +439,10 @@ class SerialReaderThread(QThread):
 
                     # avg_sample_time_us: uint16 LE, 2 bytes after payload
                     avg_time_offset = payload_end
-                    avg_sample_time_us = int.from_bytes(
-                        buffer[avg_time_offset:avg_time_offset + SERIAL_PACKET_AVG_SAMPLE_TIME_BYTES], 'little'
-                    )
+                    avg_sample_time_us, block_start_us, block_end_us = struct.unpack_from('<HII', buffer, avg_time_offset)
 
-                    # block_start_us / block_end_us: uint32 LE, 4 bytes each
-                    # Use int.from_bytes (copies bytes immediately) instead of
-                    # np.frombuffer so no memoryview holds a live export on the
-                    # bytearray at the point of the del buffer[:n] trim below.
-                    ts_offset = avg_time_offset + SERIAL_PACKET_AVG_SAMPLE_TIME_BYTES
-                    block_start_us = int.from_bytes(
-                        buffer[ts_offset:ts_offset + 4], 'little'
-                    )
-                    block_end_us = int.from_bytes(
-                        buffer[ts_offset + 4:ts_offset + 8], 'little'
-                    )
+                    # struct returns scalar values without retaining a view on
+                    # the bytearray, which is trimmed after this decode pass.
 
                     if not self._is_packet_timing_sane(
                         sample_count=sample_count,
@@ -224,7 +450,8 @@ class SerialReaderThread(QThread):
                         block_start_us=block_start_us,
                         block_end_us=block_end_us,
                     ):
-                        self._rejected_packets_total += 1
+                        self._record_rejection('timing', raw_buffer=buffer, raw_offset=buf_start, sample_count=sample_count, avg_dt_us=avg_sample_time_us,
+                                               block_start_us=block_start_us, block_end_us=block_end_us)
                         if self._debug_binary_rejections < SERIAL_READER_DEBUG_LOG_LIMIT:
                             self._debug_binary_rejections += 1
                             self.error_occurred.emit(
@@ -235,9 +462,20 @@ class SerialReaderThread(QThread):
                         buf_start += 1
                         continue
 
-                    self.binary_sweep_received.emit(
-                        samples, avg_sample_time_us, block_start_us, block_end_us
-                    )
+                    self._accepted_packets_total += 1
+                    if self.batch_consumer is None:
+                        if not self._reader_failed:
+                            self.binary_sweep_received.emit(samples, avg_sample_time_us, block_start_us, block_end_us)
+                    else:
+                        if sample_count != expected:
+                            raise ValueError('Batched timed frame must contain exactly one configured sweep')
+                        if not self._batch_frames:
+                            self._batch_started = time.perf_counter()
+                        self._batch_frames.append((samples.reshape(1, -1), np.asarray([avg_sample_time_us], dtype=np.uint16),
+                            np.asarray([block_start_us], dtype=np.uint32), np.asarray([block_end_us], dtype=np.uint32), self._chunk_arrival))
+                        self._batch_sweeps += 1
+                        if self._batch_sweeps >= min(1500, max(1, 262144 // packet_size)):
+                            self._flush_batch()
 
                 buf_start += packet_size
                 continue
@@ -281,7 +519,12 @@ class SerialReaderThread(QThread):
         return buffer
 
     def set_capturing(self, capturing, expected_samples_per_sweep=None):
+        self._decoder_control(lambda: self._set_capturing(capturing, expected_samples_per_sweep))
+
+    def _set_capturing(self, capturing, expected_samples_per_sweep=None):
         """Set whether we're currently capturing data."""
+        if not capturing:
+            self._flush_batch()
         self.is_capturing = capturing
         self.expected_samples_per_sweep = expected_samples_per_sweep if capturing else None
         if capturing:
@@ -289,16 +532,23 @@ class SerialReaderThread(QThread):
             self._debug_binary_rejections = 0
             self._accepted_packets_total = 0
             self._rejected_packets_total = 0
-            self._last_data_time = time.monotonic()
+            self._rejection_examples = []
+            self._last_data_time = time.perf_counter()
             self._last_idle_log_time = 0.0
+            self._reader_failed = False
+            self._read_interval_max_s = self._decode_age_max_s = 0.0
+            self._native_read_interval_max_s = 0.0
+            self._last_read = None
+            self._trailing_capture_bytes = 0
         if not capturing:
             # Drop any partial/queued binary data between captures so timestamps restart clean
+            self._trailing_capture_bytes = len(self.binary_buffer)
             self.binary_buffer.clear()
 
     def _maybe_emit_capture_idle_debug(self) -> None:
         if not self.is_capturing:
             return
-        now = time.monotonic()
+        now = time.perf_counter()
         idle_for_sec = now - self._last_data_time
         if idle_for_sec < 0.25:
             return
@@ -338,7 +588,7 @@ class SerialReaderThread(QThread):
 
     def clear_buffer(self):
         """Explicitly clear the internal binary buffer."""
-        self.binary_buffer.clear()
+        self._decoder_control(self.binary_buffer.clear)
 
     def stop(self):
         """Stop the thread."""

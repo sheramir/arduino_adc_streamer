@@ -24,6 +24,12 @@ def legacy_updates(mode, resolved):
     return {p.legacy_key: resolved.requested[key] for key, p in mode.parameters.items()}
 
 
+def set_parameter(owner, key, value):
+    """Write through the active definition, including its compatibility state key."""
+    parameter = context_for(owner).mode.parameters[key]
+    owner.config[parameter.legacy_key] = parameter.normalize(value)
+
+
 def validate_state(context, state):
     return context.mode.resolve_settings(parameter_values(state))
 

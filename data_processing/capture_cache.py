@@ -30,7 +30,7 @@ class CaptureCacheMixin:
         )
 
         if reply == QMessageBox.StandardButton.Yes:
-            self.testboard_capture_descriptor = None
+            self.array_capture_descriptor = None
             self.drain_serial_input(0.05)
 
             self._reset_capture_buffer_state(reset_samples_per_sweep=True)
@@ -106,11 +106,17 @@ class CaptureCacheMixin:
             )
             return
 
+        if writer is not None and writer.is_alive():
+            self.log_status(f'Archive still draining; retaining cache: {archive_path}')
+            return
+
         if writer is not None and hasattr(writer, "get_status_snapshot"):
             snapshot = writer.get_status_snapshot()
             if snapshot.get("state") == "failed":
                 error_text = snapshot.get("last_error") or "unknown archive writer failure"
                 self.log_status(f"WARNING: Archive writer failed before cache cleanup: {error_text}")
+                self.log_status(f"Incomplete archive retained: {archive_path}")
+                return
 
         self._delete_capture_cache_files(archive_path, block_timing_path, cache_dir_path)
 
@@ -162,6 +168,10 @@ class CaptureCacheMixin:
 
         if not block and writer is not None and writer.is_alive():
             self._defer_capture_cache_cleanup(writer, archive_path, block_timing_path, cache_dir_path)
+            return
+
+        if writer is not None and hasattr(writer, 'get_status_snapshot') and writer.get_status_snapshot().get('state') == 'failed':
+            self.log_status(f'Incomplete archive retained: {archive_path}')
             return
 
         self._delete_capture_cache_files(archive_path, block_timing_path, cache_dir_path)

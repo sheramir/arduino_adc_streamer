@@ -10,6 +10,8 @@ def audit(root=None):
     sketch_map = readme.read_text(encoding='utf-8').split('## Current Sketch Map', 1)[1].split('## Which Sketch', 1)[0]
     names = sorted(set(re.findall(r'`# ([^`]+)`', sketch_map)))
     for name in names:
+        if name in registry.standalone_firmware:
+            continue
         if registry.resolve(name).id == registry.fallback:
             raise ValueError(f'Active firmware identity has no profile: {name}')
     for board in registry.profiles.values():
@@ -23,7 +25,10 @@ def main():
     for board in registry.profiles.values():
         identities = ', '.join(board.definition['mcu_aliases']) or '(declared compatibility fallback)'
         print(f'{board.id}: {identities}; modes={",".join(board.modes)}')
-    print(f'Validated {len(registry.profiles)} profiles and {len(names)} active MCU identities.')
+    for name, reason in registry.standalone_firmware.items():
+        print(f'{name}: {reason}')
+    standalone = sum(name in registry.standalone_firmware for name in names)
+    print(f'Validated {len(registry.profiles)} GUI profiles, {len(names) - standalone} active GUI identities and {standalone} standalone firmware identities.')
 
 
 if __name__ == '__main__':

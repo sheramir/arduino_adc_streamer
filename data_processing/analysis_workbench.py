@@ -143,7 +143,7 @@ def build_in_memory_snapshot(owner) -> AnalysisSourceSnapshot:
         "source": "in_memory",
         "timing": _owner_analysis_timing_metadata(owner),
     }
-    _attach_testboard_metadata(owner, metadata)
+    _attach_array_metadata(owner, metadata)
     return AnalysisSourceSnapshot(
         data=data,
         timestamps_s=_normalize_timestamps(timestamps, data.shape[0]),
@@ -189,7 +189,7 @@ def build_snapshot_from_archive(owner) -> AnalysisSourceSnapshot:
         "source": "archive",
         "timing": _owner_analysis_timing_metadata(owner),
     }
-    _attach_testboard_metadata(owner, metadata)
+    _attach_array_metadata(owner, metadata)
     return AnalysisSourceSnapshot(
         data=data,
         timestamps_s=_normalize_timestamps(ts, data.shape[0]),
@@ -253,15 +253,15 @@ def load_exported_csv_snapshot(csv_path, metadata_path) -> AnalysisSourceSnapsho
     if np.isnan(data).any():
         raise ValueError("CSV signal columns contain missing or non-numeric values.")
 
-    from config.testboard_acquisition import validate_descriptor
-    from config.testboard_7953_board import is_testboard_7953
+    from config.array_acquisition import validate_descriptor
+    from config.array_acquisition import requires_array_identity
     from config.boards.capture import validate_capture_context
     if metadata.get('board_context'):
         validate_capture_context(metadata['board_context'])
     descriptor = metadata.get('testboard_acquisition')
     if descriptor:
         validate_descriptor(descriptor, data.shape[1], data_columns)
-    elif is_testboard_7953(metadata.get('mcu_type')):
+    elif requires_array_identity(metadata.get('mcu_type')):
         raise ValueError('Legacy TestBoard data lacks saved ADC/array route identity; array association is unavailable.')
 
     timestamps = _timestamps_from_export_rows(rows, metadata)
@@ -404,6 +404,9 @@ def build_calculated_pzt_force_traces(
 
         x_values = np.asarray(x_base[:, column], dtype=np.float64)
         time_s = np.asarray(time_base_s[:, column], dtype=np.float64)
+        from data_processing.acquisition_timing import gap_indices
+        if len(gap_indices(time_s)):
+            raise ValueError('Calculated force window crosses missing measurements; select a contiguous window.')
         calibration = channel_calibration.get(label, {})
         if not isinstance(calibration, Mapping):
             calibration = {}
@@ -645,7 +648,13 @@ def filter_offline_data(snapshot: AnalysisSourceSnapshot, filter_settings: dict)
         index_map=index_map,
     )
     engine.reset_runtime_states(runtime)
-    return engine.filter_block(runtime, np.asarray(snapshot.data, dtype=np.float32).copy())
+    from data_processing.acquisition_timing import gap_indices
+    filtered = np.asarray(snapshot.data, dtype=np.float32).copy()
+    boundaries = np.unique(np.concatenate(([0], gap_indices(snapshot.timestamps_s), [len(filtered)]))).astype(int)
+    for start, end in zip(boundaries[:-1], boundaries[1:]):
+        engine.reset_runtime_states(runtime)
+        filtered[start:end] = engine.filter_block(runtime, filtered[start:end])
+    return filtered
 
 
 def _expanding_median(values: np.ndarray) -> np.ndarray:
@@ -881,11 +890,11 @@ def integrate_voltage_series(
         return _fallback_integrated(voltage_by_key, int(integration_window_samples))
 
 
-def _attach_testboard_metadata(owner, metadata):
+def _attach_array_metadata(owner, metadata):
     from copy import deepcopy
     from config.boards.capture import attach_capture_context
     attach_capture_context(owner, metadata)
-    descriptor = getattr(owner, 'testboard_capture_descriptor', None)
+    descriptor = getattr(owner, 'array_capture_descriptor', None)
     if descriptor:
         metadata['testboard_acquisition'] = deepcopy(descriptor)
         metadata['configuration'].update(reference=descriptor['reference'], repeat=1,
@@ -1108,7 +1117,7 @@ def _owner_analysis_timing_metadata(owner) -> dict:
     timing_state = getattr(owner, "timing_state", None)
     timing_data = getattr(timing_state, "timing_data", {}) if timing_state is not None else {}
     result = dict(timing_data) if isinstance(timing_data, dict) else {}
-    if getattr(owner, 'testboard_capture_descriptor', None):
+    if getattr(owner, 'array_capture_descriptor', None):
         return {**result, 'physical_adc_connection_timing': 'unavailable for ADS7953'}
 
     # The current run may be analysed before export.  Preserve the same compact

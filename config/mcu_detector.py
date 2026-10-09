@@ -106,8 +106,8 @@ class MCUDetectorMixin:
 
     def _apply_mcu_view_state(self, view_state):
         # Restore generic values before applying the new MCU's locked defaults.
-        if not view_state.show_testboard_scan_controls and getattr(self, '_testboard_controls_active', False):
-            self.apply_testboard_controls(False)
+        if not view_state.show_testboard_scan_controls and getattr(self, '_array_controls_active', False):
+            self.apply_array_controls(False)
         if hasattr(self, 'adc_config_group'):
             self.adc_config_group.setVisible(view_state.show_adc_config_section)
 
@@ -137,14 +137,14 @@ class MCUDetectorMixin:
             if hasattr(self, 'config'):
                 self.config['repeat'] = 1
 
-        if hasattr(self, 'testboard_array_label'):
-            self.testboard_array_label.setVisible(view_state.show_testboard_scan_controls)
-        if hasattr(self, 'testboard_array_combo'):
-            self.testboard_array_combo.setVisible(view_state.show_testboard_scan_controls)
-        if hasattr(self, 'testboard_scan_order_label'):
-            self.testboard_scan_order_label.setVisible(view_state.show_testboard_scan_controls)
-        if hasattr(self, 'testboard_scan_order_combo'):
-            self.testboard_scan_order_combo.setVisible(view_state.show_testboard_scan_controls)
+        if hasattr(self, 'sampled_array_label'):
+            self.sampled_array_label.setVisible(view_state.show_testboard_scan_controls)
+        if hasattr(self, 'sampled_array_combo'):
+            self.sampled_array_combo.setVisible(view_state.show_testboard_scan_controls)
+        if hasattr(self, 'array_scan_order_label'):
+            self.array_scan_order_label.setVisible(view_state.show_testboard_scan_controls)
+        if hasattr(self, 'array_scan_order_combo'):
+            self.array_scan_order_combo.setVisible(view_state.show_testboard_scan_controls)
         if hasattr(self, 'pzt_sequence_input'):
             self.pzt_sequence_input.setPlaceholderText(
                 "e.g., 3,6"
@@ -265,8 +265,8 @@ class MCUDetectorMixin:
         self.sample_rate_spin.setVisible(view_state.show_teensy_controls)
 
         self.log_status(f"Device mode: {view_state.device_mode_log_label}")
-        if hasattr(self, "apply_testboard_controls"):
-            self.apply_testboard_controls(view_state.show_testboard_scan_controls)
+        if hasattr(self, "apply_array_controls"):
+            self.apply_array_controls(view_state.show_testboard_scan_controls)
 
     def update_gui_for_mcu(self):
         """Update GUI controls based on detected MCU type."""
@@ -329,8 +329,8 @@ class MCUDetectorMixin:
                     self.config.register_parameters(next_context.mode)
                 self.config.update(legacy_updates(next_context.mode, restored))
             apply_board_controls(self, defaults=changed and next_context.profile.definition.get('preferences', {}).get('reconnect') == 'defaults')
-            if hasattr(self, 'refresh_testboard_sequence_controls'):
-                self.refresh_testboard_sequence_controls()
+            if hasattr(self, 'refresh_array_sequence_controls'):
+                self.refresh_array_sequence_controls()
         self._applying_board_profile = False
 
         if hasattr(self, 'update_heatmap_ui_for_mode'):

@@ -116,6 +116,8 @@ def validate_profile(data, source='<profile>'):
                         elif key not in params or not isinstance(value, bool):
                             raise ValueError('invalid rule target/state')
             ModeProfile(name, freeze(mode), freeze(params)).resolve_settings()
+            from .streaming import validate_streaming
+            validate_streaming(mode)
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(f'{source}: {exc}') from exc
 

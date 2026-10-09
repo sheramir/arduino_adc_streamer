@@ -40,10 +40,10 @@ from constants.defaults_555 import (
 )
 
 
-from gui.testboard_panel import TestBoardPanelMixin
+from gui.array_panel import ArrayPanelMixin
 
 
-class ControlPanelsMixin(TestBoardPanelMixin):
+class ControlPanelsMixin(ArrayPanelMixin):
     """Mixin class for control panel GUI components."""
     
     def create_serial_section(self) -> QGroupBox:
@@ -141,13 +141,13 @@ class ControlPanelsMixin(TestBoardPanelMixin):
         self.vref_combo = QComboBox()
         self.vref_combo.currentTextChanged.connect(self.on_vref_changed)
         layout.addWidget(self.vref_combo, 0, 1)
-        self.testboard_spi_clock_label = QLabel("SPI CLK [MHz]:")
-        self.testboard_spi_clock_spin = QDoubleSpinBox()
-        self.testboard_spi_clock_spin.valueChanged.connect(self.on_testboard_spi_clock_changed)
-        layout.addWidget(self.testboard_spi_clock_label, 10, 0)
-        layout.addWidget(self.testboard_spi_clock_spin, 10, 1)
-        self.testboard_spi_clock_label.hide()
-        self.testboard_spi_clock_spin.hide()
+        self.board_spi_clock_label = QLabel("SPI CLK [MHz]:")
+        self.board_spi_clock_spin = QDoubleSpinBox()
+        self.board_spi_clock_spin.valueChanged.connect(self.on_board_spi_clock_changed)
+        layout.addWidget(self.board_spi_clock_label, 10, 0)
+        layout.addWidget(self.board_spi_clock_spin, 10, 1)
+        self.board_spi_clock_label.hide()
+        self.board_spi_clock_spin.hide()
 
         # OSR (Oversampling Ratio / Averaging)
         self.osr_label = QLabel("OSR (Oversampling):")
@@ -301,34 +301,34 @@ class ControlPanelsMixin(TestBoardPanelMixin):
         self.pzr_sequence_label.hide()
         self.pzr_sequence_input.hide()
 
-        # PCB_TestBoard_7953-only routing controls.
-        self.testboard_array_label = QLabel("Physical Arrays:")
-        layout.addWidget(self.testboard_array_label, 3, 0)
-        self.testboard_array_combo = QComboBox()
-        self.testboard_array_combo.setToolTip(
-            "Choose which ADS7953 pair is sampled: ADC1/2, ADC3/4, or both"
+        # Shared lane-aware array controls; capabilities/defaults come from JSON.
+        self.sampled_array_label = QLabel("Physical Arrays:")
+        layout.addWidget(self.sampled_array_label, 3, 0)
+        self.sampled_array_combo = QComboBox()
+        self.sampled_array_combo.setToolTip(
+            "Choose the physical arrays to sample, as defined by the active sensor layout"
         )
-        self.testboard_array_combo.currentTextChanged.connect(
-            self.on_testboard_array_selection_changed
+        self.sampled_array_combo.currentTextChanged.connect(
+            self.on_array_selection_changed
         )
-        layout.addWidget(self.testboard_array_combo, 3, 1, 1, 2)
+        layout.addWidget(self.sampled_array_combo, 3, 1, 1, 2)
 
-        self.testboard_scan_order_label = QLabel("Scan Order:")
-        layout.addWidget(self.testboard_scan_order_label, 4, 0)
-        self.testboard_scan_order_combo = QComboBox()
-        self.testboard_scan_order_combo.setToolTip(
+        self.array_scan_order_label = QLabel("Scan Order:")
+        layout.addWidget(self.array_scan_order_label, 4, 0)
+        self.array_scan_order_combo = QComboBox()
+        self.array_scan_order_combo.setToolTip(
             "Compare ADC hopping across both arrays, array-by-array hopping, "
             "or completing one ADC before moving to the next"
         )
-        self.testboard_scan_order_combo.currentTextChanged.connect(
-            self.on_testboard_scan_order_changed
+        self.array_scan_order_combo.currentTextChanged.connect(
+            self.on_array_scan_order_changed
         )
-        layout.addWidget(self.testboard_scan_order_combo, 4, 1, 1, 2)
+        layout.addWidget(self.array_scan_order_combo, 4, 1, 1, 2)
 
-        self.testboard_array_label.hide()
-        self.testboard_array_combo.hide()
-        self.testboard_scan_order_label.hide()
-        self.testboard_scan_order_combo.hide()
+        self.sampled_array_label.hide()
+        self.sampled_array_combo.hide()
+        self.array_scan_order_label.hide()
+        self.array_scan_order_combo.hide()
 
         # Ground pin
         self.ground_pin_label = QLabel("Ground Pin:")
@@ -356,19 +356,19 @@ class ControlPanelsMixin(TestBoardPanelMixin):
         self.buffer_spin = QSpinBox()
         self.buffer_spin.valueChanged.connect(self.on_buffer_size_changed)
         layout.addWidget(self.buffer_spin, 7, 1)
-        self.testboard_sequence_label = QLabel("Sequence:")
-        self.testboard_sequence_combo = QComboBox()
-        self.testboard_sequence_combo.setToolTip("Auto-1 samples each selected channel once; effective repeat is 1. Vmid sampling requires manual.")
-        self.testboard_sequence_combo.currentTextChanged.connect(self.on_testboard_sequence_changed)
-        layout.addWidget(self.testboard_sequence_label, 8, 0)
-        layout.addWidget(self.testboard_sequence_combo, 8, 1, 1, 2)
+        self.board_sequence_label = QLabel("Sequence:")
+        self.board_sequence_combo = QComboBox()
+        self.board_sequence_combo.setToolTip("Auto-1 samples each selected channel once; effective repeat is 1. Vmid sampling requires manual.")
+        self.board_sequence_combo.currentTextChanged.connect(self.on_board_sequence_changed)
+        layout.addWidget(self.board_sequence_label, 8, 0)
+        layout.addWidget(self.board_sequence_combo, 8, 1, 1, 2)
         self.display_array_label = QLabel("Display Array:")
         self.display_array_combo = QComboBox()
         self.display_array_combo.addItems(["1", "2"])
         self.display_array_combo.currentTextChanged.connect(self.on_display_array_changed)
         layout.addWidget(self.display_array_label, 9, 0)
         layout.addWidget(self.display_array_combo, 9, 1, 1, 2)
-        for widget in (self.testboard_sequence_label, self.testboard_sequence_combo, self.display_array_label, self.display_array_combo):
+        for widget in (self.board_sequence_label, self.board_sequence_combo, self.display_array_label, self.display_array_combo):
             widget.hide()
 
         group.setLayout(layout)

@@ -20,6 +20,8 @@ import json
 import queue
 import threading
 import time
+import csv
+from collections import deque
 
 
 class ArchiveWriterThread(threading.Thread):
@@ -31,11 +33,8 @@ class ArchiveWriterThread(threading.Thread):
       ``dtype`` may be ``uint16`` for unprocessed captures or ``float32`` when a
       host-side processing stage makes cleaned samples canonical.
 
-    GIL note: ``json.dumps()`` is pure-Python and holds the GIL. During live
-    capture, the thread sleeps briefly after each queue item so the main/GUI
-    thread gets consistent GIL time even when the queue is never empty. Once
-    capture stops, draining skips that delay so final save/export can finish
-    quickly without dropping queued data.
+    JSON serialization uses bounded host batches. There is no fixed per-item
+    sleep; the live replay benchmark includes serialization/GIL contention.
     """
 
     STATE_OPENING = "opening"
@@ -44,15 +43,21 @@ class ArchiveWriterThread(threading.Thread):
     STATE_CLOSED = "closed"
     STATE_FAILED = "failed"
 
-    _GIL_YIELD_SEC = 0.002
+    _GIL_YIELD_SEC = 0.0
     _QUEUE_GET_TIMEOUT_SEC = 0.1
     _DRAIN_IDLE_GRACE_SEC = 0.25
 
-    def __init__(self, archive_path: str, metadata: dict):
+    def __init__(self, archive_path: str, metadata: dict, *, max_pending_bytes=64 * 1024 * 1024):
         super().__init__(name="ArchiveWriter", daemon=True)
         self._archive_path = archive_path
         self._metadata = metadata
-        self.queue: queue.Queue = queue.Queue()
+        self.queue: queue.Queue = queue.Queue(maxsize=2048)
+        self.max_pending_bytes = max_pending_bytes
+        self._pending_bytes = self._pending_sweeps = 0
+        self._pending_arrivals = deque()
+        self.timing_handle = None
+        self.final_summary = None
+        self._accepting = True
         self._stop_event = threading.Event()
         self._closed_event = threading.Event()
         self._state_lock = threading.Lock()
@@ -62,7 +67,7 @@ class ArchiveWriterThread(threading.Thread):
         self._written_blocks = 0
         self._written_sweeps = 0
         self._dropped_blocks = 0
-        self._last_enqueue_time = time.monotonic()
+        self._last_enqueue_time = time.perf_counter()
 
     # ------------------------------------------------------------------
     # Status helpers
@@ -94,6 +99,10 @@ class ArchiveWriterThread(threading.Thread):
                 "written_sweeps": self._written_sweeps,
                 "dropped_blocks": self._dropped_blocks,
                 "is_alive": self.is_alive(),
+                "pending_bytes": self._pending_bytes,
+                "pending_sweeps": self._pending_sweeps,
+                "pending_items": len(self._pending_arrivals),
+                "oldest_age_s": max(0.0, time.perf_counter() - self._pending_arrivals[0]) if self._pending_arrivals else 0.0,
             }
 
     # ------------------------------------------------------------------
@@ -110,7 +119,7 @@ class ArchiveWriterThread(threading.Thread):
                     if self._stop_event.is_set():
                         self._transition_state(self.STATE_DRAINING)
                         if self.queue.empty():
-                            idle_time = time.monotonic() - self._last_enqueue_time
+                            idle_time = time.perf_counter() - self._last_enqueue_time
                             if idle_time >= self._DRAIN_IDLE_GRACE_SEC:
                                 break
 
@@ -123,26 +132,35 @@ class ArchiveWriterThread(threading.Thread):
                         self.queue.task_done()
                         continue
 
-                    sweep_timestamps, block_array = item
+                    sweep_timestamps, block_array, timing_rows, item_bytes = item
 
                     lines = []
                     for ts, row in zip(sweep_timestamps, block_array):
                         lines.append(
-                            json.dumps({"timestamp_s": float(ts), "samples": row.tolist()})
+                            json.dumps({"timestamp_s": float(ts), "samples": row.tolist()}, separators=(',', ':'))
                             + "\n"
                         )
                     handle.write("".join(lines))
+                    if timing_rows is not None and self.timing_handle is not None:
+                        csv.writer(self.timing_handle).writerows(timing_rows)
                     with self._state_lock:
                         self._written_blocks += 1
                         self._written_sweeps += len(lines)
                         written_sweeps = self._written_sweeps
+                        self._pending_bytes -= item_bytes
+                        self._pending_sweeps -= len(sweep_timestamps)
+                        self._pending_arrivals.popleft()
 
                     if written_sweeps % 1000 < len(lines):
                         handle.flush()
 
                     self.queue.task_done()
-                    if not self._stop_event.is_set():
-                        time.sleep(self._GIL_YIELD_SEC)
+
+                if self.final_summary is not None:
+                    summary = dict(self.final_summary)
+                    summary.update(archive_written_sweeps=self._written_sweeps,
+                                   archive_overruns=self._dropped_blocks)
+                    handle.write(json.dumps({'capture_summary': summary}) + '\n')
 
                 handle.flush()
 
@@ -150,6 +168,11 @@ class ArchiveWriterThread(threading.Thread):
             self._record_failure("archive writer", exc)
             return
         finally:
+            if self.timing_handle is not None:
+                try:
+                    self.timing_handle.close()
+                except Exception as exc:
+                    self._record_failure('timing sidecar close', exc)
             snapshot = self.get_status_snapshot()
             if snapshot["state"] != self.STATE_FAILED:
                 self._transition_state(self.STATE_CLOSED)
@@ -158,26 +181,33 @@ class ArchiveWriterThread(threading.Thread):
     # Public API
     # ------------------------------------------------------------------
 
-    def enqueue(self, sweep_timestamps, block_array):
+    def enqueue(self, sweep_timestamps, block_array, *, timing_rows=None):
         """Enqueue a block of sweeps for writing without blocking the caller."""
         with self._state_lock:
-            if self._state in {self.STATE_CLOSED, self.STATE_FAILED}:
+            item_bytes = sweep_timestamps.nbytes + block_array.nbytes
+            if timing_rows is not None:
+                item_bytes += len(timing_rows) * 384  # conservative Python row/list overhead
+            if not self._accepting or self._state in {self.STATE_CLOSED, self.STATE_FAILED} or self._pending_bytes + item_bytes > self.max_pending_bytes:
                 self._dropped_blocks += 1
+                self._last_error = 'archive rejected data; capture incomplete (closed, failed or queue budget exceeded)'
+                return False
+            try:
+                self.queue.put_nowait((sweep_timestamps.copy(), block_array.copy(), timing_rows, item_bytes))
+            except queue.Full:
+                self._dropped_blocks += 1
+                self._last_error = 'archive queue budget exceeded; capture incomplete'
                 return False
             self._enqueued_blocks += 1
-            self._last_enqueue_time = time.monotonic()
-
-        try:
-            self.queue.put_nowait((sweep_timestamps, block_array))
+            self._last_enqueue_time = time.perf_counter()
+            self._pending_arrivals.append(self._last_enqueue_time)
+            self._pending_bytes += item_bytes
+            self._pending_sweeps += len(sweep_timestamps)
             return True
-        except Exception:
-            with self._state_lock:
-                self._dropped_blocks += 1
-                self._enqueued_blocks = max(0, self._enqueued_blocks - 1)
-            return False
 
     def stop_nowait(self):
         """Signal the writer to finish but do not block the caller."""
+        with self._state_lock:
+            self._accepting = False
         self._stop_event.set()
         self._transition_state(self.STATE_DRAINING)
         return self.get_status_snapshot()

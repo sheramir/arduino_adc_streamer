@@ -78,6 +78,7 @@ Desktop GUI and firmware workspace for streaming ADC data from MG24 and Teensy b
 
 - `sensors_library/sensor_configurations.json`: bundled starter sensor library shipped with the repo
 - `config/boards/`: versioned MCU profiles, shared parameters/rules and adapters; see [board maintenance](config/boards/README.md) and [MCU coverage](config/boards/coverage.md)
+- Acquisition uses shared runtime, routing, worker and rendering modules selected by board JSON; see [the architecture and replay validation](docs/architecture/gui/GUI_GENERIC_ACQUISITION_REFACTOR.md)
 - Sensor JSON owns Array/ADC/PZT/input wiring; TestBoard defaults and scan order live in `config/boards/profiles/testboard_7953.json`
 - TestBoard GUI: PZT-only controls, live Display Array switching and complete two-array capture/export; see [the array configuration guide](docs/guides/configuration/ARRAY_CONFIGURATION_GUIDE.md#testboard_7953-two-ads7953-arrays)
 - `~/.adc_streamer/sensors/sensor_configurations.json`: user-edited sensor library persisted by the GUI

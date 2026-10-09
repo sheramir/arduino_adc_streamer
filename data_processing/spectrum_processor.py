@@ -178,6 +178,10 @@ def _compute_spectrum_payload(payload: dict) -> dict:
         samples = np.asarray(channel_entry['samples'], dtype=np.float64)
         fs_hz = float(channel_entry.get('fs_hz', 0.0))
         timestamps = np.asarray(channel_entry.get('timestamps', []), dtype=np.float64)
+        if timestamps.size == samples.size and timestamps.size > 1:
+            from data_processing.acquisition_timing import gap_indices
+            if np.any(np.diff(timestamps) <= 0) or len(gap_indices(timestamps)):
+                return {'status': 'error', 'message': 'Spectrum window crosses a missing transmission interval; select a contiguous window.'}
 
         # If timestamps are provided, derive effective Fs and resample to a uniform grid.
         # This compensates for block gaps/jitter that would otherwise distort FFT/PSD.
@@ -389,7 +393,7 @@ class SpectrumProcessorMixin:
     def _group_spectrum_specs_by_package(self, specs):
         """Return {sensor_id: [specs]} in selection order, or {} outside array mode."""
         try:
-            descriptor = self.get_testboard_descriptor() if hasattr(self, 'get_testboard_descriptor') else None
+            descriptor = self.get_array_descriptor() if hasattr(self, 'get_array_descriptor') else None
             if not descriptor and not self.is_array_sensor_selection_mode():
                 return {}
         except Exception:
@@ -513,7 +517,8 @@ class SpectrumProcessorMixin:
             'channels': payload_channels,
         }
 
-        if hasattr(self, 'should_filter_adc_data') and self.should_filter_adc_data():
+        if (hasattr(self, 'should_filter_adc_data') and self.should_filter_adc_data()
+                and getattr(self, '_acquisition_worker', None) is None):
             filter_settings = getattr(self, 'filter_settings', None)
             if filter_settings and SCIPY_FILTERS_AVAILABLE:
                 payload['filter_settings'] = {
@@ -556,7 +561,7 @@ class SpectrumProcessorMixin:
 
     def on_spectrum_worker_result(self, result: dict):
         self.spectrum_busy = False
-        descriptor = self.get_testboard_descriptor() if hasattr(self, 'get_testboard_descriptor') else None
+        descriptor = self.get_array_descriptor() if hasattr(self, 'get_array_descriptor') else None
         if descriptor and result.get('status') == 'ok':
             prefix = f"A{getattr(self, 'display_array_id', 1)}_"
             if any(not channel['label'].startswith(prefix) for channel in result.get('channels', [])):

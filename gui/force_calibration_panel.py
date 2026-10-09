@@ -186,9 +186,9 @@ class ForceCalibrationPanelMixin:
 
     def _create_live_calibration_row(self):
         top, bottom, left, right, center, total = self._sensor_values_to_calibration_fields([])
-        descriptor = self.get_testboard_descriptor() if hasattr(self, 'get_testboard_descriptor') else None
-        groups = self.get_testboard_package_groups() if descriptor else []
-        groups = [g for g in groups if g['array_number'] == self._testboard_calibration_array_id] if descriptor else []
+        descriptor = self.get_array_descriptor() if hasattr(self, 'get_array_descriptor') else None
+        groups = self.get_array_package_groups() if descriptor else []
+        groups = [g for g in groups if g['array_number'] == self._calibration_array_id] if descriptor else []
         index = min(self._get_force_calibration_selected_package_index(), len(groups) - 1)
         return CalibrationRow(
             sensor_family=self.force_calibration_state.selected_sensor_family,
@@ -200,14 +200,14 @@ class ForceCalibrationPanelMixin:
             sensor_right=right,
             sensor_center=center,
             sensor_total=total,
-            array_number=self._testboard_calibration_array_id if descriptor else None,
+            array_number=self._calibration_array_id if descriptor else None,
             sensor_id=groups[index]['sensor_id'] if groups else None,
         )
 
     def _force_calibration_channel_specs(self):
-        descriptor = self.get_testboard_descriptor() if hasattr(self, 'get_testboard_descriptor') else None
+        descriptor = self.get_array_descriptor() if hasattr(self, 'get_array_descriptor') else None
         if descriptor:
-            array = (getattr(self, '_testboard_calibration_array_id', self.display_array_id)
+            array = (getattr(self, '_calibration_array_id', self.display_array_id)
                      if self.force_calibration_state.is_capturing else self.display_array_id)
             return [s for s in self.get_acquisition_channel_specs() if s['array_number'] == array]
         return self.get_display_channel_specs() or []
@@ -241,9 +241,9 @@ class ForceCalibrationPanelMixin:
         if not package_values_by_id:
             return None
         package_ids = list(package_values_by_id.keys())
-        descriptor = self.get_testboard_descriptor() if hasattr(self, 'get_testboard_descriptor') else None
+        descriptor = self.get_array_descriptor() if hasattr(self, 'get_array_descriptor') else None
         if descriptor:
-            package_ids = [g['package_id'] for g in self.get_testboard_package_groups() if g['package_id'] in package_values_by_id]
+            package_ids = [g['package_id'] for g in self.get_array_package_groups() if g['package_id'] in package_values_by_id]
         selected_index = min(self._get_force_calibration_selected_package_index(), len(package_ids) - 1)
         package_id = package_ids[selected_index]
         return package_id, package_values_by_id[package_id]
@@ -253,7 +253,7 @@ class ForceCalibrationPanelMixin:
             return None
         settings = self.get_heatmap_settings()
         if self.force_calibration_state.is_capturing:
-            settings = {**settings, 'display_array_id': getattr(self, '_testboard_calibration_array_id', 1)}
+            settings = {**settings, 'display_array_id': getattr(self, '_calibration_array_id', 1)}
         package_sensor_values = self.compute_channel_intensities(settings)
         if not package_sensor_values:
             return None
@@ -488,7 +488,7 @@ class ForceCalibrationPanelMixin:
     
     def _start_force_calibration_measurement(self):
         """Begin a new measurement window."""
-        self._testboard_calibration_array_id = getattr(self, 'display_array_id', 1)
+        self._calibration_array_id = getattr(self, 'display_array_id', 1)
         self.force_calibration_state.is_capturing = True
         self.force_calibration_state.active_measurement_window.reset()
         self.force_calibration_state.selected_signal_source = self._get_selected_force_calibration_signal_source()
@@ -509,7 +509,7 @@ class ForceCalibrationPanelMixin:
         """End measurement and commit a new row."""
         self.force_calibration_state.is_capturing = False
         self.force_calib_start_stop_btn.setText("Start Measure")
-        self.force_calib_family_combo.setEnabled(not getattr(self, '_testboard_controls_active', False))
+        self.force_calib_family_combo.setEnabled(not getattr(self, '_array_controls_active', False))
         self.force_calib_signal_source_combo.setEnabled(True)
         self.force_calib_sensor_number_spin.setEnabled(True)
         

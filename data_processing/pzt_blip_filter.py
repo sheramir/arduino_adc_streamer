@@ -24,6 +24,7 @@ class PztBlipFilterMixin:
     def _init_pzt_blip_filter_state(self) -> None:
         self._pzt_blip_filter_history: np.ndarray | None = None  # shape (2, len(columns))
         self._pzt_blip_filter_history_len = 0
+        self._pzt_blip_column_indices = None
 
     def begin_pzt_blip_filter_capture(self) -> None:
         """Drop carried-over history so a new capture never blends across the boundary."""
@@ -47,13 +48,12 @@ class PztBlipFilterMixin:
             return block, archive
 
         width = block.shape[1]
-        columns = sorted({
-            column for group in self._get_pzt_ghost_groups(width) for column in group
-        })
-        if not columns:
-            return block, archive
-
-        column_indices = np.asarray(columns, dtype=np.int32)
+        column_indices = self._pzt_blip_column_indices
+        if column_indices is None:
+            columns = sorted({column for group in self._get_pzt_ghost_groups(width) for column in group})
+            if not columns:
+                return block, archive
+            column_indices = np.asarray(columns, dtype=np.int32)
         filtered = self._pzt_blip_filtered_columns(block[:, column_indices])
         block[:, column_indices] = filtered
         if archive.ndim == 2 and archive.shape[1] == width:

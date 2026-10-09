@@ -10,10 +10,10 @@ BINDINGS = {
     'settling_conversions': ('repeat_spin', 'repeat_label'), 'sweeps_per_block': ('buffer_spin', 'buffer_label'),
     'ground_pin': ('ground_pin_spin', 'ground_pin_label'),
     'ground_sampling': ('use_ground_check', None), 'vmid_sampling': ('use_ground_check', None),
-    'spi_clock_hz': ('testboard_spi_clock_spin', 'testboard_spi_clock_label'),
-    'sequence': ('testboard_sequence_combo', 'testboard_sequence_label'),
-    'array_selection': ('testboard_array_combo', 'testboard_array_label'),
-    'scan_order': ('testboard_scan_order_combo', 'testboard_scan_order_label'),
+    'spi_clock_hz': ('board_spi_clock_spin', 'board_spi_clock_label'),
+    'sequence': ('board_sequence_combo', 'board_sequence_label'),
+    'array_selection': ('sampled_array_combo', 'sampled_array_label'),
+    'scan_order': ('array_scan_order_combo', 'array_scan_order_label'),
     'conversion_speed': ('conv_speed_combo', 'conv_speed_label'),
     'sampling_speed': ('samp_speed_combo', 'samp_speed_label'), 'sample_rate': ('sample_rate_spin', 'sample_rate_label'),
     'rb_ohms': ('rb_spin', 'rb_label'), 'rk_ohms': ('rk_spin', 'rk_label'), 'rxmax_ohms': ('rxmax_spin', 'rxmax_label'),
@@ -70,6 +70,9 @@ def create_parameter_widget(param):
 
 def apply_board_controls(owner, *, defaults=False):
     context = context_for(owner)
+    if hasattr(owner, 'live_time_window_spin'):
+        from config.boards.streaming import streaming_policy
+        owner.live_time_window_spin.setVisible(streaming_policy(context.mode).batched)
     values = {} if defaults else parameter_values(owner.config)
     # Values from another board are migrated one field at a time.
     valid = {}

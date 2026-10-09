@@ -68,6 +68,8 @@ class FilterProcessorMixin:
         return self.is_adc_filter_supported_mode() and bool(self.filtering_enabled)
 
     def should_filter_live_timeseries_locally(self) -> bool:
+        if getattr(self, '_acquisition_worker', None) is not None:
+            return False
         """Return True when live Time Series should filter only the visible window."""
         if not self.should_filter_adc_data():
             return False
@@ -170,7 +172,13 @@ class FilterProcessorMixin:
             index_map=index_map,
         )
         self.adc_filter_engine.reset_runtime_states(runtime)
-        return self.adc_filter_engine.filter_block(runtime, dataset.astype(np.float32, copy=True))
+        from data_processing.acquisition_timing import gap_indices
+        filtered = dataset.astype(np.float32, copy=True)
+        boundaries = np.unique(np.concatenate(([0], gap_indices(timestamps_array) if timestamps_array is not None else [], [len(filtered)]))).astype(int)
+        for start, end in zip(boundaries[:-1], boundaries[1:]):
+            self.adc_filter_engine.reset_runtime_states(runtime)
+            filtered[start:end] = self.adc_filter_engine.filter_block(runtime, filtered[start:end])
+        return filtered
 
     def get_full_view_plot_snapshot(self):
         if not bool(getattr(self, 'is_full_view', False)):
@@ -301,6 +309,8 @@ class FilterProcessorMixin:
         default_start_abs = max(0, current_abs - actual_sweeps)
         default_end_abs = current_abs
         default_buffer = self.get_active_data_buffer()
+        if getattr(self, '_acquisition_worker', None) is not None:
+            return default_buffer, default_start_abs, default_end_abs
 
         current_tab = ''
         if hasattr(self, 'get_current_visualization_tab_name'):
@@ -768,6 +778,18 @@ class FilterProcessorMixin:
 
         if not self._filter_channel_runtime:
             return block_data.astype(np.float32, copy=True)
+
+        if sweep_timestamps_sec is not None:
+            from data_processing.acquisition_timing import gap_indices
+            gaps = gap_indices(sweep_timestamps_sec)
+            if len(gaps):
+                block_data = block_data.copy()
+                boundaries = np.concatenate(([0], gaps, [len(block_data)]))
+                for start, end in zip(boundaries[:-1], boundaries[1:]):
+                    if start in gaps:
+                        self.adc_filter_engine.reset_runtime_states(self._filter_channel_runtime)
+                    block_data[start:end] = self.adc_filter_engine.filter_block(self._filter_channel_runtime, block_data[start:end])
+                return block_data
 
         return self.adc_filter_engine.filter_block(self._filter_channel_runtime, block_data)
 

@@ -16,6 +16,7 @@ from constants.plotting import (
 from constants.pressure_map import PRESSURE_MAP_PLOT_UPDATE_INTERVAL_SEC
 from constants.runtime import MAX_TIMING_SAMPLES
 from data_processing.force_state import get_force_runtime_state
+from data_processing.acquisition_timing import DeviceTimeline
 
 
 class BinaryProcessorMixin:
@@ -200,8 +201,9 @@ class BinaryProcessorMixin:
                                 f"First sweep timestamp initialized: {self.first_sweep_timestamp_us} µs (wrap-safe)"
                             )
 
-                delta_us = (sweep_timestamps_us - self.first_sweep_timestamp_us) & 0xFFFFFFFF
-                sweep_timestamps_sec = delta_us / 1_000_000.0
+                if not hasattr(self, '_device_timeline'):
+                    self._device_timeline = DeviceTimeline()
+                sweep_timestamps_sec = self._device_timeline.extend(sweep_timestamps_us)
 
                 ghost_calibration_was_pending = bool(
                     hasattr(self, 'is_pzt_ghost_calibration_pending')
@@ -263,14 +265,14 @@ class BinaryProcessorMixin:
                         self.queue_pzt_ghost_archive_block(sweep_timestamps_sec, archive_samples_array)
                         if ghost_calibration_completed:
                             for pending_timestamps, pending_block in self.pop_clean_pzt_ghost_archive_blocks():
-                                self._archive_writer.enqueue(pending_timestamps, pending_block)
+                                self._enqueue_received_archive(pending_timestamps, pending_block)
                     else:
                         archive_block = (
                             archive_samples_array
                             if hasattr(self, 'should_remove_pzt_ghost') and self.should_remove_pzt_ghost()
                             else block_u16
                         )
-                        self._archive_writer.enqueue(sweep_timestamps_sec, archive_block)
+                        self._enqueue_received_archive(sweep_timestamps_sec, archive_block)
 
                 # Rate-limit plot updates using wall-clock time.
                 # The old sweep_count % N check broke when sweep_count jumps by
@@ -388,6 +390,16 @@ class BinaryProcessorMixin:
 
             except Exception as e:
                 self.log_status(f"ERROR: Failed to process binary block - {e}")
+
+    def _enqueue_received_archive(self, timestamps, block):
+        if self._archive_writer.enqueue(timestamps, block):
+            return
+        if not getattr(self, '_archive_stop_requested', False):
+            from PyQt6.QtCore import QTimer
+            self._archive_stop_requested = True
+            self._capture_incomplete_reason = self._archive_writer.get_status_snapshot().get('last_error') or 'Archive queue overrun'
+            self.log_status(f'Capture incomplete: {self._capture_incomplete_reason}')
+            QTimer.singleShot(0, self.stop_capture)
 
     def _maybe_log_slow_timeseries_redraw(
         self,

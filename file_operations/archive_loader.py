@@ -136,12 +136,12 @@ class ArchiveLoaderMixin:
                             self.board_capture_context = saved_context
                         descriptor = metadata.get('metadata', {}).get('testboard_acquisition')
                         if descriptor:
-                            from config.testboard_acquisition import validate_descriptor
+                            from config.array_acquisition import validate_descriptor
                             validate_descriptor(descriptor)
-                            self.testboard_capture_descriptor = descriptor
+                            self.array_capture_descriptor = descriptor
                         else:
-                            from config.testboard_7953_board import is_testboard_7953
-                            if is_testboard_7953(metadata.get('metadata', {}).get('mcu_type')):
+                            from config.array_acquisition import requires_array_identity
+                            if requires_array_identity(metadata.get('metadata', {}).get('mcu_type')):
                                 raise ValueError('Legacy TestBoard archive lacks saved ADC/array route identity.')
                     except json.JSONDecodeError:
                         pass
@@ -152,6 +152,10 @@ class ArchiveLoaderMixin:
                     if line:
                         try:
                             sweep_data = json.loads(line)
+
+                            if isinstance(sweep_data, dict) and 'capture_summary' in sweep_data:
+                                self.capture_summary = sweep_data['capture_summary']
+                                continue
 
                             # New format: {"timestamp_s": float, "samples": [...]}
                             if isinstance(sweep_data, dict) and 'samples' in sweep_data:

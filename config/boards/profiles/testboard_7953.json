@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "profile_version": 1,
+  "profile_version": 2,
   "id": "testboard_7953",
   "mcu_aliases": [
     "TestBoard_7953",
@@ -240,7 +240,11 @@
         }
       ],
       "buffer_limits": {},
-      "emitted_adc_lanes": 4
+      "emitted_adc_lanes": 4,
+      "streaming": {
+        "pipeline": "batched_timed_sweeps",
+        "render_interval_ms": 200
+      }
     }
   }
 }

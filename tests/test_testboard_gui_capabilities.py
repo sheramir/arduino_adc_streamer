@@ -149,6 +149,11 @@ def gui(tmp_path,monkeypatch):
     monkeypatch.setattr(Path,'home',lambda:tmp_path)
     with patch('adc_gui.load_device_config',return_value={'auto_connect':False}):
         from adc_gui import ADCStreamerGUI
+        from PyQt6.QtCore import QSettings
+        monkeypatch.setattr(ADCStreamerGUI, '_pzt_decay_qsettings',
+            lambda self: QSettings(str(tmp_path / 'decay.ini'), QSettings.Format.IniFormat))
+        monkeypatch.setattr(ADCStreamerGUI, '_pressure_map_workspace_qsettings',
+            lambda self: QSettings(str(tmp_path / 'pressure.ini'), QSettings.Format.IniFormat))
         window=ADCStreamerGUI()
     window.current_mcu='TestBoard_7953'; window.update_gui_for_mcu()
     window.pzt_sequence_input.setText('6,1')
@@ -173,6 +178,169 @@ def test_gui_constraints_board_transition_and_default_controls(gui):
     gui.current_mcu='MG24'; gui.update_gui_for_mcu()
     assert gui.repeat_spin.maximum()==16 and gui.vref_combo.currentText()=='3.3V (VDD)'
     assert gui.testboard_sequence_combo.isHidden() and not gui.buffer_spin.isHidden()
+
+
+@pytest.mark.parametrize('display_array', ['1', '2'])
+@pytest.mark.parametrize('zoomed', [False, True])
+def test_live_capture_has_visible_curves_on_selected_array(gui, tmp_path, display_array, zoomed):
+    import time
+    from scripts.benchmark_testboard_gui import ReplayPort
+    from serial_communication.serial_threads import SerialReaderThread
+    from serial_communication.adc_session import ADCSessionController
+    gui._build_adc_configuration_request()
+    gui.update_channel_list()
+    gui.display_array_combo.setCurrentText(display_array)
+    gui.show()
+    QApplication.processEvents()
+    if zoomed:
+        gui.apply_y_axis_range()  # Cache Adaptive before the user pans a stopped plot.
+        gui.plot_widget.setXRange(10, 11)
+        gui.plot_widget.setYRange(-10, -9)
+    port = ReplayPort(20, 1000, .5)
+    reader = SerialReaderThread(port)
+    session = ADCSessionController(gui.process_serial_data, gui.process_binary_sweep, gui._handle_serial_reader_error)
+    session.serial_port, session.serial_thread = port, reader
+    gui.adc_session = session
+    gui._sync_adc_transport_state()
+    reader.data_received.connect(gui.process_serial_data)
+    reader.error_occurred.connect(gui._handle_serial_reader_error)
+    gui.dir_input.setText(str(tmp_path))
+    reader.start()
+    try:
+        gui.start_capture()
+        end = time.perf_counter() + .65
+        while time.perf_counter() < end:
+            QApplication.processEvents()
+            time.sleep(.001)
+        assert gui.sweep_count == 500
+        assert gui.display_array_id == int(display_array)
+        curves = [c for c in gui._adc_curves.values() if c.isVisible()]
+        assert len(curves) == 10
+        x_range, y_range = gui.plot_widget.getViewBox().viewRange()
+        for curve in curves:
+            x, y = curve.getData()
+            assert len(x) > 1 and np.isfinite(y).any()
+            assert x_range[0] <= x[-1] <= x_range[1]
+            assert y_range[0] <= np.nanmedian(y) <= y_range[1]
+        gui.stop_capture()
+        assert gui.capture_summary['complete']
+    finally:
+        if gui.is_capturing:
+            gui.stop_capture()
+        gui._archive_writer.stop()
+        reader.stop()
+        reader.wait(5000)
+        port.close()
+
+
+def test_pipeline_restart_ignores_old_timed_finish_and_restarts_timeline(gui, tmp_path):
+    import time
+    from scripts.benchmark_testboard_gui import ReplayPort
+    from serial_communication.serial_threads import SerialReaderThread
+    from serial_communication.adc_session import ADCSessionController
+    app = QApplication.instance()
+    gui._build_adc_configuration_request()
+    # Fixture selects both arrays and two packages: 20 routes.
+    port = ReplayPort(20, 1000, .05)
+    reader = SerialReaderThread(port)
+    session = ADCSessionController(gui.process_serial_data, gui.process_binary_sweep, gui._handle_serial_reader_error)
+    session.serial_port, session.serial_thread = port, reader
+    gui.adc_session = session
+    gui._sync_adc_transport_state()
+    reader.data_received.connect(gui.process_serial_data)
+    reader.binary_sweep_received.connect(gui.process_binary_sweep)
+    reader.error_occurred.connect(gui._handle_serial_reader_error)
+    gui.dir_input.setText(str(tmp_path))
+    reader.start()
+    def pump(seconds):
+        end = time.perf_counter() + seconds
+        while time.perf_counter() < end:
+            app.processEvents()
+            time.sleep(.001)
+    try:
+        gui.timed_run_check.setChecked(True)
+        gui.timed_run_spin.setValue(50)
+        gui.start_capture()
+        pump(.1)
+        gui.stop_capture()
+        first_writer, first_path = gui._archive_writer, gui._archive_path
+        assert gui.sweep_count == 50 and gui.capture_summary['complete']
+        first_generation = gui._capture_generation
+        port2 = ReplayPort(20, 1000, .7)
+        reader.serial_port = session.serial_port = port2
+        gui._sync_adc_transport_state()
+        gui.timed_run_check.setChecked(False)
+        gui.start_capture()
+        assert gui._capture_generation == first_generation + 1
+        pump(.6)
+        # The old first capture's timed finish has fired by now.
+        assert gui.is_capturing
+        pump(.2)
+        gui.stop_capture()
+        assert gui.sweep_count == 700 and gui.capture_summary['complete']
+        assert first_path != gui._archive_path
+        first_writer.stop()
+        gui._archive_writer.stop()
+        data, times = gui.load_archive_data()
+        assert len(data) == 700 and times[0] == 0 and times[-1] == .699
+    finally:
+        if gui.is_capturing:
+            gui.stop_capture()
+        reader.stop()
+        reader.wait(5000)
+        port.close()
+        if session.serial_port:
+            session.serial_port.close()
+
+
+@pytest.mark.parametrize('fault', ['removal', 'overrun', 'raw_overrun'])
+def test_pipeline_fault_retains_incomplete_archive(gui, tmp_path, fault):
+    import time
+    from scripts.benchmark_testboard_gui import ReplayPort
+    from serial_communication.serial_threads import SerialReaderThread
+    gui._build_adc_configuration_request()
+    port = ReplayPort(20,1000,.3)
+    reader = SerialReaderThread(port)
+    session = gui._build_adc_session()
+    session.serial_port, session.serial_thread = port, reader
+    gui.adc_session = session
+    gui._sync_adc_transport_state()
+    reader.data_received.connect(gui.process_serial_data)
+    reader.binary_sweep_received.connect(gui.process_binary_sweep)
+    reader.error_occurred.connect(gui._handle_serial_reader_error)
+    gui.dir_input.setText(str(tmp_path))
+    reader.start()
+    try:
+        gui.start_capture()
+        if fault == 'overrun':
+            gui._testboard_worker.queue.max_bytes = 1
+        deadline = time.perf_counter() + .2
+        while time.perf_counter() < deadline and gui.is_capturing:
+            QApplication.processEvents()
+            time.sleep(.001)
+        if fault == 'removal':
+            gui._handle_serial_reader_error('Serial read error: ClearCommError after USB removal')
+        elif fault == 'raw_overrun':
+            gui._handle_serial_reader_error('Acquisition pipeline error: raw reader: child raw FIFO: capture queue budget exceeded')
+        deadline = time.perf_counter() + 2
+        while time.perf_counter() < deadline and gui.is_capturing:
+            QApplication.processEvents()
+            time.sleep(.001)
+        assert not gui.is_capturing and not gui.capture_summary['complete']
+        assert ('ClearCommError' if fault == 'removal' else 'queue budget') in gui.capture_summary['interruption']
+        gui._archive_writer.stop()
+        assert Path(gui._archive_path).exists()
+        footer = json.loads(Path(gui._archive_path).read_text().splitlines()[-1])['capture_summary']
+        assert footer['complete'] is False
+        assert footer['archive_written_sweeps'] == gui.sweep_count
+        if fault in ('removal', 'raw_overrun'):
+            assert gui.serial_port is None and gui.serial_thread is None
+    finally:
+        if gui.is_capturing:
+            gui.stop_capture()
+        reader.stop()
+        reader.wait(5000)
+        port.close()
 
 
 def test_switching_display_keeps_capture_descriptor_buffer_and_validity(gui):

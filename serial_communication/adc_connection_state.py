@@ -30,6 +30,7 @@ class ADCConnectionViewState:
 @dataclass(slots=True)
 class ArduinoStatus:
     parameters: dict = field(default_factory=dict)
+    stream_diagnostics: dict = field(default_factory=dict)
     channels: list[int] | None = None
     repeat: int | None = None
     ground_pin: int | None = None
@@ -59,6 +60,7 @@ class ArduinoStatus:
 
     def apply(self, other: "ArduinoStatus") -> None:
         self.parameters = dict(other.parameters)
+        self.stream_diagnostics = dict(other.stream_diagnostics)
         self.channels = None if other.channels is None else list(other.channels)
         self.repeat = other.repeat
         self.ground_pin = other.ground_pin

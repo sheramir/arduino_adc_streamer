@@ -140,11 +140,11 @@ class PiezoHeatmapProcessorMixin:
         cop_y = np.sum(np.array(SENSOR_POS_Y, dtype=np.float32) * weights) / total_weight
 
         smooth_alpha = settings.get('smooth_alpha', SMOOTH_ALPHA)
-        descriptor = self.get_testboard_descriptor() if hasattr(self, 'get_testboard_descriptor') else None
+        descriptor = self.get_array_descriptor() if hasattr(self, 'get_array_descriptor') else None
         if descriptor:
             key = (getattr(self, 'display_array_id', 1), package_index)
-            states = getattr(self, '_testboard_cop_history', {})
-            self._testboard_cop_history = states
+            states = getattr(self, '_array_cop_history', {})
+            self._array_cop_history = states
             old_x, old_y, old_i = states.get(key, (0.0, 0.0, 0.0))
             value = (smooth_alpha * cop_x + (1-smooth_alpha) * old_x,
                      smooth_alpha * cop_y + (1-smooth_alpha) * old_y,
@@ -254,11 +254,21 @@ class PiezoHeatmapProcessorMixin:
         window_sweeps = min(window_sweeps, actual_sweeps)
 
         with self.buffer_lock:
+            if getattr(self, '_acquisition_worker', None) is not None:
+                actual_sweeps = min(self.sweep_count, self.MAX_SWEEPS_BUFFER)
+                current_write_index = self.buffer_write_index
             slices = recent_window_slices(
                 actual_sweeps, current_write_index, window_sweeps, self.MAX_SWEEPS_BUFFER
             )
             data_array = take_recent(self.raw_data_buffer, slices)
             timestamps = take_recent(self.sweep_timestamps_buffer, slices)
+
+        from data_processing.acquisition_timing import gap_indices
+        gaps = gap_indices(timestamps, nominal=getattr(self, '_received_sweep_period_s', None))
+        if len(gaps):
+            # RMS/HPF must not treat missing measurements as contiguous samples.
+            self._array_heatmap_processors = {}
+            data_array, timestamps = data_array[gaps[-1]:], timestamps[gaps[-1]:]
 
         return data_array, timestamps, avg_sample_time_us
 
@@ -267,7 +277,7 @@ class PiezoHeatmapProcessorMixin:
             return None
 
         display_specs = list(self.get_display_channel_specs() or [])
-        board_descriptor = self.get_testboard_descriptor() if hasattr(self, 'get_testboard_descriptor') else None
+        board_descriptor = self.get_array_descriptor() if hasattr(self, 'get_array_descriptor') else None
         if board_descriptor:
             display_specs = self.get_acquisition_channel_specs()
         if not display_specs:
@@ -316,10 +326,12 @@ class PiezoHeatmapProcessorMixin:
             float(data_array.shape[1]) / max(1, int(self.config.get('repeat', 1))),
         )
         per_channel_rate_hz = sample_rate_hz / samples_per_repeat
+        if board_descriptor and timestamps.size > 1:
+            per_channel_rate_hz = 1.0 / float(np.median(np.diff(timestamps)))
         window_end_time_sec = float(timestamps[-1]) if timestamps.size else None
         package_sensor_values = []
         if board_descriptor:
-            from config.testboard_acquisition import descriptor_groups
+            from config.array_acquisition import descriptor_groups
             package_order = [g['package_id'] for g in descriptor_groups(board_descriptor) if g['package_id'] in package_samples]
 
         for package_index, package_id in enumerate(package_order if board_descriptor else package_order[:MAX_SENSOR_PACKAGES]):
@@ -333,8 +345,8 @@ class PiezoHeatmapProcessorMixin:
 
             if board_descriptor:
                 from data_processing.heatmap_signal_processing import HeatmapSignalProcessor
-                processors = getattr(self, '_testboard_heatmap_processors', {})
-                self._testboard_heatmap_processors = processors
+                processors = getattr(self, '_array_heatmap_processors', {})
+                self._array_heatmap_processors = processors
                 if package_id not in processors:
                     from constants.heatmap import BIAS_CALIBRATION_DURATION_SEC, HPF_CUTOFF_HZ
                     processors[package_id] = HeatmapSignalProcessor(channel_count=5,

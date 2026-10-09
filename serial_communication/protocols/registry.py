@@ -11,6 +11,13 @@ class ProtocolAdapter:
     def configure(self, service, request):
         return getattr(service, self.implementation)(request)
 
+    def stopped_status(self, session):
+        # This ASCII status contract is specific to this protocol, not the GUI.
+        return session.read_testboard_status() if self.id == 'ads7953' else None
+
+    def capture_engine(self, status):
+        return getattr(status, 'testboard_engine', None) if self.id == 'ads7953' else None
+
 
 PROTOCOL_ADAPTERS = {
     name: ProtocolAdapter(name, '_send_legacy_config')

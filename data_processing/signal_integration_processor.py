@@ -257,12 +257,10 @@ class SignalIntegrationProcessorMixin:
 
     def _build_signal_integration_channel_map(self) -> dict[int, Hashable]:
         if (
-            hasattr(self, "is_testboard_7953_mode")
-            and self.is_testboard_7953_mode()
+            hasattr(self, "is_multi_array_mode")
+            and self.is_multi_array_mode()
         ):
-            from config.testboard_7953_board import PZT_CHANNEL_LABELS
-
-            raw_map = PZT_CHANNEL_LABELS
+            raw_map = self.get_active_channel_sensor_map()
         elif hasattr(self, "get_active_channel_sensor_map"):
             raw_map = self.get_active_channel_sensor_map()
         else:
@@ -459,19 +457,19 @@ class SignalIntegrationProcessorMixin:
                     if index < samples_per_sweep}
 
         if (
-            hasattr(self, "is_testboard_7953_mode")
-            and self.is_testboard_7953_mode()
-            and hasattr(self, "get_testboard_adc_routes")
+            hasattr(self, "is_multi_array_mode")
+            and self.is_multi_array_mode()
+            and hasattr(self, "get_array_adc_routes")
         ):
-            routes = list(self.get_testboard_adc_routes())
+            routes = list(self.get_array_adc_routes())
             route_positions = {route: index for index, route in enumerate(routes)}
             mapping_lane = int(group.get("mux", 1))
             array_selection = (
-                self.get_testboard_array_selection()
-                if hasattr(self, "get_testboard_array_selection")
+                self.get_array_selection()
+                if hasattr(self, "get_array_selection")
                 else "both"
             )
-            from config.testboard_scan import physical_lanes_for_mapping
+            from config.array_scan import physical_lanes_for_mapping
 
             layout = self.get_active_sensor_configuration()
             lanes = physical_lanes_for_mapping(mapping_lane, array_selection, layout)
@@ -571,7 +569,7 @@ class SignalIntegrationProcessorMixin:
         return False
 
     def _is_signal_integration_reverse_polarity(self) -> bool:
-        descriptor = self.get_testboard_descriptor() if hasattr(self, 'get_testboard_descriptor') else None
+        descriptor = self.get_array_descriptor() if hasattr(self, 'get_array_descriptor') else None
         if descriptor:
             return bool(descriptor['sensor_configuration'].get('reverse_polarity', False))
         if hasattr(self, "is_active_sensor_reverse_polarity"):

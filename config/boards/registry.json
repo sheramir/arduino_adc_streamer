@@ -16,6 +16,9 @@
     "profiles/generic_array.json"
   ],
   "fallback": "generic_adc",
+  "standalone_firmware": {
+    "TestBoard_ADC124": "Standalone benchmarks only; a desktop GUI profile and protocol adapter are not implemented yet"
+  },
   "bootstrap": {
     "baud_rate": 460800,
     "command_terminator": "***",

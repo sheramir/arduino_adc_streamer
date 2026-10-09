@@ -99,7 +99,7 @@ class ADCSessionController:
         if thread:
             try:
                 thread.stop()
-                if not thread.wait(thread_wait_ms):
+                if not thread.wait(max(thread_wait_ms, getattr(thread, 'shutdown_wait_ms', 0))):
                     warnings.append("Serial thread shutdown timed out; continuing disconnect")
             except Exception as exc:
                 warnings.append(f"Serial thread did not stop cleanly: {exc}")

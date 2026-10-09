@@ -192,6 +192,19 @@ class ADCSerialMixin:
         """Handle serial-thread errors and transition to a clean disconnected state."""
         self.log_status(message)
 
+        if str(message).startswith('Acquisition pipeline error:'):
+            if self.is_capturing:
+                self._capture_incomplete_reason = str(message)
+            if str(message).startswith('Acquisition pipeline error: raw reader:'):
+                # A fatal raw-source failure exits the reader. Do not leave
+                # Start enabled against a dead reader after retaining the run.
+                if not self._serial_disconnect_in_progress and (self.serial_port or self.serial_thread):
+                    self.log_status('Acquisition raw reader stopped - disconnecting')
+                    QTimer.singleShot(0, lambda: self.disconnect_serial(cleanup_block=False))
+            elif self.is_capturing:
+                QTimer.singleShot(0, self.stop_capture)
+            return
+
         if not str(message).startswith("Serial read error:"):
             return
 
@@ -201,6 +214,8 @@ class ADCSerialMixin:
             return
 
         self.log_status("Serial device connection lost - disconnecting")
+        if self.is_capturing:
+            self._capture_incomplete_reason = str(message)
         QTimer.singleShot(0, lambda: self.disconnect_serial(cleanup_block=False))
 
     def disconnect_serial(self, *, cleanup_block=False):
@@ -214,7 +229,7 @@ class ADCSerialMixin:
             if self.is_capturing:
                 self.stop_capture()
 
-            if CLEAR_CACHE_ON_EXIT and hasattr(self, 'cleanup_capture_cache'):
+            if CLEAR_CACHE_ON_EXIT and not getattr(self, '_capture_incomplete_reason', None) and hasattr(self, 'cleanup_capture_cache'):
                 self.cleanup_capture_cache(block=cleanup_block)
 
             outcome = self.adc_connection_workflow.disconnect(getattr(self, "adc_session", None))

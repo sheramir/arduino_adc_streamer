@@ -7,7 +7,7 @@ Includes the active tabbed interface for time-series, spectrum, and sensor views
 
 from PyQt6.QtWidgets import (
     QGroupBox, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, 
-    QPushButton, QComboBox, QCheckBox, QSpinBox, QWidget, QScrollArea, QTabWidget
+    QPushButton, QComboBox, QCheckBox, QSpinBox, QDoubleSpinBox, QWidget, QScrollArea, QTabWidget
 )
 from PyQt6.QtCore import Qt
 import pyqtgraph as pg
@@ -488,6 +488,15 @@ class DisplayPanelsMixin:
         self.window_size_spin.setValue(DEFAULT_WINDOW_SIZE)
         self.window_size_spin.setToolTip("Number of sweeps to display during capture (scrolling mode)")
         display_settings_layout.addWidget(self.window_size_spin, 1, 1)
+        self.live_time_window_spin = QDoubleSpinBox()
+        self.live_time_window_spin.setRange(0.0, 60.0)
+        self.live_time_window_spin.setDecimals(3)
+        self.live_time_window_spin.setSingleStep(0.1)
+        self.live_time_window_spin.setValue(1.0)
+        self.live_time_window_spin.setSuffix(' s')
+        self.live_time_window_spin.setToolTip('TestBoard live time window; bounded by retained history. Zero uses Window Size in sweeps.')
+        self.live_time_window_spin.valueChanged.connect(lambda: self.trigger_plot_update())
+        display_settings_layout.addWidget(self.live_time_window_spin, 1, 3)
 
         self.reset_graph_btn = QPushButton("Reset View")
         self.reset_graph_btn.clicked.connect(self.reset_graph_view)

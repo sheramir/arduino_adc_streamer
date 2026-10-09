@@ -23,8 +23,7 @@ VREF_LABEL_TO_COMMAND = {
 }
 
 
-def _testboard_default(key):
-    return get_board_registry().profiles['testboard_7953'].mode().parameters[key].default
+from config.legacy_array_api import legacy_array_default as _testboard_default
 
 
 @dataclass(frozen=True, slots=True)

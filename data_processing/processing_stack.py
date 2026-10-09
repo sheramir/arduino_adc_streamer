@@ -17,9 +17,11 @@ from data_processing.pzt_blip_filter import PztBlipFilterMixin
 from data_processing.force_processor import ForceProcessorMixin
 from data_processing.heatmap_processor import HeatmapProcessorMixin
 from data_processing.signal_integration_processor import SignalIntegrationProcessorMixin
+from data_processing.live_acquisition import LiveAcquisitionMixin
 
 
 class DataProcessorMixin(
+    LiveAcquisitionMixin,
     ForceOverlayMixin,
     HeatmapProcessorMixin,
     SignalIntegrationProcessorMixin,

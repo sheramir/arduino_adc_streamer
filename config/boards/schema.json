@@ -63,7 +63,14 @@
         "rules": {"type": "array", "items": {"$ref": "#/$defs/rule"}},
         "timing_profile": {"type": "string", "minLength": 1},
         "buffer_limits": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 1}},
-        "timing": {"type": "object"}
+        "timing": {"type": "object"},
+        "streaming": {
+          "type": "object", "additionalProperties": false,
+          "properties": {
+            "pipeline": {"enum": ["legacy_blocks", "batched_timed_sweeps"]},
+            "render_interval_ms": {"type": "integer", "minimum": 1, "maximum": 1000}
+          }
+        }
       }
     },
     "parameter": {

@@ -1,10 +1,97 @@
 import struct
+import threading
+import time
 import unittest
 
 import numpy as np
+import pytest
 
 from constants.serial import SERIAL_ASCII_LINE_MAX_BYTES
 from serial_communication.serial_threads import SerialReaderThread
+
+
+@pytest.mark.parametrize('initial_timeout', [None, 1.0, .005])
+@pytest.mark.parametrize('buffer_request_fails', [False, True])
+def test_reader_waits_for_first_byte_then_drains_burst_and_restores_timeout(initial_timeout, buffer_request_fails):
+    class Port:
+        is_open = True
+        timeout = 1.0
+        def __init__(self):
+            self.buffer = bytearray()
+            self.condition = threading.Condition()
+            self.waiting = threading.Event()
+            self.reads = []
+            self.buffer_request = None
+        def set_buffer_size(self, rx_size, tx_size):
+            self.buffer_request = (rx_size, tx_size)
+            if buffer_request_fails:
+                raise OSError('driver buffer request unsupported')
+        @property
+        def in_waiting(self):
+            with self.condition:
+                return len(self.buffer)
+        def read(self, count):
+            with self.condition:
+                self.reads.append((count, self.timeout))
+                if not self.buffer:
+                    self.waiting.set()
+                    self.condition.wait_for(lambda: bool(self.buffer), timeout=self.timeout)
+                data = bytes(self.buffer[:count])
+                del self.buffer[:count]
+                return data
+        def feed(self, data):
+            with self.condition:
+                self.buffer.extend(data)
+                self.condition.notify_all()
+    port = Port()
+    port.timeout = initial_timeout
+    reader = SerialReaderThread(port)
+    batches = []
+    reader.configure_batch_consumer(batches.append, 1)
+    reader.set_capturing(True, 20)
+    reader.start()
+    try:
+        assert port.waiting.wait(.5), 'reader must wait for arrivals instead of polling an empty port'
+        packets = [SerialReaderThreadTests()._build_packet(list(range(20)), 1, 1000+i*100, 1019+i*100)
+                   for i in range(1000)]
+        port.feed(b''.join(packets))
+        deadline = time.perf_counter() + 2
+        while reader.pipeline_status()['accepted_frames'] < 1000 and time.perf_counter() < deadline:
+            time.sleep(.001)
+        reader.set_capturing(False)
+        assert sum(len(b['starts']) for b in batches) == 1000
+        np.testing.assert_array_equal(np.concatenate([b['starts'] for b in batches]), 1000+np.arange(1000)*100)
+        assert reader.pipeline_status()['parser_rejections'] == 0
+        assert port.buffer_request == (65536, 4096)
+        status = reader.pipeline_status()
+        if buffer_request_fails:
+            assert status['driver_rx_buffer_requested_bytes'] is None
+            assert 'unsupported' in status['driver_rx_buffer_request_error']
+        else:
+            assert status['driver_rx_buffer_requested_bytes'] == 65536
+            assert status['driver_rx_buffer_request_error'] is None
+        assert all(timeout <= .02 and count <= 65536 for count, timeout in port.reads)
+    finally:
+        reader.stop()
+        assert reader.wait(2000)
+    assert port.timeout == initial_timeout
+
+
+def test_rejection_diagnostics_are_bounded_and_reset_per_capture():
+    reader = SerialReaderThread(None)
+    reader.set_capturing(True, 20)
+    bad = SerialReaderThreadTests()._build_packet(list(range(20)), 1, 1000, 1000000)
+    good = SerialReaderThreadTests()._build_packet(list(range(20)), 1, 1000100, 1000119)
+    reader.process_binary_data(bytearray(bad * 18 + good))
+    status = reader.pipeline_status()
+    assert status['parser_rejections'] == 18 and status['accepted_frames'] == 1
+    assert len(status['rejection_examples']) == 10
+    assert status['rejection_examples'][0]['reason'] == 'timing'
+    assert status['rejection_examples'][0]['block_end_us'] == 1000000
+    assert all(len(bytes.fromhex(item['raw_context_hex'])) <= 256 for item in status['rejection_examples'])
+    reader.set_capturing(False)
+    reader.set_capturing(True, 20)
+    assert reader.pipeline_status()['rejection_examples'] == []
 
 
 class SerialReaderThreadTests(unittest.TestCase):

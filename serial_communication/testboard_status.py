@@ -14,7 +14,10 @@ def apply_testboard_status_line(status, line, context=None):
     booleans = {"vmid_between_channels_requested": "testboard_vmid",
                 "vmid_between_channels_effective": "testboard_effective_vmid"}
     try:
-        if key == "adcchannels":
+        if key in ('sampling_sweeps', 'usb_frames_sent', 'usb_frames_discarded',
+                   'sampling_period_max_us', 'sampling_period_over_1ms'):
+            status.stream_diagnostics[key] = int(value)
+        elif key == "adcchannels":
             from config.boards import get_board_registry
             context = context or get_board_registry().context('TestBoard_7953')
             hardware = context.profile.hardware

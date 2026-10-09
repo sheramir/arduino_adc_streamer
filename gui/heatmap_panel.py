@@ -275,12 +275,12 @@ class HeatmapPanelMixin:
         return float(default)
     
     def _heatmap_uses_array_layout(self):
-        descriptor = self.get_testboard_descriptor() if hasattr(self, 'get_testboard_descriptor') else None
+        descriptor = self.get_array_descriptor() if hasattr(self, 'get_array_descriptor') else None
         return bool(descriptor) or (hasattr(self, 'is_array_sensor_selection_mode') and self.is_array_sensor_selection_mode())
 
     def _get_channel_group_title(self, package_index):
-        if hasattr(self, 'get_testboard_package_groups'):
-            groups = self.get_testboard_package_groups(visible=True)
+        if hasattr(self, 'get_array_package_groups'):
+            groups = self.get_array_package_groups(visible=True)
             if package_index < len(groups):
                 return groups[package_index]['package_id']
         if self.is_array_sensor_selection_mode():
@@ -299,8 +299,8 @@ class HeatmapPanelMixin:
 
     def _get_sensor_id_for_package(self, package_index: int) -> str:
         """Get the sensor ID for a given heatmap package index."""
-        if hasattr(self, 'get_testboard_package_groups'):
-            groups = self.get_testboard_package_groups(visible=True)
+        if hasattr(self, 'get_array_package_groups'):
+            groups = self.get_array_package_groups(visible=True)
             if package_index < len(groups):
                 return groups[package_index]['package_id']
         if self.is_array_sensor_selection_mode():
@@ -312,8 +312,8 @@ class HeatmapPanelMixin:
 
     def _get_visible_sensor_ids(self) -> list[str]:
         """Get list of visible sensor IDs based on current heatmap display."""
-        if hasattr(self, 'get_testboard_package_groups'):
-            groups = self.get_testboard_package_groups(visible=True)
+        if hasattr(self, 'get_array_package_groups'):
+            groups = self.get_array_package_groups(visible=True)
             if groups:
                 return [group['package_id'] for group in groups]
         if self.is_array_sensor_selection_mode():
@@ -807,7 +807,7 @@ class HeatmapPanelMixin:
             grid.addWidget(card["group"], int(row), int(col))
 
     def _get_array_sensor_position_map(self):
-        descriptor = self.get_testboard_descriptor() if hasattr(self, 'get_testboard_descriptor') else None
+        descriptor = self.get_array_descriptor() if hasattr(self, 'get_array_descriptor') else None
         if not (self._heatmap_uses_array_layout()):
             return {}
         if not hasattr(self, "get_active_sensor_configuration"):
@@ -840,7 +840,7 @@ class HeatmapPanelMixin:
             return [], 1, 1
 
         if self._heatmap_uses_array_layout():
-            descriptor = self.get_testboard_descriptor() if hasattr(self, 'get_testboard_descriptor') else None
+            descriptor = self.get_array_descriptor() if hasattr(self, 'get_array_descriptor') else None
             selected = descriptor['selected_pzts'] if descriptor else list(self.config.get("selected_array_sensors", [])) if hasattr(self, "config") else []
             position_map = self._get_array_sensor_position_map()
             positions = []

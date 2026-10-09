@@ -1061,7 +1061,10 @@ class AnalysisPanelMixin:
             curve.setDownsampling(auto=True, method="peak")
             store[key] = curve
             self._analysis_pen_colors[(group, key)] = color
-        curve.setData(trace.x, trace.y)
+        from data_processing.acquisition_timing import peak_envelope
+        x, y = peak_envelope(trace.x, trace.y, max(4, int(plot.width()) * 2))
+        curve.setDownsampling(auto=False)
+        curve.setData(x, y, connect='finite')
         self._apply_analysis_curve_pen(group, key, curve, color)
         curve.setVisible(visible)
         return curve

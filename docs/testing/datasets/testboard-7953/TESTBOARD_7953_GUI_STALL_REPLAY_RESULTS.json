@@ -1,0 +1,41 @@
+[
+  {
+    "width": 10,
+    "target_rate": 75000,
+    "duration_s": 10.0,
+    "tab": "Time Series",
+    "filters": true,
+    "stall": true,
+    "expected": 750000,
+    "received": 750000,
+    "written": 750000,
+    "complete": true,
+    "interruption": null,
+    "heartbeat_p95_ms": 26.578774966765195,
+    "heartbeat_max_ms": 510.7374000363052,
+    "max_raw_bytes": 678022,
+    "max_decoded_sweeps": 36000,
+    "max_archive_sweeps": 3000,
+    "decoder": {
+      "raw": {
+        "items": 0,
+        "bytes": 0,
+        "sweeps": 0,
+        "oldest_age_s": 0.0,
+        "estimated_sweeps": null
+      },
+      "read_interval_max_s": 0.509813099866733,
+      "decode_age_max_s": 0.01632099994458258,
+      "accepted_frames": 750000,
+      "parser_rejections": 0,
+      "trailing_capture_bytes": 0
+    },
+    "worker_duration_max_ms": 60.216700192540884,
+    "render_duration_ms": 14.317600056529045,
+    "reload_verified": null,
+    "stall_to_fresh_render_ms": 10.537999914959073,
+    "pipeline_catchup_ms": 10.79359999857843,
+    "render_recovery_after_catchup_ms": 0,
+    "decode_to_render_age_ms": 124.84990013763309
+  }
+]

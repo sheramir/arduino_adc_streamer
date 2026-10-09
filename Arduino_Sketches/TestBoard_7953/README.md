@@ -29,8 +29,8 @@ is stored. Per-run status reports `sampling_sweeps`, `usb_frames_sent`,
 Unexpected write errors still stop acquisition and increment `usb_write_errors`;
 PZR retains its original write path. Binary framing and commands keep their
 existing layout. Previously accepted bytes in USB/Windows buffers can still
-arrive late. See [live USB behavior and the reduced COM3 test](../../docs/architecture/TESTBOARD_7953_LIVE_USB_STREAM.md).
-See [USB repair validation](../../docs/architecture/TESTBOARD_7953_USB_STREAM_DIAGNOSIS.md#implemented-repair)
+arrive late. See [live USB behavior and the reduced COM3 test](../../docs/architecture/firmware/TESTBOARD_7953_LIVE_USB_STREAM.md).
+See [USB repair validation](../../docs/reports/firmware/TESTBOARD_7953_USB_STREAM_DIAGNOSIS.md#implemented-repair)
 for offline checks and the focused on-board benchmark.
 
 ## Optional phase profiling
@@ -47,7 +47,7 @@ The benchmark's `--profile on` collects phase histograms, cycle counts, capacity
 observations, and long-period snapshots in `firmware_profile.jsonl`. Default
 `--profile off` normalizes the setting on diagnostic firmware, and stays
 compatible with earlier firmware. Frames and payload timing fields are unchanged.
-See [profiling instructions](../../docs/architecture/TESTBOARD_7953_PHASE_PROFILING.md)
+See [profiling instructions](../../docs/architecture/firmware/TESTBOARD_7953_PHASE_PROFILING.md)
 for upload, a reduced COM3 comparison, measurement limits, and offline checks.
 
 The current LPSPI candidate caches CS register access, specializes the word loop
@@ -56,7 +56,7 @@ Both environments include it. The production 252-capture comparison passes
 with clean raw streams. Manual LPSPI with both full arrays at 20 MHz reaches
 16,889 sweeps/s, 60.5% above the original firmware. Long-gap latency and
 electrical/analog acceptance remain separate work; see
-[the production validation](../../docs/architecture/TESTBOARD_7953_LPSPI_PRODUCTION_RESULTS.md).
+[the production validation](../../docs/testing/benchmarks/testboard-7953/TESTBOARD_7953_LPSPI_PRODUCTION_RESULTS.md).
 
 ## Hardware map
 
@@ -143,7 +143,7 @@ restored before USB enqueue and on acquisition failure.
 This optimization candidate has been built and checked with offline digital
 ADC models. On-board speed and analog behavior still need the matching
 before/after benchmark and hardware checks below. See
-[`firmware optimization notes`](../../docs/architecture/TESTBOARD_7953_FIRMWARE_OPTIMIZATION.md)
+[`firmware optimization notes`](../../docs/architecture/firmware/TESTBOARD_7953_FIRMWARE_OPTIMIZATION.md)
 for comparison instructions and validation coverage.
 
 `spiclock` is accepted only while stopped. `status*` reports the requested

@@ -1,0 +1,331 @@
+{
+  "method": "Read-only source audit and retained validated per-channel raw medians; pipeline trace is a source-level reconstruction, not instrumented per-channel hardware timing.",
+  "neighbor_baselines": [
+    {
+      "topology": "all_four_full",
+      "engine": "blocking",
+      "adc": 2,
+      "baseline_counts": {
+        "10": 2036.0,
+        "11": 1955.0,
+        "12": 1990.0
+      },
+      "channel11_deficit_from_neighbor_mean_mv": 35.400390625
+    },
+    {
+      "topology": "all_four_full",
+      "engine": "blocking",
+      "adc": 4,
+      "baseline_counts": {
+        "10": 2037.0,
+        "11": 1986.0,
+        "12": 2027.0
+      },
+      "channel11_deficit_from_neighbor_mean_mv": 28.076171875
+    },
+    {
+      "topology": "all_four_full",
+      "engine": "dma",
+      "adc": 2,
+      "baseline_counts": {
+        "10": 2022.0,
+        "11": 1946.0,
+        "12": 1984.0
+      },
+      "channel11_deficit_from_neighbor_mean_mv": 34.7900390625
+    },
+    {
+      "topology": "all_four_full",
+      "engine": "dma",
+      "adc": 4,
+      "baseline_counts": {
+        "10": 2027.0,
+        "11": 1979.0,
+        "12": 2019.0
+      },
+      "channel11_deficit_from_neighbor_mean_mv": 26.85546875
+    },
+    {
+      "topology": "all_four_full",
+      "engine": "lpspi",
+      "adc": 2,
+      "baseline_counts": {
+        "10": 2031.0,
+        "11": 1921.0,
+        "12": 1955.0
+      },
+      "channel11_deficit_from_neighbor_mean_mv": 43.9453125
+    },
+    {
+      "topology": "all_four_full",
+      "engine": "lpspi",
+      "adc": 4,
+      "baseline_counts": {
+        "10": 2030.0,
+        "11": 1943.0,
+        "12": 2004.0
+      },
+      "channel11_deficit_from_neighbor_mean_mv": 45.166015625
+    },
+    {
+      "topology": "full_array1",
+      "engine": "blocking",
+      "adc": 2,
+      "baseline_counts": {
+        "10": 2024.0,
+        "11": 1905.0,
+        "12": 1937.0
+      },
+      "channel11_deficit_from_neighbor_mean_mv": 46.08154296875
+    },
+    {
+      "topology": "full_array1",
+      "engine": "dma",
+      "adc": 2,
+      "baseline_counts": {
+        "10": 2010.0,
+        "11": 1913.0,
+        "12": 1955.0
+      },
+      "channel11_deficit_from_neighbor_mean_mv": 42.41943359375
+    },
+    {
+      "topology": "full_array1",
+      "engine": "lpspi",
+      "adc": 2,
+      "baseline_counts": {
+        "10": 2027.0,
+        "11": 1905.0,
+        "12": 1935.0
+      },
+      "channel11_deficit_from_neighbor_mean_mv": 46.38671875
+    },
+    {
+      "topology": "full_array2",
+      "engine": "blocking",
+      "adc": 4,
+      "baseline_counts": {
+        "10": 2023.0,
+        "11": 1923.0,
+        "12": 1990.0
+      },
+      "channel11_deficit_from_neighbor_mean_mv": 50.96435546875
+    },
+    {
+      "topology": "full_array2",
+      "engine": "dma",
+      "adc": 4,
+      "baseline_counts": {
+        "10": 2015.0,
+        "11": 1944.0,
+        "12": 2000.0
+      },
+      "channel11_deficit_from_neighbor_mean_mv": 38.75732421875
+    },
+    {
+      "topology": "full_array2",
+      "engine": "lpspi",
+      "adc": 4,
+      "baseline_counts": {
+        "10": 2025.0,
+        "11": 1923.0,
+        "12": 1989.0
+      },
+      "channel11_deficit_from_neighbor_mean_mv": 51.26953125
+    },
+    {
+      "topology": "single_adc2",
+      "engine": "blocking",
+      "adc": 2,
+      "baseline_counts": {
+        "10": 2025.0,
+        "11": 1906.0,
+        "12": 1938.0
+      },
+      "channel11_deficit_from_neighbor_mean_mv": 46.08154296875
+    },
+    {
+      "topology": "single_adc2",
+      "engine": "dma",
+      "adc": 2,
+      "baseline_counts": {
+        "10": 2012.0,
+        "11": 1914.0,
+        "12": 1956.0
+      },
+      "channel11_deficit_from_neighbor_mean_mv": 42.724609375
+    },
+    {
+      "topology": "single_adc2",
+      "engine": "lpspi",
+      "adc": 2,
+      "baseline_counts": {
+        "10": 2028.0,
+        "11": 1906.0,
+        "12": 1936.0
+      },
+      "channel11_deficit_from_neighbor_mean_mv": 46.38671875
+    },
+    {
+      "topology": "single_adc4",
+      "engine": "blocking",
+      "adc": 4,
+      "baseline_counts": {
+        "10": 2024.0,
+        "11": 1924.0,
+        "12": 1990.0
+      },
+      "channel11_deficit_from_neighbor_mean_mv": 50.6591796875
+    },
+    {
+      "topology": "single_adc4",
+      "engine": "dma",
+      "adc": 4,
+      "baseline_counts": {
+        "10": 2015.0,
+        "11": 1944.0,
+        "12": 2001.0
+      },
+      "channel11_deficit_from_neighbor_mean_mv": 39.0625
+    },
+    {
+      "topology": "single_adc4",
+      "engine": "lpspi",
+      "adc": 4,
+      "baseline_counts": {
+        "10": 2026.0,
+        "11": 1923.0,
+        "12": 1990.0
+      },
+      "channel11_deficit_from_neighbor_mean_mv": 51.8798828125
+    }
+  ],
+  "manual_repeat1_vmidoff_trace": [
+    {
+      "adc": 2,
+      "spi_frame_zero_based": 9,
+      "command_channel": 9,
+      "command_hex": "0x1C80",
+      "mux_channel_selected_this_frame": 8,
+      "returned_sample_channel": 7,
+      "payload_destination": 17
+    },
+    {
+      "adc": 2,
+      "spi_frame_zero_based": 10,
+      "command_channel": 10,
+      "command_hex": "0x1D00",
+      "mux_channel_selected_this_frame": 9,
+      "returned_sample_channel": 8,
+      "payload_destination": 18
+    },
+    {
+      "adc": 2,
+      "spi_frame_zero_based": 11,
+      "command_channel": 11,
+      "command_hex": "0x1D80",
+      "mux_channel_selected_this_frame": 10,
+      "returned_sample_channel": 9,
+      "payload_destination": 19
+    },
+    {
+      "adc": 2,
+      "spi_frame_zero_based": 12,
+      "command_channel": 12,
+      "command_hex": "0x1E00",
+      "mux_channel_selected_this_frame": 11,
+      "returned_sample_channel": 10,
+      "payload_destination": 20
+    },
+    {
+      "adc": 2,
+      "spi_frame_zero_based": 13,
+      "command_channel": 13,
+      "command_hex": "0x1E80",
+      "mux_channel_selected_this_frame": 12,
+      "returned_sample_channel": 11,
+      "payload_destination": 21
+    },
+    {
+      "adc": 2,
+      "spi_frame_zero_based": 14,
+      "command_channel": 14,
+      "command_hex": "0x1F00",
+      "mux_channel_selected_this_frame": 13,
+      "returned_sample_channel": 12,
+      "payload_destination": 22
+    },
+    {
+      "adc": 2,
+      "spi_frame_zero_based": 15,
+      "command_channel": 15,
+      "command_hex": "0x1F80",
+      "mux_channel_selected_this_frame": 14,
+      "returned_sample_channel": 13,
+      "payload_destination": 23
+    },
+    {
+      "adc": 4,
+      "spi_frame_zero_based": 9,
+      "command_channel": 9,
+      "command_hex": "0x1C80",
+      "mux_channel_selected_this_frame": 8,
+      "returned_sample_channel": 7,
+      "payload_destination": 42
+    },
+    {
+      "adc": 4,
+      "spi_frame_zero_based": 10,
+      "command_channel": 10,
+      "command_hex": "0x1D00",
+      "mux_channel_selected_this_frame": 9,
+      "returned_sample_channel": 8,
+      "payload_destination": 43
+    },
+    {
+      "adc": 4,
+      "spi_frame_zero_based": 11,
+      "command_channel": 11,
+      "command_hex": "0x1D80",
+      "mux_channel_selected_this_frame": 10,
+      "returned_sample_channel": 9,
+      "payload_destination": 44
+    },
+    {
+      "adc": 4,
+      "spi_frame_zero_based": 12,
+      "command_channel": 12,
+      "command_hex": "0x1E00",
+      "mux_channel_selected_this_frame": 11,
+      "returned_sample_channel": 10,
+      "payload_destination": 45
+    },
+    {
+      "adc": 4,
+      "spi_frame_zero_based": 13,
+      "command_channel": 13,
+      "command_hex": "0x1E80",
+      "mux_channel_selected_this_frame": 12,
+      "returned_sample_channel": 11,
+      "payload_destination": 46
+    },
+    {
+      "adc": 4,
+      "spi_frame_zero_based": 14,
+      "command_channel": 14,
+      "command_hex": "0x1F00",
+      "mux_channel_selected_this_frame": 13,
+      "returned_sample_channel": 12,
+      "payload_destination": 47
+    },
+    {
+      "adc": 4,
+      "spi_frame_zero_based": 15,
+      "command_channel": 15,
+      "command_hex": "0x1F80",
+      "mux_channel_selected_this_frame": 14,
+      "returned_sample_channel": 13,
+      "payload_destination": 48
+    }
+  ]
+}

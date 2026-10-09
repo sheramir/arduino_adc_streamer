@@ -79,16 +79,20 @@ Desktop GUI and firmware workspace for streaming ADC data from MG24 and Teensy b
 - `sensors_library/sensor_configurations.json`: bundled starter sensor library shipped with the repo
 - `config/boards/`: versioned MCU profiles, shared parameters/rules and adapters; see [board maintenance](config/boards/README.md) and [MCU coverage](config/boards/coverage.md)
 - Sensor JSON owns Array/ADC/PZT/input wiring; TestBoard defaults and scan order live in `config/boards/profiles/testboard_7953.json`
-- TestBoard GUI: PZT-only controls, live Display Array switching and complete two-array capture/export; see [the array configuration guide](docs/user/ARRAY_CONFIGURATION_GUIDE.md#testboard_7953-two-ads7953-arrays)
+- TestBoard GUI: PZT-only controls, live Display Array switching and complete two-array capture/export; see [the array configuration guide](docs/guides/configuration/ARRAY_CONFIGURATION_GUIDE.md#testboard_7953-two-ads7953-arrays)
 - `~/.adc_streamer/sensors/sensor_configurations.json`: user-edited sensor library persisted by the GUI
 - `~/.adc_streamer/spectrum/`: last-used spectrum settings
 
 ### Tests And Docs
 
 - `tests/`: current automated regression coverage
-- `docs/user/`: user-facing guides for array configuration and heatmap behavior
-- `docs/architecture/`: implementation notes for active subsystems
-- `docs/history/`: historical refactor logs and milestone notes
+- `docs/guides/`: user-facing guides for array configuration and heatmap behavior
+- `docs/architecture/`: current GUI and firmware design notes
+- `docs/specifications/`: behavior specs for the app and its tabs
+- `docs/plans/`: open or hardware-pending plans
+- `docs/testing/`: test results, benchmarks, and datasets
+- `docs/reports/`: reviews and exported reports
+- `docs/history/`: completed plans, refactor logs, and milestone notes
 
 ## Root Files
 
@@ -129,11 +133,11 @@ Despite the `.c` extension, this is not compiled code — it's a scratch file of
 ## Recommended Documentation
 
 - [Arduino_Sketches/README.md](Arduino_Sketches/README.md): current firmware sketch map and serial protocol summary
-- [docs/user/ARRAY_CONFIGURATION_GUIDE.md](docs/user/ARRAY_CONFIGURATION_GUIDE.md): configuring bundled and custom sensor layouts
-- [docs/user/HEATMAP_README.md](docs/user/HEATMAP_README.md): current heatmap modes, array point tracking, geometry controls, and saved settings behavior
-- [Specs/PRESSURE_MAP_TAB_SPEC.md](Specs/PRESSURE_MAP_TAB_SPEC.md): Pressure Map controls, color-scale legend behavior, and acceptance criteria
-- [Specs/PRESSURE_MAP_REFACTOR_SPEC.md](Specs/PRESSURE_MAP_REFACTOR_SPEC.md): Current inferred-field geometry, shaping, overlap, and display-mode contract
-- [docs/history/FORCE_SENSOR_REFACTOR_PLAN.md](docs/history/FORCE_SENSOR_REFACTOR_PLAN.md): future force-path cleanup roadmap
+- [docs/guides/configuration/ARRAY_CONFIGURATION_GUIDE.md](docs/guides/configuration/ARRAY_CONFIGURATION_GUIDE.md): configuring bundled and custom sensor layouts
+- [docs/guides/heatmap/HEATMAP_README.md](docs/guides/heatmap/HEATMAP_README.md): current heatmap modes, array point tracking, geometry controls, and saved settings behavior
+- [docs/specifications/pressure-map/PRESSURE_MAP_TAB_SPEC.md](docs/specifications/pressure-map/PRESSURE_MAP_TAB_SPEC.md): Pressure Map controls, color-scale legend behavior, and acceptance criteria
+- [docs/specifications/pressure-map/PRESSURE_MAP_REFACTOR_SPEC.md](docs/specifications/pressure-map/PRESSURE_MAP_REFACTOR_SPEC.md): Current inferred-field geometry, shaping, overlap, and display-mode contract
+- [docs/plans/refactoring/FORCE_SENSOR_REFACTOR_PLAN.md](docs/plans/refactoring/FORCE_SENSOR_REFACTOR_PLAN.md): future force-path cleanup roadmap
 
 ## Testing
 

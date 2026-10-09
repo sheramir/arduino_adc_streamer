@@ -1,0 +1,62 @@
+[
+  {
+    "width": 10,
+    "target_rate": 75000,
+    "duration_s": 5.0,
+    "tab": "Time Series",
+    "filters": true,
+    "stall": true,
+    "isolated_reader": true,
+    "expected": 375000,
+    "received": 375000,
+    "written": 375000,
+    "complete": true,
+    "interruption": null,
+    "heartbeat_p95_ms": 15.238665021024643,
+    "heartbeat_max_ms": 509.54940007068217,
+    "max_raw_bytes": 49143,
+    "max_decoded_sweeps": 34500,
+    "max_archive_sweeps": 1500,
+    "decoder": {
+      "raw": {
+        "items": 0,
+        "bytes": 0,
+        "sweeps": 0,
+        "oldest_age_s": 0.0,
+        "estimated_sweeps": null
+      },
+      "read_interval_max_s": 0.5107330998871475,
+      "decode_age_max_s": 0.03112099994905293,
+      "accepted_frames": 375000,
+      "parser_rejections": 0,
+      "rejection_examples": [],
+      "driver_rx_buffer_requested_bytes": null,
+      "driver_rx_buffer_request_error": null,
+      "transport": {
+        "kind": "isolated_process",
+        "pending": {
+          "items": 0,
+          "bytes": 0,
+          "sweeps": 0,
+          "oldest_age_s": 0.0
+        },
+        "budget_bytes": 16777216,
+        "child_budget_bytes": 16777216,
+        "child_pending_bytes_last": 177,
+        "child_peak_bytes": 1300500,
+        "connection_received_bytes": 12750181,
+        "delivery_age_max_s": 0.030978400027379394,
+        "error": null
+      },
+      "trailing_capture_bytes": 0
+    },
+    "worker_duration_max_ms": 39.06710003502667,
+    "render_duration_ms": 6.262999959290028,
+    "reload_verified": null,
+    "max_visible_adc_curves": 10,
+    "stall_to_fresh_render_ms": 13.449300080537796,
+    "pipeline_catchup_ms": 13.85030010715127,
+    "render_recovery_after_catchup_ms": 0,
+    "decode_to_render_age_ms": 29.529600171372294
+  }
+]

@@ -16,7 +16,7 @@ for an 18-capture comparison. `-DryRun` inspects the matrix without opening COM3
 Reader controls `--defer-parsing`, `--reader-pause-ms` and `--reader-pause-at-ms`
 compare live parsing with a raw-draining reader and a deliberate pause. Windows
 may buffer the pause without stalling the board. Use fresh output directories.
-See [live transport behavior and acceptance](../../../docs/architecture/TESTBOARD_7953_LIVE_USB_STREAM.md).
+See [live transport behavior and acceptance](../../../docs/architecture/firmware/TESTBOARD_7953_LIVE_USB_STREAM.md).
 
 Optional firmware profiling uses `--profile on` with the `teensy41_profile`
 build. The runner saves a stopped summary per measured attempt to
@@ -27,13 +27,13 @@ received frame counts. Invalid/missing profile data and clock/wrap ambiguity fai
 the attempt while preserving evidence. Use separate output directories for
 on/off runs; resume cannot change the profiling mode. Profiling covers warm-up
 and measurement together. Existing timing CSV fields and binary framing remain.
-See [the reduced profiling procedure](../../../docs/architecture/TESTBOARD_7953_PHASE_PROFILING.md).
+See [the reduced profiling procedure](../../../docs/architecture/firmware/TESTBOARD_7953_PHASE_PROFILING.md).
 Use a fresh output directory; earlier runner 2.2 sessions remain valid historical
 artifacts with their original, less strict verdicts. Failed attempts and raw
 captures remain evidence even if an automatic retry later passes.
 
 After uploading the USB repair, run the
-[focused 12-capture check](../../../docs/architecture/TESTBOARD_7953_USB_STREAM_DIAGNOSIS.md#implemented-repair)
+[focused 12-capture check](../../../docs/reports/firmware/TESTBOARD_7953_USB_STREAM_DIAGNOSIS.md#implemented-repair)
 before repeating the full performance comparison.
 
 This directory contains host-side benchmark tools for the TestBoard 7953

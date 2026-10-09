@@ -18,7 +18,7 @@ Read these first:
 
 If the feature touches sensors or arrays, also read:
 
-- `docs/user/ARRAY_CONFIGURATION_GUIDE.md`
+- `docs/guides/configuration/ARRAY_CONFIGURATION_GUIDE.md`
 
 ## Workflow
 

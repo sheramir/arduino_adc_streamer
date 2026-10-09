@@ -1,0 +1,306 @@
+{
+  "captures": 40,
+  "raw_sweeps": 39615388,
+  "raw_values": 90768414,
+  "usb_discarded": 3638,
+  "max_sampling_period_us": 756,
+  "periods_over_1ms": 0,
+  "channel11": [
+    {
+      "adc": 1,
+      "spi_MHz": 5,
+      "scan_off_mV": 1207.275390625,
+      "neighbors_off_mV": 1200.5615234375,
+      "ch11_minus_neighbors_off_mV": 6.7138671875,
+      "hold_off_mV": 1185.9130859375,
+      "scan_on_mV": 1154.1748046875,
+      "neighbors_on_mV": 1181.0302734375,
+      "ch11_minus_neighbors_on_mV": -26.85546875,
+      "hold_on_mV": 1086.42578125
+    },
+    {
+      "adc": 1,
+      "spi_MHz": 10,
+      "scan_off_mV": 1179.8095703125,
+      "neighbors_off_mV": 1170.95947265625,
+      "ch11_minus_neighbors_off_mV": 8.85009765625,
+      "hold_off_mV": 1166.9921875,
+      "scan_on_mV": 1103.515625,
+      "neighbors_on_mV": 1145.01953125,
+      "ch11_minus_neighbors_on_mV": -41.50390625,
+      "hold_on_mV": 1049.8046875
+    },
+    {
+      "adc": 1,
+      "spi_MHz": 20,
+      "scan_off_mV": 1158.447265625,
+      "neighbors_off_mV": 1146.240234375,
+      "ch11_minus_neighbors_off_mV": 12.20703125,
+      "hold_off_mV": 1152.9541015625,
+      "scan_on_mV": 1068.115234375,
+      "neighbors_on_mV": 1119.07958984375,
+      "ch11_minus_neighbors_on_mV": -50.96435546875,
+      "hold_on_mV": 1028.4423828125
+    },
+    {
+      "adc": 2,
+      "spi_MHz": 5,
+      "scan_off_mV": 1213.9892578125,
+      "neighbors_off_mV": 1237.48779296875,
+      "ch11_minus_neighbors_off_mV": -23.49853515625,
+      "hold_off_mV": 1227.4169921875,
+      "scan_on_mV": 1196.2890625,
+      "neighbors_on_mV": 1228.02734375,
+      "ch11_minus_neighbors_on_mV": -31.73828125,
+      "hold_on_mV": 1151.123046875
+    },
+    {
+      "adc": 2,
+      "spi_MHz": 10,
+      "scan_off_mV": 1193.2373046875,
+      "neighbors_off_mV": 1228.6376953125,
+      "ch11_minus_neighbors_off_mV": -35.400390625,
+      "hold_off_mV": 1220.703125,
+      "scan_on_mV": 1161.4990234375,
+      "neighbors_on_mV": 1214.599609375,
+      "ch11_minus_neighbors_on_mV": -53.1005859375,
+      "hold_on_mV": 1118.1640625
+    },
+    {
+      "adc": 2,
+      "spi_MHz": 20,
+      "scan_off_mV": 1176.7578125,
+      "neighbors_off_mV": 1218.8720703125,
+      "ch11_minus_neighbors_off_mV": -42.1142578125,
+      "hold_off_mV": 1214.599609375,
+      "scan_on_mV": 1132.2021484375,
+      "neighbors_on_mV": 1202.69775390625,
+      "ch11_minus_neighbors_on_mV": -70.49560546875,
+      "hold_on_mV": 1093.75
+    },
+    {
+      "adc": 3,
+      "spi_MHz": 5,
+      "scan_off_mV": 1233.5205078125,
+      "neighbors_off_mV": 1231.689453125,
+      "ch11_minus_neighbors_off_mV": 1.8310546875,
+      "hold_off_mV": 1218.8720703125,
+      "scan_on_mV": 1214.599609375,
+      "neighbors_on_mV": 1221.00830078125,
+      "ch11_minus_neighbors_on_mV": -6.40869140625,
+      "hold_on_mV": 1174.31640625
+    },
+    {
+      "adc": 3,
+      "spi_MHz": 10,
+      "scan_off_mV": 1218.8720703125,
+      "neighbors_off_mV": 1214.599609375,
+      "ch11_minus_neighbors_off_mV": 4.2724609375,
+      "hold_off_mV": 1206.0546875,
+      "scan_on_mV": 1185.9130859375,
+      "neighbors_on_mV": 1197.20458984375,
+      "ch11_minus_neighbors_on_mV": -11.29150390625,
+      "hold_on_mV": 1149.90234375
+    },
+    {
+      "adc": 3,
+      "spi_MHz": 20,
+      "scan_off_mV": 1203.61328125,
+      "neighbors_off_mV": 1198.42529296875,
+      "ch11_minus_neighbors_off_mV": 5.18798828125,
+      "hold_off_mV": 1194.4580078125,
+      "scan_on_mV": 1162.7197265625,
+      "neighbors_on_mV": 1177.67333984375,
+      "ch11_minus_neighbors_on_mV": -14.95361328125,
+      "hold_on_mV": 1134.033203125
+    },
+    {
+      "adc": 4,
+      "spi_MHz": 5,
+      "scan_off_mV": 1232.2998046875,
+      "neighbors_off_mV": 1245.1171875,
+      "ch11_minus_neighbors_off_mV": -12.8173828125,
+      "hold_off_mV": 1235.3515625,
+      "scan_on_mV": 1228.02734375,
+      "neighbors_on_mV": 1239.92919921875,
+      "ch11_minus_neighbors_on_mV": -11.90185546875,
+      "hold_on_mV": 1192.626953125
+    },
+    {
+      "adc": 4,
+      "spi_MHz": 10,
+      "scan_off_mV": 1212.158203125,
+      "neighbors_off_mV": 1240.234375,
+      "ch11_minus_neighbors_off_mV": -28.076171875,
+      "hold_off_mV": 1229.248046875,
+      "scan_on_mV": 1203.61328125,
+      "neighbors_on_mV": 1229.8583984375,
+      "ch11_minus_neighbors_on_mV": -26.2451171875,
+      "hold_on_mV": 1161.4990234375
+    },
+    {
+      "adc": 4,
+      "spi_MHz": 20,
+      "scan_off_mV": 1191.40625,
+      "neighbors_off_mV": 1233.21533203125,
+      "ch11_minus_neighbors_off_mV": -41.80908203125,
+      "hold_off_mV": 1223.7548828125,
+      "scan_on_mV": 1177.978515625,
+      "neighbors_on_mV": 1218.8720703125,
+      "ch11_minus_neighbors_on_mV": -40.8935546875,
+      "hold_on_mV": 1135.25390625
+    }
+  ],
+  "reference_insertion_effect_mV": [
+    {
+      "adc": 1,
+      "spi_MHz": 5,
+      "vmid": false,
+      "ch11_delta_mV": 0.0
+    },
+    {
+      "adc": 1,
+      "spi_MHz": 5,
+      "vmid": true,
+      "ch11_delta_mV": -0.6103515625
+    },
+    {
+      "adc": 1,
+      "spi_MHz": 10,
+      "vmid": false,
+      "ch11_delta_mV": 0.0
+    },
+    {
+      "adc": 1,
+      "spi_MHz": 10,
+      "vmid": true,
+      "ch11_delta_mV": 0.0
+    },
+    {
+      "adc": 1,
+      "spi_MHz": 20,
+      "vmid": false,
+      "ch11_delta_mV": 0.0
+    },
+    {
+      "adc": 1,
+      "spi_MHz": 20,
+      "vmid": true,
+      "ch11_delta_mV": 0.0
+    },
+    {
+      "adc": 2,
+      "spi_MHz": 5,
+      "vmid": false,
+      "ch11_delta_mV": 0.0
+    },
+    {
+      "adc": 2,
+      "spi_MHz": 5,
+      "vmid": true,
+      "ch11_delta_mV": -0.6103515625
+    },
+    {
+      "adc": 2,
+      "spi_MHz": 10,
+      "vmid": false,
+      "ch11_delta_mV": 0.0
+    },
+    {
+      "adc": 2,
+      "spi_MHz": 10,
+      "vmid": true,
+      "ch11_delta_mV": 0.0
+    },
+    {
+      "adc": 2,
+      "spi_MHz": 20,
+      "vmid": false,
+      "ch11_delta_mV": 0.0
+    },
+    {
+      "adc": 2,
+      "spi_MHz": 20,
+      "vmid": true,
+      "ch11_delta_mV": 0.0
+    },
+    {
+      "adc": 3,
+      "spi_MHz": 5,
+      "vmid": false,
+      "ch11_delta_mV": 0.0
+    },
+    {
+      "adc": 3,
+      "spi_MHz": 5,
+      "vmid": true,
+      "ch11_delta_mV": 0.0
+    },
+    {
+      "adc": 3,
+      "spi_MHz": 10,
+      "vmid": false,
+      "ch11_delta_mV": -0.6103515625
+    },
+    {
+      "adc": 3,
+      "spi_MHz": 10,
+      "vmid": true,
+      "ch11_delta_mV": 0.0
+    },
+    {
+      "adc": 3,
+      "spi_MHz": 20,
+      "vmid": false,
+      "ch11_delta_mV": 0.0
+    },
+    {
+      "adc": 3,
+      "spi_MHz": 20,
+      "vmid": true,
+      "ch11_delta_mV": 0.0
+    },
+    {
+      "adc": 4,
+      "spi_MHz": 5,
+      "vmid": false,
+      "ch11_delta_mV": 0.0
+    },
+    {
+      "adc": 4,
+      "spi_MHz": 5,
+      "vmid": true,
+      "ch11_delta_mV": 0.0
+    },
+    {
+      "adc": 4,
+      "spi_MHz": 10,
+      "vmid": false,
+      "ch11_delta_mV": 0.0
+    },
+    {
+      "adc": 4,
+      "spi_MHz": 10,
+      "vmid": true,
+      "ch11_delta_mV": 0.0
+    },
+    {
+      "adc": 4,
+      "spi_MHz": 20,
+      "vmid": false,
+      "ch11_delta_mV": 0.0
+    },
+    {
+      "adc": 4,
+      "spi_MHz": 20,
+      "vmid": true,
+      "ch11_delta_mV": -0.6103515625
+    }
+  ],
+  "drift_check_ch11_mV": {
+    "1": 0.6103515625,
+    "2": 0.0,
+    "3": 0.0,
+    "4": 0.0
+  }
+}

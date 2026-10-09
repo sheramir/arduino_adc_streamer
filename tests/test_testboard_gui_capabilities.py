@@ -180,6 +180,44 @@ def test_gui_constraints_board_transition_and_default_controls(gui):
     assert gui.testboard_sequence_combo.isHidden() and not gui.buffer_spin.isHidden()
 
 
+@pytest.mark.parametrize('mcu', [None, 'MG24', 'Array_PZT1'])
+@pytest.mark.parametrize('frozen', [False, True])
+def test_display_array_refresh_ignores_stale_controls_without_capture_data(gui, mcu, frozen):
+    if frozen:
+        gui._build_adc_configuration_request()
+        gui.freeze_array_capture_descriptor()
+    assert gui.sweep_count == 0 and gui._array_controls_active
+    # The identity changes before the old controls have finished being refreshed.
+    gui.current_mcu = mcu
+    gui.refresh_display_array_control()
+    assert gui.display_array_combo.isHidden()
+    assert gui.display_array_label.isHidden()
+    gui.update_gui_for_mcu()
+
+
+@pytest.mark.parametrize('capturing, sweeps', [(True, 0), (False, 100)])
+def test_display_array_refresh_uses_frozen_capture_without_current_array_profile(gui, monkeypatch, capturing, sweeps):
+    gui._build_adc_configuration_request()
+    gui.freeze_array_capture_descriptor()
+    descriptor = copy.deepcopy(gui.array_capture_descriptor)
+    gui.current_mcu = 'MG24'
+    gui._array_controls_active = False
+    gui.is_capturing = capturing
+    gui.sweep_count = sweeps
+    # Retained data must remain viewable even with a different or absent layout.
+    monkeypatch.setattr(gui, 'get_active_sensor_configuration', lambda: {})
+    gui.display_array_combo.blockSignals(True)
+    gui.display_array_combo.clear()
+    gui.display_array_combo.blockSignals(False)
+    gui.display_array_id = 2
+    gui.refresh_display_array_control()
+    assert not gui.display_array_combo.isHidden()
+    assert gui.display_array_combo.isEnabled()
+    assert [gui.display_array_combo.itemText(i) for i in range(gui.display_array_combo.count())] == ['1', '2']
+    assert gui.display_array_combo.currentText() == '2'
+    assert gui.array_capture_descriptor == descriptor
+
+
 @pytest.mark.parametrize('display_array', ['1', '2'])
 @pytest.mark.parametrize('zoomed', [False, True])
 def test_live_capture_has_visible_curves_on_selected_array(gui, tmp_path, display_array, zoomed):

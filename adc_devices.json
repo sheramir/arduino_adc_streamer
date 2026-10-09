@@ -7,6 +7,13 @@
       "pid": "0x0483",
       "serial_number": "20139650",
       "baudrate": 115200
+    },
+    {
+      "name": "MCU: TestBoard_7953",
+      "vid": "0x16C0",
+      "pid": "0x0483",
+      "serial_number": "18435620",
+      "baudrate": 115200
     }
   ],
   "force_devices": [

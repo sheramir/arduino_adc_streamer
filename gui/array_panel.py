@@ -55,17 +55,27 @@ class ArrayPanelMixin:
 
     def refresh_display_array_control(self):
         captured = getattr(self, "array_capture_descriptor", None)
-        active = getattr(self, "_array_controls_active", False) or bool(captured)
+        use_captured = bool(captured) and bool(
+            getattr(self, "is_capturing", False) or getattr(self, "sweep_count", 0)
+        )
+        # A board identity can change before its widgets finish updating. The
+        # selector follows retained data, or the current parameter contract;
+        # the previous board's visibility flag is not an acquisition contract.
+        mode = None if use_captured else context_for(self).mode
+        active = use_captured or 'array_selection' in mode.parameters
         self.display_array_label.setVisible(active)
         self.display_array_combo.setVisible(active)
         if not active:
             return
-        layout = self.get_active_sensor_configuration()
-        if not layout.get('arrays'):
-            self.display_array_combo.setEnabled(False)
-            return
-        resolved = context_for(self).mode.resolve_settings(parameter_values(self.config))
-        arrays = captured["sampled_arrays"] if captured and getattr(self, "sweep_count", 0) else selected_arrays(resolved.requested['array_selection'], layout)
+        if use_captured:
+            arrays = captured["sampled_arrays"]
+        else:
+            layout = self.get_active_sensor_configuration()
+            if not layout.get('arrays'):
+                self.display_array_combo.setEnabled(False)
+                return
+            resolved = mode.resolve_settings(parameter_values(self.config))
+            arrays = selected_arrays(resolved.requested['array_selection'], layout)
         array = getattr(self, "display_array_id", arrays[0])
         if array not in arrays:
             array = arrays[0]

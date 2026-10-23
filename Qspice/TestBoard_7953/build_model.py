@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import math
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -109,11 +110,20 @@ def stream_channels(cfg: dict) -> list[int]:
     return seq
 
 
+def other_adc_frames(cfg: dict) -> int:
+    """Frames the other ADCs of the sequence clock while this mux is parked: each streams its channels x repeat + 2 pipeline frames."""
+    t = cfg["timing"]
+    n_other = int(t["n_adc"]) - 1
+    if n_other < 0:
+        raise ValueError("timing.n_adc must be at least 1")
+    return n_other * (int(t["other_adc_channels"]) * int(t["repeat"]) + 2) if n_other else 0
+
+
 def build_schedule(cfg: dict) -> dict:
     t = cfg["timing"]
     ft = frame_timing(cfg)
     seq = stream_channels(cfg)
-    n_park = int(t["other_adc_frames"])
+    n_park = other_adc_frames(cfg)
     frames_per_cycle = n_park + len(seq)
     cycle = frames_per_cycle * ft["period"] + t["sweep_gap_us"] * MICRO
     n_cycles = int(t["num_cycles"])
@@ -145,8 +155,38 @@ def build_schedule(cfg: dict) -> dict:
 
 
 # ----------------------------------------------------------------------------- waveforms
+SINE_POINTS_PER_CYCLE = 64        # piecewise-linear sine: 64 points per cycle keep the amplitude error below 0.2 %
+MAX_SINE_POINTS = 1_000_000
+
+
+def check_sines(cfg: dict) -> None:
+    for s in cfg.get("forces_sin", []):
+        if float(s["freq_hz"]) <= 0 or float(s["cycles"]) <= 0:
+            raise ValueError(f"sine force on address {s['address']}: frequency and number of cycles must be positive")
+
+
+def sine_value(s: dict, t: float) -> float:
+    """Force [N] of one sine row at time t: amp * sin(2 pi f (t - t_start)) for `cycles` periods, zero before and after."""
+    t0, f = s["t_start_us"] * MICRO, float(s["freq_hz"])
+    if t <= t0 or t >= t0 + float(s["cycles"]) / f:
+        return 0.0
+    return s["amp_N"] * math.sin(2 * math.pi * f * (t - t0))
+
+
+def sine_times(s: dict, t_stop: float) -> list[float]:
+    t0, f = s["t_start_us"] * MICRO, float(s["freq_hz"])
+    t_end = min(t0 + float(s["cycles"]) / f, t_stop)
+    if t_end <= t0:
+        return []
+    n = int(math.ceil((t_end - t0) * f * SINE_POINTS_PER_CYCLE))
+    if n > MAX_SINE_POINTS:
+        raise ValueError(f"sine force on address {s['address']}: {n} points needed (frequency too high for this run length)")
+    return [t0 + k / (f * SINE_POINTS_PER_CYCLE) for k in range(n)] + [t_end]
+
 def force_pwl(cfg: dict, addr: int, t_stop: float) -> list[tuple[float, float]]:
     pulses = [f for f in cfg["forces"] if int(f["address"]) == addr]
+    sines = [f for f in cfg.get("forces_sin", []) if int(f["address"]) == addr]
+    check_sines(cfg)
 
     def trap(f, t):
         t0 = f["t_start_us"] * MICRO
@@ -167,7 +207,9 @@ def force_pwl(cfg: dict, addr: int, t_stop: float) -> list[tuple[float, float]]:
         t0 = f["t_start_us"] * MICRO
         r, w, fl = f["rise_us"] * MICRO, f["width_us"] * MICRO, f["fall_us"] * MICRO
         times.update(x for x in (t0, t0 + r, t0 + r + w, t0 + r + w + fl) if x <= t_stop)
-    return [(x, sum(trap(f, x) for f in pulses)) for x in sorted(times)]
+    for sn in sines:
+        times.update(x for x in sine_times(sn, t_stop) if x <= t_stop)
+    return [(x, sum(trap(f, x) for f in pulses) + sum(sine_value(sn, x) for sn in sines)) for x in sorted(times)]
 
 
 def fmt_pwl(name: str, node: str, pts: list[tuple[float, float]]) -> str:

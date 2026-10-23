@@ -227,7 +227,7 @@ class TableEditor(QtWidgets.QGroupBox):
         self.table.itemChanged.connect(self._on_item_changed)
         lay.addWidget(self.table)
         buttons = QtWidgets.QHBoxLayout()
-        add = QtWidgets.QPushButton("Add pulse")
+        add = QtWidgets.QPushButton(spec.get("add_label", "Add pulse"))
         add.clicked.connect(self._add)
         rem = QtWidgets.QPushButton("Remove selected")
         rem.clicked.connect(self._remove)

@@ -24,7 +24,7 @@ ADC hold instants on the sample capacitor.*
 | AINP and S/H | R/C at AINP (datasheet typical application), a 15 pF sample capacitor behind a track switch. The switch opens (hold) when CS falls and tracks again at the 14th SCLK rising edge, every frame of this ADC's stream. The sample capacitor voltage at the hold instant is the value the ADC converts. |
 | Timing | Frame = 16 SCLK clocks + frame gap. The mux changes 100 ns after CS falls (2nd SCLK falling edge), tracking opens 675 ns after CS falls (14th rising edge), the sample is held at the next CS fall. A sensor is connected `repeat` frames (**Repeats** on the System tab, default 1; only the last conversion is kept) and sampled `repeat × frame − 100 ns` after it is connected (1.9 µs with repeat 1). |
 
-Sweep = the other ADC's frames (`other_adc_frames`, default 12: ADC1 streams 10 routes + 2 drain frames) with this mux on VMID, then this ADC's stream of
+Sweep = the frames of the other ADCs with this mux on VMID (`n_adc` ADCs in total, default 2; each other ADC streams `other_adc_channels` × `repeat` + 2 frames, default 10 routes + 2 drain = 12 frames per other ADC; `n_adc` = 1 gives a sweep of this ADC alone), then this ADC's stream of
 `n × repeat + 2` frames (`n × (repeat + 2)` with a VMID visit after every channel; 17 frames for 15 channels, repeat 1). The default sweep is 29 frames = 58 µs
 (17,241 sweeps/s; the board measures 16,889 sweeps/s including software overhead, `sweep_gap_us` adds that).
 

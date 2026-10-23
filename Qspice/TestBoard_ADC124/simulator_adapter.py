@@ -33,12 +33,11 @@ def build(cfg: dict) -> dict:
     text, slots = bm.build(cfg, with_force=True)
     sensor = [s for s in slots if s["kind"] == "sensor"]
     warnings: list[str] = []
-    forces = cfg.get("forces", [])
-    for f in forces:
+    for kind, f in [("pulse", f) for f in cfg.get("forces", [])] + [("sine", f) for f in cfg.get("forces_sin", [])]:
         sp = bm.sensor_params(cfg, int(f["address"]))
         v_open = sp["d33"] * float(f["amp_N"]) / sp["cp"]
         if cfg["circuit"]["vmid_v"] + v_open > cfg["circuit"]["vdd_v"]:
-            warnings.append(f"Force pulse on address {f['address']} ({f['amp_N']} N) gives {v_open:.2f} V open circuit: "
+            warnings.append(f"Force {kind} on address {f['address']} ({f['amp_N']} N) gives {v_open:.2f} V open circuit: "
                             f"the sensor pin would exceed VDD ({cfg['circuit']['vdd_v']} V); the model has no input clamp.")
     return {
         "netlist": text,

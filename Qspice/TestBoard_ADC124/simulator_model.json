@@ -572,6 +572,50 @@
     "fall_us": 40.0,
     "amp_N": 0.1
    }
+  },
+  {
+   "path": "forces_sin",
+   "title": "Input profile: sine waves",
+   "add_label": "Add sin",
+   "tip": "One row per sinusoidal force on a sensor: F = amplitude x sin(2 pi f t) for the given number of cycles starting at Start (zero before and after, so it swings both ways around the VMID level). Rows on the same address add up and also add to the pulses above.",
+   "columns": [
+    {
+     "key": "address",
+     "label": "Sensor address",
+     "type": "int",
+     "min": 0,
+     "max": 6
+    },
+    {
+     "key": "t_start_us",
+     "label": "Start [us]",
+     "type": "float"
+    },
+    {
+     "key": "freq_hz",
+     "label": "Frequency [Hz]",
+     "type": "float",
+     "min": 0
+    },
+    {
+     "key": "cycles",
+     "label": "Cycles",
+     "type": "float",
+     "min": 0
+    },
+    {
+     "key": "amp_N",
+     "label": "Amplitude [N]",
+     "type": "float"
+    }
+   ],
+   "new_row": {
+    "address": 2,
+    "t_start_us": 20.0,
+    "freq_hz": 20000.0,
+    "cycles": 3,
+    "amp_N": 0.05
+   }
   }
  ],
  "plot_groups": [

@@ -33,6 +33,7 @@
     "3": {}
   },
 
+  "forces_sin": [],
   "forces": [
     {"address": 2, "t_start_us": 30.0,  "rise_us": 40.0, "width_us": 250.0, "fall_us": 40.0, "amp_N": 0.10},
     {"address": 4, "t_start_us": 150.0, "rise_us": 40.0, "width_us": 260.0, "fall_us": 40.0, "amp_N": 0.15}

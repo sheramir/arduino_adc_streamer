@@ -33,6 +33,7 @@
   },
   "sensor_overrides": {},
 
+  "forces_sin": [],
   "forces": [
     {"address": 2, "t_start_us": 20.0, "rise_us": 40.0, "width_us": 150.0, "fall_us": 40.0, "amp_N": 0.06},
     {"address": 4, "t_start_us": 90.0, "rise_us": 40.0, "width_us": 150.0, "fall_us": 40.0, "amp_N": 0.10}
@@ -83,12 +84,13 @@
   },
 
   "timing": {
-    "_note": "One SPI frame = adc_word_clocks SCLK cycles + frame_gap. Per the ADS7953 datasheet and the repository capture-timing report: CS falling holds the sample, the mux changes at the 2nd SCLK falling edge (first_clock_delay + 1.5 clocks after CS falls), tracking opens at the 14th rising edge (first_clock_delay + 13 clocks). A manual command in frame k reaches the mux in frame k+1 and its sample is held at the CS fall of frame k+repeat+1, so a sensor is connected repeat frames and sampled (frame - mux delay) after it is connected. Sweep = other_adc_frames parked on VMID, then this ADC's stream of n*repeat+2 frames (n*(repeat+2) with a VMID visit after every channel). frame_gap_ns 1200 gives the ~2 us frame spacing implied by 16,889 sweeps/s over 29 frame slots; replace with a measured value.",
+    "_note": "One SPI frame = adc_word_clocks SCLK cycles + frame_gap. Per the ADS7953 datasheet and the repository capture-timing report: CS falling holds the sample, the mux changes at the 2nd SCLK falling edge (first_clock_delay + 1.5 clocks after CS falls), tracking opens at the 14th rising edge (first_clock_delay + 13 clocks). A manual command in frame k reaches the mux in frame k+1 and its sample is held at the CS fall of frame k+repeat+1, so a sensor is connected repeat frames and sampled (frame - mux delay) after it is connected. Sweep = the frames of the other ADCs, (n_adc - 1) x (other_adc_channels x repeat + 2), with this mux parked on VMID, then this ADC's stream of n*repeat+2 frames (n*(repeat+2) with a VMID visit after every channel). frame_gap_ns 1200 gives the ~2 us frame spacing implied by 16,889 sweeps/s over 29 frame slots; replace with a measured value.",
     "scan_order": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14],
     "repeat": 1,
     "vmid_between_channels": false,
     "vmid_frames_between": 2,
-    "other_adc_frames": 12,
+    "n_adc": 2,
+    "other_adc_channels": 10,
     "sweep_gap_us": 0.0,
     "spi_clk_hz": 20000000.0,
     "adc_word_clocks": 16,

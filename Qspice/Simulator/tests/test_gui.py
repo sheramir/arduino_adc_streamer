@@ -107,6 +107,22 @@ def test_input_profile_table_edits_forces(window):
     assert window.cfg["forces"] == []
 
 
+def test_add_sin_button_edits_the_sine_table(window):
+    table = next(t for t in window._tables if t.path == "forces_sin")
+    assert [b.text() for b in table.findChildren(QtWidgets.QPushButton)][0] == "Add sin"
+    assert window.cfg["forces_sin"] == []
+    table._add()
+    row = window.cfg["forces_sin"][0]
+    assert set(row) == {"address", "t_start_us", "freq_hz", "cycles", "amp_N"}
+    table.table.item(0, 2).setText("100k")
+    table.table.item(0, 3).setText("2.5")
+    table.table.item(0, 4).setText("0.03")
+    assert (window.cfg["forces_sin"][0]["freq_hz"], window.cfg["forces_sin"][0]["cycles"], window.cfg["forces_sin"][0]["amp_N"]) == (1e5, 2.5, 0.03)
+    assert len(window.cfg["forces"]) == 2                  # the pulse table is untouched
+    table._clear()
+    assert window.cfg["forces_sin"] == []
+
+
 def test_run_plot_reference_and_export(window, tmp_path):
     try:
         runner.find_qspice()

@@ -389,11 +389,18 @@
      "tip": ""
     },
     {
-     "path": "timing.other_adc_frames",
-     "label": "Frames of the other ADC while this mux is parked on VMID",
+     "path": "timing.n_adc",
+     "label": "Number of ADCs in the sweep",
      "unit": "",
      "type": "int",
-     "tip": "Default 12: ADC1 streams 10 routes + 2 drain frames before ADC2 (full routing, repeat 1)."
+     "tip": "This ADC plus the others that are clocked one after another on the shared sequence while this mux is parked on VMID. 1 = this ADC alone. The frames of the other ADCs are derived from the ADC frame timing."
+    },
+    {
+     "path": "timing.other_adc_channels",
+     "label": "Channels streamed by each other ADC",
+     "unit": "",
+     "type": "int",
+     "tip": "Default 10 (ADC1/ADC3 route 10 channels). Each other ADC clocks channels x repeats + 2 pipeline frames per sweep, at the same frame period as this ADC."
     },
     {
      "path": "timing.sweep_gap_us",
@@ -531,6 +538,50 @@
     "rise_us": 40.0,
     "width_us": 150.0,
     "fall_us": 40.0,
+    "amp_N": 0.05
+   }
+  },
+  {
+   "path": "forces_sin",
+   "title": "Input profile: sine waves",
+   "add_label": "Add sin",
+   "tip": "One row per sinusoidal force on a sensor: F = amplitude x sin(2 pi f t) for the given number of cycles starting at Start (zero before and after, so it swings both ways around the VMID level). Rows on the same address add up and also add to the pulses above.",
+   "columns": [
+    {
+     "key": "address",
+     "label": "Channel",
+     "type": "int",
+     "min": 0,
+     "max": 14
+    },
+    {
+     "key": "t_start_us",
+     "label": "Start [us]",
+     "type": "float"
+    },
+    {
+     "key": "freq_hz",
+     "label": "Frequency [Hz]",
+     "type": "float",
+     "min": 0
+    },
+    {
+     "key": "cycles",
+     "label": "Cycles",
+     "type": "float",
+     "min": 0
+    },
+    {
+     "key": "amp_N",
+     "label": "Amplitude [N]",
+     "type": "float"
+    }
+   ],
+   "new_row": {
+    "address": 2,
+    "t_start_us": 20.0,
+    "freq_hz": 20000.0,
+    "cycles": 3,
     "amp_N": 0.05
    }
   }

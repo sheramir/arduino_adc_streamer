@@ -28,14 +28,14 @@ def build(cfg: dict) -> dict:
     text, sched = bm.build(cfg)
     warnings: list[str] = []
     c = cfg["circuit"]
-    for f in cfg.get("forces", []):
+    for kind, f in [("pulse", f) for f in cfg.get("forces", [])] + [("sine", f) for f in cfg.get("forces_sin", [])]:
         sp = bm.sensor_params(cfg, int(f["address"]))
         v_open = sp["d33"] * float(f["amp_N"]) / sp["cp"]
         if c["vmid_v"] + v_open > c["vref_v"]:
-            warnings.append(f"Force pulse on address {f['address']} ({f['amp_N']} N) gives {v_open:.2f} V open circuit: the sensor "
+            warnings.append(f"Force {kind} on address {f['address']} ({f['amp_N']} N) gives {v_open:.2f} V open circuit: the sensor "
                             f"pin would exceed VREF ({c['vref_v']} V, ADS7953 range 1); the model has no input clamp.")
         if c["vmid_v"] - v_open < 0:
-            warnings.append(f"Force pulse on address {f['address']}: the release swing would go below 0 V (ADS7953 absolute range -0.2 V).")
+            warnings.append(f"Force {kind} on address {f['address']}: the release swing would go below 0 V (ADS7953 absolute range -0.2 V).")
     track = sched["timing"]["track"]
     if track < MIN_ACQUISITION_S:
         warnings.append(f"Track window {track * 1e9:.0f} ns is shorter than the ADS7953 minimum acquisition time of 325 ns "
@@ -54,7 +54,8 @@ def summary(cfg: dict) -> list[tuple[str, str]]:
     seq = bm.stream_channels(cfg)
     n = len(t["scan_order"])
     rep = int(t["repeat"])
-    frames = int(t["other_adc_frames"]) + len(seq)
+    other = bm.other_adc_frames(cfg)
+    frames = other + len(seq)
     cycle = frames * ft["period"] + t["sweep_gap_us"] * 1e-6
     connected = rep * ft["period"]
     sp = bm.sensor_params(cfg, 0)
@@ -67,7 +68,8 @@ def summary(cfg: dict) -> list[tuple[str, str]]:
         ("Connected time per sensor", f"{connected * 1e6:.3f} us  ({rep} frame{'s' if rep > 1 else ''})"),
         ("Connection to retained hold", f"{(connected - ft['delta']) * 1e6:.3f} us"),
         ("Stream frames of this ADC", f"{len(seq)}  ({'n*(repeat+2)' if t['vmid_between_channels'] else 'n*repeat+2'} for n = {n})"),
-        ("Frames per sweep (with the other ADC)", f"{frames}"),
+        ("Frames of the other ADCs per sweep", f"{other}  ({int(t['n_adc']) - 1} x ({int(t['other_adc_channels'])} channels x {rep} + 2) frames, {other * ft['period'] * 1e6:.2f} us)"),
+        ("Frames per sweep (all ADCs)", f"{frames}"),
         ("Sweep period", f"{cycle * 1e6:.2f} us  ({1.0 / cycle:,.0f} sweeps/s)"),
         ("Connected duty per sensor", f"{connected / cycle * 100:.1f} %"),
         ("Pin leakage at 0 / 1.25 / 2.5 V (Figure 43)", " / ".join(f"{x * 1e9:.3g}" for x in bm.leakage_levels(cfg)) + f" nA at {cfg['adc']['temperature_c']:g} C"),

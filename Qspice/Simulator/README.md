@@ -28,7 +28,7 @@ Models are looked up in `Qspice/*/` plus the folders in `--models` and `QSPICE_M
 | **Model** | Pick the model (also in the toolbar), read its description, set the QSPICE path, add another model folder, reset every parameter to the model defaults, reload the model files after editing them. |
 | **Components** | Edit component parameters (sensor material and size, bias network, mux leakage / capacitances / charge injection, op-amp, parasitics). A typed value is applied on Enter, when you leave the field, and also when you press Run (F5), Hold as reference, Save settings or Update estimate. Values accept engineering notation (`1e10`, `470k`, `1.5n`, `2meg`). Changed values are highlighted, the ↺ button resets one value, the filter box finds a parameter by name. |
 | **System** | System-level parameters of the scan: scan order, settle / acquisition / conversion / VMID times and the per-sensor sampling rate (when set, the park time is derived from it). The *Derived values* box shows the resulting cycle time, sampling rate, sensor capacitance and sensitivity. |
-| **Simulation** | Input profile (table of force pulses: sensor, start, rise, hold, fall, amplitude), preset scenarios, measurement time (run duration or number of scan cycles), solver step. *Update estimate* predicts number of time points, run time and result size. |
+| **Simulation** | Input profile (table of force pulses: sensor, start, rise, hold, fall, amplitude; second table of sine waves, **Add sin**: sensor, start, frequency, number of cycles, amplitude), preset scenarios, measurement time (run duration or number of scan cycles), solver step. *Update estimate* predicts number of time points, run time and result size. |
 | **Visualization** | Tick the nodes to display (grouped by plot panel; *Other nodes* lists every node found in the netlist), layout (stacked per group / one plot per node / single overlay), time window, line width, sample markers, reference overlay, title annotation. |
 
 Toolbar: **Run** (F5), **Stop** (Esc), **Save image…** (PNG or SVG), **Export data…** (CSV of the visible time range),
@@ -82,7 +82,7 @@ Manifest keys:
                                                "type": "float", "tip": "tooltip", "nullable": false} ]} ],
   "system": [ ... ], "simulation": [ ... ],            // same structure; types: float, int, bool, choice (+ "choices"), intlist
   "tables": [ {"path": "forces", "title": "...", "columns": [{"key": "amp_N", "label": "Amplitude [N]", "type": "float"}],
-               "new_row": {"amp_N": 0.1}} ],           // editable list-of-dicts (the input profile)
+               "new_row": {"amp_N": 0.1}, "add_label": "Add pulse"} ],   // editable list-of-dicts (the input profile); add_label = text of the add button
   "plot_groups": [ {"id": "adc", "title": "ADC input [V]"} ],     // one stacked plot panel per group
   "nodes": [ {"name": "ain", "label": "AIN_B4", "group": "adc", "default": true} ],
   "sample_marker": {"node": "ain", "label": "ADC hold samples"}   // optional: marks the adapter's sample times on this node

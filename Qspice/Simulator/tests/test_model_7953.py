@@ -46,6 +46,20 @@ def test_frame_timing_matches_the_ads7953_description(bm, model):
     assert sched["cycle"] == pytest.approx(58e-6)
 
 
+def test_other_adc_frames_follow_the_number_of_adcs_and_their_timing(bm, model):
+    cfg = model.default_config()
+    cfg["timing"]["scan_order"] = [0]
+    for n_adc, channels, repeat, expected in ((2, 10, 1, 12), (1, 10, 1, 0), (4, 10, 1, 36), (2, 15, 1, 17), (2, 10, 3, 32)):
+        cfg["timing"].update(n_adc=n_adc, other_adc_channels=channels, repeat=repeat)
+        sched = bm.build_schedule(cfg)
+        assert bm.other_adc_frames(cfg) == expected
+        assert sched["frames_per_cycle"] == expected + 1 * repeat + 2
+        assert sched["cycle"] == pytest.approx(sched["frames_per_cycle"] * 2e-6)
+    cfg["timing"]["n_adc"] = 0
+    with pytest.raises(ValueError, match="n_adc"):
+        bm.build_schedule(cfg)
+
+
 def test_stream_length_follows_repeat_and_vmid_between_channels(bm, model):
     cfg = model.default_config()
     n = len(cfg["timing"]["scan_order"])
